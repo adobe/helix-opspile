@@ -20,7 +20,7 @@ flowchart LR
   T[Microsoft Graph<br/>change notifications / delta] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
-  C[(2. channel folders<br/>R2, one file per thread)] --> I
+  C[(2. channel folders<br/>R2, one file per message)] --> I
   C <--> K[(3. knowledge bases<br/>Artifacts, one repo per org / team)]
   I[(4. fast index<br/>D1 + Durable Objects)] --> UI[opspile UI]
   UI -- read events --> I
@@ -49,7 +49,7 @@ Slack or Microsoft add fields, we keep them; normalization happens downstream.
 ### 2. Channel folders
 
 ```
-channels/<org>/<team>/<source>-<channelId>/<threadKey>.md
+channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
 Every channel belongs to one **org** (a customer or a vendor) and one **team** (the ops team
@@ -57,19 +57,45 @@ that owns it). Most of the mapping follows from naming conventions (`aem-<custom
 both platforms) and from Slack Connect's connected workspace; a small override file covers
 vendor channels, alert channels, and irregular names.
 
-Each thread is one markdown file with frontmatter. Every message links back to its raw object
-key and to its platform permalink.
+**One markdown file per message**, in a folder per platform thread (the root message's id; the
+root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
+and Teams HTML are converted), so keeping each message in its own file avoids nesting one
+document inside another, and makes every file a natural retrieval chunk. There is no
+per-thread rollup file; reading a thread means listing its folder.
+
+```markdown
+---
+source: slack
+thread: slack:<enterpriseId>:<channelId>:<thread_ts>
+logicalThread: slack:<enterpriseId>:<channelId>:<other_thread_ts>   # only if re-threaded
+id: <ts>
+at: 2026-10-14T07:37:26Z
+author: { kind: person, name: …, org: …, staff: true }
+editedAt: …
+deletedAt: …
+raw: [<raw object key>, …]
+permalink: https://…
+---
+
+The message body, as markdown.
+```
 
 ```
-threadKey   slack:<enterpriseId>:<channelId>:<thread_ts>
-            teams:<tenantId>:<teamId>:<channelId>:<rootMessageId>
+thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
+             teams:<tenantId>:<teamId>:<channelId>:<rootMessageId>
 ```
+
+- New messages are new objects, so concurrent replies never contend for the same file.
+- An edit rewrites exactly one file. Earlier versions remain in pile 1.
+- A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
+  watermarks stay valid.
 
 **Enrichment on write.** When a message is copied into this pile:
 
 - **[Clef](https://blog.cloudflare.com/clairic-extraction-model/)** (a decision model)
   classifies the thread: who has to act next (`us`, `customer`, `vendor`, `nobody`), what kind
-  of thread it is (incident, security, question, request, alert), and urgency.
+  of thread it is (incident, security, question, request, alert), and urgency. Thread-level
+  results live in the index (pile 4).
 - **Deterministic extraction** handles structured tokens: CVE ids, URLs, ticket links,
   `org/site` identifiers.
 - **Clairic** (an extraction model) handles loose facts, and only values above a confidence
@@ -78,13 +104,13 @@ threadKey   slack:<enterpriseId>:<channelId>:<thread_ts>
 **Re-threading.** People often post a follow-up as a new root message instead of replying.
 When a root message arrives, we find the 3–5 most similar recent threads in the same channel
 by vector search, and let Clef choose between those candidates and "new topic". A confident
-match links the message to that *logical* thread. The platform thread is never modified, so the
-link can be undone.
+match sets `logicalThread` on that one message file. The file stays where it is and the
+platform thread is never modified, so undoing the match is a one-field change.
 
 Vector search uses Workers AI embeddings in Vectorize, written at ingestion time so that a
 message can be matched seconds after it arrives.
 [AI Search](https://blog.cloudflare.com/introducing-autorag-on-cloudflare/) indexes the same
-folders for agent retrieval, where its periodic re-indexing is acceptable.
+message files for agent retrieval, where its periodic re-indexing is acceptable.
 
 ### 3. Knowledge bases
 
