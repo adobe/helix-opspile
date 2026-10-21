@@ -23,7 +23,9 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
  */
 export function teamsNotify(url) {
   const token = url.searchParams.get('validationToken');
-  if (token) return text(token);
+  if (token) {
+    return text(token);
+  }
   return text('', 202);
 }
 

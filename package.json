@@ -5,13 +5,14 @@
   "description": "Unified ops inbox for Slack and Microsoft Teams, on Cloudflare",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy:prod": "wrangler deploy --env prod",
-    "deploy:stage": "wrangler deploy --env stage",
+    "dev": "cf dev",
+    "deploy:prod": "cf deploy --mode prod",
+    "deploy:stage": "cf deploy --mode stage",
     "lint": "eslint ."
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
+    "cf": "1.0.0-beta.20",
     "eslint": "^9.39.5",
     "globals": "^17.13.0",
     "wrangler": "^4.151.3"
