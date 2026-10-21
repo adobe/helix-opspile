@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CF_SEND_TELEMETRY: 'false'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      # Builds the Worker without credentials (default mode, no vars needed).
+      - run: npx cf deploy --dry-run
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+      MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+      PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
+      STAFF_DOMAINS: ${{ secrets.STAFF_DOMAINS }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Migrations are additive and run before the deploy, so the new code never meets
+      # an old schema.
+      - name: Apply D1 migrations
+        run: |
+          id=$(npx cf d1 list | node -e '
+            const d = JSON.parse(require("fs").readFileSync(0));
+            const db = (Array.isArray(d) ? d : d.result || []).find((x) => x.name === "helix-opspile");
+            if (!db) { console.error("database helix-opspile not found"); process.exit(1); }
+            console.log(db.uuid);')
+          npx cf d1 migrations apply "$id"
+      - name: Deploy
+        run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"

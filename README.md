@@ -65,6 +65,16 @@ The Entra app needs these Microsoft Graph **application** permissions, with admi
 
 ### Develop and deploy
 
+**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint, tests and a build
+check on every pull request. A push to `main` applies the D1 migrations and deploys
+`helix-opspile-prod`. It authenticates with the repository secrets `CLOUDFLARE_API_TOKEN`
+(an account token scoped to Workers scripts, R2, Queues, D1 and Workers Observability; it
+expires after a year) and `CLOUDFLARE_ACCOUNT_ID`, and reads the plain-text vars from the
+secrets of the same name. Migrations must be additive, because they run before the new code
+is live.
+
+To deploy by hand instead:
+
 Deploys go through the new Cloudflare CLI, [`cf`](https://developers.cloudflare.com/cf/), which
 reads `cloudflare.config.ts` (`--mode prod` or `--mode stage` selects the Worker).
 
