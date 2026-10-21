@@ -17,7 +17,9 @@
 // uncommitted `.env`. cf has no `keep_vars`, so a deploy without them would wipe them.
 // Secrets are declared only by name; cf checks that they exist and keeps their values.
 import { existsSync } from 'node:fs';
-import { bindings, defineConfig, triggers } from 'cf/config';
+import {
+  bindings, defineConfig, exports as workerExports, triggers,
+} from 'cf/config';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
@@ -28,7 +30,10 @@ const NAMES: Record<string, string> = {
 
 // PUBLIC_ORIGIN: this Worker's https origin, where Graph sends notifications.
 // STAFF_DOMAINS: comma-separated mail domains whose people count as staff.
-const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN', 'STAFF_DOMAINS'] as const;
+// ACCESS_TEAM_DOMAIN, ACCESS_AUD: the Cloudflare Access app in front of /inbox and /api.
+const VARS = [
+  'MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN', 'STAFF_DOMAINS', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD',
+] as const;
 
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
@@ -71,21 +76,25 @@ function vars(deployed: boolean) {
 
 export default defineConfig(({ mode }) => {
   const deployed = Boolean(mode && NAMES[mode]);
+  const name = deployed ? NAMES[mode as string] : 'helix-opspile';
   return {
     worker: {
-      name: deployed ? NAMES[mode as string] : 'helix-opspile',
+      name,
       compatibilityDate: '2026-10-01',
       entrypoint: 'src/index.js',
       previewUrls: false,
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
       // Renews the Graph subscription, which lives at most 60 minutes (#5).
+      exports: { TeamRoom: workerExports.durableObject({ storage: 'sqlite' }) },
       triggers: deployed
         ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
         : [],
       env: {
         ...vars(deployed),
         ...resources(mode),
+        // One Durable Object per ops team: live read state (#7).
+        ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

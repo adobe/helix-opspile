@@ -16,7 +16,8 @@
  * - `{ op: 'upsert', message }`: a message to write (new, or a newer version)
  * - `{ op: 'delete', message }`: a tombstone (`deletedAt`, no body)
  * - `{ op: 'channel', channel }`: channel metadata changed (rename, creation)
- * - `{ op: 'skip', reason }`: nothing for pile 2 (reactions go to read state, #7)
+ * - `{ op: 'reaction', reaction }`: someone reacted to a message (read state only)
+ * - `{ op: 'skip', reason }`: nothing for pile 2
  *
  * A message carries an `authorRef` that the caller resolves to an author, and its body
  * in the platform's format (`text` + `format`), converted later once mentions are known.
@@ -99,6 +100,19 @@ export function normalizeSlack(key, payload) {
       },
     };
   }
+  if (event.type === 'reaction_added' && event.item && event.item.type === 'message') {
+    return {
+      op: 'reaction',
+      reaction: {
+        source: 'slack',
+        tenant,
+        channelId: event.item.channel,
+        id: event.item.ts,
+        userId: event.user,
+        at: iso(event.event_ts || payload.event_time),
+      },
+    };
+  }
   if (event.type !== 'message') {
     return { op: 'skip', reason: event.type || payload.type };
   }
@@ -173,6 +187,10 @@ export function normalizeTeams(key, msg) {
       .filter(Boolean).join('\n'),
     permalink: msg.webUrl,
     raw: key,
+    // Teams reports reactions on the message itself; each reactor has read up to here.
+    reactors: [...new Set((msg.reactions || [])
+      .map((r) => r && r.user && r.user.user && r.user.user.id)
+      .filter(Boolean))],
   };
   if (msg.deletedDateTime) {
     return { op: 'delete', message: { ...message, deletedAt: msg.deletedDateTime } };

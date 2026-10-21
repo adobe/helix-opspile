@@ -40,6 +40,8 @@ jobs:
       MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
       PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
       STAFF_DOMAINS: ${{ secrets.STAFF_DOMAINS }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

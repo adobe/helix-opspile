@@ -150,6 +150,11 @@ raw events that justify it, so every memory is traceable to its source, and a ba
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
   them back to D1 in batches.
+- The index is derived: a `messages` row per pile-2 file, and a `threads` row recomputed from
+  its messages on every write (last activity by a person, last speaker and whether they are
+  staff, title, message count), so it is the same in any replay order. Alert threads use the
+  last message of any kind, because they consist of bot posts.
+- The UI is one static page, served by the Worker at `/inbox` behind Cloudflare Access.
 
 ## Read state
 
@@ -167,7 +172,7 @@ signed-in user's own state only coarsely, so opspile owns read state. Most of it
 | Signal | Effect |
 |---|---|
 | Person posts a message in the thread | Their watermark moves to that message |
-| Person reacts to a message | Their watermark moves to that message |
+| Person reacts to a message | Their watermark moves to that message (Slack `reaction_added`; Teams reports reactions on the message) |
 | Person opens the thread in opspile | Their watermark moves to the last message |
 | A message is edited, or a reaction is added by someone else | No change; edits never make a thread unread |
 | Bot or system message | Stored and shown, but does not count as new activity |

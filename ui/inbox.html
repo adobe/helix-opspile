@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opspile</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #fff; --ink: #1d1d1b; --mute: #6b6b66; --line: #e3e3de;
+    --accent: #2f5bd3; --unread: #2f5bd3; --warn: #b4540a; --soft: #eef1fb;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --panel: #1d1d1c; --ink: #ececea; --mute: #9a9a94; --line: #2e2e2c;
+      --accent: #7f9cf5; --unread: #7f9cf5; --warn: #e3964f; --soft: #23283a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px;
+    border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  header .me { margin-left: auto; color: var(--mute); }
+  select, button { font: inherit; color: inherit; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+  nav.filters button[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
+  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); display: inline-block; }
+  .live.on { background: #2e9e5b; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(320px, 40%) 1fr; min-height: 0; }
+  #list { overflow: auto; border-right: 1px solid var(--line); }
+  #list .group { padding: 6px 14px; color: var(--mute); font-size: 12px; text-transform: uppercase;
+    letter-spacing: .05em; background: var(--bg); position: sticky; top: 0; }
+  .t { display: grid; grid-template-columns: 12px 1fr auto; gap: 2px 8px; padding: 9px 14px;
+    border-bottom: 1px solid var(--line); cursor: pointer; background: var(--panel); }
+  .t:hover { background: var(--soft); }
+  .t.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .t .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; }
+  .t.unread .dot { background: var(--unread); }
+  .t.unread .title { font-weight: 600; }
+  .t .meta { grid-column: 2 / 4; color: var(--mute); font-size: 12px; display: flex; gap: 8px;
+    flex-wrap: wrap; align-items: center; }
+  .t .when { color: var(--mute); font-size: 12px; white-space: nowrap; }
+  .t .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .partial { color: var(--mute); font-weight: 400; }
+  .badge { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); }
+  .badge.us { color: var(--warn); border-color: var(--warn); }
+  .readers { display: inline-flex; gap: 2px; }
+  .readers span { font-size: 10px; width: 18px; height: 18px; border-radius: 50%; display: grid;
+    place-items: center; background: var(--soft); color: var(--accent); }
+  #thread { overflow: auto; padding: 0 0 40px; }
+  #thread .head { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; }
+  #thread .head h2 { font-size: 16px; margin: 0 0 4px; }
+  #thread .head .sub { color: var(--mute); font-size: 12px; }
+  .m { padding: 10px 20px; border-bottom: 1px solid var(--line); }
+  .m.root { background: var(--panel); }
+  .m .who { font-weight: 600; }
+  .m .who .staff { font-weight: 400; color: var(--mute); font-size: 12px; }
+  .m .at { color: var(--mute); font-size: 12px; margin-left: 6px; }
+  .m .at a { color: inherit; }
+  .m .body { margin-top: 3px; overflow-wrap: anywhere; }
+  .m .body pre { background: var(--soft); padding: 8px; border-radius: 6px; overflow: auto; }
+  .m .body code { background: var(--soft); padding: 0 3px; border-radius: 3px; }
+  .m .body blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--mute); }
+  .m.deleted .body { color: var(--mute); font-style: italic; }
+  .empty { padding: 40px; color: var(--mute); text-align: center; }
+  .seenline { color: var(--mute); font-size: 12px; padding: 8px 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>opspile</h1>
+  <select id="team" aria-label="Team"></select>
+  <nav class="filters" id="filters"></nav>
+  <span class="live" id="live" title="live updates"></span>
+  <span class="me" id="me"></span>
+</header>
+<main>
+  <section id="list" aria-label="Threads"><div class="empty">Loading…</div></section>
+  <section id="thread" aria-label="Thread"><div class="empty">Pick a thread.</div></section>
+</main>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const FILTERS = [
+  ['all', 'All'], ['unread', 'Unread'], ['others', 'Seen by others'],
+  ['unseen', 'Unseen by team'], ['us', 'Waiting on us'],
+];
+const state = { me: null, team: null, data: null, filter: 'all', open: null, ws: null };
+
+async function get(path) {
+  const res = await fetch(path, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+  return res.json();
+}
+
+function ago(iso) {
+  if (!iso) return '';
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
+  return new Date(iso).toLocaleDateString();
+}
+
+const initials = (name) => String(name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+const memberName = (id) => (state.data?.members.find((m) => m.id === id) || {}).name || `#${id}`;
+const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
+
+// A small, safe markdown subset: everything is escaped first.
+function md(src) {
+  const blocks = String(src || '').split(/```/);
+  return blocks.map((b, i) => {
+    if (i % 2) return `<pre><code>${esc(b.replace(/^\n|\n$/g, ''))}</code></pre>`;
+    return esc(b)
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+      .replace(/^&gt; ?(.*)$/gm, '<blockquote>$1</blockquote>')
+      .replace(/\n/g, '<br>');
+  }).join('');
+}
+
+function matches(t) {
+  switch (state.filter) {
+    case 'unread': return t.unread;
+    case 'others': return t.seenByOthers;
+    case 'unseen': return t.unseen;
+    case 'us': return t.last_staff === 0 && t.kind !== 'alert';
+    default: return true;
+  }
+}
+
+function row(t) {
+  const readers = t.readers.filter((p) => p !== state.me.id)
+    .map((p) => `<span title="${esc(memberName(p))} has read this">${esc(initials(memberName(p)))}</span>`).join('');
+  const where = `${t.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(t.channel_name || '')}`;
+  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''}" data-thread="${esc(t.thread)}">
+    <span class="dot"></span>
+    <span class="title" title="${t.root_known ? '' : 'The first message of this thread predates ingestion'}">${t.root_known ? '' : '<span class="partial">↳</span> '}${esc(t.title || '(no text)')}</span>
+    <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>
+    <span class="meta">
+      <span class="badge">${esc(t.org)}</span><span>${where}</span>
+      ${t.last_author ? `<span>${esc(t.last_author)}</span>` : ''}
+      ${t.last_staff === 0 && t.kind !== 'alert' ? '<span class="badge us">waiting on us</span>' : ''}
+      ${t.messages > 1 ? `<span>${t.messages} msgs</span>` : ''}
+      <span class="readers">${readers}</span>
+    </span>
+  </div>`;
+}
+
+function renderList() {
+  const list = $('list');
+  if (!state.data) return;
+  const shown = state.data.threads.filter(matches);
+  const alerts = shown.filter((t) => t.kind === 'alert');
+  const normal = shown.filter((t) => t.kind !== 'alert');
+  let html = normal.map(row).join('');
+  if (alerts.length) {
+    const unread = alerts.filter((t) => t.unread).length;
+    html += `<details><summary class="group">Alerts · ${alerts.length} threads${unread ? `, ${unread} unread` : ''}</summary>${alerts.map(row).join('')}</details>`;
+  }
+  list.innerHTML = html || '<div class="empty">Nothing here.</div>';
+  for (const f of $('filters').children) f.setAttribute('aria-pressed', String(f.dataset.f === state.filter));
+}
+
+async function loadInbox() {
+  state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+  renderList();
+}
+
+function markRead(t) {
+  const at = lastOf(t);
+  if (!at) return;
+  const msg = { type: 'read', thread: t.thread, at };
+  if (state.ws?.readyState === 1) state.ws.send(JSON.stringify(msg));
+  else fetch('/api/read', { method: 'POST', body: JSON.stringify(msg), credentials: 'same-origin' });
+  applyRead({ person: state.me.id, thread: t.thread, at });
+}
+
+async function openThread(key) {
+  state.open = key;
+  renderList();
+  const pane = $('thread');
+  pane.innerHTML = '<div class="empty">Loading…</div>';
+  const { thread, messages, watermarks } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
+  if (state.open !== key) return;
+  const seen = watermarks.filter((w) => w.read_at >= lastOf(thread) && w.person !== state.me.id)
+    .map((w) => memberName(w.person));
+  pane.innerHTML = `<div class="head"><h2>${esc(thread.title || '(no text)')}</h2>
+      <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}</div></div>
+    ${thread.root_at ? '' : '<div class="seenline">Earlier messages of this thread were posted before opspile started listening.</div>'}
+    ${messages.map((m, i) => `<div class="m ${i === 0 && thread.root_at ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
+      <span class="who">${esc(m.author?.name || 'unknown')}${m.author?.staff ? ' <span class="staff">staff</span>' : (m.author?.org ? ` <span class="staff">${esc(m.author.org)}</span>` : '')}</span>
+      <span class="at" title="${esc(m.at)}">${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">${ago(m.at)}</a>` : ago(m.at)}${m.editedAt ? ' · edited' : ''}</span>
+      <div class="body">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div></div>`).join('')}
+    <div class="seenline">${seen.length ? `Seen by ${esc(seen.join(', '))}` : 'Nobody else on the team has seen the latest message.'}</div>`;
+  const t = state.data.threads.find((x) => x.thread === key);
+  if (t) markRead(t);
+}
+
+function applyRead({ person, thread, at }) {
+  const t = state.data?.threads.find((x) => x.thread === thread);
+  if (!t) return;
+  const last = lastOf(t);
+  if (last && at >= last && !t.readers.includes(person)) t.readers.push(person);
+  const mine = t.readers.includes(state.me.id);
+  t.unread = Boolean(last) && !mine;
+  t.seenByOthers = !mine && t.readers.some((p) => p !== state.me.id);
+  t.unseen = Boolean(last) && t.readers.length === 0;
+  renderList();
+}
+
+let refetch;
+function connect() {
+  state.ws?.close();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/live?team=${encodeURIComponent(state.team)}`);
+  state.ws = ws;
+  ws.onopen = () => $('live').classList.add('on');
+  ws.onclose = () => {
+    $('live').classList.remove('on');
+    if (state.ws === ws) setTimeout(connect, 3000);
+  };
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'read') applyRead(ev);
+    if (ev.type === 'thread') {
+      clearTimeout(refetch);
+      refetch = setTimeout(async () => {
+        await loadInbox();
+        if (state.open === ev.thread) openThread(ev.thread);
+      }, 500);
+    }
+  };
+}
+
+async function start() {
+  try {
+    state.me = await get('/api/me');
+  } catch (e) {
+    $('list').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  $('me').textContent = state.me.name || state.me.email;
+  $('team').innerHTML = state.me.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
+  state.team = new URLSearchParams(location.search).get('team') || state.me.teams[0]?.slug;
+  $('team').value = state.team;
+  $('filters').innerHTML = FILTERS.map(([f, label]) => `<button data-f="${f}">${label}</button>`).join('');
+  $('filters').onclick = (e) => { if (e.target.dataset.f) { state.filter = e.target.dataset.f; renderList(); } };
+  $('team').onchange = async () => { state.team = $('team').value; state.open = null; await loadInbox(); connect(); };
+  $('list').onclick = (e) => { const el = e.target.closest('.t'); if (el) openThread(el.dataset.thread); };
+  await loadInbox();
+  connect();
+}
+start();
+</script>
+</body>
+</html>
