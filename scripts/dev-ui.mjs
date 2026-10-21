@@ -164,7 +164,10 @@ function inbox(team) {
     members: members(team),
     threads: readState(rows, marks, mentions, ME)
       .map((t) => ({
-        ...t, label: store.labels.get(t.thread) || null, ...people(store.threads.get(t.thread)),
+        ...t,
+        label: store.labels.get(t.thread) || null,
+        ...people(store.threads.get(t.thread)),
+        members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
       })),
   };
 }
@@ -189,9 +192,14 @@ function thread(key) {
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const watermarks = [...store.watermarks.values()]
     .filter((w) => w.thread === key && teamIds.has(w.person))
-    .map(({ person, read_at: readAt, via }) => ({ person, read_at: readAt, via }));
+    .map(({ person, read_at: readAt, via }) => ({
+      person, thread: key, read_at: readAt, via,
+    }));
   return {
     thread: entry.row,
+    members: [{
+      thread: key, root_at: entry.row.root_at, last_at: entry.row.last_at, any_at: entry.row.any_at,
+    }],
     messages,
     watermarks,
     label: store.labels.get(key) || null,
@@ -242,8 +250,9 @@ async function api(req, res, url) {
     const {
       id, name, email, teams, admin,
     } = store.me;
+    // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
-      id, name, email, teams, admin,
+      id, name, email, teams, admin, connected: { slack: true, teams: true },
     });
   }
   if (url.pathname.startsWith('/api/review')) {
@@ -259,6 +268,19 @@ async function api(req, res, url) {
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));
     return result ? json(res, result) : json(res, { error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/post' && req.method === 'POST') {
+    const { thread: key, text: reply } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!entry || !inTeam(entry.row.team) || !String(reply || '').trim()) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    // As the real reply would: it arrives a moment later, like a platform event.
+    setTimeout(() => {
+      store.post(key, 'dana', String(reply).trim());
+      broadcast(entry.row.team, { type: 'thread', thread: key });
+    }, 1200);
+    return json(res, { ok: true, platform: entry.row.source, id: 'fake' });
   }
   if (url.pathname === '/api/read' && req.method === 'POST') {
     const { thread: key, at } = await readJson(req);

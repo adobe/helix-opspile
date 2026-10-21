@@ -12,12 +12,15 @@
 
 import { accessEmail } from './access.js';
 import { cachedGraph } from './graph.js';
+import {
+  connections, disconnect, finishAuth, post, startAuth,
+} from './post.js';
 import { parse } from './channels.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
-import { readState } from './threads.js';
+import { ATTENTION, readState } from './threads.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -85,10 +88,65 @@ async function members(env, team) {
   return results || [];
 }
 
+const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
+const max = (xs) => xs.filter(Boolean).sort().pop() || null;
+
+/**
+ * Folds re-threaded threads into one entry per group (keyed by the group's first
+ * thread). The entry keeps the first thread's title and link, the latest activity and
+ * label of any member, the most pressing attention, and the list of members.
+ */
+export function fold(threads) {
+  const groups = new Map();
+  for (const t of threads) {
+    const k = t.logical_thread || t.thread;
+    if (!groups.has(k)) {
+      groups.set(k, []);
+    }
+    groups.get(k).push(t);
+  }
+  return [...groups].map(([k, ms]) => {
+    if (ms.length === 1 && ms[0].thread === k) {
+      return { ...ms[0], members: [{ thread: k, last_at: ms[0].last_at, any_at: ms[0].any_at }] };
+    }
+    const byRoot = [...ms].sort((a, b) => String(a.root_at).localeCompare(String(b.root_at)));
+    const anchor = ms.find((m) => m.thread === k) || byRoot[0];
+    const latest = [...ms].sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0];
+    const people = [];
+    for (const m of byRoot) {
+      for (const p of m.participants || []) {
+        if (people.length < 5 && !people.some((x) => x.name === p.name)) {
+          people.push(p);
+        }
+      }
+    }
+    return {
+      ...anchor,
+      thread: k,
+      last_at: max(ms.map((m) => m.last_at)),
+      any_at: max(ms.map((m) => m.any_at)),
+      last_author: latest.last_author,
+      last_staff: latest.last_staff,
+      messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
+      participants: people,
+      label: latest.label || anchor.label || null,
+      attention: [...ms].sort((a, b) => rank(a.attention) - rank(b.attention))[0].attention,
+      unread: ms.some((m) => m.unread),
+      unseen: ms.every((m) => m.unseen),
+      unseenByAdobe: ms.some((m) => m.unseenByAdobe),
+      seenByOthers: ms.some((m) => m.seenByOthers),
+      mentionedMe: ms.some((m) => m.mentionedMe),
+      mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
+      readers: latest.readers,
+      members: byRoot.map((m) => ({ thread: m.thread, last_at: m.last_at, any_at: m.any_at })),
+    };
+  }).sort((a, b) => String(b.last_at || b.any_at).localeCompare(String(a.last_at || a.any_at)));
+}
+
 export async function inbox(env, me, team) {
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
-      root_at IS NOT NULL AS root_known,
+      root_at IS NOT NULL AS root_known, logical_thread,
       (SELECT m.permalink FROM messages m WHERE m.thread = threads.thread AND m.deleted = 0
         AND m.permalink IS NOT NULL ORDER BY (m.id = threads.root_id) DESC, m.at LIMIT 1)
         AS permalink
@@ -123,38 +181,49 @@ export async function inbox(env, me, team) {
   return {
     team,
     members: await members(env, team),
-    threads: readState(threads, marks || [], mentions || [], me.id)
+    threads: fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => ({
         ...t,
         label: labelBy.get(t.thread) || null,
         ...(people.get(t.thread) || { participants: [], customerDomain: null }),
-      })),
+      }))),
   };
 }
 
+/**
+ * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
+ * every member's messages in order. Each message carries its platform `thread`.
+ */
 export async function thread(env, me, key) {
   const row = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!row || !(inTeam(me, row.team) || isAdmin(me))) {
     return null;
   }
+  const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
+    WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
+  const group = memberRows && memberRows.length ? memberRows : [row];
+  const keys = JSON.stringify(group.map((m) => m.thread));
   const link = await env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
     AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first();
   row.permalink = link ? link.permalink : null;
-  const listed = await env.CHANNELS.list({ prefix: row.path });
-  const files = await Promise.all(listed.objects.map(async (o) => {
-    const obj = await env.CHANNELS.get(o.key);
-    return obj ? parse(await obj.text()) : null;
-  }));
-  const { results: idx } = await env.DB.prepare(`SELECT m.id, m.source || ':' || m.tenant || ':'
-      || m.channel_id || ':' || m.id AS mkey, i.avatar
-    FROM messages m ${identityJoin} WHERE m.thread = ?`).bind(key).all();
+  const files = (await Promise.all(group.map(async (m) => {
+    const listed = await env.CHANNELS.list({ prefix: m.path });
+    return Promise.all(listed.objects.map(async (o) => {
+      const obj = await env.CHANNELS.get(o.key);
+      return obj ? parse(await obj.text()) : null;
+    }));
+  }))).flat();
+  const { results: idx } = await env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
+      || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar
+    FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
+    .bind(keys).all();
   const { results: rx } = await env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
       COALESCE(p.name, i.name) AS name
     FROM reactions r
     LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
     LEFT JOIN people p ON p.id = i.person
-    WHERE r.thread = ? ORDER BY r.at`).bind(key).all();
-  const byId = new Map((idx || []).map((m) => [m.id, m]));
+    WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(keys).all();
+  const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
   const reactionsBy = new Map();
   for (const r of rx || []) {
     const list = reactionsBy.get(r.message) || [];
@@ -171,25 +240,42 @@ export async function thread(env, me, key) {
   }
   const messages = files.filter(Boolean)
     .map(({ meta, body }) => {
-      const m = byId.get(String(meta.id)) || {};
+      const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
         ...meta, body, avatar: m.avatar || null, reactions: reactionsBy.get(m.mkey) || [],
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at, w.via
+  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
     FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
-    WHERE w.thread = ?`).bind(row.team, key).all();
-  const model = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(key).first();
+    WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(row.team, keys).all();
+  // The latest member's label speaks for the group.
+  const labelKey = [...group]
+    .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0].thread;
+  const model = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(labelKey).first();
   const reviews = isAdmin(me) ? (await env.DB.prepare(`SELECT r.question, r.model_value, r.value,
       r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
     FROM label_reviews r JOIN people p ON p.id = r.reviewer
-    WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(key).all()).results || [] : [];
-  const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [key]) : []);
-  const { results: facts } = await env.DB.prepare(`SELECT source, field, value, confidence
-    FROM facts WHERE thread = ? ORDER BY field, value`).bind(key).all();
+    WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()).results || [] : [];
+  const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [labelKey]) : []);
+  const { results: facts } = await env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
+    FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
+    .bind(keys).all();
   return {
-    thread: row, messages, watermarks: marks || [], label, model, reviews, facts: facts || [],
+    thread: { ...row, label_thread: labelKey },
+    members: group.map((m) => ({
+      thread: m.thread,
+      root_at: m.root_at,
+      last_at: m.last_at,
+      any_at: m.any_at,
+      logical_via: m.logical_via,
+    })),
+    messages,
+    watermarks: marks || [],
+    label,
+    model,
+    reviews,
+    facts: facts || [],
   };
 }
 
@@ -249,7 +335,24 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   const team = url.searchParams.get('team');
 
   if (url.pathname === '/api/me') {
-    return json(me);
+    return json({ ...me, connected: await connections(env, me.id) });
+  }
+  const auth = /^\/api\/auth\/(slack|teams)(\/start|\/callback)?$/.exec(url.pathname);
+  if (auth) {
+    const [, platform, step] = auth;
+    if (step === '/start') {
+      return startAuth(env, me, platform);
+    }
+    if (step === '/callback') {
+      return finishAuth(env, me, platform, url);
+    }
+    if (request.method === 'DELETE') {
+      return disconnect(env, me, platform);
+    }
+  }
+  if (url.pathname === '/api/post' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return post(env, me, body, (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(me, team)) {

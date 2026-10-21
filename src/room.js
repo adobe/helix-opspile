@@ -103,6 +103,11 @@ export class TeamRoom extends DurableObject {
 
   // eslint-disable-next-line class-methods-use-this
   async webSocketClose(ws, code) {
-    ws.close(code, 'closing');
+    // 1005 (no status) and 1006 (abnormal) are reported to us but may not be sent back.
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, 'closing');
+    } catch {
+      // already closed
+    }
   }
 }
