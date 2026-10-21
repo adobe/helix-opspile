@@ -8,7 +8,8 @@
     "dev": "cf dev",
     "deploy:prod": "cf deploy --mode prod",
     "deploy:stage": "cf deploy --mode stage",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
