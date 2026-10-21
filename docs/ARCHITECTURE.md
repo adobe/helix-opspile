@@ -115,11 +115,19 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
 - **Clairic** (an extraction model) handles loose facts, and only values above a confidence
   threshold are kept.
 
-**Re-threading.** People often post a follow-up as a new root message instead of replying.
-When a root message arrives, we find the 3–5 most similar recent threads in the same channel
-by vector search, and let Clef choose between those candidates and "new topic". A confident
-match sets `logicalThread` on that one message file. The file stays where it is and the
-platform thread is never modified, so undoing the match is a one-field change.
+**Re-threading.** People often post a follow-up as a new root message instead of replying,
+and alert channels post the same alert again and again. When a root message arrives, its
+*skeleton* (the text without timestamps, long numbers, hex and UUID ids, query strings and user
+agents; short numbers like status codes stay) is embedded and the most similar earlier roots in
+the same channel, within 14 days, are found by vector search. A near-identical one (cosine ≥
+0.97) is a match outright; otherwise, above 0.82, Clef chooses between up to four candidates
+and "a new topic", and a match needs a probability of at least 0.7. A match sets
+`logicalThread` on that one message file and on its thread row, always pointing at the group's
+first thread. The file stays where it is and the platform thread is never modified, so undoing
+the match is a one-field change. Replays arrive in any order, so a root that is matched also
+pulls in near-identical later roots that had found nothing earlier. The inbox shows a group as
+one entry: the first thread's title, the latest activity, the most pressing attention of any
+member, and all members' messages in order.
 
 Vector search uses Workers AI embeddings in Vectorize, written at ingestion time so that a
 message can be matched seconds after it arrives.
@@ -226,6 +234,15 @@ current labels nobody has reviewed, least confident first, and per question the 
 answer. A review is calibration data (Clef's agreement rate and most common corrections per
 question) and overrides the model's answer for that label version; when the thread changes
 and is labeled again, the model answers again and the old review only counts as history.
+
+## Replying
+
+Replies are written in the inbox and sent **as the person**, never as a bot: each person
+connects their own Slack account (user scope `chat:write`) and Microsoft account (delegated
+`ChannelMessage.Send`) once. The account must be theirs (the same person in D1, or the same
+email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
+A reply goes to the latest platform thread of an inbox entry and comes back through the
+normal ingestion path, like any other message.
 
 ## People
 

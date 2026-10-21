@@ -1,0 +1,331 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+import { json } from './http.js';
+import { getIdentity, isStaffDomain } from './lookup.js';
+
+/**
+ * Replying from the inbox, as the person who writes, never as a bot. Each person connects
+ * their own Slack and Microsoft accounts once (OAuth); the tokens are stored encrypted with
+ * TOKEN_KEY and are only used to post replies the person writes in the inbox.
+ *
+ * Slack: user scope `chat:write`. Teams: delegated `ChannelMessage.Send` (+ offline_access
+ * for a refresh token), redeemed server-side with the Entra app's secret.
+ */
+
+const SLACK_SCOPE = 'chat:write';
+const TEAMS_SCOPE = 'offline_access https://graph.microsoft.com/ChannelMessage.Send https://graph.microsoft.com/User.Read';
+const STATE_TTL_MS = 10 * 60 * 1000;
+const MAX_TEXT = 8000;
+
+const enc = new TextEncoder();
+const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
+  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+
+async function aesKey(env) {
+  if (!env.TOKEN_KEY) {
+    throw new Error('TOKEN_KEY is not set');
+  }
+  return crypto.subtle.importKey('raw', unb64u(env.TOKEN_KEY), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+export async function seal(env, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(env), enc.encode(text));
+  return b64u([...iv, ...new Uint8Array(ct)]);
+}
+
+export async function unseal(env, sealed) {
+  const bytes = unb64u(sealed);
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: bytes.slice(0, 12) },
+    await aesKey(env),
+    bytes.slice(12),
+  );
+  return new TextDecoder().decode(pt);
+}
+
+async function hmac(env, data) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    unb64u(env.TOKEN_KEY),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  return b64u(await crypto.subtle.sign('HMAC', key, enc.encode(data)));
+}
+
+/** OAuth state: who started the sign-in, for which platform, until when. Signed. */
+export async function makeState(env, person, platform, now = Date.now()) {
+  const claims = { p: person, pl: platform, exp: now + STATE_TTL_MS };
+  const body = b64u(enc.encode(JSON.stringify(claims)));
+  return `${body}.${await hmac(env, body)}`;
+}
+
+export async function checkState(env, state, person, platform, now = Date.now()) {
+  const [body, sig] = String(state || '').split('.');
+  if (!body || !sig || sig !== await hmac(env, body)) {
+    return false;
+  }
+  const s = JSON.parse(new TextDecoder().decode(unb64u(body)));
+  return s.p === person && s.pl === platform && s.exp > now;
+}
+
+const origin = (env) => String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+const redirectUri = (env, platform) => `${origin(env)}/api/auth/${platform}/callback`;
+
+async function saveToken(env, person, platform, t) {
+  await env.DB.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      refresh_token, expires_at, scope, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (person, platform) DO UPDATE SET user_id = excluded.user_id,
+      access_token = excluded.access_token, refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at, scope = excluded.scope, updated_at = excluded.updated_at`)
+    .bind(
+      person,
+      platform,
+      t.userId,
+      await seal(env, t.access),
+      t.refresh ? await seal(env, t.refresh) : null,
+      t.expiresIn ? new Date(Date.now() + (t.expiresIn - 60) * 1000).toISOString() : null,
+      t.scope || null,
+      new Date().toISOString(),
+    )
+    .run();
+}
+
+export async function connections(env, person) {
+  const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
+    .bind(person).all();
+  const set = new Set((results || []).map((r) => r.platform));
+  return { slack: set.has('slack'), teams: set.has('teams') };
+}
+
+/** GET /api/auth/<platform>/start: off to the platform's consent screen. */
+export async function startAuth(env, me, platform) {
+  const state = await makeState(env, me.id, platform);
+  let url;
+  if (platform === 'slack') {
+    url = new URL('https://slack.com/oauth/v2/authorize');
+    url.search = new URLSearchParams({
+      client_id: env.SLACK_CLIENT_ID,
+      user_scope: SLACK_SCOPE,
+      redirect_uri: redirectUri(env, 'slack'),
+      state,
+    });
+  } else {
+    url = new URL(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/authorize`);
+    url.search = new URLSearchParams({
+      client_id: env.MS_CLIENT_ID,
+      response_type: 'code',
+      response_mode: 'query',
+      redirect_uri: redirectUri(env, 'teams'),
+      scope: TEAMS_SCOPE,
+      login_hint: me.email,
+      state,
+    });
+  }
+  return Response.redirect(url.toString(), 302);
+}
+
+const sameEmail = (a, b) => Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+
+async function slackCallback(env, me, code) {
+  const res = await fetch('https://slack.com/api/oauth.v2.access', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.SLACK_CLIENT_ID,
+      client_secret: env.SLACK_CLIENT_SECRET,
+      code,
+      redirect_uri: redirectUri(env, 'slack'),
+    }),
+  });
+  const data = await res.json();
+  const user = data.authed_user || {};
+  if (!data.ok || !user.access_token) {
+    throw new Error(`slack: ${data.error || 'no user token'}`);
+  }
+  const tenant = (data.enterprise && data.enterprise.id) || (data.team && data.team.id);
+  const identity = await getIdentity(env, { source: 'slack', tenant, userId: user.id });
+  // The account must be the signed-in person's: the same D1 person, or the same email.
+  if (identity.person !== me.id && !sameEmail(identity.email, me.email)) {
+    throw new Error('that Slack account belongs to someone else');
+  }
+  await saveToken(env, me.id, 'slack', {
+    userId: user.id,
+    access: user.access_token,
+    refresh: user.refresh_token,
+    expiresIn: user.expires_in,
+    scope: user.scope,
+  });
+}
+
+async function msToken(env, params) {
+  const res = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
+    method: 'POST',
+    body: new URLSearchParams({
+      client_id: env.MS_CLIENT_ID,
+      client_secret: env.MS_CLIENT_SECRET,
+      scope: TEAMS_SCOPE,
+      ...params,
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) {
+    throw new Error(`microsoft: ${data.error || res.status}`);
+  }
+  return data;
+}
+
+async function teamsCallback(env, me, code) {
+  const data = await msToken(env, {
+    grant_type: 'authorization_code', code, redirect_uri: redirectUri(env, 'teams'),
+  });
+  const select = 'id,mail,userPrincipalName,otherMails';
+  const meRes = await fetch(`https://graph.microsoft.com/v1.0/me?$select=${select}`, {
+    headers: { authorization: `Bearer ${data.access_token}` },
+  });
+  const who = await meRes.json();
+  const emails = [who.mail, ...(who.otherMails || [])].filter(Boolean);
+  const identity = await getIdentity(env, { source: 'teams', tenant: env.MS_TENANT_ID, userId: who.id });
+  if (identity.person !== me.id && !emails.some((e) => sameEmail(e, me.email))) {
+    throw new Error('that Microsoft account belongs to someone else');
+  }
+  await saveToken(env, me.id, 'teams', {
+    userId: who.id,
+    access: data.access_token,
+    refresh: data.refresh_token,
+    expiresIn: data.expires_in,
+    scope: data.scope,
+  });
+}
+
+/** GET /api/auth/<platform>/callback: store the token, back to the inbox. */
+export async function finishAuth(env, me, platform, url) {
+  const back = new URL(`${origin(env)}/inbox`);
+  try {
+    if (url.searchParams.get('error')) {
+      throw new Error(url.searchParams.get('error_description') || url.searchParams.get('error'));
+    }
+    if (!await checkState(env, url.searchParams.get('state'), me.id, platform)) {
+      throw new Error('sign-in expired, please try again');
+    }
+    const code = url.searchParams.get('code');
+    await (platform === 'slack' ? slackCallback(env, me, code) : teamsCallback(env, me, code));
+    back.searchParams.set('connected', platform);
+  } catch (e) {
+    back.searchParams.set('connect_error', e.message.slice(0, 200));
+  }
+  return Response.redirect(back.toString(), 302);
+}
+
+async function accessToken(env, person, platform) {
+  const row = await env.DB.prepare('SELECT * FROM user_tokens WHERE person = ? AND platform = ?')
+    .bind(person, platform).first();
+  if (!row) {
+    return null;
+  }
+  if (!row.expires_at || Date.parse(row.expires_at) > Date.now()) {
+    return unseal(env, row.access_token);
+  }
+  if (!row.refresh_token || platform !== 'teams') {
+    return null;
+  }
+  const data = await msToken(env, {
+    grant_type: 'refresh_token', refresh_token: await unseal(env, row.refresh_token),
+  });
+  await saveToken(env, person, platform, {
+    userId: row.user_id,
+    access: data.access_token,
+    refresh: data.refresh_token || await unseal(env, row.refresh_token),
+    expiresIn: data.expires_in,
+    scope: data.scope,
+  });
+  return data.access_token;
+}
+
+const htmlEscape = (s) => s.replace(/[&<>"]/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+}[c]));
+
+/** The latest platform thread of an inbox entry: replies go there. */
+async function target(env, key) {
+  const { results } = await env.DB.prepare(`SELECT t.*, c.group_id FROM threads t
+    LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
+    WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC LIMIT 1`).bind(key, key).all();
+  return results && results[0];
+}
+
+/**
+ * POST /api/post `{ thread, text }`: replies in the thread as the signed-in person. The
+ * reply then arrives like any other message, through the platform's events.
+ */
+export async function post(env, me, request, inTeam) {
+  const { thread: key, text } = request || {};
+  const body = String(text || '').trim();
+  if (!body || body.length > MAX_TEXT) {
+    return json({ error: 'write something (up to 8000 characters)' }, 400);
+  }
+  const t = key && await target(env, key);
+  if (!t || !inTeam(t.team)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (!isStaffDomain(env, me.email)) {
+    return json({ error: 'only staff can reply' }, 403);
+  }
+  const token = await accessToken(env, me.id, t.source);
+  if (!token) {
+    const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
+    return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
+  }
+  if (t.source === 'slack') {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ channel: t.channel_id, thread_ts: t.root_id, text: body }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      const reconnect = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'].includes(data.error);
+      return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
+    }
+    return json({ ok: true, platform: 'slack', id: data.ts });
+  }
+  if (!t.group_id) {
+    return json({ error: 'the Teams team of this channel is not known yet' }, 409);
+  }
+  const path = `/teams/${encodeURIComponent(t.group_id)}/channels/${encodeURIComponent(t.channel_id)}`
+    + `/messages/${encodeURIComponent(t.root_id)}/replies`;
+  const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      body: { contentType: 'html', content: htmlEscape(body).replace(/\n/g, '<br>') },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return json({
+      error: `Teams: ${(data.error && data.error.code) || res.status}`,
+      connect: res.status === 401 ? 'teams' : undefined,
+    }, 502);
+  }
+  return json({ ok: true, platform: 'teams', id: data.id });
+}
+
+export async function disconnect(env, me, platform) {
+  await env.DB.prepare('DELETE FROM user_tokens WHERE person = ? AND platform = ?')
+    .bind(me.id, platform).run();
+  return json({ ok: true });
+}

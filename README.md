@@ -19,6 +19,8 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state, one thread's messages from pile 2. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
+| `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. |
+| `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scope `chat:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
@@ -36,7 +38,10 @@ Nothing below is committed; set it on the Worker.
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
 | `GRAPH_CLIENT_STATE` | secret | Random value our Graph subscriptions carry as `clientState`; notifications without it are dropped |
+| `SLACK_CLIENT_SECRET` | secret | Client secret of the opspile Slack app (people connecting their Slack account) |
+| `TOKEN_KEY` | secret | 32 random bytes (base64url): encrypts people's OAuth tokens and signs OAuth state |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
+| `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
@@ -46,7 +51,8 @@ Nothing below is committed; set it on the Worker.
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, threads, messages, watermarks, mentions, backfills, labels, facts |
-| `AI` | Workers AI | Clef (thread labels) and Clairic (facts) |
+| `AI` | Workers AI | Clef (thread labels, re-threading) and Clairic (facts), `bge-base-en-v1.5` embeddings |
+| `VECTORS` | Vectorize | `helix-opspile-roots` (`-stage`): one vector per root message. Create it by hand: 768 dimensions, cosine, metadata indexes `channel` (string) and `at` (number) |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
 
 `cf deploy` creates the buckets and queues when they are missing. The D1 schema is in
@@ -78,6 +84,9 @@ node scripts/replay.mjs --clear             # after changing rules: empty pile 2
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
 `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`.
+For replies it also needs the **delegated** permissions `ChannelMessage.Send`, `offline_access`
+and `User.Read`, and the web redirect URI `<origin>/api/auth/teams/callback`. The Slack app
+needs the user scope `chat:write` and the redirect URL `<origin>/api/auth/slack/callback`.
 
 ### Iterate on the inbox UI
 

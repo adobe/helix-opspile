@@ -13,6 +13,7 @@
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
+import { rethread } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
@@ -246,6 +247,10 @@ export async function processKey(env, key, cache = {}) {
       });
     }
   }
+  // A new root may continue an earlier thread (a repeat alert, a follow-up).
+  if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {
+    await env.NORMALIZE.send({ rethread: message.thread }, { delaySeconds: 30 });
+  }
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
@@ -265,12 +270,16 @@ export async function consume(batch, env) {
     const body = msg.body || {};
     const key = body.key
       || (body.label && `label:${body.label}`)
-      || (body.backfill && `backfill:${body.backfill.thread}`);
+      || (body.backfill && `backfill:${body.backfill.thread}`)
+      || (body.rethread && `rethread:${body.rethread}`);
     try {
       let r;
       if (body.backfill) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await runBackfill(env, body.backfill) };
+      } else if (body.rethread) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await rethread(env, body.rethread) };
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };

@@ -31,12 +31,16 @@ const NAMES: Record<string, string> = {
 // PUBLIC_ORIGIN: this Worker's https origin, where Graph sends notifications.
 // STAFF_DOMAINS: comma-separated mail domains whose people count as staff.
 // ACCESS_TEAM_DOMAIN, ACCESS_AUD: the Cloudflare Access app in front of /inbox and /api.
+// SLACK_CLIENT_ID: the Slack app's client id, for people connecting their Slack account.
 const VARS = [
   'MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN', 'STAFF_DOMAINS', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD',
+  'SLACK_CLIENT_ID',
 ] as const;
 
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
+  // Posting as the user: the Slack app's client secret, and the key that encrypts tokens.
+  'SLACK_CLIENT_SECRET', 'TOKEN_KEY',
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -49,6 +53,9 @@ function resources(mode: string | undefined) {
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
     // Workers AI: Clef (thread labels) and Clairic (facts).
     AI: bindings.ai(),
+    // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
+    // indexes on `channel` and `at`); see README.
+    VECTORS: bindings.vectorize({ name: `helix-opspile-roots${suffix}` }),
   };
 }
 

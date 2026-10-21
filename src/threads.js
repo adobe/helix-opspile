@@ -23,7 +23,10 @@ export const TITLE_MAX = 140;
 export function titleOf(subject, body) {
   const line = String(subject || body || '')
     .split('\n')
-    .map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*_~`]/g, '').trim())
+    .map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
+      // `_` only as emphasis at word edges, so `:rotating_light:` keeps its name.
+      .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
+      .trim())
     .find(Boolean) || '';
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line;
 }

@@ -54,6 +54,41 @@ function slackFiles(files) {
   return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
 }
 
+const blockText = (t) => (t && typeof t.text === 'string' ? t.text : '');
+
+/**
+ * Block Kit to mrkdwn, for messages whose blocks say more than their `text` (bots and
+ * apps). `rich_text` blocks are what Slack's own composer sends; for those, `text` already
+ * holds the same content, so they are not rendered.
+ */
+export function slackBlocks(blocks) {
+  if (!Array.isArray(blocks) || blocks.every((b) => b.type === 'rich_text')) {
+    return null;
+  }
+  const out = [];
+  for (const b of blocks) {
+    if (b.type === 'header') {
+      out.push(`*${blockText(b.text)}*`);
+    } else if (b.type === 'section') {
+      if (b.text) {
+        out.push(blockText(b.text));
+      }
+      if (Array.isArray(b.fields) && b.fields.length) {
+        // "*Label:*\nvalue" fields become one "*Label:* value" line each.
+        out.push(b.fields.map((f) => blockText(f).replace(/^(\*[^*\n]+\*)\n/, '$1 ')).join('\n'));
+      }
+    } else if (b.type === 'context') {
+      out.push((b.elements || []).map(blockText).filter(Boolean).join(' · '));
+    } else if (b.type === 'divider') {
+      out.push('---');
+    } else if (b.type === 'image' && b.image_url) {
+      out.push(`<${b.image_url}|${b.alt_text || 'image'}>`);
+    }
+  }
+  const text = out.filter(Boolean).join('\n\n');
+  return text || null;
+}
+
 /** Slack's reactions on a message (present on backfilled messages), one row per user. */
 function slackReactions(msg) {
   if (!Array.isArray(msg.reactions)) {
@@ -91,7 +126,8 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     authorRef,
     subtype: msg.subtype,
     format: 'mrkdwn',
-    text: [msg.text || '', files && `\n\nAttachments:\n${files}`].filter(Boolean).join(''),
+    text: [slackBlocks(msg.blocks) || msg.text || '', files && `\n\nAttachments:\n${files}`]
+      .filter(Boolean).join(''),
     reactions: slackReactions(msg),
     mentionIds: [...new Set([...String(msg.text || '').matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]
       .map((m) => m[1]))],
