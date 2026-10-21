@@ -18,7 +18,7 @@ export default [
   },
   {
     ...recommended,
-    files: ['src/**/*.js'],
+    files: ['src/**/*.js', 'test/**/*.js'],
     languageOptions: {
       ...recommended.languageOptions,
       globals: {
@@ -28,6 +28,8 @@ export default [
     },
     rules: {
       ...recommended.rules,
+      // console is how a Worker writes to Workers Logs.
+      'no-console': 'off',
       'max-len': ['error', 100, 2, {
         ignoreUrls: true,
         ignoreStrings: true,

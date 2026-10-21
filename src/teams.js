@@ -18,14 +18,23 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
  * Microsoft Graph change-notification and lifecycle endpoint.
  *
  * Graph validates a subscription's URLs by POSTing `?validationToken=…` and expects the
- * token echoed back as text/plain within 10 seconds. Anything else is acknowledged with
- * 202 and, for now, dropped.
+ * token echoed back as text/plain within 10 seconds. Notifications are logged as
+ * metadata (no resource paths, no client state), acknowledged with 202 and, for now,
+ * dropped; `clientState` checks and storage are #5 and #4.
  */
-export function teamsNotify(url) {
+export async function teamsNotify(request, url) {
   const token = url.searchParams.get('validationToken');
   if (token) {
     return text(token);
   }
+  const body = await request.json().catch(() => null);
+  const items = (body && Array.isArray(body.value)) ? body.value : [];
+  console.log(JSON.stringify({
+    route: url.pathname === '/teams/lifecycle' ? 'teams-lifecycle' : 'teams',
+    count: items.length,
+    changeTypes: [...new Set(items.map((n) => n.changeType).filter(Boolean))],
+    lifecycleEvents: [...new Set(items.map((n) => n.lifecycleEvent).filter(Boolean))],
+  }));
   return text('', 202);
 }
 

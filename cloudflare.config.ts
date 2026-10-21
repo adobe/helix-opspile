@@ -49,6 +49,8 @@ export default defineConfig(({ mode }) => {
       compatibilityDate: '2026-10-01',
       entrypoint: 'src/index.js',
       previewUrls: false,
+      // Workers Logs; logs carry event metadata only, never message content.
+      observability: { enabled: true },
       env: {
         ...vars(deployed),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),

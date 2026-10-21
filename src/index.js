@@ -25,10 +25,10 @@ export default {
     const { pathname } = url;
 
     if (request.method === 'POST' && pathname === '/slack/events') {
-      return slackEvents(request);
+      return slackEvents(request, env);
     }
     if (request.method === 'POST' && (pathname === '/teams/notify' || pathname === '/teams/lifecycle')) {
-      return teamsNotify(url);
+      return teamsNotify(request, url);
     }
     if (pathname === '/diag/teams') {
       if (!authorizedDiag(request, env)) {
