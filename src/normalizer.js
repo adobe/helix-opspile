@@ -20,8 +20,11 @@ import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { classify } from './rules.js';
 import {
-  advanceWatermark, findMessage, indexMessage, mentionedByName, recordMentions, titleOf,
+  advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
+  replaceReactions, titleOf,
 } from './threads.js';
+
+const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
 const MAX_MENTIONS = 20;
 
@@ -68,16 +71,24 @@ async function processReaction(env, key, r) {
   if (!msg) {
     return { key, result: 'skip', reason: 'reaction to an unknown message' };
   }
-  const person = await personOf(env, r.source, r.tenant, r.userId);
-  if (!person) {
-    return { key, result: 'skip', reason: 'reaction by someone outside the teams' };
-  }
-  await advanceWatermark(env.DB, person, msg.thread, msg.at, 'react');
-  const row = await env.DB.prepare('SELECT team FROM threads WHERE thread = ?').bind(msg.thread).first();
-  await notifyRoom(env, row && row.team, {
-    type: 'read', person, thread: msg.thread, at: msg.at,
+  await applyReaction(env.DB, {
+    thread: msg.thread,
+    message: messageKeyOf(r),
+    emoji: r.emoji,
+    userKey: `${r.source}:${r.tenant}:${r.userId}`,
+    at: r.at,
+    removed: r.removed,
   });
-  return { key, result: 'reaction' };
+  const row = await env.DB.prepare('SELECT team FROM threads WHERE thread = ?').bind(msg.thread).first();
+  const person = r.removed ? null : await personOf(env, r.source, r.tenant, r.userId);
+  if (person) {
+    await advanceWatermark(env.DB, person, msg.thread, msg.at, 'react');
+    await notifyRoom(env, row && row.team, {
+      type: 'read', person, thread: msg.thread, at: msg.at,
+    });
+  }
+  await notifyRoom(env, row && row.team, { type: 'thread', thread: msg.thread });
+  return { key, result: r.removed ? 'reaction-removed' : 'reaction' };
 }
 
 async function toMarkdown(env, message) {
@@ -186,6 +197,8 @@ export async function processKey(env, key, cache = {}) {
 
   await indexMessage(env.DB, {
     ...message,
+    authorKey: message.authorRef.userId
+      ? `${message.source}:${message.tenant}:${message.authorRef.userId}` : null,
     author: author.name,
     person,
     staff: author.staff,
@@ -198,6 +211,15 @@ export async function processKey(env, key, cache = {}) {
     channelName: channel.name,
     path: path.slice(0, path.lastIndexOf('/') + 1),
   });
+  if (message.reactions) {
+    await replaceReactions(
+      env.DB,
+      { thread: message.thread, message: messageKeyOf(message) },
+      message.reactions.map((r) => ({
+        emoji: r.emoji, userKey: `${message.source}:${message.tenant}:${r.userId}`, at: r.at,
+      })),
+    );
+  }
   for (const userId of message.reactors || []) {
     // eslint-disable-next-line no-await-in-loop
     const reactor = await personOf(env, message.source, message.tenant, userId);
@@ -206,7 +228,7 @@ export async function processKey(env, key, cache = {}) {
   }
   await recordMentions(env.DB, {
     thread: message.thread,
-    message: `${message.source}:${message.tenant}:${message.channelId}:${message.id}`,
+    message: messageKeyOf(message),
     at: message.at,
   }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
 

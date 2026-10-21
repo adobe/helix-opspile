@@ -122,6 +122,22 @@ function members(team) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Thread participants and the customer's domain, the way src/api.js derives them. */
+function people(entry) {
+  const seen = new Map();
+  for (const m of [...entry.messages].sort((a, b) => a.at.localeCompare(b.at))) {
+    if (m.author.kind === 'person' && !m.deletedAt && !seen.has(m.author.name)) {
+      seen.set(m.author.name, [...store.people.values()].find((p) => p.name === m.author.name));
+    }
+  }
+  const domains = [...seen.values()].filter((p) => p && !p.staff).map((p) => p.email.split('@').pop());
+  return {
+    participants: [...seen].slice(0, 5)
+      .map(([name, p]) => ({ name, staff: Boolean(p?.staff), avatar: null })),
+    customerDomain: domains[0] || null,
+  };
+}
+
 function inbox(team) {
   const rows = [...store.threads.values()]
     .map((e) => e.row)
@@ -147,7 +163,9 @@ function inbox(team) {
     team,
     members: members(team),
     threads: readState(rows, marks, mentions, ME)
-      .map((t) => ({ ...t, label: store.labels.get(t.thread) || null })),
+      .map((t) => ({
+        ...t, label: store.labels.get(t.thread) || null, ...people(store.threads.get(t.thread)),
+      })),
   };
 }
 
@@ -161,7 +179,13 @@ function thread(key) {
     .filter(([path]) => path.startsWith(entry.row.path))
     .map(([, body]) => parse(body))
     .filter(Boolean)
-    .map(({ meta, body }) => ({ ...meta, body }))
+    // Fake reactions: a thumbs-up from a teammate on every thank-you.
+    .map(({ meta, body }) => ({
+      ...meta,
+      body,
+      avatar: null,
+      reactions: /thank/i.test(body) ? [{ emoji: 'thumbsup', count: 1, names: ['Tom Okafor'] }] : [],
+    }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const watermarks = [...store.watermarks.values()]
     .filter((w) => w.thread === key && teamIds.has(w.person))

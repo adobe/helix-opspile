@@ -45,10 +45,21 @@ export function slackPermalink(channel, ts, rootId) {
 }
 
 function slackFiles(files) {
-  return (files || [])
-    .filter((f) => f && (f.permalink || f.name))
-    .map((f) => `- [${f.title || f.name || 'file'}](${f.permalink || ''})`)
-    .join('\n');
+  const ok = (files || []).filter((f) => f && (f.permalink || f.name));
+  // Images are shown inline (through the inbox's media proxy); other files are links.
+  const images = ok.filter((f) => /^image\//.test(f.mimetype || '') && f.url_private)
+    .map((f) => `![${f.title || f.name || 'image'}](${f.url_private})`);
+  const links = ok.filter((f) => !(/^image\//.test(f.mimetype || '') && f.url_private))
+    .map((f) => `- [${f.title || f.name || 'file'}](${f.permalink || ''})`);
+  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+}
+
+/** Slack's reactions on a message (present on backfilled messages), one row per user. */
+function slackReactions(msg) {
+  if (!Array.isArray(msg.reactions)) {
+    return undefined; // live message events carry no reactions; they arrive as events
+  }
+  return msg.reactions.flatMap((r) => (r.users || []).map((userId) => ({ emoji: r.name, userId })));
 }
 
 function slackMessage(payload, key, msg, channel, extra = {}) {
@@ -81,6 +92,7 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     subtype: msg.subtype,
     format: 'mrkdwn',
     text: [msg.text || '', files && `\n\nAttachments:\n${files}`].filter(Boolean).join(''),
+    reactions: slackReactions(msg),
     mentionIds: [...new Set([...String(msg.text || '').matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]
       .map((m) => m[1]))],
     permalink: slackPermalink(channel, msg.ts, rootId),
@@ -109,10 +121,13 @@ export function normalizeSlack(key, delivered) {
       },
     };
   }
-  if (event.type === 'reaction_added' && event.item && event.item.type === 'message') {
+  if ((event.type === 'reaction_added' || event.type === 'reaction_removed')
+    && event.item && event.item.type === 'message') {
     return {
       op: 'reaction',
       reaction: {
+        removed: event.type === 'reaction_removed',
+        emoji: event.reaction,
         source: 'slack',
         tenant,
         channelId: event.item.channel,
@@ -196,6 +211,11 @@ export function normalizeTeams(key, msg) {
       .filter(Boolean).join('\n'),
     permalink: msg.webUrl,
     raw: key,
+    reactions: (msg.reactions || [])
+      .filter((r) => r && r.user && r.user.user && r.user.user.id)
+      .map((r) => ({
+        emoji: r.reactionType || r.displayName, userId: r.user.user.id, at: r.createdDateTime,
+      })),
     mentionIds: [...new Set((msg.mentions || [])
       .map((x) => x && x.mentioned && x.mentioned.user && x.mentioned.user.id)
       .filter(Boolean))],

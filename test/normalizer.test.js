@@ -213,11 +213,16 @@ describe('processKey', () => {
         type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'x',
       }),
       [react]: event({
-        type: 'reaction_added', user: 'U2', event_ts: '1.4', item: { type: 'message', channel: 'C1', ts: '1.1' },
+        type: 'reaction_added', user: 'U2', reaction: 'eyes', event_ts: '1.4', item: { type: 'message', channel: 'C1', ts: '1.1' },
       }),
     });
     await processKey(e, root);
-    assert.equal((await processKey(e, react)).reason, 'reaction by someone outside the teams');
+    // Shown in the thread, but it says nothing about anyone's read state.
+    assert.equal((await processKey(e, react)).result, 'reaction');
+    assert.deepEqual(e.DB.rows('SELECT emoji, user_key FROM reactions'), [
+      { emoji: 'eyes', user_key: 'slack:E1:U2' },
+    ]);
+    assert.deepEqual(e.DB.rows('SELECT * FROM watermarks'), []);
     assert.equal((await processKey(e, 'slack/none.json')).result, 'missing');
   });
 });

@@ -11,6 +11,7 @@
  */
 
 import { cachedGraph } from './graph.js';
+import { sha256 } from './raw.js';
 
 /**
  * Channel and author lookups, cached in D1 (`channels`, `identities`). These are the
@@ -150,9 +151,19 @@ export async function updateChannelName(env, {
     .run();
 }
 
+/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
+export async function gravatar(email) {
+  return email
+    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
+    : '';
+}
+
 async function fetchSlackUser(env, userId) {
   const { user: u } = await slackApi(env, 'users.info', { user: userId });
+  const p = u.profile || {};
+  const image = p.is_custom_image === false ? null : (p.image_72 || p.image_48 || null);
   return {
+    avatar: image || await gravatar(p.email),
     kind: u.is_bot || u.id === 'USLACKBOT' ? 'bot' : 'person',
     name: u.real_name || (u.profile && u.profile.real_name) || u.name,
     email: (u.profile && u.profile.email) || null,
@@ -167,13 +178,14 @@ async function fetchTeamsUser(env, userId, fallbackName) {
       `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName`,
     );
     const upn = /#EXT#/i.test(u.userPrincipalName || '') ? null : u.userPrincipalName;
+    const email = u.mail || upn || null;
     return {
-      kind: 'person', name: u.displayName || fallbackName, email: u.mail || upn || null, home: null,
+      kind: 'person', name: u.displayName || fallbackName, email, home: null, avatar: await gravatar(email),
     };
   } catch (e) {
     // Users from other tenants cannot always be read; keep what the message says.
     return {
-      kind: 'person', name: fallbackName || null, email: null, home: null, error: e.message,
+      kind: 'person', name: fallbackName || null, email: null, home: null, avatar: '', error: e.message,
     };
   }
 }
@@ -187,7 +199,8 @@ export async function getIdentity(env, ref, now = Date.now()) {
     FROM identities i LEFT JOIN people p ON p.id = i.person
     WHERE i.source = ? AND i.tenant = ? AND i.user_id = ?`)
     .bind(ref.source, ref.tenant, ref.userId).first();
-  if (fresh(row, now)) {
+  // Rows cached before avatars existed have avatar NULL; '' means "looked, none".
+  if (fresh(row, now) && row.avatar !== null && row.avatar !== undefined) {
     return row;
   }
   let f;
@@ -214,11 +227,11 @@ export async function getIdentity(env, ref, now = Date.now()) {
     : null;
   const home = f.home || ref.home || null;
   await env.DB.prepare(`INSERT INTO identities
-    (source, tenant, user_id, kind, name, email, home, person, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
-      person = excluded.person, fetched_at = excluded.fetched_at`)
+      person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar`)
     .bind(
       ref.source,
       ref.tenant,
@@ -229,10 +242,12 @@ export async function getIdentity(env, ref, now = Date.now()) {
       home,
       person ? person.id : null,
       new Date(now).toISOString(),
+      f.avatar || '',
     )
     .run();
   return {
     ...f,
+    avatar: f.avatar || '',
     home,
     person: person ? person.id : null,
     person_staff: person ? person.staff : null,
