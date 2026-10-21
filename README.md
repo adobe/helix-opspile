@@ -13,7 +13,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 
 | Route | Purpose |
 | --- | --- |
-| `POST /slack/events` | Slack Events API request URL. Rejects requests without a valid signature (401). Answers `url_verification`; stores every event callback in pile 1 before acknowledging it, and answers 500 if that fails so Slack retries. |
+| `POST /slack/events` | Slack Events API request URL. Rejects requests without a valid signature (401). Answers `url_verification`; stores every event callback in pile 1 (without Slack's verification `token`) before acknowledging it, and answers 500 if that fails so Slack retries. |
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, without a fetch; acting on them is #5. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` subscription. Never returns a token. |

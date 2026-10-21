@@ -119,6 +119,7 @@ describe('slackEvents', () => {
     'x-slack-request-timestamp': TS, 'x-slack-signature': sign(body), ...headers,
   });
   const callback = JSON.stringify({
+    token: 'made-up-verification-token',
     type: 'event_callback',
     enterprise_id: 'E1',
     team_id: 'T1',
@@ -129,13 +130,18 @@ describe('slackEvents', () => {
     },
   });
 
-  it('stores a signed event callback as delivered and enqueues it', async () => {
+  it('stores a signed event callback without its verification token and enqueues it', async () => {
     const e = fakeEnv(vars);
     const res = await quiet(() => atNow(() => slackEvents(signed(callback), e)));
     assert.equal(res.status, 200);
     const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
     assert.deepEqual([...e.objects.keys()], [key]);
-    assert.equal(e.objects.get(key).body, callback);
+    const stored = JSON.parse(e.objects.get(key).body);
+    assert.equal(stored.token, undefined);
+    const { token, ...expected } = JSON.parse(callback);
+    assert.equal(token, 'made-up-verification-token');
+    assert.deepEqual(stored, expected);
+    assert.doesNotMatch(e.objects.get(key).body, /made-up-verification-token/);
     assert.equal(e.objects.get(key).options.customMetadata.via, 'events');
     assert.deepEqual(e.queued, [{ key }]);
   });

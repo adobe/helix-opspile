@@ -98,6 +98,14 @@ export function slackKey(payload) {
 }
 
 /**
+ * The payload to store: everything Slack sent, except the deprecated verification
+ * `token`, which is a credential and is never used (requests are verified by signature).
+ */
+export function withoutCredentials(payload) {
+  return JSON.stringify({ ...payload, token: undefined });
+}
+
+/**
  * Metadata of an event callback, for logs. Never includes message text or user ids.
  */
 function describe(payload, request) {
@@ -120,9 +128,9 @@ function describe(payload, request) {
  * Slack Events API endpoint.
  *
  * Every request, `url_verification` included, must carry a valid signature. Event
- * callbacks are stored in pile 1 exactly as delivered (the raw body) before they are
- * acknowledged; if storing fails, the 500 makes Slack retry with the same `event_id`,
- * which rewrites the same key.
+ * callbacks are stored in pile 1 as delivered, minus the deprecated verification `token`
+ * (a credential), before they are acknowledged; if storing fails, the 500 makes Slack
+ * retry with the same `event_id`, which rewrites the same key.
  */
 export async function slackEvents(request, env) {
   const body = await request.text();
@@ -152,7 +160,7 @@ export async function slackEvents(request, env) {
     return text('', 200);
   }
   try {
-    info.key = await putRaw(env, slackKey(payload), body, {
+    info.key = await putRaw(env, slackKey(payload), withoutCredentials(payload), {
       source: 'slack', via: 'events', retry: info.retry,
     });
   } catch (e) {
