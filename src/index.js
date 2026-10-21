@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import inboxHtml from '../ui/inbox.html';
+import { api } from './api.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { consume } from './normalizer.js';
@@ -42,6 +44,15 @@ export default {
         return json({ error: e.message }, 500);
       }
     }
+    if (pathname === '/inbox') {
+      return new Response(inboxHtml, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
+    const apiResponse = await api(request, env, url);
+    if (apiResponse) {
+      return apiResponse;
+    }
     if (pathname === '/') {
       return text('opspile ingest (stub)\n');
     }
@@ -60,3 +71,5 @@ export default {
       .catch((e) => console.error(JSON.stringify({ route: 'cron', error: e.message }))));
   },
 };
+
+export { TeamRoom } from './room.js';

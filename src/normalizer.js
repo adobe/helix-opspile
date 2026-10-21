@@ -17,16 +17,65 @@ import {
 import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { classify } from './rules.js';
+import {
+  advanceWatermark, findMessage, indexMessage, titleOf,
+} from './threads.js';
 
 const MAX_MENTIONS = 20;
 
+/** `{ author, person }`: the frontmatter author and the D1 person id, if known. */
 async function resolveAuthor(env, ref) {
   if (!ref.userId) {
     return {
-      kind: ref.kind || 'bot', name: ref.name || null, org: null, staff: false,
+      author: {
+        kind: ref.kind || 'bot', name: ref.name || null, org: null, staff: false,
+      },
+      person: null,
     };
   }
-  return toAuthor(env, await getIdentity(env, ref));
+  const identity = await getIdentity(env, ref);
+  return { author: toAuthor(env, identity), person: identity.person || null };
+}
+
+/**
+ * Tells the team's room (a Durable Object) about a change, so connected inboxes update.
+ * Best effort: the index in D1 is the record, the room only fans out.
+ */
+export async function notifyRoom(env, team, event) {
+  if (!env.ROOMS || !team) {
+    return;
+  }
+  try {
+    const room = env.ROOMS.get(env.ROOMS.idFromName(team));
+    await room.fetch('https://room/notify', { method: 'POST', body: JSON.stringify(event) });
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'normalize', room: team, error: e.message }));
+  }
+}
+
+async function personOf(env, source, tenant, userId) {
+  if (!userId) {
+    return null;
+  }
+  const identity = await getIdentity(env, { source, tenant, userId });
+  return identity.person || null;
+}
+
+async function processReaction(env, key, r) {
+  const msg = await findMessage(env.DB, r);
+  if (!msg) {
+    return { key, result: 'skip', reason: 'reaction to an unknown message' };
+  }
+  const person = await personOf(env, r.source, r.tenant, r.userId);
+  if (!person) {
+    return { key, result: 'skip', reason: 'reaction by someone outside the teams' };
+  }
+  await advanceWatermark(env.DB, person, msg.thread, msg.at, 'react');
+  const row = await env.DB.prepare('SELECT team FROM threads WHERE thread = ?').bind(msg.thread).first();
+  await notifyRoom(env, row && row.team, {
+    type: 'read', person, thread: msg.thread, at: msg.at,
+  });
+  return { key, result: 'reaction' };
 }
 
 async function toMarkdown(env, message) {
@@ -63,6 +112,9 @@ export async function processKey(env, key, cache = {}) {
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }
+  if (op.op === 'reaction') {
+    return processReaction(env, key, op.reaction);
+  }
   if (op.op === 'channel') {
     await updateChannelName(env, op.channel);
     return { key, result: 'channel' };
@@ -81,12 +133,13 @@ export async function processKey(env, key, cache = {}) {
   }
 
   const deleted = op.op === 'delete';
+  const { author, person } = await resolveAuthor(env, message.authorRef);
   const meta = {
     source: message.source,
     thread: message.thread,
     id: message.id,
     at: message.at,
-    author: await resolveAuthor(env, message.authorRef),
+    author,
     subject: message.subject,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
@@ -98,6 +151,28 @@ export async function processKey(env, key, cache = {}) {
   const written = await writeMessage(env.CHANNELS, path, {
     meta, body, version: message.version, deleted,
   });
+
+  await indexMessage(env.DB, {
+    ...message,
+    author: author.name,
+    person,
+    staff: author.staff,
+    counted: author.kind === 'person',
+    deleted,
+    title: deleted ? null : titleOf(message.subject, body),
+    org: cls.org,
+    team: cls.team,
+    kind: cls.kind,
+    channelName: channel.name,
+    path: path.slice(0, path.lastIndexOf('/') + 1),
+  });
+  for (const userId of message.reactors || []) {
+    // eslint-disable-next-line no-await-in-loop
+    const reactor = await personOf(env, message.source, message.tenant, userId);
+    // eslint-disable-next-line no-await-in-loop
+    await advanceWatermark(env.DB, reactor, message.thread, message.at, 'react');
+  }
+  await notifyRoom(env, cls.team, { type: 'thread', thread: message.thread });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
   };

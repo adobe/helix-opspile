@@ -16,7 +16,8 @@ import {
 } from 'node:test';
 import { parse } from '../src/channels.js';
 import { consume, processKey } from '../src/normalizer.js';
-import { fakeBucket, fakeDb, quiet } from './fakes.js';
+import { d1 } from './d1.js';
+import { fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -28,7 +29,7 @@ const RULES = [
   },
 ];
 const PEOPLE = [{
-  id: 7, email: 'ada@staff.example', name: 'Ada Staff', staff: 1,
+  id: 7, email: 'ada@staff.example', name: 'Ada Staff', staff: 1, teams: ['helix'],
 }];
 const USERS = {
   U1: {
@@ -45,7 +46,7 @@ function env(raw) {
       Object.entries(raw).map(([k, v]) => [k, JSON.stringify(v)]),
     )),
     CHANNELS: fakeBucket(),
-    DB: fakeDb({ rules: RULES, people: PEOPLE }),
+    DB: d1({ rules: RULES, people: PEOPLE, teams: [{ slug: 'helix', name: 'Helix' }] }),
     SLACK_BOT_TOKEN: 'xoxb-made-up',
     STAFF_DOMAINS: 'staff.example',
   };
@@ -159,10 +160,45 @@ describe('processKey', () => {
     assert.deepEqual(tomb.meta.raw, [orig, edit, del].sort());
   });
 
-  it('skips reactions and missing objects', async () => {
-    const key = 'slack/E1/C1/2026/10/21/2.1-r.json';
-    const e = env({ [key]: event({ type: 'reaction_added', item: { channel: 'C1' } }) });
-    assert.equal((await processKey(e, key)).result, 'skip');
+  it('indexes the thread and moves a reactor\'s watermark', async () => {
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const react = 'slack/E1/C1/2026/10/21/1.4-r.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1792584000.000100', text: 'help',
+      }),
+      [react]: event({
+        type: 'reaction_added',
+        user: 'U1',
+        event_ts: '1792584100.000000',
+        item: { type: 'message', channel: 'C1', ts: '1792584000.000100' },
+      }),
+    });
+    assert.equal((await processKey(e, react)).result, 'skip'); // message not known yet
+    await processKey(e, root);
+    const [t] = e.DB.rows('SELECT * FROM threads');
+    assert.deepEqual([t.org, t.team, t.title, t.last_author, t.last_staff, t.channel_name], [
+      'acme', 'helix', 'help', 'Cy', 0, 'aem-acme',
+    ]);
+    assert.equal((await processKey(e, react)).result, 'reaction');
+    assert.deepEqual(e.DB.rows('SELECT person, read_at, via FROM watermarks'), [
+      { person: 7, read_at: '2026-10-21T12:00:00.000Z', via: 'react' },
+    ]);
+  });
+
+  it('skips missing objects and reactions by outsiders', async () => {
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const react = 'slack/E1/C1/2026/10/21/1.4-r.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'x',
+      }),
+      [react]: event({
+        type: 'reaction_added', user: 'U2', event_ts: '1.4', item: { type: 'message', channel: 'C1', ts: '1.1' },
+      }),
+    });
+    await processKey(e, root);
+    assert.equal((await processKey(e, react)).reason, 'reaction by someone outside the teams');
     assert.equal((await processKey(e, 'slack/none.json')).result, 'missing');
   });
 });

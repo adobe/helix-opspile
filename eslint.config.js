@@ -24,10 +24,13 @@ export default [
       globals: {
         ...recommended.languageOptions.globals,
         ...globals.serviceworker,
+        WebSocketPair: 'readonly',
       },
     },
     rules: {
       ...recommended.rules,
+      // Workers runtime modules.
+      'import/no-unresolved': ['error', { ignore: ['^cloudflare:'] }],
       // console is how a Worker writes to Workers Logs.
       'no-console': 'off',
       'max-len': ['error', 100, 2, {
