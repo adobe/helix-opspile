@@ -1,0 +1,18 @@
+# helix-opspile ingest Worker.
+#
+# The Cloudflare account is NOT pinned here (this repo is public): export
+# CLOUDFLARE_ACCOUNT_ID before `npm run deploy:*`. Identifiers and credentials are
+# Worker bindings, never committed — see "Bindings" in README.md.
+name = "helix-opspile"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Plain-text vars (MS_CLIENT_ID, MS_TENANT_ID) are managed outside this file;
+# keep them on deploy instead of wiping them.
+keep_vars = true
+
+[env.prod]
+name = "helix-opspile-prod"
+
+[env.stage]
+name = "helix-opspile-stage"
