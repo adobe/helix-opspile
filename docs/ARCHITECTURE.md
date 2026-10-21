@@ -215,6 +215,12 @@ and an unchanged thread is never labeled twice):
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
   kept (0.8, and 0.6 for the free-text problem).
 
+**Label review.** Members of the admin team can review labels in the inbox: a queue of
+current labels nobody has reviewed, least confident first, and per question the right
+answer. A review is calibration data (Clef's agreement rate and most common corrections per
+question) and overrides the model's answer for that label version; when the thread changes
+and is labeled again, the model answers again and the old review only counts as history.
+
 ## People
 
 Authors are normalized to `{ kind: person | bot | system, org, staff }`.

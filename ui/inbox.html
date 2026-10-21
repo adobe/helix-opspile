@@ -65,6 +65,15 @@
   .m.deleted .body { color: var(--mute); font-style: italic; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
   .seenline { color: var(--mute); font-size: 12px; padding: 8px 20px; }
+  #review[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
+  .rv { padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--soft); font-size: 13px; }
+  .rv .q { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 3px 0; }
+  .rv .q b { width: 90px; font-weight: 600; }
+  .rv button { padding: 1px 7px; font-size: 12px; }
+  .rv button.model { border-color: var(--accent); }
+  .rv button.picked { background: var(--accent); color: var(--panel); }
+  .rv .hist { color: var(--mute); font-size: 12px; margin-top: 4px; }
+  .stats { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -72,6 +81,7 @@
   <h1>opspile</h1>
   <select id="team" aria-label="Team"></select>
   <nav class="filters" id="filters"></nav>
+  <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
 </header>
@@ -93,7 +103,12 @@ const ATTENTION_LABEL = {
   team: 'nobody on the team has seen this',
   me: 'you have not seen this',
 };
-const state = { me: null, team: null, data: null, filter: 'all', open: null, ws: null };
+const state = {
+  me: null, team: null, data: null, filter: 'all', open: null, ws: null, review: null,
+};
+const QUESTION_LABEL = {
+  next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved',
+};
 
 async function get(path) {
   const res = await fetch(path, { credentials: 'same-origin' });
@@ -163,8 +178,26 @@ function row(t) {
   </div>`;
 }
 
+function reviewRow(q) {
+  return `<div class="t ${state.open === q.thread ? 'sel' : ''}" data-thread="${esc(q.thread)}">
+    <span class="dot"></span>
+    <span class="title">${esc(q.title || '(no text)')}</span>
+    <span class="when">${Math.round((q.confidence ?? 1) * 100)}%</span>
+    <span class="meta"><span class="badge">${esc(q.team)}</span><span class="badge">${esc(q.org)}</span>
+      <span>${esc(q.kind)} · next: ${esc(q.next_actor)} · urgency ${Number(q.urgency).toFixed(1)}</span></span>
+  </div>`;
+}
+
 function renderList() {
   const list = $('list');
+  if (state.review) {
+    const { queue, stats } = state.review;
+    const line = stats.length
+      ? stats.map((x) => `${esc(QUESTION_LABEL[x.question] || x.question)} ${Math.round(x.accuracy * 100)}% of ${x.reviewed}`).join(' · ')
+      : 'No reviews yet.';
+    list.innerHTML = `<div class="stats">Clef agreement: ${line}</div>${queue.map(reviewRow).join('') || '<div class="empty">Every current label has been reviewed.</div>'}`;
+    return;
+  }
   if (!state.data) return;
   const shown = state.data.threads.filter(matches);
   const alerts = shown.filter((t) => t.kind === 'alert');
@@ -198,7 +231,7 @@ async function openThread(key) {
   const pane = $('thread');
   pane.innerHTML = '<div class="empty">Loading…</div>';
   const {
-    thread, messages, watermarks, label, facts,
+    thread, messages, watermarks, label, model, reviews, facts,
   } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
   if (state.open !== key) return;
   const seen = watermarks.filter((w) => w.read_at >= lastOf(thread) && w.person !== state.me.id)
@@ -207,6 +240,7 @@ async function openThread(key) {
       <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}
       ${label ? ` · ${esc(label.kind)} · next: ${esc(label.next_actor)} · urgency ${Number(label.urgency).toFixed(1)}/3 · resolved ${Math.round((label.resolved_p || 0) * 100)}%` : ''}</div>
       ${facts.length ? `<div class="sub">${facts.map((f) => `${esc(f.field)}: ${esc(f.value)}`).join(' · ')}</div>` : ''}</div>
+    ${state.me.admin && model ? reviewPanel(thread, model, label, reviews) : ''}
     ${thread.root_at ? '' : '<div class="seenline">Earlier messages of this thread were posted before opspile started listening.</div>'}
     ${messages.map((m, i) => `<div class="m ${i === 0 && thread.root_at ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
       <span class="who">${esc(m.author?.name || 'unknown')}${m.author?.staff ? ' <span class="staff">staff</span>' : (m.author?.org ? ` <span class="staff">${esc(m.author.org)}</span>` : '')}</span>
@@ -215,6 +249,41 @@ async function openThread(key) {
     <div class="seenline">${seen.length ? `Seen by ${esc(seen.join(', '))}` : 'Nobody else on the team has seen the latest message.'}</div>`;
   const t = state.data.threads.find((x) => x.thread === key);
   if (t) markRead(t);
+}
+
+function modelValue(model, q) {
+  if (q === 'urgency') return model.urgency == null ? null : String(Math.round(model.urgency));
+  if (q === 'resolved') return model.resolved_p == null ? null : (model.resolved_p >= 0.5 ? 'yes' : 'no');
+  return model[q];
+}
+
+function reviewPanel(thread, model, label, reviews) {
+  const answers = state.answers || {};
+  const current = reviews.filter((r) => r.labeled_through === model.labeled_through);
+  const rows = Object.keys(QUESTION_LABEL).map((q) => {
+    const mv = modelValue(model, q);
+    const picked = (current.find((r) => r.question === q) || {}).value;
+    const opts = (answers[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}" title="${v === mv ? 'Clef' : ''}">${esc(v)}</button>`).join('');
+    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${opts}</div>`;
+  }).join('');
+  const hist = reviews.slice(0, 5).map((r) => `${esc(r.reviewer)}: ${esc(r.question)} ${r.agrees ? 'confirmed' : `${esc(r.model_value)} → ${esc(r.value)}`}${r.labeled_through !== model.labeled_through ? ' (earlier label)' : ''}`).join(' · ');
+  return `<div class="rv" data-thread="${esc(thread.thread)}">Outlined: Clef's answer. Pick the right one per question.${rows}${hist ? `<div class="hist">${hist}</div>` : ''}</div>`;
+}
+
+async function loadReview() {
+  const [{ queue, answers }, { stats }] = await Promise.all([get('/api/review/queue'), get('/api/review/stats')]);
+  state.answers = answers;
+  state.review = { queue, stats };
+  renderList();
+}
+
+async function submitAnswer(thread, question, value) {
+  const res = await fetch('/api/review', {
+    method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question, value }),
+  });
+  if (!res.ok) { alert((await res.json()).error || res.status); return; }
+  await openThread(thread);
+  if (state.review) await loadReview();
 }
 
 function applyRead({ person, thread, at }) {
@@ -268,6 +337,19 @@ async function start() {
   $('filters').onclick = (e) => { if (e.target.dataset.f) { state.filter = e.target.dataset.f; renderList(); } };
   $('team').onchange = async () => { state.team = $('team').value; state.open = null; await loadInbox(); connect(); };
   $('list').onclick = (e) => { const el = e.target.closest('.t'); if (el) openThread(el.dataset.thread); };
+  $('thread').onclick = (e) => {
+    const b = e.target.closest('.rv button');
+    if (b) submitAnswer(b.closest('.rv').dataset.thread, b.dataset.q, b.dataset.v);
+  };
+  if (state.me.admin) {
+    $('review').hidden = false;
+    get('/api/review/queue').then((r) => { state.answers = r.answers; });
+    $('review').onclick = async () => {
+      const on = !state.review;
+      $('review').setAttribute('aria-pressed', String(on));
+      if (on) await loadReview(); else { state.review = null; renderList(); }
+    };
+  }
   await loadInbox();
   connect();
 }

@@ -13,6 +13,9 @@
 import { accessEmail } from './access.js';
 import { parse } from './channels.js';
 import { json, text } from './http.js';
+import {
+  ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
+} from './review.js';
 import { readState } from './threads.js';
 
 /**
@@ -34,7 +37,8 @@ export async function viewer(request, env, options) {
   }
   const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
     JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
-  return { ...person, teams: results || [] };
+  const teams = results || [];
+  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
 }
 
 const inTeam = (me, team) => me.teams.some((t) => t.slug === team);
@@ -70,9 +74,12 @@ export async function inbox(env, me, team) {
     WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
     .bind(team, keys).all();
   const { results: labels } = await env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
-      kind AS label_kind, kind_p, urgency, resolved_p FROM labels
+      kind AS label_kind, kind_p, urgency, resolved_p, labeled_through FROM labels
     WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
-  const labelBy = new Map((labels || []).map((l) => [l.thread, l]));
+  const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
+  const labelBy = new Map((labels || []).map((l) => [
+    l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
+  ]));
   return {
     team,
     members: await members(env, team),
@@ -83,7 +90,7 @@ export async function inbox(env, me, team) {
 
 export async function thread(env, me, key) {
   const row = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
-  if (!row || !inTeam(me, row.team)) {
+  if (!row || !(inTeam(me, row.team) || isAdmin(me))) {
     return null;
   }
   const listed = await env.CHANNELS.list({ prefix: row.path });
@@ -97,11 +104,16 @@ export async function thread(env, me, key) {
   const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at, w.via
     FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
     WHERE w.thread = ?`).bind(row.team, key).all();
-  const label = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(key).first();
+  const model = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(key).first();
+  const reviews = isAdmin(me) ? (await env.DB.prepare(`SELECT r.question, r.model_value, r.value,
+      r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
+    FROM label_reviews r JOIN people p ON p.id = r.reviewer
+    WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(key).all()).results || [] : [];
+  const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [key]) : []);
   const { results: facts } = await env.DB.prepare(`SELECT source, field, value, confidence
     FROM facts WHERE thread = ? ORDER BY field, value`).bind(key).all();
   return {
-    thread: row, messages, watermarks: marks || [], label, facts: facts || [],
+    thread: row, messages, watermarks: marks || [], label, model, reviews, facts: facts || [],
   };
 }
 
@@ -110,11 +122,12 @@ function room(env, team) {
 }
 
 /** Routes `/api/*`. Returns null for paths it does not own. */
-export async function api(request, env, url) {
+export async function api(request, env, url, { viewer: injected } = {}) {
   if (!url.pathname.startsWith('/api/')) {
     return null;
   }
-  const me = await viewer(request, env);
+  // `viewer` can be injected by tests; in the Worker it always comes from Access.
+  const me = injected || await viewer(request, env);
   if (!me) {
     return json({ error: 'not signed in, or not a member of any team' }, 403);
   }
@@ -132,6 +145,22 @@ export async function api(request, env, url) {
   if (url.pathname === '/api/thread') {
     const result = await thread(env, me, url.searchParams.get('thread'));
     return result ? json(result) : json({ error: 'not found' }, 404);
+  }
+  if (url.pathname.startsWith('/api/review')) {
+    if (!isAdmin(me)) {
+      return json({ error: 'label review is for the admin team' }, 403);
+    }
+    if (url.pathname === '/api/review/queue') {
+      return json({ answers: ANSWERS, queue: await reviewQueue(env.DB) });
+    }
+    if (url.pathname === '/api/review/stats') {
+      return json({ stats: await reviewStats(env.DB) });
+    }
+    if (url.pathname === '/api/review' && request.method === 'POST') {
+      const result = await submitReview(env.DB, me, await request.json().catch(() => ({})));
+      return json(result, result.error ? 400 : 200);
+    }
+    return json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at } = await request.json().catch(() => ({}));
