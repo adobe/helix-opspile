@@ -154,7 +154,13 @@ raw events that justify it, so every memory is traceable to its source, and a ba
   its messages on every write (last activity by a person, last speaker and whether they are
   staff, title, message count), so it is the same in any replay order. Alert threads use the
   last message of any kind, because they consist of bot posts.
-- The UI is one static page, served by the Worker at `/inbox` behind Cloudflare Access.
+- The UI is one static page, served by the Worker at `/inbox` behind Cloudflare Access: facet
+  cards (status, type, next actor, urgency, kind, customer, platform) on the left, threads in
+  fixed-height rows in the middle, and the thread as a chat on the right (customers on the
+  left, Adobe on the right, with reactions and images). Avatars are the Slack profile picture
+  or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
+  Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
+  Teams reports on each message.
 
 ## Read state
 

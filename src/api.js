@@ -11,6 +11,7 @@
  */
 
 import { accessEmail } from './access.js';
+import { cachedGraph } from './graph.js';
 import { parse } from './channels.js';
 import { json, text } from './http.js';
 import {
@@ -24,6 +25,41 @@ import { readState } from './threads.js';
  */
 
 const INBOX_LIMIT = 200;
+const MAX_PARTICIPANTS = 5;
+
+const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = m.author_key";
+const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
+
+/**
+ * People in each thread, in order of first post (up to five), and the customer's mail
+ * domain (the most common domain among non-staff authors). Emails stay on the server.
+ */
+async function participants(env, keys) {
+  const { results } = await env.DB.prepare(`SELECT m.thread, m.author, MAX(m.staff) AS staff,
+      MIN(m.at) AS first_at, MAX(i.avatar) AS avatar, MAX(i.email) AS email
+    FROM messages m ${identityJoin}
+    WHERE m.thread IN (SELECT value FROM json_each(?)) AND m.deleted = 0 AND m.counted = 1
+    GROUP BY m.thread, COALESCE(m.author_key, m.author)
+    ORDER BY m.thread, first_at`).bind(keys).all();
+  const by = new Map();
+  for (const r of results || []) {
+    if (!by.has(r.thread)) {
+      by.set(r.thread, { people: [], domains: new Map() });
+    }
+    const t = by.get(r.thread);
+    if (t.people.length < MAX_PARTICIPANTS) {
+      t.people.push({ name: r.author, staff: Boolean(r.staff), avatar: r.avatar || null });
+    }
+    const domain = domainOf(r.email);
+    if (domain && !r.staff) {
+      t.domains.set(domain, (t.domains.get(domain) || 0) + 1);
+    }
+  }
+  return new Map([...by].map(([key, t]) => [key, {
+    participants: t.people,
+    customerDomain: [...t.domains].sort((a, b) => b[1] - a[1])[0]?.[0] || null,
+  }]));
+}
 
 export async function viewer(request, env, options) {
   const email = await accessEmail(request, env, options);
@@ -79,6 +115,7 @@ export async function inbox(env, me, team) {
   const { results: labels } = await env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
       kind AS label_kind, kind_p, urgency, resolved_p, labeled_through FROM labels
     WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
+  const people = await participants(env, keys);
   const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
@@ -87,7 +124,11 @@ export async function inbox(env, me, team) {
     team,
     members: await members(env, team),
     threads: readState(threads, marks || [], mentions || [], me.id)
-      .map((t) => ({ ...t, label: labelBy.get(t.thread) || null })),
+      .map((t) => ({
+        ...t,
+        label: labelBy.get(t.thread) || null,
+        ...(people.get(t.thread) || { participants: [], customerDomain: null }),
+      })),
   };
 }
 
@@ -104,8 +145,37 @@ export async function thread(env, me, key) {
     const obj = await env.CHANNELS.get(o.key);
     return obj ? parse(await obj.text()) : null;
   }));
+  const { results: idx } = await env.DB.prepare(`SELECT m.id, m.source || ':' || m.tenant || ':'
+      || m.channel_id || ':' || m.id AS mkey, i.avatar
+    FROM messages m ${identityJoin} WHERE m.thread = ?`).bind(key).all();
+  const { results: rx } = await env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
+      COALESCE(p.name, i.name) AS name
+    FROM reactions r
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN people p ON p.id = i.person
+    WHERE r.thread = ? ORDER BY r.at`).bind(key).all();
+  const byId = new Map((idx || []).map((m) => [m.id, m]));
+  const reactionsBy = new Map();
+  for (const r of rx || []) {
+    const list = reactionsBy.get(r.message) || [];
+    let e = list.find((x) => x.emoji === r.emoji);
+    if (!e) {
+      e = { emoji: r.emoji, count: 0, names: [] };
+      list.push(e);
+    }
+    e.count += 1;
+    if (r.name) {
+      e.names.push(r.name);
+    }
+    reactionsBy.set(r.message, list);
+  }
   const messages = files.filter(Boolean)
-    .map(({ meta, body }) => ({ ...meta, body }))
+    .map(({ meta, body }) => {
+      const m = byId.get(String(meta.id)) || {};
+      return {
+        ...meta, body, avatar: m.avatar || null, reactions: reactionsBy.get(m.mkey) || [],
+      };
+    })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at, w.via
     FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
@@ -121,6 +191,45 @@ export async function thread(env, me, key) {
   return {
     thread: row, messages, watermarks: marks || [], label, model, reviews, facts: facts || [],
   };
+}
+
+const MEDIA_MAX = 10 * 1024 * 1024;
+
+/**
+ * Images from messages, fetched with the platform's credentials: Slack files need the bot
+ * token, Teams inline images (hostedContents) a Graph token. Only those two kinds of URL
+ * are fetched, and only images are passed on.
+ */
+export async function media(env, target) {
+  let u;
+  try {
+    u = new URL(target);
+  } catch {
+    return json({ error: 'bad url' }, 400);
+  }
+  let res;
+  if (u.protocol === 'https:' && u.hostname === 'files.slack.com') {
+    res = await fetch(u, { headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } });
+  } else if (u.protocol === 'https:' && u.hostname === 'graph.microsoft.com'
+    && /^\/v1\.0\/(teams|chats)\/.+\/hostedContents\/[^/]+\/\$value$/.test(u.pathname)) {
+    const graph = await cachedGraph(env);
+    res = await graph(u.toString());
+  } else {
+    return json({ error: 'not a message attachment' }, 400);
+  }
+  const type = res.headers.get('content-type') || '';
+  const length = Number(res.headers.get('content-length') || 0);
+  if (!res.ok || !type.startsWith('image/') || length > MEDIA_MAX) {
+    return json({ error: `cannot show this attachment (${res.status})` }, 502);
+  }
+  return new Response(res.body, {
+    headers: {
+      'content-type': type,
+      'cache-control': 'private, max-age=86400',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'",
+    },
+  });
 }
 
 function room(env, team) {
@@ -151,6 +260,9 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   if (url.pathname === '/api/thread') {
     const result = await thread(env, me, url.searchParams.get('thread'));
     return result ? json(result) : json({ error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/media') {
+    return media(env, url.searchParams.get('u'));
   }
   if (url.pathname.startsWith('/api/review')) {
     if (!isAdmin(me)) {

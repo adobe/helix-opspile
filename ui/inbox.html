@@ -6,118 +6,167 @@
 <title>opspile</title>
 <style>
   :root {
-    --bg: #f6f6f4; --panel: #fff; --ink: #1d1d1b; --mute: #6b6b66; --line: #e3e3de;
-    --accent: #2f5bd3; --unread: #2f5bd3; --warn: #b4540a; --soft: #eef1fb;
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+    --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
+    --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
+    --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
+    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a;
+    --me: #2f7cf6; --me-ink: #fff; --me-link: #fff;
+    --them: #2b3037; --them-ink: #e8eaed;
+    --code: #0b0d10;
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; color: var(--ink);
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #151514; --panel: #1d1d1c; --ink: #ececea; --mute: #9a9a94; --line: #2e2e2c;
-      --accent: #7f9cf5; --unread: #7f9cf5; --warn: #e3964f; --soft: #23283a; }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
+      --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
+      --sel: #dde9fb; --them: #e9ebee; --them-ink: #1d2025; --code: #f3f4f6;
+    }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px;
-    border-bottom: 1px solid var(--line); background: var(--panel); }
-  header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 9px; cursor: pointer; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
   header .me { margin-left: auto; color: var(--mute); }
-  select, button { font: inherit; color: inherit; background: var(--panel);
-    border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
-  nav.filters button[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
-  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--mute); display: inline-block; }
-  .live.on { background: #2e9e5b; }
-  main { flex: 1; display: grid; grid-template-columns: minmax(320px, 40%) 1fr; min-height: 0; }
-  #list { overflow: auto; border-right: 1px solid var(--line); }
-  #list .group { padding: 6px 14px; color: var(--mute); font-size: 12px; text-transform: uppercase;
-    letter-spacing: .05em; background: var(--bg); position: sticky; top: 0; }
-  .t { display: grid; grid-template-columns: 12px 1fr auto; gap: 2px 8px; padding: 9px 14px;
-    border-bottom: 1px solid var(--line); cursor: pointer; background: var(--panel); }
-  .t:hover { background: var(--soft); }
-  .t.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .t .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; }
-  .t.unread .dot { background: var(--unread); }
-  .t.unread .title { font-weight: 600; }
-  .t .meta { grid-column: 2 / 4; color: var(--mute); font-size: 12px; display: flex; gap: 8px;
-    flex-wrap: wrap; align-items: center; }
-  .t .when { color: var(--mute); font-size: 12px; white-space: nowrap; }
-  .t .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .partial { color: var(--mute); font-weight: 400; }
-  a.back { color: var(--accent); text-decoration: none; font-size: 12px; font-weight: 400; white-space: nowrap; }
-  a.back:hover { text-decoration: underline; }
-  .badge { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); }
-  .badge.us, .badge.att-adobe { color: var(--warn); border-color: var(--warn); }
-  .badge.att-mentioned-me, .badge.att-mentioned-team { color: var(--accent); border-color: var(--accent); }
-  .readers { display: inline-flex; gap: 2px; }
-  .readers span { font-size: 10px; width: 18px; height: 18px; border-radius: 50%; display: grid;
-    place-items: center; background: var(--soft); color: var(--accent); }
-  #thread { overflow: auto; padding: 0 0 40px; }
-  #thread .head { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
-    position: sticky; top: 0; }
-  #thread .head h2 { font-size: 16px; margin: 0 0 4px; }
-  #thread .head .sub { color: var(--mute); font-size: 12px; }
-  .m { padding: 10px 20px; border-bottom: 1px solid var(--line); }
-  .m.root { background: var(--panel); }
-  .m .who { font-weight: 600; }
-  .m .who .staff { font-weight: 400; color: var(--mute); font-size: 12px; }
-  .m .at { color: var(--mute); font-size: 12px; margin-left: 6px; }
-  .m .at a { color: inherit; }
-  .m .body { margin-top: 3px; overflow-wrap: anywhere; }
-  .m .body pre { background: var(--soft); padding: 8px; border-radius: 6px; overflow: auto; }
-  .m .body code { background: var(--soft); padding: 0 3px; border-radius: 3px; }
-  .m .body blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--mute); }
-  .m.deleted .body { color: var(--mute); font-style: italic; }
+  #review[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
+  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
+  .live.on { background: var(--green); }
+  main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
+  main > section { overflow: auto; min-height: 0; }
+
+  /* Filters: one card per facet, as in klickhaus. */
+  #filters { padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 8px; }
+  .card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
+  .card h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .card h3 .clear { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--mute); cursor: pointer; }
+  .card h3 .clear:hover { color: var(--ink); }
+  .fr { display: grid; grid-template-columns: 4px 18px 1fr auto 56px; gap: 6px; align-items: center;
+    padding: 4px 4px; border-radius: 6px; cursor: pointer; }
+  .fr:hover { background: var(--hover); }
+  .fr.on { background: var(--sel); }
+  .fr .ind { width: 3px; height: 16px; border-radius: 2px; background: var(--faint); }
+  .fr .ico { width: 16px; height: 16px; border-radius: 3px; }
+  .fr .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fr .lab.dim { color: var(--faint); }
+  .fr .n { font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mute); text-align: right; }
+  .fr .bar { height: 7px; border-radius: 4px; background: var(--faint); min-width: 2px; }
+  .c-red { background: var(--red) !important; } .c-yellow { background: var(--yellow) !important; }
+  .c-green { background: var(--green) !important; } .c-none { background: var(--faint) !important; }
+  .c-accent { background: var(--accent) !important; }
+
+  /* Threads: fixed-height rows, two lines, as in Apple Mail. */
+  #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  #threads .count { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: var(--col); z-index: 1; }
+  .t { height: 64px; padding: 9px 14px 0 12px; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: grid; grid-template-rows: 22px 24px; row-gap: 2px; }
+  .t:hover { background: var(--hover); }
+  .t.sel { background: var(--sel); }
+  .t .l1, .t .l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .t .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+  .t .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .t.unread .title { font-weight: 650; }
+  .t .when { flex: none; color: var(--mute); font-size: 12px; }
+  .t .l2 { padding-left: 17px; font-size: 12px; color: var(--mute); }
+  .t .cust { display: flex; align-items: center; gap: 5px; max-width: 34%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .t .cust img { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+  .faces { display: flex; flex: none; }
+  .faces .av { width: 20px; height: 20px; font-size: 9px; margin-left: -5px; border: 2px solid var(--col); border-radius: 50%; }
+  .faces .av:first-child { margin-left: 0; }
+  .t .replies { flex: none; }
+  .t .tags { margin-left: auto; display: flex; gap: 4px; overflow: hidden; flex-shrink: 1; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; color: var(--mute); }
+  .tag.hot { color: var(--red); border-color: var(--red); }
+  .tag.us { color: var(--yellow); border-color: var(--yellow); }
+  .back { color: var(--link); text-decoration: none; font-size: 12px; white-space: nowrap; }
+  .back:hover { text-decoration: underline; }
+
+  .av { width: 36px; height: 36px; border-radius: 9px; flex: none; object-fit: cover; display: grid;
+    place-items: center; font-size: 13px; font-weight: 600; color: #fff; overflow: hidden; }
+
+  /* Messages: bubbles, customers left, Adobe right. */
+  #pane { display: flex; flex-direction: column; }
+  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  .ph h2 { margin: 0 0 3px; font-size: 17px; display: flex; gap: 10px; align-items: baseline; }
+  .ph .sub { color: var(--mute); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .ph .sub img { width: 14px; height: 14px; border-radius: 3px; }
+  .feed { padding: 8px 22px 40px; }
+  .day { text-align: center; margin: 18px 0 8px; }
+  .day span { font-size: 12px; font-weight: 600; color: var(--mute); border: 1px solid var(--line); border-radius: 12px; padding: 3px 12px; }
+  .divider { display: flex; align-items: center; gap: 10px; color: var(--mute); font-size: 12px; margin: 14px 0 6px; }
+  .divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .msg { display: flex; gap: 10px; align-items: flex-end; margin-top: 10px; }
+  .msg.cont { margin-top: 3px; }
+  .msg.cont .av { visibility: hidden; height: 0; }
+  .msg.adobe { flex-direction: row-reverse; }
+  .msg .col { max-width: min(74%, 760px); display: flex; flex-direction: column; align-items: flex-start; }
+  .msg.adobe .col { align-items: flex-end; }
+  .msg .who { font-size: 12px; color: var(--mute); margin: 0 12px 3px; }
+  .msg .who b { color: var(--ink); font-weight: 600; }
+  .msg.cont .who { display: none; }
+  .bubble { background: var(--them); color: var(--them-ink); padding: 8px 13px; border-radius: 18px;
+    border-bottom-left-radius: 5px; overflow-wrap: anywhere; line-height: 1.5; }
+  .msg.adobe .bubble { background: var(--me); color: var(--me-ink); border-bottom-left-radius: 18px; border-bottom-right-radius: 5px; }
+  .bubble a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+  .msg.adobe .bubble a { color: var(--me-link); }
+  .bubble p { margin: 0; }
+  .bubble p + p { margin-top: 8px; }
+  .bubble code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(0,0,0,.25); padding: 1px 4px; border-radius: 4px; }
+  .bubble pre { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); color: var(--ink);
+    border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; overflow: auto; margin: 6px 0; white-space: pre-wrap; }
+  .bubble blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid currentColor; opacity: .85; }
+  .bubble ul, .bubble ol { margin: 4px 0; padding-left: 20px; }
+  .bubble img.att { display: block; max-width: 100%; max-height: 360px; border-radius: 10px; margin: 6px 0; }
+  .bubble .mention { font-weight: 600; }
+  .msg.deleted .bubble { font-style: italic; opacity: .6; }
+  .msg .meta { font-size: 11px; color: var(--faint); margin: 3px 12px 0; min-height: 15px; }
+  .msg .meta a { visibility: hidden; }
+  .msg:hover .meta a { visibility: visible; }
+  .msg .meta a { color: inherit; }
+  .rx { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 6px 0; }
+  .rx span { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  .sys { text-align: center; color: var(--faint); font-size: 12px; margin: 8px 0; }
+  .seen { text-align: right; color: var(--faint); font-size: 11px; margin-top: 6px; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
-  .seenline { color: var(--mute); font-size: 12px; padding: 8px 20px; }
-  #review[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); }
-  .rv { padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--soft); font-size: 13px; }
+
+  .rv { margin: 12px 22px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 13px; }
   .rv .q { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 3px 0; }
-  .rv .q b { width: 90px; font-weight: 600; }
-  .rv button { padding: 1px 7px; font-size: 12px; }
+  .rv .q b { width: 86px; font-weight: 600; }
+  .rv button { padding: 1px 8px; font-size: 12px; }
   .rv button.model { border-color: var(--accent); }
-  .rv button.picked { background: var(--accent); color: var(--panel); }
+  .rv button.picked { background: var(--accent); color: #fff; }
   .rv .hist { color: var(--mute); font-size: 12px; margin-top: 4px; }
-  .stats { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line); }
 </style>
 </head>
 <body>
 <header>
   <h1>opspile</h1>
   <select id="team" aria-label="Team"></select>
-  <nav class="filters" id="filters"></nav>
   <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
 </header>
 <main>
-  <section id="list" aria-label="Threads"><div class="empty">Loading…</div></section>
-  <section id="thread" aria-label="Thread"><div class="empty">Pick a thread.</div></section>
+  <section id="filters" aria-label="Filters"></section>
+  <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
+  <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
 </main>
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const FILTERS = [
-  ['all', 'All'], ['adobe', 'Unseen by Adobe'], ['mentioned', 'Mentions'],
-  ['unseen', 'Unseen by team'], ['unread', 'Unread'], ['us', 'Waiting on us'],
-];
-const ATTENTION_LABEL = {
-  adobe: 'nobody at Adobe has seen this',
-  'mentioned-me': 'you were mentioned',
-  'mentioned-team': 'a teammate was mentioned',
-  team: 'nobody on the team has seen this',
-  me: 'you have not seen this',
-};
 const state = {
-  me: null, team: null, data: null, filter: 'all', open: null, ws: null, review: null,
-};
-const QUESTION_LABEL = {
-  next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved',
+  me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
+  sel: { type: new Set(['conversation']) },
 };
 
+// ---------------------------------------------------------------- helpers
 async function get(path) {
   const res = await fetch(path, { credentials: 'same-origin' });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
   return res.json();
 }
-
 function ago(iso) {
   if (!iso) return '';
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -125,104 +174,239 @@ function ago(iso) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+function dayLabel(iso) {
+  const d = new Date(iso);
+  const today = new Date(); const y = new Date(Date.now() - 86400000);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+const platform = (t) => (t.source === 'slack' ? 'Slack' : 'Teams');
+const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
+const favicon = (domain) => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+const backlink = (t, label) => (t.permalink
+  ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
+
+const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
+function hue(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; }
+const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+function avatar(name, url, cls = '') {
+  const fallback = `<span class="av ${cls}" style="background:${hue(name)}" title="${esc(name)}">${esc(initials(name))}</span>`;
+  if (!url) return fallback;
+  return `<img class="av ${cls}" src="${esc(url)}" alt="" title="${esc(name)}" loading="lazy" referrerpolicy="no-referrer" data-fallback="${esc(fallback)}" onerror="this.outerHTML=this.dataset.fallback">`;
 }
 
-const initials = (name) => String(name || '?').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-const memberName = (id) => (state.data?.members.find((m) => m.id === id) || {}).name || `#${id}`;
-const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
-const platform = (t) => (t.source === 'slack' ? 'Slack' : 'Teams');
-const backlink = (t, label = `↗ ${platform(t)}`) => (t.permalink
-  ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open this thread in ${platform(t)}">${esc(label)}</a>`
-  : '');
+// Slack names and Teams types to characters. Anything else is shown by name.
+const EMOJI = {
+  thumbsup: '👍', '+1': '👍', thumbsdown: '👎', '-1': '👎', like: '👍', heart: '❤️', laugh: '😆', surprised: '😮',
+  sad: '😢', angry: '😠', eyes: '👀', white_check_mark: '✅', heavy_check_mark: '✔️', x: '❌', tada: '🎉',
+  pray: '🙏', raised_hands: '🙌', clap: '👏', rocket: '🚀', fire: '🔥', joy: '😂', smile: '😄', slightly_smiling_face: '🙂',
+  wink: '😉', thinking_face: '🤔', 100: '💯', ok_hand: '👌', warning: '⚠️', rotating_light: '🚨', bug: '🐛',
+  wave: '👋', muscle: '💪', sparkles: '✨', star: '⭐', point_up: '☝️', point_right: '👉', see_no_evil: '🙈',
+  sweat_smile: '😅', grinning: '😀', confused: '😕', facepalm: '🤦', face_palm: '🤦', hourglass: '⌛', 'heavy_plus_sign': '➕',
+  rofl: '🤣', heart_eyes: '😍', partying_face: '🥳', saluting_face: '🫡', ack: '✅', done: '✅', yes: '✅', no: '❌',
+  thank_you: '🙏', thanks: '🙏', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡',
+};
+const emoji = (name) => EMOJI[name] || EMOJI[String(name).replace(/::skin-tone-\d/, '')] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 
-// A small, safe markdown subset: everything is escaped first.
+// A safe markdown subset: escape first, then format. Images from Slack and Teams go
+// through the inbox's media proxy, which adds the platform's credentials.
+const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
+function inline(s) {
+  return s
+    .replace(/!\[([^\]\n]*)\]\((https:\/\/[^)\s]+)\)/g, (_, alt, u) => `<img class="att" src="${esc(proxied(u.replace(/&amp;/g, '&')))}" alt="${alt}" loading="lazy">`)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(>])\*([^*\n]+)\*(?=[\s).,!?:;<]|$)/g, '$1<em>$2</em>')
+    .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu, '$1<span class="mention">$2</span>')
+    .replace(/:([a-z0-9_+-]+):/g, (m, n) => (EMOJI[n] ? EMOJI[n] : m));
+}
 function md(src) {
-  const blocks = String(src || '').split(/```/);
-  return blocks.map((b, i) => {
-    if (i % 2) return `<pre><code>${esc(b.replace(/^\n|\n$/g, ''))}</code></pre>`;
-    return esc(b)
-      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
-      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-      .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
-      .replace(/^&gt; ?(.*)$/gm, '<blockquote>$1</blockquote>')
-      .replace(/\n/g, '<br>');
+  return String(src || '').split(/```/).map((b, i) => {
+    if (i % 2) return `<pre>${esc(b.replace(/^\n|\n$/g, ''))}</pre>`;
+    return esc(b).split(/\n{2,}/).map((para) => {
+      const lines = para.split('\n');
+      if (lines.every((l) => /^&gt; ?/.test(l))) return `<blockquote>${inline(lines.map((l) => l.replace(/^&gt; ?/, '')).join('<br>'))}</blockquote>`;
+      if (lines.every((l) => /^[-*] /.test(l))) return `<ul>${lines.map((l) => `<li>${inline(l.slice(2))}</li>`).join('')}</ul>`;
+      if (lines.every((l) => /^\d+\. /.test(l))) return `<ol>${lines.map((l) => `<li>${inline(l.replace(/^\d+\. /, ''))}</li>`).join('')}</ol>`;
+      return para.trim() ? `<p>${inline(lines.join('<br>'))}</p>` : '';
+    }).join('');
   }).join('');
 }
 
-function matches(t) {
-  switch (state.filter) {
-    case 'unread': return t.unread;
-    case 'adobe': return t.unseenByAdobe;
-    case 'mentioned': return t.mentionedMe || t.mentionedTeam.length > 0;
-    case 'unseen': return t.unseen;
-    case 'us': return (t.label ? t.label.next_actor === 'us' : t.last_staff === 0) && t.kind !== 'alert';
-    default: return true;
+// ---------------------------------------------------------------- facets
+// Status: red = nobody at Adobe has seen it, or you were mentioned; yellow = a teammate was
+// mentioned, or nobody on the team has seen it; green = only you have not; none = caught up.
+const STATUS = { adobe: 'red', 'mentioned-me': 'red', 'mentioned-team': 'yellow', team: 'yellow', me: 'green' };
+const statusOf = (t) => STATUS[t.attention] || 'none';
+const URGENCY = ['low', 'normal', 'high', 'critical'];
+const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : null);
+const FACETS = [
+  { id: 'status', title: 'Status', value: statusOf, order: ['red', 'yellow', 'green', 'none'],
+    label: { red: 'Adobe / you', yellow: 'Team', green: 'Only you', none: 'Caught up' },
+    hint: { red: 'Nobody at Adobe has seen it, or you were mentioned', yellow: 'Nobody on the team has seen it, or a teammate was mentioned', green: 'Only you have not seen it', none: 'Everyone is caught up' },
+    color: (v) => `c-${v}` },
+  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
+    label: { conversation: 'Conversations', alert: 'Alerts' } },
+  { id: 'next', title: 'Next actor', value: (t) => t.label?.next_actor || null, order: ['us', 'customer', 'vendor', 'nobody'],
+    color: (v) => (v === 'us' ? 'c-yellow' : 'c-none') },
+  { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
+    color: (v) => ({ critical: 'c-red', high: 'c-yellow', normal: 'c-green', low: 'c-none' }[v]) },
+  { id: 'kind', title: 'Kind', value: (t) => t.label?.label_kind || null },
+  { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => ts.find((t) => t.org === v && t.customerDomain)?.customerDomain, limit: 12 },
+  { id: 'platform', title: 'Platform', value: platform },
+];
+const passes = (t, except) => FACETS.every((f) => f.id === except || !state.sel[f.id]?.size || state.sel[f.id].has(f.value(t) ?? '(none)'));
+
+function renderFilters() {
+  const all = state.data?.threads || [];
+  $('filters').innerHTML = FACETS.map((f) => {
+    const pool = all.filter((t) => passes(t, f.id));
+    const counts = new Map();
+    for (const t of pool) { const v = f.value(t) ?? '(none)'; counts.set(v, (counts.get(v) || 0) + 1); }
+    for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
+    let rows = [...counts];
+    rows.sort((a, b) => (f.order ? (f.order.indexOf(a[0]) + 1 || 99) - (f.order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
+    if (f.limit) rows = rows.slice(0, f.limit);
+    const max = Math.max(1, ...rows.map((r) => r[1]));
+    const on = state.sel[f.id] || new Set();
+    return `<div class="card" data-f="${f.id}"><h3>${esc(f.title)}${on.size ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+      ${rows.map(([v, n]) => {
+        const color = f.color ? f.color(v) : 'c-accent';
+        const ic = f.icon && f.icon(v, all);
+        return `<div class="fr ${on.has(v) ? 'on' : ''}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
+          <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
+          ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : '<span></span>'}
+          <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.label && f.label[v]) || v)}</span>
+          <span class="n">${n}</span>
+          <span class="bar ${color}" style="width:${Math.round((n / max) * 100)}%"></span></div>`;
+      }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>'}</div>`;
+  }).join('');
+}
+
+// ---------------------------------------------------------------- thread list
+function tags(t) {
+  const out = [];
+  const l = t.label;
+  if (l) {
+    const u = urgencyOf(t);
+    if (u === 'critical' || u === 'high') out.push(`<span class="tag hot">${u}</span>`);
+    if (l.next_actor === 'us') out.push('<span class="tag us">our move</span>');
+    else if (l.next_actor) out.push(`<span class="tag">${esc(l.next_actor)}</span>`);
+    if (l.label_kind) out.push(`<span class="tag">${esc(l.label_kind)}</span>`);
   }
+  return out.join('');
 }
-
 function row(t) {
-  const readers = t.readers.filter((p) => p !== state.me.id)
-    .map((p) => `<span title="${esc(memberName(p))} has read this">${esc(initials(memberName(p)))}</span>`).join('');
-  const where = `${t.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(t.channel_name || '')}`;
+  const status = statusOf(t);
+  const faces = (t.participants || []).map((p) => avatar(`${p.name || '?'}${p.staff ? ' (Adobe)' : ''}`, p.avatar)).join('');
+  const replies = Math.max(0, (t.messages || 1) - 1);
   return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''}" data-thread="${esc(t.thread)}">
-    <span class="dot"></span>
-    <span class="title" title="${t.root_known ? '' : 'The first message of this thread predates ingestion'}">${t.root_known ? '' : '<span class="partial">↳</span> '}${esc(t.title || '(no text)')}</span>
-    <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>
-    <span class="meta">
-      <span class="badge">${esc(t.org)}</span><span>${where}</span>
-      ${t.last_author ? `<span>${esc(t.last_author)}</span>` : ''}
-      ${t.attention ? `<span class="badge att-${t.attention}" title="${esc(ATTENTION_LABEL[t.attention])}">${esc(t.attention)}</span>` : ''}
-      ${t.label ? `<span class="badge">${esc(t.label.label_kind)} · next: ${esc(t.label.next_actor)}${t.label.urgency >= 1.5 ? ' · urgent' : ''}</span>` : ''}
-      ${!t.label && t.last_staff === 0 && t.kind !== 'alert' ? '<span class="badge us">waiting on us</span>' : ''}
-      ${t.messages > 1 ? `<span>${t.messages} msgs</span>` : ''}
-      ${backlink(t)}
-      <span class="readers">${readers}</span>
-    </span>
-  </div>`;
+    <div class="l1"><span class="dot ${status === 'none' ? '' : `c-${status}`}" title="${esc(t.attention || 'caught up')}"></span>
+      <span class="title">${t.root_known ? '' : '↳ '}${esc(t.title || '(no text)')}</span>
+      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
+    <div class="l2">
+      <span class="cust">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="" loading="lazy">` : ''}${esc(t.org)}</span>
+      <span class="faces">${faces}</span>
+      ${replies ? `<span class="replies">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
+      <span class="tags">${tags(t)}</span>
+    </div></div>`;
 }
-
 function reviewRow(q) {
   return `<div class="t ${state.open === q.thread ? 'sel' : ''}" data-thread="${esc(q.thread)}">
-    <span class="dot"></span>
-    <span class="title">${esc(q.title || '(no text)')}</span>
-    <span class="when">${Math.round((q.confidence ?? 1) * 100)}%</span>
-    <span class="meta"><span class="badge">${esc(q.team)}</span><span class="badge">${esc(q.org)}</span>
-      <span>${esc(q.kind)} · next: ${esc(q.next_actor)} · urgency ${Number(q.urgency).toFixed(1)}</span></span>
-  </div>`;
+    <div class="l1"><span class="dot c-none"></span><span class="title">${esc(q.title || '(no text)')}</span>
+      <span class="when">${Math.round((q.confidence ?? 1) * 100)}%</span></div>
+    <div class="l2"><span class="cust">${esc(q.team)} · ${esc(q.org)}</span>
+      <span class="tags"><span class="tag">${esc(q.kind)}</span><span class="tag">next: ${esc(q.next_actor)}</span></span></div></div>`;
 }
-
-function renderList() {
-  const list = $('list');
+function renderThreads() {
+  const box = $('threads');
   if (state.review) {
     const { queue, stats } = state.review;
-    const line = stats.length
-      ? stats.map((x) => `${esc(QUESTION_LABEL[x.question] || x.question)} ${Math.round(x.accuracy * 100)}% of ${x.reviewed}`).join(' · ')
-      : 'No reviews yet.';
-    list.innerHTML = `<div class="stats">Clef agreement: ${line}</div>${queue.map(reviewRow).join('') || '<div class="empty">Every current label has been reviewed.</div>'}`;
+    const line = stats.length ? stats.map((x) => `${esc(x.question)} ${Math.round(x.accuracy * 100)}% of ${x.reviewed}`).join(' · ') : 'no reviews yet';
+    box.innerHTML = `<div class="count">Review queue · ${queue.length} labels · Clef agreement: ${line}</div>${queue.map(reviewRow).join('') || '<div class="empty">Every current label has been reviewed.</div>'}`;
     return;
   }
   if (!state.data) return;
-  const shown = state.data.threads.filter(matches);
-  const alerts = shown.filter((t) => t.kind === 'alert');
-  const normal = shown.filter((t) => t.kind !== 'alert');
-  let html = normal.map(row).join('');
-  if (alerts.length) {
-    const unread = alerts.filter((t) => t.unread).length;
-    html += `<details><summary class="group">Alerts · ${alerts.length} threads${unread ? `, ${unread} unread` : ''}</summary>${alerts.map(row).join('')}</details>`;
-  }
-  list.innerHTML = html || '<div class="empty">Nothing here.</div>';
-  for (const f of $('filters').children) f.setAttribute('aria-pressed', String(f.dataset.f === state.filter));
+  const shown = state.data.threads.filter((t) => passes(t));
+  const order = { red: 0, yellow: 1, green: 2, none: 3 };
+  shown.sort((a, b) => (order[statusOf(a)] - order[statusOf(b)]) || String(lastOf(b)).localeCompare(String(lastOf(a))));
+  box.innerHTML = `<div class="count">${shown.length} of ${state.data.threads.length} threads</div>${shown.map(row).join('') || '<div class="empty">Nothing matches these filters.</div>'}`;
+}
+function render() { renderFilters(); renderThreads(); }
+
+// ---------------------------------------------------------------- messages
+const QUESTION_LABEL = { next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved' };
+function modelValue(model, q) {
+  if (q === 'urgency') return model.urgency == null ? null : String(Math.round(model.urgency));
+  if (q === 'resolved') return model.resolved_p == null ? null : (model.resolved_p >= 0.5 ? 'yes' : 'no');
+  return model[q];
+}
+function reviewPanel(thread, model, reviews) {
+  const current = reviews.filter((r) => r.labeled_through === model.labeled_through);
+  const rows = Object.keys(QUESTION_LABEL).map((q) => {
+    const mv = modelValue(model, q);
+    const picked = (current.find((r) => r.question === q) || {}).value;
+    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${(state.answers?.[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}">${esc(v)}</button>`).join('')}</div>`;
+  }).join('');
+  const hist = reviews.slice(0, 5).map((r) => `${esc(r.reviewer)}: ${esc(r.question)} ${r.agrees ? 'confirmed' : `${esc(r.model_value)} → ${esc(r.value)}`}${r.labeled_through !== model.labeled_through ? ' (earlier label)' : ''}`).join(' · ');
+  return `<div class="rv" data-thread="${esc(thread.thread)}">Outlined: Clef's answer. Pick the right one per question.${rows}${hist ? `<div class="hist">${hist}</div>` : ''}</div>`;
+}
+function message(m, prev) {
+  const a = m.author || {};
+  if (a.kind === 'system') return `<div class="sys">${md(m.body)} · ${clock(m.at)}</div>`;
+  const adobe = Boolean(a.staff);
+  const cont = prev && prev.author?.name === a.name && prev.author?.kind === a.kind
+    && Date.parse(m.at) - Date.parse(prev.at) < 5 * 60 * 1000 && dayLabel(prev.at) === dayLabel(m.at);
+  const who = `<b>${esc(a.name || 'unknown')}</b> ${adobe ? 'Adobe' : esc(a.kind === 'bot' ? 'bot' : (a.org || ''))} · ${clock(m.at)}`;
+  const rx = (m.reactions || []).map((r) => `<span title="${esc(r.names.join(', ') || r.emoji)}">${esc(emoji(r.emoji))} ${r.count}</span>`).join('');
+  return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''}">
+    ${avatar(a.name || '?', m.avatar)}
+    <div class="col"><div class="who">${who}</div>
+      <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
+      ${rx ? `<div class="rx">${rx}</div>` : ''}
+      ${m.editedAt || m.permalink ? `<div class="meta">${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
+    </div></div>`;
+}
+async function openThread(key) {
+  state.open = key;
+  renderThreads();
+  const pane = $('pane');
+  pane.innerHTML = '<div class="empty">Loading…</div>';
+  const { thread, messages, watermarks, label, model, reviews, facts } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
+  if (state.open !== key) return;
+  const t = state.data?.threads.find((x) => x.thread === key) || {};
+  const seen = watermarks.filter((w) => w.read_at >= lastOf(thread) && w.person !== state.me.id)
+    .map((w) => state.data?.members.find((p) => p.id === w.person)?.name).filter(Boolean);
+  let feed = '';
+  let prev = null;
+  let day = null;
+  messages.forEach((m, i) => {
+    if (dayLabel(m.at) !== day) { day = dayLabel(m.at); feed += `<div class="day"><span>${esc(day)}</span></div>`; prev = null; }
+    if (i === 1 && thread.root_at && messages.length > 1) { feed += `<div class="divider">${messages.length - 1} ${messages.length === 2 ? 'reply' : 'replies'}</div>`; prev = null; }
+    feed += message(m, prev);
+    prev = m;
+  });
+  const facts1 = facts.filter((f) => f.field !== 'url').map((f) => `<span class="tag">${esc(f.field)}: ${esc(f.value)}</span>`).join('');
+  pane.innerHTML = `<div class="ph"><h2>${esc(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
+      <div class="sub">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="">` : ''}<span>${esc(thread.org)}</span> ·
+        <span>${platform(thread)} · ${esc(thread.channel_name || '')}</span>
+        ${label ? `· <span class="tag">${esc(label.kind)}</span><span class="tag ${label.next_actor === 'us' ? 'us' : ''}">next: ${esc(label.next_actor)}</span><span class="tag ${label.urgency >= 1.5 ? 'hot' : ''}">urgency ${Number(label.urgency).toFixed(1)}/3</span><span class="tag">resolved ${Math.round((label.resolved_p || 0) * 100)}%</span>` : ''}
+        ${facts1}</div></div>
+    ${state.me.admin && model ? reviewPanel(thread, model, reviews) : ''}
+    <div class="feed">${thread.root_at ? '' : '<div class="sys">Earlier messages were posted before opspile started listening.</div>'}${feed}
+      <div class="seen">${seen.length ? `Seen by ${esc(seen.join(', '))}` : 'Nobody else on the team has seen the latest message.'}</div></div>`;
+  if (state.data?.threads.some((x) => x.thread === key)) markRead(t);
 }
 
-async function loadInbox() {
-  state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
-  renderList();
-}
-
+// ---------------------------------------------------------------- read state, live
 function markRead(t) {
   const at = lastOf(t);
   if (!at) return;
@@ -231,68 +415,6 @@ function markRead(t) {
   else fetch('/api/read', { method: 'POST', body: JSON.stringify(msg), credentials: 'same-origin' });
   applyRead({ person: state.me.id, thread: t.thread, at });
 }
-
-async function openThread(key) {
-  state.open = key;
-  renderList();
-  const pane = $('thread');
-  pane.innerHTML = '<div class="empty">Loading…</div>';
-  const {
-    thread, messages, watermarks, label, model, reviews, facts,
-  } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
-  if (state.open !== key) return;
-  const seen = watermarks.filter((w) => w.read_at >= lastOf(thread) && w.person !== state.me.id)
-    .map((w) => memberName(w.person));
-  pane.innerHTML = `<div class="head"><h2>${esc(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
-      <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}
-      ${label ? ` · ${esc(label.kind)} · next: ${esc(label.next_actor)} · urgency ${Number(label.urgency).toFixed(1)}/3 · resolved ${Math.round((label.resolved_p || 0) * 100)}%` : ''}</div>
-      ${facts.length ? `<div class="sub">${facts.map((f) => `${esc(f.field)}: ${esc(f.value)}`).join(' · ')}</div>` : ''}</div>
-    ${state.me.admin && model ? reviewPanel(thread, model, label, reviews) : ''}
-    ${thread.root_at ? '' : '<div class="seenline">Earlier messages of this thread were posted before opspile started listening.</div>'}
-    ${messages.map((m, i) => `<div class="m ${i === 0 && thread.root_at ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
-      <span class="who">${esc(m.author?.name || 'unknown')}${m.author?.staff ? ' <span class="staff">staff</span>' : (m.author?.org ? ` <span class="staff">${esc(m.author.org)}</span>` : '')}</span>
-      <span class="at" title="${esc(m.at)}">${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">${ago(m.at)}</a>` : ago(m.at)}${m.editedAt ? ' · edited' : ''}</span>
-      <div class="body">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div></div>`).join('')}
-    <div class="seenline">${seen.length ? `Seen by ${esc(seen.join(', '))}` : 'Nobody else on the team has seen the latest message.'}</div>`;
-  const t = state.data.threads.find((x) => x.thread === key);
-  if (t) markRead(t);
-}
-
-function modelValue(model, q) {
-  if (q === 'urgency') return model.urgency == null ? null : String(Math.round(model.urgency));
-  if (q === 'resolved') return model.resolved_p == null ? null : (model.resolved_p >= 0.5 ? 'yes' : 'no');
-  return model[q];
-}
-
-function reviewPanel(thread, model, label, reviews) {
-  const answers = state.answers || {};
-  const current = reviews.filter((r) => r.labeled_through === model.labeled_through);
-  const rows = Object.keys(QUESTION_LABEL).map((q) => {
-    const mv = modelValue(model, q);
-    const picked = (current.find((r) => r.question === q) || {}).value;
-    const opts = (answers[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}" title="${v === mv ? 'Clef' : ''}">${esc(v)}</button>`).join('');
-    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${opts}</div>`;
-  }).join('');
-  const hist = reviews.slice(0, 5).map((r) => `${esc(r.reviewer)}: ${esc(r.question)} ${r.agrees ? 'confirmed' : `${esc(r.model_value)} → ${esc(r.value)}`}${r.labeled_through !== model.labeled_through ? ' (earlier label)' : ''}`).join(' · ');
-  return `<div class="rv" data-thread="${esc(thread.thread)}">Outlined: Clef's answer. Pick the right one per question.${rows}${hist ? `<div class="hist">${hist}</div>` : ''}</div>`;
-}
-
-async function loadReview() {
-  const [{ queue, answers }, { stats }] = await Promise.all([get('/api/review/queue'), get('/api/review/stats')]);
-  state.answers = answers;
-  state.review = { queue, stats };
-  renderList();
-}
-
-async function submitAnswer(thread, question, value) {
-  const res = await fetch('/api/review', {
-    method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question, value }),
-  });
-  if (!res.ok) { alert((await res.json()).error || res.status); return; }
-  await openThread(thread);
-  if (state.review) await loadReview();
-}
-
 function applyRead({ person, thread, at }) {
   const t = state.data?.threads.find((x) => x.thread === thread);
   if (!t) return;
@@ -300,57 +422,67 @@ function applyRead({ person, thread, at }) {
   if (last && at >= last && !t.readers.includes(person)) t.readers.push(person);
   const mine = t.readers.includes(state.me.id);
   t.unread = Boolean(last) && !mine;
-  t.seenByOthers = !mine && t.readers.some((p) => p !== state.me.id);
   t.unseen = Boolean(last) && t.readers.length === 0;
-  renderList();
+  if (person === state.me.id) t.mentionedMe = false;
+  else t.mentionedTeam = t.mentionedTeam.filter((p) => p !== person);
+  if (at >= last) t.unseenByAdobe = false;
+  const applies = { adobe: t.unseenByAdobe, 'mentioned-me': t.mentionedMe, 'mentioned-team': t.mentionedTeam.length > 0, team: t.unseen, me: t.unread };
+  t.attention = ['adobe', 'mentioned-me', 'mentioned-team', 'team', 'me'].find((a) => applies[a]) || null;
+  render();
 }
-
+async function loadInbox() { state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`); render(); }
+async function loadReview() {
+  const [{ queue, answers }, { stats }] = await Promise.all([get('/api/review/queue'), get('/api/review/stats')]);
+  state.answers = answers;
+  state.review = { queue, stats };
+  renderThreads();
+}
 let refetch;
 function connect() {
   state.ws?.close();
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/api/live?team=${encodeURIComponent(state.team)}`);
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}`);
   state.ws = ws;
   ws.onopen = () => $('live').classList.add('on');
-  ws.onclose = () => {
-    $('live').classList.remove('on');
-    if (state.ws === ws) setTimeout(connect, 3000);
-  };
+  ws.onclose = () => { $('live').classList.remove('on'); if (state.ws === ws) setTimeout(connect, 3000); };
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'read') applyRead(ev);
     if (ev.type === 'thread') {
       clearTimeout(refetch);
-      refetch = setTimeout(async () => {
-        await loadInbox();
-        if (state.open === ev.thread) openThread(ev.thread);
-      }, 500);
+      refetch = setTimeout(async () => { await loadInbox(); if (state.open === ev.thread) openThread(ev.thread); }, 500);
     }
   };
 }
 
+// ---------------------------------------------------------------- wiring
 async function start() {
-  try {
-    state.me = await get('/api/me');
-  } catch (e) {
-    $('list').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
-    return;
-  }
+  try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   $('me').textContent = state.me.name || state.me.email;
   $('team').innerHTML = state.me.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
   state.team = new URLSearchParams(location.search).get('team') || state.me.teams[0]?.slug;
   $('team').value = state.team;
-  $('filters').innerHTML = FILTERS.map(([f, label]) => `<button data-f="${f}">${label}</button>`).join('');
-  $('filters').onclick = (e) => { if (e.target.dataset.f) { state.filter = e.target.dataset.f; renderList(); } };
   $('team').onchange = async () => { state.team = $('team').value; state.open = null; await loadInbox(); connect(); };
-  $('list').onclick = (e) => {
-    if (e.target.closest('a')) return; // a backlink opens the platform, not the thread
-    const el = e.target.closest('.t');
-    if (el) openThread(el.dataset.thread);
+  $('filters').onclick = (e) => {
+    const card = e.target.closest('.card');
+    if (!card) return;
+    const id = card.dataset.f;
+    if (e.target.dataset.clear) { delete state.sel[id]; render(); return; }
+    const r = e.target.closest('.fr');
+    if (!r || r.dataset.v === undefined) return;
+    const set = state.sel[id] || (state.sel[id] = new Set());
+    if (set.has(r.dataset.v)) set.delete(r.dataset.v); else set.add(r.dataset.v);
+    if (!set.size) delete state.sel[id];
+    render();
   };
-  $('thread').onclick = (e) => {
+  $('threads').onclick = (e) => { if (e.target.closest('a')) return; const el = e.target.closest('.t'); if (el) openThread(el.dataset.thread); };
+  $('pane').onclick = async (e) => {
     const b = e.target.closest('.rv button');
-    if (b) submitAnswer(b.closest('.rv').dataset.thread, b.dataset.q, b.dataset.v);
+    if (!b) return;
+    const thread = b.closest('.rv').dataset.thread;
+    const res = await fetch('/api/review', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question: b.dataset.q, value: b.dataset.v }) });
+    if (!res.ok) { alert((await res.json()).error || res.status); return; }
+    await openThread(thread);
+    if (state.review) await loadReview();
   };
   if (state.me.admin) {
     $('review').hidden = false;
@@ -358,7 +490,7 @@ async function start() {
     $('review').onclick = async () => {
       const on = !state.review;
       $('review').setAttribute('aria-pressed', String(on));
-      if (on) await loadReview(); else { state.review = null; renderList(); }
+      if (on) await loadReview(); else { state.review = null; renderThreads(); }
     };
   }
   await loadInbox();

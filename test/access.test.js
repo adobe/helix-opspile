@@ -117,3 +117,33 @@ describe('viewer and inbox', () => {
     ]);
   });
 });
+
+describe('media proxy', () => {
+  it('only fetches Slack files and Teams hosted contents', async () => {
+    const { media } = await import('../src/api.js');
+    for (const u of ['https://evil.example/x.png', 'http://files.slack.com/x', 'https://graph.microsoft.com/v1.0/users/x', 'not a url']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await media({}, u)).status, 400);
+    }
+  });
+
+  it('passes on images only', async () => {
+    const { media } = await import('../src/api.js');
+    const real = globalThis.fetch;
+    globalThis.fetch = async (u, init) => {
+      assert.equal(init.headers.authorization, 'Bearer xoxb-made-up');
+      return new Response(String(u).endsWith('.png') ? 'PNG' : '<html>', {
+        headers: { 'content-type': String(u).endsWith('.png') ? 'image/png' : 'text/html' },
+      });
+    };
+    try {
+      const slackEnv = { SLACK_BOT_TOKEN: 'xoxb-made-up' };
+      const ok = await media(slackEnv, 'https://files.slack.com/files-pri/T1-F1/a.png');
+      assert.equal(ok.status, 200);
+      assert.equal(ok.headers.get('content-type'), 'image/png');
+      assert.equal((await media(slackEnv, 'https://files.slack.com/files-pri/T1-F1/a.html')).status, 502);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+});

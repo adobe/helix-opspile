@@ -54,14 +54,15 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
     (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title,
-     permalink)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     permalink, author_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
       deleted = MAX(messages.deleted, excluded.deleted),
       title = COALESCE(excluded.title, messages.title),
-      permalink = COALESCE(excluded.permalink, messages.permalink)`)
+      permalink = COALESCE(excluded.permalink, messages.permalink),
+      author_key = COALESCE(excluded.author_key, messages.author_key)`)
     .bind(
       m.source,
       m.tenant,
@@ -76,6 +77,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.deleted ? 1 : 0,
       m.title || null,
       m.permalink || null,
+      m.authorKey || null,
     )
     .run();
 
@@ -235,4 +237,27 @@ export function mentionedByName(text, people) {
     const forms = [parts.join(' '), `${lastName}, ${first}`].map(escapeRe);
     return new RegExp(`(^|[^\\p{L}])(${forms.join('|')})(?![\\p{L}])`, 'iu').test(body);
   });
+}
+
+/** Replaces the reactions recorded for a message with a snapshot (backfill, Teams). */
+export async function replaceReactions(db, { thread, message }, reactions) {
+  await db.prepare('DELETE FROM reactions WHERE message = ?').bind(message).run();
+  for (const r of reactions) {
+    // eslint-disable-next-line no-await-in-loop
+    await db.prepare(`INSERT OR IGNORE INTO reactions (message, thread, emoji, user_key, at)
+      VALUES (?, ?, ?, ?, ?)`).bind(message, thread, r.emoji, r.userKey, r.at || null).run();
+  }
+}
+
+/** Adds or removes one reaction (Slack reaction events). */
+export async function applyReaction(db, {
+  thread, message, emoji, userKey, at, removed,
+}) {
+  if (removed) {
+    await db.prepare('DELETE FROM reactions WHERE message = ? AND emoji = ? AND user_key = ?')
+      .bind(message, emoji, userKey).run();
+    return;
+  }
+  await db.prepare(`INSERT OR IGNORE INTO reactions (message, thread, emoji, user_key, at)
+    VALUES (?, ?, ?, ?, ?)`).bind(message, thread, emoji, userKey, at || null).run();
 }

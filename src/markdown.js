@@ -90,7 +90,10 @@ export function htmlToMarkdown(html) {
       // Never `<href>`: the tag stripping below would remove it as if it were a tag.
       return `[${!text || text === href ? href : text}](${href})`;
     })
-    .replace(/<img\s[^>]*?(?:alt="([^"]*)")?[^>]*>/gi, (_, alt) => `![${alt || 'image'}]()`)
+    .replace(/<img\s[^>]*>/gi, (tag) => {
+      const attr = (name) => (new RegExp(`\\s${name}="([^"]*)"`, 'i').exec(tag) || [])[1] || '';
+      return `![${attr('alt') || 'image'}](${attr('src')})`;
+    })
     .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')
     .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')
     .replace(/<(s|strike|del)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '~~$3~~')
