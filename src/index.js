@@ -13,6 +13,7 @@
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { slackEvents } from './slack.js';
+import { ensureSubscription } from './subscription.js';
 import { teamsNotify } from './teams.js';
 
 function authorizedDiag(request, env) {
@@ -44,5 +45,12 @@ export default {
       return text('opspile ingest (stub)\n');
     }
     return text('not found\n', 404);
+  },
+
+  /** Cron: keep the Graph subscription alive (#5). */
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(ensureSubscription(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', cron: controller.cron, ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', error: e.message }))));
   },
 };

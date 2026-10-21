@@ -10,7 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
-import { graphClient, graphToken } from './teams.js';
+import { graphClient, graphToken } from './graph.js';
+import { ensureSubscription } from './subscription.js';
 
 async function countTeams(graph) {
   let count = 0;
@@ -39,8 +40,9 @@ async function probeSubscription(graph, origin) {
     method: 'POST',
     body: JSON.stringify({
       changeType: 'created,updated,deleted',
-      notificationUrl: `${origin}/teams/notify`,
-      lifecycleNotificationUrl: `${origin}/teams/lifecycle`,
+      // ?probe=1 keeps the probe from looking like the real subscription (ensureSubscription).
+      notificationUrl: `${origin}/teams/notify?probe=1`,
+      lifecycleNotificationUrl: `${origin}/teams/lifecycle?probe=1`,
       resource: '/teams/getAllMessages',
       expirationDateTime: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       clientState: crypto.randomUUID(),
@@ -63,7 +65,8 @@ async function probeSubscription(graph, origin) {
 /**
  * GET /diag/teams — checks the Microsoft side end to end without exposing a token:
  * the granted application roles, how many teams the app can see, and (with `?sub=1`)
- * whether a /teams/getAllMessages subscription can be created.
+ * whether a /teams/getAllMessages subscription can be created. `?ensure=1` runs the cron's
+ * ensureSubscription now and returns what it did.
  */
 export async function diagTeams(url, env) {
   const { token, roles, expiresIn } = await graphToken(env);
@@ -72,6 +75,9 @@ export async function diagTeams(url, env) {
   out.teams = await countTeams(graph);
   if (url.searchParams.get('sub') === '1') {
     out.subscription = await probeSubscription(graph, url.origin);
+  }
+  if (url.searchParams.get('ensure') === '1') {
+    out.ensure = await ensureSubscription(env, { graph });
   }
   return out;
 }

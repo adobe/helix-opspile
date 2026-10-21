@@ -10,12 +10,12 @@
  * governing permissions and limitations under the License.
  */
 
+import { cachedGraph } from './graph.js';
 import { text } from './http.js';
+import { handleLifecycle } from './subscription.js';
 import {
   dayPath, putRaw, segment, sha256,
 } from './raw.js';
-
-const GRAPH = 'https://graph.microsoft.com/v1.0';
 
 const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
 
@@ -64,18 +64,6 @@ export function messageKey(tenantId, res, message) {
     + `${dayPath(modified)}/${modified.getTime()}-${segment(message.id || res.messageId)}.json`;
 }
 
-let cachedToken = null;
-
-async function cachedGraph(env) {
-  if (!cachedToken || cachedToken.until < Date.now()) {
-    // eslint-disable-next-line no-use-before-define
-    const { token, expiresIn } = await graphToken(env);
-    cachedToken = { token, until: Date.now() + (Number(expiresIn) - 300) * 1000 };
-  }
-  // eslint-disable-next-line no-use-before-define
-  return graphClient(cachedToken.token);
-}
-
 /**
  * Fetches the message a notification points to and stores it next to the notification.
  * A message that is gone (404) leaves only the notification; the deletion is then
@@ -117,7 +105,7 @@ export async function fetchAndStore(env, tenantId, item, notification) {
  * (the value our subscriptions are created with, #5); anything else is dropped. Each
  * accepted notification is stored before the 202, without its `clientState`. The
  * message it points to is fetched after the response, because Graph expects an answer
- * within 3 seconds.
+ * within 3 seconds. Lifecycle notifications renew or recreate the subscription.
  */
 export async function teamsNotify(request, url, env, ctx) {
   const token = url.searchParams.get('validationToken');
@@ -160,55 +148,14 @@ export async function teamsNotify(request, url, env, ctx) {
     return text('storage error\n', 500);
   }
   console.log(JSON.stringify(log));
-  return text('', 202);
-}
-
-function decodeClaims(jwt) {
-  const payload = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(atob(payload));
-}
-
-/**
- * Client-credentials token for Microsoft Graph.
- *
- * This must run server-side: Entra rejects confidential-client token redemption from any
- * request carrying a browser `Origin` header (AADSTS9002326).
- */
-export async function graphToken(env) {
-  const body = new URLSearchParams({
-    client_id: env.MS_CLIENT_ID,
-    client_secret: env.MS_CLIENT_SECRET,
-    scope: 'https://graph.microsoft.com/.default',
-    grant_type: 'client_credentials',
-  });
-  const url = `https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`;
-  const res = await fetch(url, { method: 'POST', body });
-  const data = await res.json();
-  if (!data.access_token) {
-    const reason = (data.error_description || '').split('\r\n')[0];
-    throw new Error(`token ${res.status} ${data.error}: ${reason}`);
+  if (lifecycle) {
+    // One renewal or re-creation answers every lifecycle event in the batch.
+    const item = accepted.find((n) => n.lifecycleEvent !== 'missed') || accepted[0];
+    if (item) {
+      ctx.waitUntil(handleLifecycle(env, item)
+        .then((r) => console.log(JSON.stringify({ route, ...r })))
+        .catch((e) => console.error(JSON.stringify({ route, error: e.message }))));
+    }
   }
-  const claims = decodeClaims(data.access_token);
-  return {
-    token: data.access_token,
-    roles: (claims.roles || []).sort(),
-    expiresIn: data.expires_in,
-  };
-}
-
-/**
- * Returns a fetch wrapper bound to one Graph access token.
- */
-export function graphClient(token) {
-  return (path, init = {}) => {
-    const target = path.startsWith('https://') ? path : `${GRAPH}${path}`;
-    return fetch(target, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        ...(init.headers || {}),
-      },
-    });
-  };
+  return text('', 202);
 }
