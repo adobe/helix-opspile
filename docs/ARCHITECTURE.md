@@ -32,7 +32,9 @@ so it, and everything after it, can be rebuilt by replaying pile 1.
 ### 1. Raw events
 
 One R2 bucket, append-only, holding events exactly as the platform API delivered them. When
-Slack or Microsoft add fields, we keep them; normalization happens downstream.
+Slack or Microsoft add fields, we keep them; normalization happens downstream. The one
+exception is credentials: Slack's deprecated verification `token` and Graph's `clientState`
+are removed before an event is stored.
 
 ```
 <source>/<tenant>/<channel>/<yyyy>/<mm>/<dd>/<eventTs>-<eventId>.json
@@ -43,7 +45,10 @@ Slack or Microsoft add fields, we keep them; normalization happens downstream.
 - **Slack** delivers edits as `message_changed` (with the full new message), deletions as
   `message_deleted`, and reactions as separate events. All of them are stored.
 - **Teams** change notifications usually carry only the resource path. We store the
-  notification and the message we then fetch as two objects that reference each other.
+  notification and the message we then fetch as two objects. Graph notifications have no
+  event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
+  fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
+  `resource` names the message; the message's metadata names the notification.
 - Backfill pages from the history APIs land here too, marked `via: backfill`.
 
 ### 2. Channel folders

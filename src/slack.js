@@ -11,6 +11,7 @@
  */
 
 import { text } from './http.js';
+import { dayPath, putRaw, segment } from './raw.js';
 
 /** Slack rejects requests older than this; so do we (replay window). */
 export const MAX_SKEW_SECONDS = 5 * 60;
@@ -64,6 +65,46 @@ export async function verifySlackSignature({
   return ok ? null : 'bad signature';
 }
 
+/** The channel an event belongs to, for the event types opspile subscribes to. */
+function channelOf(event) {
+  if (typeof event.channel === 'string') {
+    return event.channel;
+  }
+  if (event.channel && event.channel.id) {
+    return event.channel.id; // channel_created, channel_rename
+  }
+  if (event.item && event.item.channel) {
+    return event.item.channel; // reaction_added, reaction_removed
+  }
+  return event.channel_id;
+}
+
+/**
+ * Pile-1 key of an event callback:
+ * `slack/<enterprise or team>/<channel>/<yyyy>/<mm>/<dd>/<event_ts>-<event_id>.json`.
+ * Workspace-level events without a channel (`tokens_revoked`, `app_uninstalled`) use `_`.
+ */
+export function slackKey(payload) {
+  const event = payload.event || {};
+  const ts = event.event_ts || event.ts || String(payload.event_time);
+  const seconds = Number(payload.event_time) || Math.floor(Number(ts)) || Date.now() / 1000;
+  return [
+    'slack',
+    segment(payload.enterprise_id || payload.team_id),
+    segment(channelOf(event)),
+    dayPath(new Date(seconds * 1000)),
+    `${segment(ts)}-${segment(payload.event_id)}.json`,
+  ].join('/');
+}
+
+/**
+ * The payload to store: everything Slack sent, except the deprecated verification
+ * `token`, which is a credential and is never used (requests are verified by signature).
+ */
+export function withoutCredentials(payload) {
+  return JSON.stringify({ ...payload, token: undefined });
+}
+
 /**
  * Metadata of an event callback, for logs. Never includes message text or user ids.
  */
@@ -76,7 +117,7 @@ function describe(payload, request) {
     eventType: event.type,
     subtype: event.subtype || (event.message && event.message.subtype),
     channelType: event.channel_type,
-    channel: event.channel || (event.item && event.item.channel),
+    channel: channelOf(event),
     reply: Boolean(event.thread_ts && event.thread_ts !== event.ts),
     bot: Boolean(event.bot_id),
     retry: request.headers.get('x-slack-retry-num') || undefined,
@@ -86,8 +127,10 @@ function describe(payload, request) {
 /**
  * Slack Events API endpoint.
  *
- * Every request, `url_verification` included, must carry a valid signature. Accepted
- * events are logged as metadata and acknowledged; storing them is #4.
+ * Every request, `url_verification` included, must carry a valid signature. Event
+ * callbacks are stored in pile 1 as delivered, minus the deprecated verification `token`
+ * (a credential), before they are acknowledged; if storing fails, the 500 makes Slack
+ * retry with the same `event_id`, which rewrites the same key.
  */
 export async function slackEvents(request, env) {
   const body = await request.text();
@@ -111,6 +154,19 @@ export async function slackEvents(request, env) {
   if (payload.type === 'url_verification' && typeof payload.challenge === 'string') {
     return text(payload.challenge);
   }
-  console.log(JSON.stringify(describe(payload, request)));
+  const info = describe(payload, request);
+  if (payload.type !== 'event_callback') {
+    console.log(JSON.stringify(info)); // e.g. app_rate_limited: nothing to store
+    return text('', 200);
+  }
+  try {
+    info.key = await putRaw(env, slackKey(payload), withoutCredentials(payload), {
+      source: 'slack', via: 'events', retry: info.retry,
+    });
+  } catch (e) {
+    console.error(JSON.stringify({ ...info, error: e.message }));
+    return text('storage error\n', 500);
+  }
+  console.log(JSON.stringify(info));
   return text('', 200);
 }
