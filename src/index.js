@@ -20,7 +20,7 @@ function authorizedDiag(request, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
 
@@ -28,7 +28,7 @@ export default {
       return slackEvents(request, env);
     }
     if (request.method === 'POST' && (pathname === '/teams/notify' || pathname === '/teams/lifecycle')) {
-      return teamsNotify(request, url);
+      return teamsNotify(request, url, env, ctx);
     }
     if (pathname === '/diag/teams') {
       if (!authorizedDiag(request, env)) {

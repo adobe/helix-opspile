@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { slackEvents, verifySlackSignature } from '../src/slack.js';
+import { slackEvents, slackKey, verifySlackSignature } from '../src/slack.js';
+import { fakeEnv, quiet } from './fakes.js';
 
 // Fixed, made-up values. Never use a real signing secret here.
 const SECRET = 'test-signing-secret';
@@ -87,7 +88,8 @@ describe('verifySlackSignature', () => {
 });
 
 describe('slackEvents', () => {
-  const env = { SLACK_SIGNING_SECRET: SECRET };
+  const vars = { SLACK_SIGNING_SECRET: SECRET };
+  const env = fakeEnv(vars);
   const realNow = Date.now;
   const atNow = async (fn) => {
     Date.now = () => NOW;
@@ -97,17 +99,6 @@ describe('slackEvents', () => {
       Date.now = realNow;
     }
   };
-  const quiet = async (fn) => {
-    const { log, warn } = console;
-    console.log = () => {};
-    console.warn = () => {};
-    try {
-      return await fn();
-    } finally {
-      Object.assign(console, { log, warn });
-    }
-  };
-
   it('answers a signed url_verification with the challenge', async () => {
     const body = '{"type":"url_verification","challenge":"c-123"}';
     const res = await atNow(() => slackEvents(request(body, {
@@ -124,12 +115,51 @@ describe('slackEvents', () => {
     assert.notEqual(await res.text(), 'c-123');
   });
 
-  it('acknowledges a signed event callback', async () => {
-    const body = JSON.stringify({ type: 'event_callback', event_id: 'Ev1', event: { type: 'message' } });
-    const res = await quiet(() => atNow(() => slackEvents(request(body, {
-      'x-slack-request-timestamp': TS, 'x-slack-signature': sign(body),
-    }), env)));
+  const signed = (body, headers = {}) => request(body, {
+    'x-slack-request-timestamp': TS, 'x-slack-signature': sign(body), ...headers,
+  });
+  const callback = JSON.stringify({
+    type: 'event_callback',
+    enterprise_id: 'E1',
+    team_id: 'T1',
+    event_id: 'Ev1',
+    event_time: NOW / 1000,
+    event: {
+      type: 'message', channel: 'C1', ts: '1792584000.000100', event_ts: '1792584000.000100',
+    },
+  });
+
+  it('stores a signed event callback as delivered and enqueues it', async () => {
+    const e = fakeEnv(vars);
+    const res = await quiet(() => atNow(() => slackEvents(signed(callback), e)));
     assert.equal(res.status, 200);
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    assert.deepEqual([...e.objects.keys()], [key]);
+    assert.equal(e.objects.get(key).body, callback);
+    assert.equal(e.objects.get(key).options.customMetadata.via, 'events');
+    assert.deepEqual(e.queued, [{ key }]);
+  });
+
+  it('rewrites the same key when Slack retries', async () => {
+    const e = fakeEnv(vars);
+    await quiet(() => atNow(() => slackEvents(signed(callback), e)));
+    await quiet(() => atNow(() => slackEvents(signed(callback, { 'x-slack-retry-num': '1' }), e)));
+    assert.equal(e.objects.size, 1);
+    assert.equal([...e.objects.values()][0].options.customMetadata.retry, '1');
+  });
+
+  it('answers 500 when storing fails, so Slack retries', async () => {
+    const e = fakeEnv(vars, { failPut: true });
+    const res = await quiet(() => atNow(() => slackEvents(signed(callback), e)));
+    assert.equal(res.status, 500);
+    assert.equal(e.queued.length, 0);
+  });
+
+  it('acknowledges other signed payloads without storing them', async () => {
+    const e = fakeEnv(vars);
+    const res = await quiet(() => atNow(() => slackEvents(signed('{"type":"app_rate_limited"}'), e)));
+    assert.equal(res.status, 200);
+    assert.equal(e.objects.size, 0);
   });
 
   it('rejects a signed request whose body is not JSON', async () => {
@@ -138,5 +168,40 @@ describe('slackEvents', () => {
       'x-slack-request-timestamp': TS, 'x-slack-signature': sign(body),
     }), env));
     assert.equal(res.status, 400);
+  });
+});
+
+describe('slackKey', () => {
+  const base = {
+    enterprise_id: 'E1', team_id: 'T1', event_id: 'Ev9', event_time: 1792584000,
+  };
+  const key = (event, extra = {}) => slackKey({ ...base, ...extra, event });
+
+  it('files a message under its channel and day', () => {
+    assert.equal(
+      key({ type: 'message', channel: 'C1', event_ts: '1792584000.5' }),
+      'slack/E1/C1/2026/10/21/1792584000.5-Ev9.json',
+    );
+  });
+
+  it('uses the item channel of a reaction', () => {
+    assert.match(key({ type: 'reaction_added', item: { channel: 'C2' }, event_ts: '1' }), /^slack\/E1\/C2\//);
+  });
+
+  it('uses the channel id of channel_created and channel_rename', () => {
+    assert.match(key({ type: 'channel_rename', channel: { id: 'C3', name: 'x' }, event_ts: '1' }), /^slack\/E1\/C3\//);
+  });
+
+  it('falls back to the team id and _ for workspace events', () => {
+    assert.equal(
+      slackKey({
+        team_id: 'T1', event_id: 'Ev8', event_time: 1792584000, event: { type: 'tokens_revoked' },
+      }),
+      'slack/T1/_/2026/10/21/1792584000-Ev8.json',
+    );
+  });
+
+  it('keeps / out of key segments', () => {
+    assert.match(key({ type: 'message', channel: 'C/../x', event_ts: '1' }), /^slack\/E1\/C_\.\._x\//);
   });
 });

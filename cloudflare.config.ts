@@ -28,7 +28,18 @@ const NAMES: Record<string, string> = {
 
 const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID'] as const;
 
-const SECRETS = ['SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN'];
+const SECRETS = [
+  'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
+];
+
+/** Per-environment resource names; `cf deploy` creates them if they are missing. */
+function resources(mode: string | undefined) {
+  const suffix = mode === 'prod' ? '' : `-${mode || 'dev'}`;
+  return {
+    RAW: bindings.r2({ name: `helix-opspile-raw${suffix}` }),
+    NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
+  };
+}
 
 function vars(deployed: boolean) {
   const missing = VARS.filter((name) => !process.env[name]);
@@ -53,6 +64,7 @@ export default defineConfig(({ mode }) => {
       observability: { enabled: true },
       env: {
         ...vars(deployed),
+        ...resources(mode),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },
