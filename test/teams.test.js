@@ -175,7 +175,7 @@ describe('teamsNotify', () => {
     assert.equal(env.objects.size, 1);
   });
 
-  it('stores lifecycle notifications without fetching', async () => {
+  it('stores lifecycle notifications and renews instead of fetching', async () => {
     const env = fakeEnv(VARS);
     const ctx = fakeCtx();
     const { request, url } = notifyRequest(
@@ -183,8 +183,10 @@ describe('teamsNotify', () => {
       '/teams/lifecycle',
     );
     await quiet(() => teamsNotify(request, url, env, ctx));
-    assert.equal(ctx.pending.length, 0);
     assert.match([...env.objects.keys()][0], /^teams\/tenant-1\/_lifecycle\/_\//);
+    assert.equal(ctx.pending.length, 1); // the renewal, not a message fetch
+    await quiet(() => ctx.settle());
+    assert.equal(graphCalls.filter((u) => u.includes('/messages/')).length, 0);
   });
 
   it('answers 500 when storing fails, so Graph redelivers', async () => {

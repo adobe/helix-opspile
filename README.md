@@ -4,7 +4,7 @@ An inbox for opsophiles: one place for an ops team to work through every Slack a
 Teams channel it is responsible for, with per-person and per-team read state.
 
 Status: **pile 1 live for Slack.** Signed Slack events are stored in R2 and queued for
-normalization; Teams notifications are stored once a subscription exists (#5). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+normalization; Teams: a cron keeps one tenant-wide Graph subscription alive, and its notifications and the messages they name are stored the same way. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 design and the open issues for what comes next.
 
 ## Ingest Worker
@@ -15,8 +15,9 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | --- | --- |
 | `POST /slack/events` | Slack Events API request URL. Rejects requests without a valid signature (401). Answers `url_verification`; stores every event callback in pile 1 (without Slack's verification `token`) before acknowledging it, and answers 500 if that fails so Slack retries. |
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
-| `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, without a fetch; acting on them is #5. |
-| `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` subscription. Never returns a token. |
+| `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
+| `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
+| cron `*/20 * * * *` | Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -31,6 +32,7 @@ Nothing below is committed; set it on the Worker.
 | `GRAPH_CLIENT_STATE` | secret | Random value our Graph subscriptions carry as `clientState`; notifications without it are dropped |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
+| `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
 
@@ -48,11 +50,11 @@ reads `cloudflare.config.ts` (`--mode prod` or `--mode stage` selects the Worker
 npm install
 npm run lint
 cf auth create <profile> && cf auth activate <profile>  # once, for the target account
-printf 'MS_CLIENT_ID=…\nMS_TENANT_ID=…\n' > .env       # uncommitted, see below
+printf 'MS_CLIENT_ID=…\nMS_TENANT_ID=…\nPUBLIC_ORIGIN=https://…\n' > .env  # uncommitted
 npm run deploy:prod                                    # or deploy:stage
 ```
 
-`cf` has no `keep_vars`: the `MS_*` vars are part of every deploy, so the config reads them
+`cf` has no `keep_vars`: the plain-text vars are part of every deploy, so the config reads them
 from the environment or `.env` and refuses to deploy without them. Secrets are declared by
 name only; `cf deploy` checks that they exist on the Worker and keeps their values. `cf`
 cannot set a single secret yet, so use

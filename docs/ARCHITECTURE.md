@@ -17,7 +17,7 @@ Artifacts) in a single account.
 ```mermaid
 flowchart LR
   S[Slack Events API] --> R
-  T[Microsoft Graph<br/>change notifications / delta] --> R
+  T[Microsoft Graph<br/>change notifications] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
   C[(2. channel folders<br/>R2, one file per message)] --> I
@@ -198,14 +198,16 @@ Two new apps:
   and reaction events. Slack only delivers message events for channels the app is a member
   of, so the app has to be added to every ingested channel, including Slack Connect channels.
 - A **Microsoft Entra app registration** in the support tenant with application permissions
-  to read teams, channels and channel messages. Tenant-wide channel message notifications
-  (`/teams/getAllMessages`) are a protected, metered Graph API. The alternative is polling
-  `/messages/delta` per channel.
+  to read teams, channels and channel messages. One tenant-wide change-notification
+  subscription on `/teams/getAllMessages` delivers root messages and replies. It carries no
+  resource data (so no encryption certificate) and lives at most 60 minutes, so a cron
+  renews it every 20 minutes. Microsoft stopped metering Teams APIs on 2025-08-25, and
+  creating the subscription needed no protected-API approval (measured 2026-10-20).
+  Polling is not an alternative: `/messages/delta` and `/messages` return root messages
+  only, never replies.
 
 ## Open questions
 
-- Teams: does `/messages/delta` report replies, or only root messages? This decides between
-  delta polling and change notifications.
 - Slack Connect: does adding the app to a shared channel require approval from the other
   workspace?
 - Re-threading: what confidence threshold keeps false merges rare, measured on real

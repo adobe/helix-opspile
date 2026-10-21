@@ -17,7 +17,7 @@
 // uncommitted `.env`. cf has no `keep_vars`, so a deploy without them would wipe them.
 // Secrets are declared only by name; cf checks that they exist and keeps their values.
 import { existsSync } from 'node:fs';
-import { bindings, defineConfig } from 'cf/config';
+import { bindings, defineConfig, triggers } from 'cf/config';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
@@ -26,7 +26,8 @@ const NAMES: Record<string, string> = {
   stage: 'helix-opspile-stage',
 };
 
-const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID'] as const;
+// PUBLIC_ORIGIN: this Worker's https origin, where Graph sends notifications.
+const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN'] as const;
 
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
@@ -62,6 +63,8 @@ export default defineConfig(({ mode }) => {
       previewUrls: false,
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
+      // Renews the Graph subscription, which lives at most 60 minutes (#5).
+      triggers: deployed ? [triggers.scheduled({ schedule: '*/20 * * * *' })] : [],
       env: {
         ...vars(deployed),
         ...resources(mode),
