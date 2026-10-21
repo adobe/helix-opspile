@@ -9,7 +9,9 @@
     "deploy:prod": "cf deploy --mode prod",
     "deploy:stage": "cf deploy --mode stage",
     "lint": "eslint .",
-    "test": "node --test"
+    "test": "node --test",
+    "ui:dev": "node --watch scripts/dev-ui.mjs",
+    "ui:session": "node scripts/dev-ui-session.mjs"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",

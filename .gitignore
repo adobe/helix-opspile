@@ -153,3 +153,6 @@ vite.config.ts.timestamp-*
 .cloudflare/
 .dev.vars
 .dev.vars.*
+
+# Production session copied for the local UI preview (scripts/dev-ui-session.mjs)
+.dev-ui-session.json
