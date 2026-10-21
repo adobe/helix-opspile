@@ -20,7 +20,9 @@ async function countTeams(graph) {
     const res = await graph(next);
     // eslint-disable-next-line no-await-in-loop
     const data = await res.json();
-    if (!res.ok) return { status: res.status, error: data.error && data.error.message };
+    if (!res.ok) {
+      return { status: res.status, error: data.error && data.error.message };
+    }
     count += (data.value || []).length;
     next = data['@odata.nextLink'] || null;
   }

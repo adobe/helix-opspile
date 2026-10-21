@@ -31,14 +31,18 @@ export default {
       return teamsNotify(url);
     }
     if (pathname === '/diag/teams') {
-      if (!authorizedDiag(request, env)) return text('forbidden\n', 403);
+      if (!authorizedDiag(request, env)) {
+        return text('forbidden\n', 403);
+      }
       try {
         return json(await diagTeams(url, env));
       } catch (e) {
         return json({ error: e.message }, 500);
       }
     }
-    if (pathname === '/') return text('opspile ingest (stub)\n');
+    if (pathname === '/') {
+      return text('opspile ingest (stub)\n');
+    }
     return text('not found\n', 404);
   },
 };
