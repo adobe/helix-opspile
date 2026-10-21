@@ -1,0 +1,20 @@
+{
+  "name": "helix-opspile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unified ops inbox for Slack and Microsoft Teams, on Cloudflare",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:prod": "wrangler deploy --env prod",
+    "deploy:stage": "wrangler deploy --env stage",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@adobe/eslint-config-helix": "^3.0.33",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "wrangler": "^4.151.3"
+  },
+  "license": "Apache-2.0"
+}
