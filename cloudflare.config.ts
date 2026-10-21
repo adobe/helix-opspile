@@ -47,6 +47,8 @@ function resources(mode: string | undefined) {
     CHANNELS: bindings.r2({ name: `helix-opspile-channels${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
+    // Workers AI: Clef (thread labels) and Clairic (facts).
+    AI: bindings.ai(),
   };
 }
 

@@ -20,7 +20,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state, one thread's messages from pile 2. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
-| queue `helix-opspile-normalize` | Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
+| queue `helix-opspile-normalize` | Also carries thread backfill requests and label jobs (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
 | cron `*/20 * * * *` | Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
@@ -43,7 +43,8 @@ Nothing below is committed; set it on the Worker.
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
-| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, threads, messages, watermarks |
+| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, threads, messages, watermarks, mentions, backfills, labels, facts |
+| `AI` | Workers AI | Clef (thread labels) and Clairic (facts) |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
 
 `cf deploy` creates the buckets and queues when they are missing. The D1 schema is in

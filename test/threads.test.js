@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, readState, titleOf,
+  advanceWatermark, indexMessage, mentionedByName, readState, titleOf,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -126,23 +126,71 @@ describe('readState', () => {
     thread: key, kind: 'channel', last_at: last, any_at: last, ...extra,
   });
   const LAST = '2026-10-21T10:05:00Z';
+  const EARLY = '2026-10-21T10:00:00Z';
+  // 1 = me, 2 = teammate, 9 = staff outside the team
+  const w = (person, key, readAt, staff = 1, inTeam = person !== 9) => ({
+    person, thread: key, read_at: readAt, staff, in_team: inTeam ? 1 : 0,
+  });
 
   it('tells unread, seen by others and unseen apart', () => {
     const [a, b, c, d] = readState([t('a', LAST), t('b', LAST), t('c', LAST), t('d', null)], [
-      { person: 1, thread: 'a', read_at: LAST },
-      { person: 2, thread: 'b', read_at: LAST },
-      { person: 1, thread: 'c', read_at: '2026-10-21T10:00:00Z' },
-    ], 1);
+      w(1, 'a', LAST),
+      w(2, 'b', LAST),
+      w(1, 'c', EARLY),
+    ], [], 1);
     assert.deepEqual([a.unread, a.seenByOthers, a.unseen], [false, false, false]);
     assert.deepEqual([b.unread, b.seenByOthers, b.unseen, b.readers], [true, true, false, [2]]);
     // c: read, but before the last message
     assert.deepEqual([c.unread, c.seenByOthers, c.unseen], [true, false, true]);
-    assert.deepEqual([d.unread, d.unseen], [false, false]); // only bots: nothing to read
+    assert.deepEqual([d.unread, d.unseen, d.attention], [false, false, null]); // bots only
   });
 
-  it('uses any message for alert threads', () => {
-    const [alert] = readState([t('x', null, { kind: 'alert', any_at: LAST })], [], 1);
-    assert.equal(alert.unread, true);
+  it('ranks attention: adobe, mentioned me, mentioned team, team, me', () => {
+    const rows = readState([
+      t('nobody', LAST),
+      t('staff-elsewhere', LAST),
+      t('mentioned-me', LAST),
+      t('mentioned-team', LAST),
+      t('teammate-read', LAST),
+      t('all-read', LAST),
+    ], [
+      w(9, 'staff-elsewhere', LAST),
+      w(9, 'mentioned-me', LAST),
+      w(9, 'mentioned-team', LAST),
+      w(1, 'mentioned-team', LAST),
+      w(2, 'mentioned-team', EARLY),
+      w(2, 'teammate-read', LAST),
+      w(1, 'all-read', LAST),
+      w(2, 'all-read', LAST),
+    ], [
+      { thread: 'mentioned-me', person: 1, at: LAST },
+      { thread: 'mentioned-team', person: 2, at: LAST },
+      { thread: 'all-read', person: 2, at: EARLY }, // read since: no longer asks for attention
+    ], 1);
+    assert.deepEqual(rows.map((r) => [r.thread, r.attention]), [
+      ['nobody', 'adobe'],
+      ['staff-elsewhere', 'team'],
+      ['mentioned-me', 'mentioned-me'],
+      ['mentioned-team', 'mentioned-team'],
+      ['teammate-read', 'me'],
+      ['all-read', null],
+    ]);
+    assert.deepEqual(rows[3].mentionedTeam, [2]);
+    assert.equal(rows[1].unseenByAdobe, false); // staff outside the team saw it
+    assert.deepEqual(rows[1].readers, []); // but they are not readers on this team
+  });
+
+  it('uses any message for alert threads, and never asks Adobe to look at them', () => {
+    const [alert] = readState([t('x', null, { kind: 'alert', any_at: LAST })], [], [], 1);
+    assert.deepEqual([alert.unread, alert.unseenByAdobe, alert.attention], [true, false, 'team']);
+  });
+});
+
+describe('mentionedByName', () => {
+  const people = [{ id: 1, name: 'Ada Lovelace' }, { id: 2, name: 'Bob Lovelace' }, { id: 3, name: 'Adam Smith' }, { id: 4, name: 'Cher' }];
+  it('finds full names, including "Last, First", as whole words', () => {
+    const hits = mentionedByName('hi Ada Lovelace and Lovelace, Bob; adam smithers and Cher', people);
+    assert.deepEqual(hits.map((p) => p.id), [1, 2]);
   });
 });
 

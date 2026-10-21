@@ -177,6 +177,44 @@ signed-in user's own state only coarsely, so opspile owns read state. Most of it
 | A message is edited, or a reaction is added by someone else | No change; edits never make a thread unread |
 | Bot or system message | Stored and shown, but does not count as new activity |
 
+### Attention
+
+Read state answers "who has seen this"; attention ranks what that means for the person
+looking, most pressing first:
+
+1. **Nobody at Adobe has seen it**: no staff member at all (in any team or none) has posted,
+   reacted or opened the thread since its last message. Staff become people in D1 the first
+   time they post, so their reads count even outside the ops teams.
+2. **You were mentioned** after you last read the thread (a platform mention, or your full
+   name in the text).
+3. **A teammate was mentioned** after they last read it.
+4. **Nobody on your team has seen it.**
+5. **You have not seen it.**
+
+Alert threads skip the first level: they are bot posts and nobody outside is waiting.
+
+## Backfill
+
+A reply whose root has never been seen (it was posted before ingestion started, or before
+the bot joined) triggers one request for the thread's history: `conversations.replies` on
+Slack, the message and its `/replies` on Graph. Every message lands in pile 1 marked
+`via: backfill` and is normalized like a live event, so pile 2 cannot tell them apart. The
+`backfills` table makes the request idempotent.
+
+## Labels and facts
+
+Two minutes after a person posts, the thread is labeled (later posts reuse the same label job,
+and an unchanged thread is never labeled twice):
+
+- **Clef** answers four questions: who acts next (`us`, `customer`, `vendor`, `nobody`), what
+  kind of thread it is (`incident`, `security`, `question`, `request`, `alert`, `other`),
+  urgency (0–3) and whether it is resolved. The state it reads is the thread as text, with
+  every author marked as Adobe staff or customer.
+- **Rules** extract CVE ids, ticket keys, Edge Delivery `org/site` pairs, GitHub repos and URLs.
+- **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
+  the error, a deadline and a go-live date. Only values at or above a confidence threshold are
+  kept (0.8, and 0.6 for the free-text problem).
+
 ## People
 
 Authors are normalized to `{ kind: person | bot | system, org, staff }`.

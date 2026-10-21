@@ -42,7 +42,8 @@
   .t .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .partial { color: var(--mute); font-weight: 400; }
   .badge { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); }
-  .badge.us { color: var(--warn); border-color: var(--warn); }
+  .badge.us, .badge.att-adobe { color: var(--warn); border-color: var(--warn); }
+  .badge.att-mentioned-me, .badge.att-mentioned-team { color: var(--accent); border-color: var(--accent); }
   .readers { display: inline-flex; gap: 2px; }
   .readers span { font-size: 10px; width: 18px; height: 18px; border-radius: 50%; display: grid;
     place-items: center; background: var(--soft); color: var(--accent); }
@@ -82,9 +83,16 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const FILTERS = [
-  ['all', 'All'], ['unread', 'Unread'], ['others', 'Seen by others'],
-  ['unseen', 'Unseen by team'], ['us', 'Waiting on us'],
+  ['all', 'All'], ['adobe', 'Unseen by Adobe'], ['mentioned', 'Mentions'],
+  ['unseen', 'Unseen by team'], ['unread', 'Unread'], ['us', 'Waiting on us'],
 ];
+const ATTENTION_LABEL = {
+  adobe: 'nobody at Adobe has seen this',
+  'mentioned-me': 'you were mentioned',
+  'mentioned-team': 'a teammate was mentioned',
+  team: 'nobody on the team has seen this',
+  me: 'you have not seen this',
+};
 const state = { me: null, team: null, data: null, filter: 'all', open: null, ws: null };
 
 async function get(path) {
@@ -127,9 +135,10 @@ function md(src) {
 function matches(t) {
   switch (state.filter) {
     case 'unread': return t.unread;
-    case 'others': return t.seenByOthers;
+    case 'adobe': return t.unseenByAdobe;
+    case 'mentioned': return t.mentionedMe || t.mentionedTeam.length > 0;
     case 'unseen': return t.unseen;
-    case 'us': return t.last_staff === 0 && t.kind !== 'alert';
+    case 'us': return (t.label ? t.label.next_actor === 'us' : t.last_staff === 0) && t.kind !== 'alert';
     default: return true;
   }
 }
@@ -145,7 +154,9 @@ function row(t) {
     <span class="meta">
       <span class="badge">${esc(t.org)}</span><span>${where}</span>
       ${t.last_author ? `<span>${esc(t.last_author)}</span>` : ''}
-      ${t.last_staff === 0 && t.kind !== 'alert' ? '<span class="badge us">waiting on us</span>' : ''}
+      ${t.attention ? `<span class="badge att-${t.attention}" title="${esc(ATTENTION_LABEL[t.attention])}">${esc(t.attention)}</span>` : ''}
+      ${t.label ? `<span class="badge">${esc(t.label.label_kind)} · next: ${esc(t.label.next_actor)}${t.label.urgency >= 1.5 ? ' · urgent' : ''}</span>` : ''}
+      ${!t.label && t.last_staff === 0 && t.kind !== 'alert' ? '<span class="badge us">waiting on us</span>' : ''}
       ${t.messages > 1 ? `<span>${t.messages} msgs</span>` : ''}
       <span class="readers">${readers}</span>
     </span>
@@ -186,12 +197,16 @@ async function openThread(key) {
   renderList();
   const pane = $('thread');
   pane.innerHTML = '<div class="empty">Loading…</div>';
-  const { thread, messages, watermarks } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
+  const {
+    thread, messages, watermarks, label, facts,
+  } = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
   if (state.open !== key) return;
   const seen = watermarks.filter((w) => w.read_at >= lastOf(thread) && w.person !== state.me.id)
     .map((w) => memberName(w.person));
   pane.innerHTML = `<div class="head"><h2>${esc(thread.title || '(no text)')}</h2>
-      <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}</div></div>
+      <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}
+      ${label ? ` · ${esc(label.kind)} · next: ${esc(label.next_actor)} · urgency ${Number(label.urgency).toFixed(1)}/3 · resolved ${Math.round((label.resolved_p || 0) * 100)}%` : ''}</div>
+      ${facts.length ? `<div class="sub">${facts.map((f) => `${esc(f.field)}: ${esc(f.value)}`).join(' · ')}</div>` : ''}</div>
     ${thread.root_at ? '' : '<div class="seenline">Earlier messages of this thread were posted before opspile started listening.</div>'}
     ${messages.map((m, i) => `<div class="m ${i === 0 && thread.root_at ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
       <span class="who">${esc(m.author?.name || 'unknown')}${m.author?.staff ? ' <span class="staff">staff</span>' : (m.author?.org ? ` <span class="staff">${esc(m.author.org)}</span>` : '')}</span>

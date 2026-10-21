@@ -17,6 +17,16 @@ import { cachedGraph } from './graph.js';
  * only platform calls the normalizer makes; everything else comes from pile 1.
  */
 
+const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
+
+/** Whether a mail domain is one of STAFF_DOMAINS. */
+export function isStaffDomain(env, email) {
+  const domains = String(env.STAFF_DOMAINS || '').toLowerCase().split(',').map((d) => d.trim())
+    .filter(Boolean);
+  const domain = domainOf(email);
+  return domain !== null && domains.includes(domain);
+}
+
 /** Cached rows older than this are fetched again. */
 export const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -193,6 +203,12 @@ export async function getIdentity(env, ref, now = Date.now()) {
       kind: ref.bot ? 'bot' : 'person', name: ref.name || ref.userId, email: null, home: ref.home,
     };
   }
+  // Staff become people the first time they show up, so their reads count towards
+  // "somebody at Adobe has seen it" even when they are in no ops team.
+  if (f.email && f.kind === 'person' && isStaffDomain(env, f.email)) {
+    await env.DB.prepare(`INSERT INTO people (email, name, staff) VALUES (?, ?, 1)
+      ON CONFLICT (email) DO UPDATE SET staff = 1`).bind(f.email, f.name).run();
+  }
   const person = f.email
     ? await env.DB.prepare('SELECT id, staff, name FROM people WHERE email = ?').bind(f.email).first()
     : null;
@@ -224,18 +240,14 @@ export async function getIdentity(env, ref, now = Date.now()) {
   };
 }
 
-const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
-
 /**
  * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
  * D1, or whose mail domain is one of STAFF_DOMAINS; the org of everyone else is their
  * mail domain (on Teams everyone is a guest, so the tenant says nothing).
  */
 export function toAuthor(env, identity) {
-  const domains = String(env.STAFF_DOMAINS || '').toLowerCase().split(',').map((d) => d.trim())
-    .filter(Boolean);
   const domain = domainOf(identity.email);
-  const staff = Boolean(identity.person_staff) || (domain !== null && domains.includes(domain));
+  const staff = Boolean(identity.person_staff) || isStaffDomain(env, identity.email);
   return {
     kind: identity.kind || 'person',
     name: identity.person_name || identity.name || null,
