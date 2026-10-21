@@ -53,13 +53,15 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
  */
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
-    (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title,
+     permalink)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
       deleted = MAX(messages.deleted, excluded.deleted),
-      title = COALESCE(excluded.title, messages.title)`)
+      title = COALESCE(excluded.title, messages.title),
+      permalink = COALESCE(excluded.permalink, messages.permalink)`)
     .bind(
       m.source,
       m.tenant,
@@ -73,6 +75,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.counted ? 1 : 0,
       m.deleted ? 1 : 0,
       m.title || null,
+      m.permalink || null,
     )
     .run();
 

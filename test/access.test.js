@@ -99,7 +99,7 @@ describe('viewer and inbox', () => {
       source: 'slack', tenant: 'E1', channelId: 'C1', org: 'acme', team: 'helix', kind: 'channel', counted: true, staff: false,
     };
     await indexMessage(DB, {
-      ...base, rootId: '1', id: '1', thread: 't1', at: '2026-10-21T10:00:00Z', title: 'one', path: 'p1/',
+      ...base, rootId: '1', id: '1', thread: 't1', at: '2026-10-21T10:00:00Z', title: 'one', path: 'p1/', permalink: 'https://chat.example/1',
     });
     await indexMessage(DB, {
       ...base, rootId: '2', id: '2', thread: 't2', at: '2026-10-21T11:00:00Z', title: 'two', path: 'p2/',
@@ -109,6 +109,7 @@ describe('viewer and inbox', () => {
     });
     const { threads, members } = await inbox({ DB }, { id: 1 }, 'helix');
     assert.deepEqual(members.map((m) => m.name), ['A', 'B']);
+    assert.deepEqual(threads.map((t) => t.permalink), [null, 'https://chat.example/1']);
     const view = threads.map((t) => [t.thread, t.unread, t.seenByOthers, t.unseen, t.last_staff]);
     assert.deepEqual(view, [
       ['t2', true, true, false, 1],

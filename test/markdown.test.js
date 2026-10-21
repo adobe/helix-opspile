@@ -54,6 +54,14 @@ describe('htmlToMarkdown', () => {
     assert.equal(htmlToMarkdown('<ol><li>a</li><li>b</li></ol>'), '1. a\n2. b');
   });
 
+  it('keeps a link whose text is its URL (it used to be stripped as a tag)', () => {
+    const url = 'https://www.example.com/docs/setup';
+    assert.equal(
+      htmlToMarkdown(`<p>see <a href="${url}" title="${url}">${url}</a>.</p>`),
+      `see [${url}](${url}).`,
+    );
+  });
+
   it('converts code and decodes entities', () => {
     assert.equal(htmlToMarkdown('<pre><code>a &lt; b</code></pre>'), '```\na < b\n```');
     assert.equal(htmlToMarkdown('<p>x &amp; y&nbsp;z</p>'), 'x & y z');
