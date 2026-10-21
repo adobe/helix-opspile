@@ -80,6 +80,15 @@ describe('indexMessage', () => {
     }
   });
 
+  it('titles a thread by its earliest known message until the root arrives', async () => {
+    const D = db();
+    await indexMessage(D, msg('1.3', '2026-10-21T10:09:00Z'));
+    await indexMessage(D, msg('1.2', '2026-10-21T10:05:00Z'));
+    assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.2', null]);
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
+    assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.1', '2026-10-21T10:00:00Z']);
+  });
+
   it('drops a deleted message from the thread, and the deletion is final', async () => {
     const D = db();
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));

@@ -40,6 +40,7 @@
     flex-wrap: wrap; align-items: center; }
   .t .when { color: var(--mute); font-size: 12px; white-space: nowrap; }
   .t .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .partial { color: var(--mute); font-weight: 400; }
   .badge { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); }
   .badge.us { color: var(--warn); border-color: var(--warn); }
   .readers { display: inline-flex; gap: 2px; }
@@ -139,7 +140,7 @@ function row(t) {
   const where = `${t.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(t.channel_name || '')}`;
   return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''}" data-thread="${esc(t.thread)}">
     <span class="dot"></span>
-    <span class="title">${esc(t.title || '(no text)')}</span>
+    <span class="title" title="${t.root_known ? '' : 'The first message of this thread predates ingestion'}">${t.root_known ? '' : '<span class="partial">↳</span> '}${esc(t.title || '(no text)')}</span>
     <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>
     <span class="meta">
       <span class="badge">${esc(t.org)}</span><span>${where}</span>
@@ -191,7 +192,8 @@ async function openThread(key) {
     .map((w) => memberName(w.person));
   pane.innerHTML = `<div class="head"><h2>${esc(thread.title || '(no text)')}</h2>
       <div class="sub">${esc(thread.org)} · ${thread.source === 'slack' ? 'Slack' : 'Teams'} · ${esc(thread.channel_name || '')}</div></div>
-    ${messages.map((m, i) => `<div class="m ${i === 0 ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
+    ${thread.root_at ? '' : '<div class="seenline">Earlier messages of this thread were posted before opspile started listening.</div>'}
+    ${messages.map((m, i) => `<div class="m ${i === 0 && thread.root_at ? 'root' : ''} ${m.deletedAt ? 'deleted' : ''}">
       <span class="who">${esc(m.author?.name || 'unknown')}${m.author?.staff ? ' <span class="staff">staff</span>' : (m.author?.org ? ` <span class="staff">${esc(m.author.org)}</span>` : '')}</span>
       <span class="at" title="${esc(m.at)}">${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">${ago(m.at)}</a>` : ago(m.at)}${m.editedAt ? ' · edited' : ''}</span>
       <div class="body">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div></div>`).join('')}

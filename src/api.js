@@ -47,7 +47,8 @@ async function members(env, team) {
 
 export async function inbox(env, me, team) {
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
-      channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages
+      channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
+      root_at IS NOT NULL AS root_known
     FROM threads WHERE team = ? AND kind != 'ignore'
     ORDER BY COALESCE(last_at, any_at) DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
   if (!threads.length) {

@@ -53,12 +53,13 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
  */
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
-    (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
-      deleted = MAX(messages.deleted, excluded.deleted)`)
+      deleted = MAX(messages.deleted, excluded.deleted),
+      title = COALESCE(excluded.title, messages.title)`)
     .bind(
       m.source,
       m.tenant,
@@ -71,6 +72,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.staff ? 1 : 0,
       m.counted ? 1 : 0,
       m.deleted ? 1 : 0,
+      m.title || null,
     )
     .run();
 
@@ -79,7 +81,12 @@ export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO threads
     (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, title, path,
      root_at, last_at, last_id, last_author, last_staff, any_at, messages, updated_at)
-    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+      COALESCE(
+        (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''),
+        (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
+          ORDER BY at LIMIT 1)),
+      ?11, ?12,
       l.at, l.id, l.author, l.staff,
       (SELECT MAX(at) FROM messages WHERE thread = ?1 AND deleted = 0),
       (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0),
@@ -91,7 +98,7 @@ export async function indexMessage(db, m, now = new Date()) {
     ON CONFLICT (thread) DO UPDATE SET
       org = excluded.org, team = excluded.team, kind = excluded.kind,
       channel_name = COALESCE(excluded.channel_name, threads.channel_name),
-      title = CASE WHEN ?14 THEN excluded.title ELSE COALESCE(threads.title, excluded.title) END,
+      title = excluded.title,
       root_at = CASE WHEN ?14 THEN excluded.root_at ELSE COALESCE(threads.root_at, excluded.root_at) END,
       last_at = excluded.last_at, last_id = excluded.last_id,
       last_author = excluded.last_author, last_staff = excluded.last_staff,
@@ -106,7 +113,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.team,
       m.kind || 'channel',
       m.channelName || null,
-      isRoot ? m.title : null,
+      null, // ?10 is unused: the title is derived from the messages above
       m.path,
       isRoot ? m.at : null,
       now.toISOString(),
