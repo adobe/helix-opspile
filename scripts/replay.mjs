@@ -18,6 +18,9 @@
  *
  *   node scripts/replay.mjs [--mode prod|stage] [--prefix slack/] [--clear] [--dry-run]
  *
+ * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
+ * minutes. Run it after a replay, once the vector index has caught up with the new roots.
+ *
  * --clear deletes pile 2 (the channels bucket) first. Use it after changing the rules:
  * a file's path depends on its org and team, so a replay alone would leave the files
  * filed under the old ones.
@@ -40,6 +43,7 @@ const prefix = opt('prefix', '');
 const dryRun = args.includes('--dry-run');
 const suffix = mode === 'prod' ? '' : `-${mode}`;
 const clear = args.includes('--clear');
+const rethreadAll = args.includes('--rethread');
 const bucket = `helix-opspile-raw${suffix}`;
 const channelsBucket = `helix-opspile-channels${suffix}`;
 const queueName = `helix-opspile-normalize${suffix}`;
@@ -77,6 +81,34 @@ if (!queue) {
 }
 
 const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
+
+if (rethreadAll) {
+  const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
+  const res = cf('d1', 'query', db.uuid, '--sql', 'SELECT thread FROM threads WHERE root_at IS NOT NULL ORDER BY root_at');
+  const keys = (res.result || res)[0].results.map((r) => r.thread);
+  for (let i = 0; i < keys.length; i += 50) {
+    const file = join(dir, 'rethread.json');
+    writeFileSync(file, JSON.stringify(keys.slice(i, i + 50)
+      .map((thread) => ({ body: { rethread: thread, force: true }, content_type: 'json' }))));
+    if (!dryRun) {
+      // Spread the batches out: Vectorize and Workers AI are rate limited.
+      cf(
+        'queues',
+        'messages',
+        'bulk-push',
+        '--queue-id',
+        queue.queue_id,
+        '--messages',
+        `@${file}`,
+        '--delay-seconds',
+        String(Math.floor(i / 50) * 20),
+      );
+    }
+  }
+  console.log(`${dryRun ? 'would re-thread' : 're-threading'} ${keys.length} thread(s)`);
+  rmSync(dir, { recursive: true, force: true });
+  process.exit(0);
+}
 let batch = [];
 let sent = 0;
 const flush = () => {

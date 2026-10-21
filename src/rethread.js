@@ -127,6 +127,23 @@ export async function rethread(env, key, { force = false } = {}) {
   }
 
   const at = Math.floor(Date.parse(thread.root_at) / 1000);
+  const hash = (await sha256(text)).slice(0, 32);
+  await env.DB.prepare('UPDATE threads SET skeleton_hash = ? WHERE thread = ?').bind(hash, key).run();
+
+  // An exact repeat: the earliest thread in the channel and window with the same skeleton.
+  const twin = await env.DB.prepare(`SELECT thread, logical_thread FROM threads
+    WHERE source = ? AND tenant = ? AND channel_id = ? AND skeleton_hash = ? AND thread != ?
+      AND root_at >= ? AND root_at <= ? ORDER BY root_at LIMIT 1`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      hash,
+      key,
+      new Date((at - WINDOW_DAYS * 86400) * 1000).toISOString(),
+      thread.root_at,
+    ).first();
+
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
     topK: TOP_K,
@@ -144,7 +161,9 @@ export async function rethread(env, key, { force = false } = {}) {
     .sort((a, b) => b.score - a.score);
 
   let match = null;
-  if (earlier.length && earlier[0].score >= AUTO_MATCH) {
+  if (twin) {
+    match = { thread: twin.thread, via: 'skeleton', p: 1 };
+  } else if (earlier.length && earlier[0].score >= AUTO_MATCH) {
     match = { thread: earlier[0].metadata.thread, via: 'vector', p: earlier[0].score };
   } else if (earlier.length) {
     const candidates = [];
@@ -194,6 +213,29 @@ export async function rethread(env, key, { force = false } = {}) {
           .bind(group, m.score, new Date().toISOString(), m.metadata.thread).run();
         joined.push(m.metadata.thread);
       }
+    }
+  }
+  // Later exact twins join, unless they already belong to a group that starts earlier.
+  const { results: laterTwins } = await env.DB.prepare(`SELECT t.thread, t.logical_thread,
+      a.root_at AS anchor_at FROM threads t LEFT JOIN threads a ON a.thread = t.logical_thread
+    WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.skeleton_hash = ? AND t.thread != ?
+      AND t.root_at > ? AND t.root_at <= ?`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      hash,
+      key,
+      thread.root_at,
+      new Date((at + WINDOW_DAYS * 86400) * 1000).toISOString(),
+    ).all();
+  for (const t of laterTwins || []) {
+    if (!t.logical_thread || joined.includes(t.logical_thread) || t.anchor_at > thread.root_at) {
+      // eslint-disable-next-line no-await-in-loop
+      await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'skeleton',
+          logical_p = 1, rethreaded_at = ? WHERE thread = ?`)
+        .bind(group, new Date().toISOString(), t.thread).run();
+      joined.push(t.thread);
     }
   }
   const { results: moved } = await env.DB.prepare(`SELECT * FROM threads
