@@ -78,6 +78,23 @@ node scripts/replay.mjs --clear             # after changing rules: empty pile 2
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
 `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`.
 
+### Iterate on the inbox UI
+
+`npm run ui:dev` serves the inbox at <http://localhost:8787/inbox> with fake data and live
+reload: saving `ui/inbox.html` reloads the page, and saving anything under `scripts/` or `src/`
+restarts the server with fresh data. The page is the same file the Worker serves, and the fake
+API uses the same `readState`, `parse` and `render` helpers. D1, R2, the team's Durable Object
+and Access are replaced by an in-memory store in
+[scripts/dev-ui-fixtures.mjs](scripts/dev-ui-fixtures.mjs), and you are signed in as Dana.
+New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off).
+No Cloudflare login or `.dev.vars` is needed.
+
+To point the preview at production instead, sign in to the inbox in Chrome with remote
+debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access
+session cookie into `.dev-ui-session.json` (gitignored, never printed), and the preview switches
+to the production API, read-only: writes are refused and the page's banner says so. Delete the
+file, or run `npm run ui:session -- --clear`, to go back to fake data.
+
 ### Develop and deploy
 
 **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint, tests and a build
