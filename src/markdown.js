@@ -87,7 +87,8 @@ export function htmlToMarkdown(html) {
     .replace(/<at[^>]*>([\s\S]*?)<\/at>/gi, (_, name) => `@${name.replace(/<[^>]+>/g, '')}`)
     .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
       const text = label.replace(/<[^>]+>/g, '').trim();
-      return !text || text === href ? `<${href}>` : `[${text}](${href})`;
+      // Never `<href>`: the tag stripping below would remove it as if it were a tag.
+      return `[${!text || text === href ? href : text}](${href})`;
     })
     .replace(/<img\s[^>]*?(?:alt="([^"]*)")?[^>]*>/gi, (_, alt) => `![${alt || 'image'}]()`)
     .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')

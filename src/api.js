@@ -52,7 +52,10 @@ async function members(env, team) {
 export async function inbox(env, me, team) {
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
-      root_at IS NOT NULL AS root_known
+      root_at IS NOT NULL AS root_known,
+      (SELECT m.permalink FROM messages m WHERE m.thread = threads.thread AND m.deleted = 0
+        AND m.permalink IS NOT NULL ORDER BY (m.id = threads.root_id) DESC, m.at LIMIT 1)
+        AS permalink
     FROM threads WHERE team = ? AND kind != 'ignore'
     ORDER BY COALESCE(last_at, any_at) DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
   if (!threads.length) {
@@ -93,6 +96,9 @@ export async function thread(env, me, key) {
   if (!row || !(inTeam(me, row.team) || isAdmin(me))) {
     return null;
   }
+  const link = await env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
+    AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first();
+  row.permalink = link ? link.permalink : null;
   const listed = await env.CHANNELS.list({ prefix: row.path });
   const files = await Promise.all(listed.objects.map(async (o) => {
     const obj = await env.CHANNELS.get(o.key);
