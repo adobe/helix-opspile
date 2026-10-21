@@ -15,6 +15,9 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { parse } from '../src/channels.js';
+import { runBackfill, slackBackfillKey } from '../src/backfill.js';
+import { ruleFacts } from '../src/facts.js';
+import { labelThread, QUESTIONS } from '../src/label.js';
 import { consume, processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -40,8 +43,12 @@ const USERS = {
   },
 };
 
-function env(raw) {
+function env(raw, extra = {}) {
+  const queued = [];
   return {
+    queued,
+    NORMALIZE: { send: async (body, options) => queued.push({ body, options }) },
+    ...extra,
     RAW: fakeBucket(Object.fromEntries(
       Object.entries(raw).map(([k, v]) => [k, JSON.stringify(v)]),
     )),
@@ -52,6 +59,7 @@ function env(raw) {
   };
 }
 
+const NOW_ISO = '2026-10-21T12:00:00Z';
 const event = (e) => ({
   type: 'event_callback', enterprise_id: 'E1', team_id: 'T1', event_id: 'Ev', event: e,
 });
@@ -66,6 +74,17 @@ describe('processKey', () => {
       calls.push(u.pathname);
       if (u.pathname === '/api/conversations.info') {
         return Response.json({ ok: true, channel: { id: 'C1', name: 'aem-acme', context_team_id: 'T1' } });
+      }
+      if (u.pathname === '/api/conversations.replies') {
+        return Response.json({
+          ok: true,
+          messages: [
+            { user: 'U2', ts: '1.1', text: 'root from history' },
+            {
+              user: 'U2', ts: '1.2', text: 'a reply', thread_ts: '1.1',
+            },
+          ],
+        });
       }
       if (u.pathname === '/api/users.info') {
         const user = USERS[u.searchParams.get('user')];
@@ -220,5 +239,166 @@ describe('consume', () => {
     await quiet(() => consume({ messages: [msg('ok'), msg('boom')] }, e));
     assert.deepEqual(acked, ['ok']);
     assert.deepEqual(retried, ['boom']);
+  });
+});
+
+describe('backfill, mentions and labels', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = async (url) => {
+      const u = new URL(url);
+      if (u.pathname === '/api/conversations.info') {
+        return Response.json({ ok: true, channel: { id: 'C1', name: 'aem-acme', context_team_id: 'T1' } });
+      }
+      if (u.pathname === '/api/conversations.replies') {
+        return Response.json({
+          ok: true,
+          messages: [
+            { user: 'U2', ts: '1.1', text: 'site down on https://main--web--acme.aem.live' },
+            {
+              user: 'U2', ts: '1.2', text: 'still down', thread_ts: '1.1',
+            },
+          ],
+        });
+      }
+      if (u.pathname === '/api/users.info') {
+        const user = USERS[u.searchParams.get('user')];
+        return Response.json(user ? { ok: true, user } : { ok: false, error: 'user_not_found' });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const reply = 'slack/E1/C1/2026/10/21/1.2-r.json';
+  const replyEvent = event({
+    type: 'message', channel: 'C1', user: 'U2', ts: '1.2', thread_ts: '1.1', text: 'still down, Ada Staff?',
+  });
+
+  it('requests the history of a thread once, when a reply arrives before its root', async () => {
+    const e = env({ [reply]: replyEvent });
+    await processKey(e, reply);
+    await processKey(e, reply);
+    const backfills = e.queued.filter((q) => q.body.backfill);
+    assert.equal(backfills.length, 1);
+    assert.deepEqual(backfills[0].body.backfill, {
+      source: 'slack', tenant: 'E1', channelId: 'C1', groupId: undefined, rootId: '1.1', thread: 'slack:E1:C1:1.1',
+    });
+  });
+
+  it('stores the backfilled thread in pile 1 and normalizes it like events', async () => {
+    const e = env({ [reply]: replyEvent });
+    e.RAW.put = async (key, body, options) => e.RAW.objects.set(key, { body, options });
+    await processKey(e, reply);
+    const { backfill } = e.queued.find((q) => q.body.backfill).body;
+    const r = await runBackfill(e, backfill);
+    assert.deepEqual([r.result, r.messages], ['backfilled', 2]);
+    const rootKey = slackBackfillKey('E1', 'C1', { ts: '1.1' });
+    assert.equal(rootKey, 'slack/E1/C1/1970/01/01/1.1-backfill.json');
+    assert.equal(e.RAW.objects.get(rootKey).options.customMetadata.via, 'backfill');
+    await processKey(e, rootKey);
+    const [t] = e.DB.rows('SELECT title, root_at, messages FROM threads');
+    assert.equal(t.title, 'site down on https://main--web--acme.aem.live');
+    assert.ok(t.root_at);
+    assert.deepEqual(e.DB.rows('SELECT done_at IS NOT NULL AS done, messages, error FROM backfills'), [
+      { done: 1, messages: 2, error: null },
+    ]);
+  });
+
+  it('records mentions by name, and a staff author becomes a person', async () => {
+    const e = env({ [reply]: replyEvent });
+    await processKey(e, reply);
+    assert.deepEqual(e.DB.rows('SELECT person, via FROM mentions'), [{ person: 7, via: 'name' }]);
+    const staff = 'slack/E1/C1/2026/10/21/1.3-s.json';
+    const e2 = env({
+      [staff]: event({
+        type: 'message', channel: 'C1', user: 'U3', ts: '1.3', text: 'on it',
+      }),
+    });
+    USERS.U3 = {
+      id: 'U3', real_name: 'Zed', profile: { email: 'zed@staff.example' }, team_id: 'T1',
+    };
+    await processKey(e2, staff);
+    assert.deepEqual(e2.DB.rows("SELECT name, staff FROM people WHERE email = 'zed@staff.example'"), [
+      { name: 'Zed', staff: 1 },
+    ]);
+    assert.deepEqual(e2.DB.rows('SELECT via FROM watermarks'), [{ via: 'post' }]);
+  });
+
+  it('labels a thread with Clef and keeps confident Clairic facts', async () => {
+    const calls = [];
+    const AI = {
+      async run(model, input) {
+        calls.push({ model, input });
+        if (model.endsWith('/clef')) {
+          return {
+            model: 'clef',
+            answers: {
+              next_actor: {
+                type: 'choice', choice: 'us', probabilities: { us: 0.9 }, confidence: 0.8,
+              },
+              kind: {
+                type: 'choice', choice: 'incident', probabilities: { incident: 0.95 }, confidence: 0.9,
+              },
+              urgency: { type: 'score', score: 2.6 },
+              resolved: { type: 'noul', noul: 0.05 },
+            },
+          };
+        }
+        return {
+          model: 'clairic',
+          answers: {
+            problem: { type: 'text', value: 'site down', confidence: 0.97 },
+            error: { type: 'text', value: 'maybe a 503', confidence: 0.4 },
+            deadline: { type: 'date', value: null, confidence: 0.99 },
+          },
+        };
+      },
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'site down on https://main--web--acme.aem.live, see CVE-2026-1234',
+      }),
+    }, { AI });
+    await processKey(e, root);
+    const labelJobs = e.queued.filter((q) => q.body.label).map((q) => q.options);
+    assert.deepEqual(labelJobs, [{ delaySeconds: 120 }]);
+    const r = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO));
+    assert.deepEqual([r.result, r.next_actor, r.kind, r.facts], ['labeled', 'us', 'incident', 1]);
+    assert.deepEqual(Object.keys(calls[0].input.questions), Object.keys(QUESTIONS));
+    assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
+    assert.equal(calls[1].input.reference_date, '2026-10-21');
+    const [label] = e.DB.rows('SELECT next_actor, kind, urgency, resolved_p FROM labels');
+    assert.deepEqual(label, {
+      next_actor: 'us', kind: 'incident', urgency: 2.6, resolved_p: 0.05,
+    });
+    assert.deepEqual(e.DB.rows("SELECT field, value FROM facts WHERE source = 'clairic'"), [
+      { field: 'problem', value: 'site down' },
+    ]);
+    assert.deepEqual(
+      e.DB.rows("SELECT field, value FROM facts WHERE source = 'rule' ORDER BY field").map((f) => f.field),
+      ['cve', 'site', 'url'],
+    );
+    assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
+    assert.equal(calls.length, 2);
+  });
+});
+
+describe('ruleFacts', () => {
+  it('finds CVEs, tickets, Edge Delivery sites, repos and URLs', () => {
+    const facts = ruleFacts([
+      'see https://main--my-site--acme-corp.aem.page/x and site--org.aem.live',
+      'CVE-2026-12345, ticket SITES-1234, https://jira.example.com/browse/ABC-99, github.com/acme/repo.git.',
+      'ABC-1 alone is not a ticket',
+    ]);
+    const by = (f) => facts.filter((x) => x.field === f).map((x) => x.value);
+    assert.deepEqual(by('cve'), ['CVE-2026-12345']);
+    assert.deepEqual(by('ticket'), ['ABC-99', 'SITES-1234']);
+    assert.deepEqual(by('site'), ['acme-corp/my-site', 'org/site']);
+    assert.deepEqual(by('repo'), ['acme/repo']);
+    assert.equal(by('url').length, 2);
   });
 });

@@ -54,14 +54,30 @@ export async function inbox(env, me, team) {
   if (!threads.length) {
     return { team, members: await members(env, team), threads: [] };
   }
-  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at
-    FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
-    WHERE w.thread IN (SELECT value FROM json_each(?))`)
-    .bind(team, JSON.stringify(threads.map((t) => t.thread))).all();
+  const keys = JSON.stringify(threads.map((t) => t.thread));
+  // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
+  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
+      p.staff, EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?)
+        AS in_team
+    FROM watermarks w JOIN people p ON p.id = w.person
+    WHERE w.thread IN (SELECT value FROM json_each(?))
+      AND (p.staff = 1 OR EXISTS (
+        SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?))`)
+    .bind(team, keys, team).all();
+  const { results: mentions } = await env.DB.prepare(`SELECT n.thread, n.person, n.at
+    FROM mentions n JOIN team_members m ON m.person = n.person AND m.team = ?
+    JOIN messages x ON x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = n.message
+    WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
+    .bind(team, keys).all();
+  const { results: labels } = await env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
+      kind AS label_kind, kind_p, urgency, resolved_p FROM labels
+    WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
+  const labelBy = new Map((labels || []).map((l) => [l.thread, l]));
   return {
     team,
     members: await members(env, team),
-    threads: readState(threads, marks || [], me.id),
+    threads: readState(threads, marks || [], mentions || [], me.id)
+      .map((t) => ({ ...t, label: labelBy.get(t.thread) || null })),
   };
 }
 
@@ -81,7 +97,12 @@ export async function thread(env, me, key) {
   const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at, w.via
     FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
     WHERE w.thread = ?`).bind(row.team, key).all();
-  return { thread: row, messages, watermarks: marks || [] };
+  const label = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(key).first();
+  const { results: facts } = await env.DB.prepare(`SELECT source, field, value, confidence
+    FROM facts WHERE thread = ? ORDER BY field, value`).bind(key).all();
+  return {
+    thread: row, messages, watermarks: marks || [], label, facts: facts || [],
+  };
 }
 
 function room(env, team) {

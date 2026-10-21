@@ -81,13 +81,22 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     subtype: msg.subtype,
     format: 'mrkdwn',
     text: [msg.text || '', files && `\n\nAttachments:\n${files}`].filter(Boolean).join(''),
+    mentionIds: [...new Set([...String(msg.text || '').matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]
+      .map((m) => m[1]))],
     permalink: slackPermalink(channel, msg.ts, rootId),
     raw: key,
     ...extra,
   };
 }
 
-export function normalizeSlack(key, payload) {
+export function normalizeSlack(key, delivered) {
+  // A backfilled message (conversations.replies) is a message event without the event.
+  const payload = delivered.type === 'backfill'
+    ? {
+      enterprise_id: delivered.tenant,
+      event: { ...delivered.message, type: 'message', channel: delivered.channel },
+    }
+    : delivered;
   const event = payload.event || {};
   const tenant = payload.enterprise_id || payload.team_id;
 
@@ -187,6 +196,9 @@ export function normalizeTeams(key, msg) {
       .filter(Boolean).join('\n'),
     permalink: msg.webUrl,
     raw: key,
+    mentionIds: [...new Set((msg.mentions || [])
+      .map((x) => x && x.mentioned && x.mentioned.user && x.mentioned.user.id)
+      .filter(Boolean))],
     // Teams reports reactions on the message itself; each reactor has read up to here.
     reactors: [...new Set((msg.reactions || [])
       .map((r) => r && r.user && r.user.user && r.user.user.id)

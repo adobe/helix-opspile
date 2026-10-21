@@ -79,5 +79,9 @@ export function fakeBucket(initial = {}) {
     async put(key, body, options) {
       objects.set(key, { body, options });
     },
+    async list({ prefix = '' } = {}) {
+      const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
+      return { objects: keys.map((key) => ({ key })) };
+    },
   };
 }

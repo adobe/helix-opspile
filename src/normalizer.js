@@ -10,7 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
+import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
+import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
@@ -18,7 +20,7 @@ import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { classify } from './rules.js';
 import {
-  advanceWatermark, findMessage, indexMessage, titleOf,
+  advanceWatermark, findMessage, indexMessage, mentionedByName, recordMentions, titleOf,
 } from './threads.js';
 
 const MAX_MENTIONS = 20;
@@ -94,6 +96,36 @@ async function toMarkdown(env, message) {
     names.set(id, identity.person_name || identity.name);
   }
   return slackToMarkdown(message.text, (id) => names.get(id));
+}
+
+/** Team members of any team, for mentions by name (loaded once per batch). */
+async function teamPeople(env, cache) {
+  if (!cache.people) {
+    const { results } = await env.DB.prepare(`SELECT DISTINCT p.id, p.name FROM people p
+      JOIN team_members m ON m.person = p.id`).all();
+    // eslint-disable-next-line no-param-reassign
+    cache.people = results || [];
+  }
+  return cache.people;
+}
+
+/** Who a message mentions: platform mentions first, then full names in the text. */
+async function mentionsOf(env, message, body, author, cache) {
+  const found = new Map();
+  for (const userId of (message.mentionIds || []).slice(0, MAX_MENTIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    const person = await personOf(env, message.source, message.tenant, userId);
+    if (person) {
+      found.set(person, 'id');
+    }
+  }
+  for (const p of mentionedByName(body, await teamPeople(env, cache))) {
+    if (!found.has(p.id)) {
+      found.set(p.id, 'name');
+    }
+  }
+  found.delete(author);
+  return [...found].map(([person, via]) => ({ person, via }));
 }
 
 /**
@@ -172,6 +204,29 @@ export async function processKey(env, key, cache = {}) {
     // eslint-disable-next-line no-await-in-loop
     await advanceWatermark(env.DB, reactor, message.thread, message.at, 'react');
   }
+  await recordMentions(env.DB, {
+    thread: message.thread,
+    message: `${message.source}:${message.tenant}:${message.channelId}:${message.id}`,
+    at: message.at,
+  }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
+
+  // A reply whose root we have never seen: fetch the thread's history once.
+  if (message.id !== message.rootId && !deleted) {
+    const root = await findMessage(env.DB, { ...message, id: message.rootId });
+    if (!root) {
+      await requestBackfill(env, {
+        source: message.source,
+        tenant: message.tenant,
+        channelId: message.channelId,
+        groupId: message.groupId,
+        rootId: message.rootId,
+        thread: message.thread,
+      });
+    }
+  }
+  if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
+    await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
+  }
   await notifyRoom(env, cls.team, { type: 'thread', thread: message.thread });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
@@ -185,10 +240,22 @@ export async function processKey(env, key, cache = {}) {
 export async function consume(batch, env) {
   const cache = {};
   for (const msg of batch.messages) {
-    const key = msg.body && msg.body.key;
+    const body = msg.body || {};
+    const key = body.key
+      || (body.label && `label:${body.label}`)
+      || (body.backfill && `backfill:${body.backfill.thread}`);
     try {
-      // eslint-disable-next-line no-await-in-loop
-      const r = await processKey(env, key, cache);
+      let r;
+      if (body.backfill) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await runBackfill(env, body.backfill) };
+      } else if (body.label) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await labelThread(env, body.label) };
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        r = await processKey(env, key, cache);
+      }
       console.log(JSON.stringify({ route: 'normalize', ...r }));
       msg.ack();
     } catch (e) {

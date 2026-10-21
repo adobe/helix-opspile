@@ -47,8 +47,8 @@ export function d1({ rules = [], people = [], teams = [] } = {}) {
       return { results: db.prepare(sql).all(...args).map((r) => ({ ...r })) };
     },
     async run() {
-      db.prepare(sql).run(...args);
-      return { success: true };
+      const { changes } = db.prepare(sql).run(...args);
+      return { success: true, meta: { changes: Number(changes) } };
     },
   });
   return {
