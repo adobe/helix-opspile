@@ -27,7 +27,8 @@ const NAMES: Record<string, string> = {
 };
 
 // PUBLIC_ORIGIN: this Worker's https origin, where Graph sends notifications.
-const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN'] as const;
+// STAFF_DOMAINS: comma-separated mail domains whose people count as staff.
+const VARS = ['MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN', 'STAFF_DOMAINS'] as const;
 
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
@@ -38,8 +39,23 @@ function resources(mode: string | undefined) {
   const suffix = mode === 'prod' ? '' : `-${mode || 'dev'}`;
   return {
     RAW: bindings.r2({ name: `helix-opspile-raw${suffix}` }),
+    CHANNELS: bindings.r2({ name: `helix-opspile-channels${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
+    DB: bindings.d1({ name: `helix-opspile${suffix}` }),
   };
+}
+
+function consumers(mode: string | undefined) {
+  const suffix = mode === 'prod' ? '' : `-${mode}`;
+  return [
+    triggers.queue({
+      name: `helix-opspile-normalize${suffix}`,
+      maxBatchSize: 20,
+      maxBatchTimeout: 5,
+      maxRetries: 5,
+      deadLetterQueue: `helix-opspile-normalize-dlq${suffix}`,
+    }),
+  ];
 }
 
 function vars(deployed: boolean) {
@@ -64,7 +80,9 @@ export default defineConfig(({ mode }) => {
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
       // Renews the Graph subscription, which lives at most 60 minutes (#5).
-      triggers: deployed ? [triggers.scheduled({ schedule: '*/20 * * * *' })] : [],
+      triggers: deployed
+        ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
+        : [],
       env: {
         ...vars(deployed),
         ...resources(mode),

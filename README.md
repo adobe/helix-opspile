@@ -3,8 +3,8 @@
 An inbox for opsophiles: one place for an ops team to work through every Slack and Microsoft
 Teams channel it is responsible for, with per-person and per-team read state.
 
-Status: **pile 1 live for Slack.** Signed Slack events are stored in R2 and queued for
-normalization; Teams: a cron keeps one tenant-wide Graph subscription alive, and its notifications and the messages they name are stored the same way. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+Status: **piles 1 and 2 live.** Signed Slack events are stored in R2 and queued for
+normalization; Teams: a cron keeps one tenant-wide Graph subscription alive, and its notifications and the messages they name are stored the same way. A queue consumer turns every raw object into one markdown file per message (pile 2), filed by the channel rules in D1. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 design and the open issues for what comes next.
 
 ## Ingest Worker
@@ -17,6 +17,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
+| queue `helix-opspile-normalize` | Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
 | cron `*/20 * * * *` | Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
@@ -33,10 +34,31 @@ Nothing below is committed; set it on the Worker.
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
+| `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
+| `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
+| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
 
-`cf deploy` creates the bucket and the queue when they are missing.
+`cf deploy` creates the buckets and queues when they are missing. The D1 schema is in
+`migrations/`; apply it with `cf d1 migrations apply <database id>` **before** the first
+deploy, and load teams, people and rules (data, never committed) with `cf d1 query`.
+
+### Rules and replay
+
+Rows in the `rules` table map a channel to an ops team, an org and a kind: for each target,
+the matching rule with the lowest `priority` wins. `field` is `channel_id`, `name`,
+`group_name` (the Teams team) or `connected` (Slack Connect team ids); `pattern` is a
+case-insensitive regular expression and `value` may use `$1`. For example
+`org | name | ^aem-(.+)$ | $1` files `aem-acme` under the org `acme`.
+
+Pile 2 is derived, so it can always be rebuilt from pile 1:
+
+```sh
+node scripts/replay.mjs --dry-run           # count what would be replayed
+node scripts/replay.mjs --prefix slack/     # replay part of pile 1
+node scripts/replay.mjs --clear             # after changing rules: empty pile 2, replay all
+```
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
 `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`.
@@ -50,7 +72,7 @@ reads `cloudflare.config.ts` (`--mode prod` or `--mode stage` selects the Worker
 npm install
 npm run lint
 cf auth create <profile> && cf auth activate <profile>  # once, for the target account
-printf 'MS_CLIENT_ID=…\nMS_TENANT_ID=…\nPUBLIC_ORIGIN=https://…\n' > .env  # uncommitted
+printf 'MS_CLIENT_ID=…\nMS_TENANT_ID=…\nPUBLIC_ORIGIN=https://…\nSTAFF_DOMAINS=…\n' > .env
 npm run deploy:prod                                    # or deploy:stage
 ```
 

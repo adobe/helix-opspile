@@ -12,6 +12,7 @@
 
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
+import { consume } from './normalizer.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
 import { teamsNotify } from './teams.js';
@@ -45,6 +46,11 @@ export default {
       return text('opspile ingest (stub)\n');
     }
     return text('not found\n', 404);
+  },
+
+  /** NORMALIZE queue: pile 1 → pile 2 (#6). */
+  async queue(batch, env) {
+    await consume(batch, env);
   },
 
   /** Cron: keep the Graph subscription alive (#5). */

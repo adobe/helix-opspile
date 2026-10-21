@@ -58,9 +58,18 @@ channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
 Every channel belongs to one **org** (a customer or a vendor) and one **team** (the ops team
-that owns it). Most of the mapping follows from naming conventions (`aem-<customer>` exists on
-both platforms) and from Slack Connect's connected workspace; a small override file covers
-vendor channels, alert channels, and irregular names.
+that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
+expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
+priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
+so are the overrides for vendor channels, alert channels and irregular names. Channels that
+no rule matches are filed under `_unassigned`.
+
+Channel names and authors are not in the events, so the normalizer looks them up
+(`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
+day. These are its only platform calls. Files only move forward to a newer version, and a
+tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2; after a rule
+change, pile 2 is emptied and replayed.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn

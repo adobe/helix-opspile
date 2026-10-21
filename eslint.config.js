@@ -18,7 +18,7 @@ export default [
   },
   {
     ...recommended,
-    files: ['src/**/*.js', 'test/**/*.js'],
+    files: ['src/**/*.js', 'test/**/*.js', 'scripts/**/*.mjs'],
     languageOptions: {
       ...recommended.languageOptions,
       globals: {
