@@ -279,7 +279,7 @@ export async function consume(batch, env) {
         r = { key, ...await runBackfill(env, body.backfill) };
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
-        r = { key, ...await rethread(env, body.rethread) };
+        r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };
@@ -291,7 +291,9 @@ export async function consume(batch, env) {
       msg.ack();
     } catch (e) {
       console.error(JSON.stringify({ route: 'normalize', key, error: e.message }));
-      msg.retry({ delaySeconds: 30 });
+      // Rate limits (Vectorize, Workers AI) back off longer and spread out.
+      const limited = /Too Many Requests|429|rate limit/i.test(e.message);
+      msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
     }
   }
 }

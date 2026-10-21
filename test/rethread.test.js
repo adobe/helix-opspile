@@ -138,6 +138,26 @@ describe('rethread', () => {
     }
   });
 
+  it('matches exact repeats by skeleton even when vector search has not caught up', async () => {
+    const f = fakes();
+    f.VECTORS.query = async () => ({ matches: [] }); // nothing visible yet
+    for (const order of [[0, 1, 2], [2, 0, 1]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...f };
+      const keys = [];
+      for (const [i, ray] of ['a4e16b8edcc84c7a', 'b5f27c9fedd95d8b', 'c6038da0fee06e9c'].entries()) {
+        const at = new Date(T0 + i * 3600 * 1000).toISOString();
+        // eslint-disable-next-line no-await-in-loop
+        keys.push(await seed(env, `4.${i}`, alert(422, ray, at), at));
+      }
+      for (const i of order) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, keys[i]);
+      }
+      const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
+      assert.deepEqual(rows.map((r) => r.logical_thread), [null, keys[0], keys[0]], `order ${order}`);
+    }
+  });
+
   it('keeps different failures apart, and lets Clef decide the unclear cases', async () => {
     const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
     const at0 = new Date(T0).toISOString();
