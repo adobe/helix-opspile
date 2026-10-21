@@ -47,7 +47,7 @@ const queueName = `helix-opspile-normalize${suffix}`;
 const cf = (...a) => JSON.parse(execFileSync('cf', a, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
 const items = (d) => (Array.isArray(d) ? d : (d.result || d.objects || d.items || []));
 
-function* listKeys() {
+function* listKeys(from = bucket, keyPrefix = prefix) {
   let cursor;
   do {
     const page = cf(
@@ -55,10 +55,10 @@ function* listKeys() {
       'objects',
       'list',
       '--bucket-name',
-      bucket,
+      from,
       '--per-page',
       '1000',
-      ...(prefix ? ['--prefix', prefix] : []),
+      ...(keyPrefix ? ['--prefix', keyPrefix] : []),
       ...(cursor ? ['--cursor', cursor] : []),
     );
     for (const o of items(page)) {
@@ -92,22 +92,43 @@ const flush = () => {
   batch = [];
 };
 if (clear) {
+  const run = (keys) => execFileSync('cf', [
+    'r2', 'objects', 'bulk-delete', '--bucket-name', channelsBucket, '--force',
+    '--body', JSON.stringify(keys),
+  ], { stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
+  const drop = (keys) => {
+    if (dryRun || !keys.length) {
+      return keys.length;
+    }
+    try {
+      run(keys);
+      return keys.length;
+    } catch {
+      // One bad key fails the whole batch: delete one by one, skipping keys that are gone.
+      let n = 0;
+      for (const key of keys) {
+        try {
+          run([key]);
+          n += 1;
+        } catch (e) {
+          if (!/10007|does not exist/.test(String(e.stderr || e.stdout || e.message))) {
+            console.error(`could not delete ${key}`);
+          }
+        }
+      }
+      return n;
+    }
+  };
   let doomed = [];
   let deleted = 0;
-  const drop = () => {
-    if (doomed.length && !dryRun) {
-      cf('r2', 'objects', 'bulk-delete', '--bucket-name', channelsBucket, '--force', '--body', JSON.stringify(doomed));
-    }
-    deleted += doomed.length;
-    doomed = [];
-  };
   for (const key of listKeys(channelsBucket, '')) {
     doomed.push(key);
-    if (doomed.length === 1000) {
-      drop();
+    if (doomed.length === 50) {
+      deleted += drop(doomed);
+      doomed = [];
     }
   }
-  drop();
+  deleted += drop(doomed);
   console.log(`${dryRun ? 'would delete' : 'deleted'} ${deleted} file(s) from ${channelsBucket}`);
 }
 
