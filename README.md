@@ -36,13 +36,21 @@ The Entra app needs these Microsoft Graph **application** permissions, with admi
 
 ### Develop and deploy
 
+Deploys go through the new Cloudflare CLI, [`cf`](https://developers.cloudflare.com/cf/), which
+reads `cloudflare.config.ts` (`--mode prod` or `--mode stage` selects the Worker).
+
 ```sh
 npm install
 npm run lint
-npx wrangler secret put SLACK_BOT_TOKEN --env prod    # repeat per secret
-export CLOUDFLARE_ACCOUNT_ID=…                         # not pinned in wrangler.toml
+cf auth create <profile> && cf auth activate <profile>  # once, for the target account
+printf 'MS_CLIENT_ID=…\nMS_TENANT_ID=…\n' > .env       # uncommitted, see below
 npm run deploy:prod                                    # or deploy:stage
 ```
 
-`keep_vars = true` in `wrangler.toml` keeps the `MS_*` vars that were set outside the
-file. For `wrangler dev`, put the bindings in an uncommitted `.dev.vars`.
+`cf` has no `keep_vars`: the `MS_*` vars are part of every deploy, so the config reads them
+from the environment or `.env` and refuses to deploy without them. Secrets are declared by
+name only; `cf deploy` checks that they exist on the Worker and keeps their values. `cf`
+cannot set a single secret yet, so use
+`npx wrangler secret put SLACK_BOT_TOKEN --name helix-opspile-prod`, or pass
+`--secrets-file` to `cf deploy` (required for the first deploy of a new Worker). For
+`cf dev`, put the bindings in an uncommitted `.dev.vars`.

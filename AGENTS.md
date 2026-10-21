@@ -26,4 +26,4 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/slack.js` — Slack Events API endpoint
 - `src/teams.js` — Graph validation endpoint, token and client helpers
 - `src/diag.js` — guarded `/diag/teams` self-test
-- `wrangler.toml` — `prod` and `stage` environments
+- `cloudflare.config.ts` — `cf` deploy config; `--mode prod` and `--mode stage`
