@@ -125,6 +125,13 @@
   .mentions .hint { margin-left: auto; color: var(--faint); font-size: 11px; }
   .composer .connect { color: var(--mute); font-size: 13px; }
   .composer .connect a { color: var(--link); }
+  dialog.confirm { max-width: min(560px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 18px; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+  dialog.confirm::backdrop { background: rgba(0,0,0,.35); }
+  dialog.confirm p { margin: 0 0 10px; }
+  dialog.confirm .bubble { max-height: 40vh; overflow: auto; }
+  dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  dialog.confirm .send { border-radius: 8px; padding: 4px 14px; background: var(--me); color: #fff; border: 0; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line);
     border-radius: 10px; padding: 8px 14px; font-size: 13px; z-index: 10; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
@@ -1801,8 +1808,9 @@ const WEBMCP_TOOLS = [
       fillReply(body);
       // The person confirms what goes out under their name.
       const where = `${platform(data.thread)} (${data.thread.org || 'customer'})`;
-      const ask = () => window.confirm(`Post this reply in ${where} as you?\n\n${clip(body, 600)}`);
-      const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : ask();
+      const ask = () => confirmInPage(`Post this reply in ${where} as you?`, body, client?.signal);
+      const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
+      if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent. The text is left in the reply box as a draft.');
       if (!yes) return fail('The user declined to send. The text is left in the reply box as a draft.');
       return await send(key, data.thread) ? out({ ok: true, thread: key, note: 'Sent; it shows as "sending" until Slack or Teams confirms it.' }) : fail(state.sendError || 'Could not send.');
     },
@@ -1851,6 +1859,36 @@ const WEBMCP_TOOLS = [
     },
   },
 ];
+
+/**
+ * Asks the person on the page: true (post), false (cancel) or null (no answer in 2 minutes,
+ * or the agent gave up). Not window.confirm(): that would freeze the page, and with it every
+ * tool call, until someone answers.
+ */
+function confirmInPage(question, body, signal) {
+  return new Promise((resolve) => {
+    const dlg = toNode(`<dialog class="confirm" aria-label="${esc(question)}"><form method="dialog">
+      <p><b>${esc(question)}</b></p><div class="bubble">${md(clip(body, 1200))}</div>
+      <div class="apply"><button value="no">Cancel</button><button value="yes" class="send">Post as me</button></div></form></dialog>`);
+    let answer = null;
+    const timer = setTimeout(() => dlg.close(), 120000);
+    const abort = () => dlg.close();
+    signal?.addEventListener('abort', abort);
+    dlg.addEventListener('close', () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      if (dlg.returnValue === 'yes') answer = true;
+      else if (dlg.returnValue === 'no') answer = false;
+      dlg.remove();
+      resolve(answer);
+    });
+    // Escape is an answer too.
+    dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('[value="yes"]').focus();
+  });
+}
 
 async function registerTools() {
   const mc = document.modelContext || navigator.modelContext;
