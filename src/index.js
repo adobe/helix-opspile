@@ -14,6 +14,7 @@ import inboxHtml from '../ui/inbox.html';
 import { api } from './api.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
+import { ensureTeamKnowledgeBases } from './kb.js';
 import { consume } from './normalizer.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
@@ -65,11 +66,14 @@ export default {
     await consume(batch, env);
   },
 
-  /** Cron: keep the Graph subscription alive (#5). */
+  /** Cron: keep the Graph subscription alive (#5), and give every team a knowledge base. */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cron: controller.cron, ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', error: e.message }))));
+    ctx.waitUntil(ensureTeamKnowledgeBases(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'teams', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'teams', error: e.message }))));
   },
 };
 

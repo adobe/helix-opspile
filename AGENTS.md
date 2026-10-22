@@ -26,4 +26,5 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/slack.js` — Slack Events API endpoint
 - `src/teams.js` — Graph validation endpoint, token and client helpers
 - `src/diag.js` — guarded `/diag/teams` self-test
+- `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts
 - `cloudflare.config.ts` — `cf` deploy config; `--mode prod` and `--mode stage`

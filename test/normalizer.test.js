@@ -20,7 +20,7 @@ import { ruleFacts } from '../src/facts.js';
 import { labelThread, QUESTIONS } from '../src/label.js';
 import { consume, processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
-import { fakeBucket, quiet } from './fakes.js';
+import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -113,6 +113,22 @@ describe('processKey', () => {
       kind: 'person', name: 'Cy', org: 'customer.example', staff: false,
     });
     assert.deepEqual(meta.raw, [key]);
+  });
+
+  it('creates the knowledge bases of a channel\'s org and team when it is discovered', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const ARTIFACTS = fakeArtifacts();
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'hello',
+      }),
+    }, { ARTIFACTS });
+    await processKey(e, key, {});
+    await processKey(e, key, {});
+    assert.deepEqual(ARTIFACTS.calls.map((c) => c[1]), ['kb-org-acme', 'kb-team-helix']);
+    assert.deepEqual(e.DB.rows('SELECT repo FROM knowledge_bases ORDER BY repo').map((r) => r.repo), [
+      'kb-org-acme', 'kb-team-helix',
+    ]);
   });
 
   it('caches channels and people in D1', async () => {
