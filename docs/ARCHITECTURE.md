@@ -250,6 +250,9 @@ and an unchanged thread is never labeled twice):
 - **Rules** extract CVE ids, ticket keys, Edge Delivery `org/site` pairs, GitHub repos and URLs.
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
+  The title leaves out what the inbox shows next to it: the customer, the channel, the
+  platform, the kind of thread and Edge Delivery itself; a customer or product name the model
+  still writes is removed afterwards.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …). The channel keeps the
   highest probability any thread showed, so every thread of a customer shows their stack.
