@@ -18,9 +18,9 @@ import { api, inbox } from '../src/api.js';
 import { reactable, seal } from '../src/post.js';
 import { nativeEmoji, react, resolve } from '../src/react.js';
 import {
-  isResolvedEmoji, mergeFacts, resolution, resolutionFacts,
+  isResolvedEmoji, mergeFacts, resolution, resolutionFacts, signalFacts, signalOf,
 } from '../src/resolve.js';
-import { applyReaction } from '../src/threads.js';
+import { applyReaction, waitingOn } from '../src/threads.js';
 import { d1 } from './d1.js';
 
 // Made-up keys, ids and people only.
@@ -146,6 +146,46 @@ describe('resolution', () => {
     assert.equal(facts.get(SLACK).customerAt, '2026-10-21T10:00:00Z');
     assert.equal(resolution(facts.get(SLACK), null, 1).state, 'resolved');
     assert.ok(isResolvedEmoji('✅\ufe0f'));
+    assert.ok(isResolvedEmoji('heavy_check_mark'));
+    assert.ok(isResolvedEmoji('✔️'));
+  });
+
+  it('counts a staff ✔️ on the root as resolved, too', async () => {
+    const e = env();
+    await applyReaction(e.DB, {
+      thread: SLACK, message: 'slack:E1:C1:1.1', emoji: 'heavy_check_mark', userKey: 'slack:E1:U1', at: '2026-10-21T11:00:00Z',
+    });
+    const facts = await resolutionFacts(e, [SLACK]);
+    assert.equal(resolution(facts.get(SLACK), null, 1).state, 'resolved');
+  });
+});
+
+describe('steering reactions', () => {
+  it('reads 👀, 🙏 and 🛟 on any message, with who and whether they are staff', async () => {
+    assert.deepEqual(
+      ['eyes', '👀', 'pray', '🙏', 'ring_buoy', '🛟', 'tada'].map(signalOf),
+      ['seen', 'seen', 'thanks', 'thanks', 'help', 'help', null],
+    );
+    const e = env();
+    const add = (emoji, user) => applyReaction(e.DB, {
+      thread: SLACK, message: 'slack:E1:C1:1.2', emoji, userKey: `slack:E1:${user}`, at: '2026-10-21T11:00:00Z',
+    });
+    await add('eyes', 'U1');
+    await add('pray', 'U7');
+    await add('tada', 'U7');
+    const got = (await signalFacts(e, [SLACK])).get(SLACK)
+      .map((x) => [x.signal, x.person, x.staff]).sort();
+    assert.deepEqual(got, [['seen', 1, true], ['thanks', 2, false]]);
+  });
+
+  it('🙏 after the last message clears "waiting on"', () => {
+    const t = {
+      kind: 'channel', last_staff: 0, last_at: '2026-10-21T10:05:00Z', label: { next_actor: 'us' },
+    };
+    assert.equal(waitingOn(t), 'us');
+    assert.equal(waitingOn({ ...t, signals: [{ signal: 'thanks', at: '2026-10-21T10:06:00Z' }] }), 'nobody');
+    // An older 🙏 does not answer a newer message.
+    assert.equal(waitingOn({ ...t, signals: [{ signal: 'thanks', at: '2026-10-21T10:01:00Z' }] }), 'us');
   });
 });
 
@@ -215,6 +255,25 @@ describe('reacting and resolving as the person', () => {
     }, inTeam);
     assert.equal(gone.status, 200);
     assert.equal(calls[1].u, 'https://slack.com/api/reactions.remove');
+    assert.deepEqual(rx(e), []);
+  });
+
+  it('puts a ✅ on a reply on the thread\'s first message, too, and takes it off both', async () => {
+    const e = await connect(env(), 'slack', 'chat:write,reactions:write');
+    const res = await react(e, ME, { thread: SLACK, id: '1.2', emoji: 'white_check_mark' }, inTeam);
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      calls.map((c) => [c.u.split('.').pop(), c.body.timestamp, c.body.name]),
+      [['add', '1.2', 'white_check_mark'], ['add', '1.1', 'white_check_mark']],
+    );
+    assert.equal((await resolutionFacts(e, [SLACK])).get(SLACK).checks.length, 1);
+    await react(e, ME, {
+      thread: SLACK, id: '1.2', emoji: 'white_check_mark', remove: true,
+    }, inTeam);
+    assert.deepEqual(
+      calls.slice(2).map((c) => [c.u.split('.').pop(), c.body.timestamp]),
+      [['remove', '1.2'], ['remove', '1.1']],
+    );
     assert.deepEqual(rx(e), []);
   });
 

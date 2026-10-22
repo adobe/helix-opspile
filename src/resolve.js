@@ -19,15 +19,61 @@ import { isStaffDomain } from './lookup.js';
  * so a customer's "thanks, works now" does not keep it open) or until staff resolve it again.
  */
 
-/** The reaction each platform uses for "resolved". */
+/** The reaction each platform uses for "resolved" (the one opspile adds). */
 export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅' };
 
-const RESOLVED = new Set(Object.values(RESOLVED_EMOJI));
+// ✅ and ✔️ both mean resolved, on either platform.
+const RESOLVED = new Set(['white_check_mark', 'heavy_check_mark', '✅', '✔']);
 
-/** Whether a reaction, as stored, is the "resolved" one (Teams may add a variation selector). */
+/** Whether a reaction, as stored, is a "resolved" one (Teams may add a variation selector). */
 export const isResolvedEmoji = (emoji) => RESOLVED.has(String(emoji || '').replace(/\ufe0f/g, ''));
 
 const RESOLVED_FORMS = [...RESOLVED].flatMap((e) => [e, `${e}\ufe0f`]);
+
+/**
+ * Reactions that steer the inbox, by what they mean:
+ * - `seen` 👀: someone at Adobe is on it (lower for the rest of the team, higher for them)
+ * - `thanks` 🙏: nothing is pending any more ("waiting on" is cleared)
+ * - `help` 🛟: someone asks the rest of the team to look (higher for everyone else)
+ */
+export const SIGNALS = {
+  seen: ['eyes', '👀'],
+  thanks: ['pray', '🙏'],
+  help: ['ring_buoy', '🛟'],
+};
+const SIGNAL_OF = new Map(Object.entries(SIGNALS)
+  .flatMap(([s, forms]) => forms.flatMap((f) => [[f, s], [`${f}\ufe0f`, s]])));
+
+/** The signal a stored reaction carries, or null. */
+export const signalOf = (emoji) => SIGNAL_OF.get(String(emoji || '').replace(/::skin-tone-\d/, '')) || null;
+
+/**
+ * The steering reactions of each thread: `{ signal, person, staff, at }`, on any message.
+ *
+ * @returns {Promise<Map<string, object[]>>}
+ */
+export async function signalFacts(env, keys) {
+  const { results } = await env.DB.prepare(`SELECT r.thread, r.emoji, r.at, i.person,
+      COALESCE(p.staff, 0) AS staff, i.email
+    FROM reactions r
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN people p ON p.id = i.person
+    WHERE r.thread IN (SELECT value FROM json_each(?))
+      AND r.emoji IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(keys), JSON.stringify([...SIGNAL_OF.keys()])).all();
+  const out = new Map();
+  for (const r of results || []) {
+    const list = out.get(r.thread) || [];
+    list.push({
+      signal: signalOf(r.emoji),
+      person: r.person || null,
+      staff: Boolean(r.staff || isStaffDomain(env, r.email)),
+      at: r.at || null,
+    });
+    out.set(r.thread, list);
+  }
+  return out;
+}
 
 /**
  * What D1 knows about the resolution of each thread: the staff ✅ on its root (`checks`:
