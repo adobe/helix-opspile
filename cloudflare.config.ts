@@ -56,6 +56,9 @@ function resources(mode: string | undefined) {
     // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
     // indexes on `channel` and `at`); see README.
     VECTORS: bindings.vectorize({ name: `helix-opspile-roots${suffix}` }),
+    // Pile 3: one knowledge-base repo per org and per team (#12). Artifacts creates the
+    // namespace with its first repo.
+    ARTIFACTS: bindings.artifacts({ namespace: `helix-opspile${suffix}` }),
   };
 }
 
@@ -94,7 +97,8 @@ export default defineConfig(({ mode }) => {
       previewUrls: false,
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
-      // Renews the Graph subscription, which lives at most 60 minutes (#5).
+      // Renews the Graph subscription, which lives at most 60 minutes (#5), and creates
+      // missing team knowledge bases (#12).
       exports: { TeamRoom: workerExports.durableObject({ storage: 'sqlite' }) },
       triggers: deployed
         ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]

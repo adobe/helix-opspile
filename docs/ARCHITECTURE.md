@@ -152,6 +152,14 @@ what it learned to the right one. Each commit carries a git note pointing to the
 raw events that justify it, so every memory is traceable to its source, and a bad one is a
 `git revert`.
 
+The repositories are created through the Worker's Artifacts binding (one namespace per
+environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
+known: when the normalizer discovers a channel, it makes sure the repositories for the
+channel's org and team exist, and the cron creates one for every team in D1, so a team that
+was added by hand gets one before it has any channel. `knowledge_bases` in D1 records the
+repositories that exist and their git remotes. Internal slugs (`_unassigned`) get none.
+Filling the repositories is separate work.
+
 ### 4. Fast index
 
 - **D1** holds the queryable index: containers, threads (last activity, last speaker,

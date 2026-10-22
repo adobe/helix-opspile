@@ -12,6 +12,7 @@
 
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
+import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { rethread } from './rethread.js';
 import {
@@ -208,6 +209,8 @@ export async function processKey(env, key, cache = {}) {
   if (cls.kind === 'ignore') {
     return { key, result: 'ignored' };
   }
+  // A channel's org and team each get a knowledge base when they are first seen (pile 3).
+  await ensureChannelKnowledgeBases(env, cls, cache);
 
   const deleted = op.op === 'delete';
   const { author, person } = await resolveAuthor(env, message.authorRef);

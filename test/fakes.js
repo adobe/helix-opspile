@@ -85,3 +85,35 @@ export function fakeBucket(initial = {}) {
     },
   };
 }
+
+const REMOTE = (name) => `https://account.artifacts.example/git/ns/${name}.git`;
+
+/** An Artifacts namespace binding in memory. */
+export function fakeArtifacts({ existing = [], fail = false } = {}) {
+  const repos = new Set(existing);
+  const calls = [];
+  return {
+    repos,
+    calls,
+    async create(name, opts) {
+      calls.push(['create', name, opts]);
+      if (fail) {
+        throw new Error('INTERNAL_ERROR');
+      }
+      if (repos.has(name)) {
+        const e = new Error('repository already exists');
+        e.code = 'ALREADY_EXISTS';
+        throw e;
+      }
+      repos.add(name);
+      return { name, remote: REMOTE(name), token: 'art_v1_made-up' };
+    },
+    async get(name) {
+      calls.push(['get', name]);
+      return {
+        info: async () => ({ name, remote: REMOTE(name) }),
+        [Symbol.dispose]() {},
+      };
+    },
+  };
+}
