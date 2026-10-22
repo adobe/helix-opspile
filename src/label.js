@@ -12,6 +12,7 @@
 
 import { parse } from './channels.js';
 import { ruleFacts } from './facts.js';
+import { isStaffDomain } from './lookup.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (rules, plus Clairic, an extraction
@@ -90,7 +91,8 @@ export const QUESTIONS = {
   },
   resolved: {
     type: 'noul',
-    instructions: 'Has the issue or request in this thread been resolved or closed?',
+    instructions: 'Has the issue or request in this thread been resolved or closed? A ✅ or ✔️'
+      + ' reaction by the customer (or a 👍 by the customer on the answer) confirms it is.',
   },
 };
 
@@ -115,8 +117,47 @@ function who(m) {
   return `${a.name || 'someone'} (${a.staff ? 'Adobe staff' : `customer${a.org ? `, ${a.org}` : ''}`})`;
 }
 
-/** The thread as text for the models: a header, then one block per message. */
-export function stateOf(thread, messages) {
+// Reaction names as the models should see them (Slack names; Teams sends characters).
+const REACTION_CHAR = {
+  white_check_mark: '✅',
+  heavy_check_mark: '✔️',
+  '+1': '👍',
+  thumbsup: '👍',
+  '-1': '👎',
+  eyes: '👀',
+  pray: '🙏',
+  ring_buoy: '🛟',
+  rocket: '🚀',
+  grinning: '😀',
+  tada: '🎉',
+  heart: '❤️',
+  joy: '😂',
+  like: '👍',
+  laugh: '😂',
+  sad: '😢',
+  surprised: '😮',
+  angry: '😠',
+  x: '❌',
+};
+const reactionChar = (e) => {
+  const name = String(e || '').replace(/::skin-tone-\d/, '');
+  return REACTION_CHAR[name] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
+};
+
+/** One line per message with reactions: who reacted with what (customer or Adobe). */
+function reactionLine(list) {
+  if (!list || !list.length) {
+    return '';
+  }
+  return `\nReactions: ${list.map((r) => `${reactionChar(r.emoji)} by ${r.name || 'someone'}`
+    + ` (${r.staff ? 'Adobe staff' : 'customer'})`).join(', ')}`;
+}
+
+/**
+ * The thread as text for the models: a header, then one block per message, with the
+ * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`).
+ */
+export function stateOf(thread, messages, reactions = new Map()) {
   const live = messages.filter((m) => !m.deletedAt);
   const shown = live.length > MAX_MESSAGES
     ? [live[0], ...live.slice(-(MAX_MESSAGES - 1))]
@@ -128,7 +169,7 @@ export function stateOf(thread, messages) {
   ].filter(Boolean).join('\n');
   const body = shown.map((m) => {
     const text = String(m.body || '').slice(0, MAX_BODY);
-    return `[${m.at}] ${who(m)}:\n${text}`;
+    return `[${m.at}] ${who(m)}:\n${text}${reactionLine(reactions.get(String(m.id)))}`;
   }).join('\n\n');
   return `${header}\n\n${body}`;
 }
@@ -141,6 +182,26 @@ async function threadMessages(env, thread) {
   }));
   return files.filter(Boolean).map(({ meta, body }) => ({ ...meta, body }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
+/** The reactions in a thread, by message id, and the time of the latest one. */
+async function threadReactions(env, key) {
+  const { results } = await env.DB.prepare(`SELECT r.message, r.emoji, r.at,
+      COALESCE(p.name, i.name) AS name, COALESCE(p.staff, 0) AS staff, i.email
+    FROM reactions r
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN people p ON p.id = i.person
+    WHERE r.thread = ? ORDER BY r.at`).bind(key).all();
+  const by = new Map();
+  let latest = null;
+  for (const r of results || []) {
+    const id = r.message.slice(r.message.lastIndexOf(':') + 1);
+    by.set(id, [...(by.get(id) || []), {
+      emoji: r.emoji, name: r.name, staff: Boolean(r.staff || isStaffDomain(env, r.email)),
+    }]);
+    latest = r.at && (!latest || r.at > latest) ? r.at : latest;
+  }
+  return { by, latest };
 }
 
 /** Clairic answers worth keeping: non-null, above the confidence threshold. */
@@ -248,9 +309,12 @@ export async function labelThread(env, key, now = new Date()) {
     // Only system events or bots (a member joined, an app was added): nothing to label.
     return { result: 'skip', reason: 'no person posted' };
   }
+  // Labeled through the latest message or reaction: a reaction is news for the models too.
+  const rx = await threadReactions(env, key);
+  const through = rx.latest && rx.latest > thread.any_at ? rx.latest : thread.any_at;
   const done = await env.DB.prepare('SELECT labeled_through FROM labels WHERE thread = ?')
     .bind(key).first();
-  if (done && done.labeled_through === thread.any_at) {
+  if (done && done.labeled_through === through) {
     return { result: 'unchanged' };
   }
   const messages = await threadMessages(env, thread);
@@ -260,7 +324,7 @@ export async function labelThread(env, key, now = new Date()) {
 
   await replaceFacts(env.DB, key, 'rule', ruleFacts(messages.map((m) => m.body || '')));
 
-  const state = stateOf(thread, messages);
+  const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
     env.AI.run(CLEF, { model: 'clef', state, questions: { ...QUESTIONS, ...TECH_QUESTIONS } }),
     env.AI.run(CLAIRIC, {
@@ -293,7 +357,7 @@ export async function labelThread(env, key, now = new Date()) {
       kindP,
       a.urgency ? a.urgency.score : null,
       a.resolved ? a.resolved.noul : null,
-      thread.any_at,
+      through,
       `${clef.model || 'clef'}+${clairic.model || 'clairic'}`,
       now.toISOString(),
       title,

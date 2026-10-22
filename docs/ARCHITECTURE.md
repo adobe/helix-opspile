@@ -280,8 +280,10 @@ moves the reaction's time forward, so a remove-and-add comes out right in either
 
 ### Resolved
 
-✅ on a thread's root message (`white_check_mark` on Slack, `✅` on Teams) by a staff member
-means **resolved**. One click or `e` in the inbox adds it as the person, on the root of the
+✅ or ✔️ on a thread's root message (`white_check_mark` / `heavy_check_mark` on Slack, `✅` /
+`✔️` on Teams) by a staff member means **resolved**. `e`, or the Resolve button that appears
+when the pointer rests on Send for a second, adds ✅ as the person; a ✅ put on a reply in the
+inbox goes on the root as well (and comes off both). It lands on the root of the
 entry's latest platform thread; undo takes the person's own ✅ off again (someone else's ✅ is
 theirs to remove). It overrides Clef's `resolved_p`, and a thread resolved this way is not in
 the "you", "waiting" or "silent" status piles.
@@ -292,6 +294,22 @@ does not keep it open), until staff resolve it again, which moves the ✅ (off a
 that it is newer than the customer's message. Staff and bot messages after the ✅ change
 nothing. A ✅ without a time (from a backfilled Slack message) counts from the root message's
 time.
+
+The models see reactions too: each message is followed by who reacted with what (customer or
+Adobe staff), and a reaction relabels the thread, so a customer's ✅ or 👍 on the answer can
+make Clef call it resolved.
+
+### Steering reactions
+
+Hovering a message shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟. Three of them steer the
+inbox, on any message of the thread:
+
+- **👀 seen**: the person who put it is on it. For them it counts like having posted (higher);
+  for the rest of the team, a colleague's 👀 since the customer last wrote puts the thread in
+  "team on it" and halves its smart score, unless it mentions them.
+- **🙏 thanks**: after the last message, nothing is pending (`waiting_on` is nobody).
+- **🛟 help**: a colleague asks the team to look: the thread is in "you" for everyone else
+  and its smart score doubles, until it is resolved.
 
 ## People
 

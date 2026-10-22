@@ -191,8 +191,22 @@
   .msg.adobe .picker { right: 0; }
   .picker button { border: 0; background: none; font-size: 18px; padding: 2px 5px; border-radius: 8px; }
   .picker button:hover, .picker button:focus-visible { background: var(--hover); }
-  .ph .resolve { margin-left: auto; align-self: center; font-size: 12px; font-weight: 400; padding: 2px 10px; white-space: nowrap; flex: none; }
-  .ph .resolve[aria-pressed="true"] { background: var(--sel); border-color: var(--green); }
+  .sendwrap { position: relative; flex: none; }
+  .sendwrap .resolve { position: absolute; right: 0; bottom: calc(100% + 6px); white-space: nowrap; font-size: 12.5px;
+    padding: 5px 12px; border-radius: 16px; background: var(--card); border: 1px solid var(--green); box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+  .sendwrap .resolve[hidden] { display: none; }
+  .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
+  /* Quick reactions on hovering a message, like Slack. */
+  .msg .quick { position: absolute; top: -14px; right: 8px; z-index: 3; display: none; gap: 1px; padding: 2px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.15); }
+  .msg.adobe .quick { right: auto; left: 8px; }
+  .msg:hover .quick, .msg .quick:focus-within { display: flex; }
+  .msg .quick button { border: 0; background: none; font-size: 16px; line-height: 20px; padding: 2px 5px; border-radius: 7px; }
+  .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
+  .msg .quick button[aria-pressed="true"] { background: var(--sel); }
+  .msg .quick .more { font-size: 14px; color: var(--mute); }
+  .msg .meta .react { display: none; }
+  @media (hover: none) { .msg .meta .react { display: inline; visibility: visible; } }
   .ph .resolved { color: var(--green); }
   .ph .reopened { color: var(--yellow); }
   .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }
@@ -243,7 +257,7 @@
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
   <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
-  <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd> ✅</span>
+  <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd></span>
 </header>
 <main>
   <section id="filters" aria-label="Filters"></section>
@@ -469,10 +483,20 @@ const EMOJI = {
   wave: '👋', muscle: '💪', sparkles: '✨', star: '⭐', point_up: '☝️', point_right: '👉', see_no_evil: '🙈',
   sweat_smile: '😅', grinning: '😀', confused: '😕', facepalm: '🤦', face_palm: '🤦', hourglass: '⌛', 'heavy_plus_sign': '➕',
   rofl: '🤣', heart_eyes: '😍', partying_face: '🥳', saluting_face: '🫡', ack: '✅', done: '✅', yes: '✅', no: '❌',
-  thank_you: '🙏', thanks: '🙏', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡', open_mouth: '😮',
+  thank_you: '🙏', thanks: '🙏', laughing: '😆', smile: '😄', smiley: '😃', rocket: '🚀', ring_buoy: '🛟',
+  heavy_check_mark: '✔️', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡', open_mouth: '😮',
 };
-// The reaction picker, by Slack name (the server turns them into Teams emoji).
-const PICKER = ['thumbsup', 'heart', 'joy', 'open_mouth', 'eyes', 'pray', 'tada', 'white_check_mark'];
+// Reactions by Slack name (the server turns them into Teams emoji). The quick ones show on
+// hovering a message, like in Slack; some of them steer the inbox (see SIGNAL_HINT).
+const QUICK = ['white_check_mark', 'eyes', 'pray', '+1', 'grinning', 'rocket', 'ring_buoy'];
+const PICKER = [...QUICK, 'heavy_check_mark', 'heart', 'joy', 'open_mouth', 'tada'];
+const SIGNAL_HINT = {
+  white_check_mark: 'resolved (also goes on the first message)',
+  heavy_check_mark: 'resolved (also goes on the first message)',
+  eyes: 'seen: you are on it (lower for the rest of the team, higher for you)',
+  pray: 'thanks: nothing is pending any more',
+  ring_buoy: 'help: the rest of the team should look',
+};
 const emoji = (name) => EMOJI[name] || EMOJI[String(name).replace(/::skin-tone-\d/, '')] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 
 // A safe markdown subset: escape first, then format. Images from Slack and Teams go
@@ -558,13 +582,35 @@ const WAIT_THEM = { critical: 30 * MIN, high: 60 * MIN, normal: 1440 * MIN, low:
  * - team: your team is in it, you were not mentioned, all is well (green)
  * - quiet: everything else (grey)
  */
+/**
+ * What the steering reactions say, for the viewer: `mine` 👀 by the viewer (on it),
+ * `others` 👀 by someone else at Adobe since the customer last wrote (someone is on it),
+ * `help` 🛟 by someone else at Adobe (they ask the team to look).
+ */
+function signals(t) {
+  const me = viewerId();
+  const list = (t.signals || []).filter((x) => x.staff);
+  const since = (x) => t.last_staff === 1 || !t.last_at || (x.at && x.at >= t.last_at);
+  return {
+    mine: list.some((x) => x.signal === 'seen' && x.person === me),
+    others: list.some((x) => x.signal === 'seen' && x.person !== me && since(x)),
+    help: list.some((x) => x.signal === 'help' && x.person !== me),
+  };
+}
+
 function statusOf(t) {
   const me = viewerId();
   const u = urgencyOf(t);
   const alert = t.kind === 'alert';
+  const sig = signals(t);
   if (!alert && t.unseenByAdobe && u === 'critical') return 'critical';
   if (!alert && t.unseenByAdobe && u === 'high') return 'hot';
-  const mine = (t.posters || []).includes(me) || (t.mentioned || []).some((m) => m.person === me);
+  // 🛟: a colleague asks for eyes on it.
+  if (!alert && sig.help && !checked(t)) return 'you';
+  // 👀 by a colleague: they are on it, so it is theirs, unless it mentions you.
+  if (!alert && sig.others && !sig.mine && !t.mentionedMe) return 'team';
+  const mine = (t.posters || []).includes(me) || (t.mentioned || []).some((m) => m.person === me)
+    || sig.mine;
   // Resolved with ✅ by staff: nobody is waiting, whoever spoke last.
   if (!alert && mine && !checked(t) && (t.last_staff === 0 || t.mentionedMe)) return 'you';
   const age = Date.now() - (Date.parse(lastOf(t)) || Date.now());
@@ -582,10 +628,10 @@ const STATUS_LABEL = {
 const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
-  you: 'You posted or were mentioned, and the customer spoke last or you were mentioned (not once resolved with ✅)',
+  you: 'You posted, were mentioned or put 👀 on it, and the customer spoke last or you were mentioned (not once resolved with ✅); or a colleague asked for help with 🛟',
   waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal), and Adobe did not post last',
   silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal): follow up or close',
-  team: 'Your team is in it, you were not mentioned, all is well',
+  team: 'Your team is in it (or a colleague put 👀 on it), you were not mentioned, all is well',
   quiet: 'Everything else',
 };
 
@@ -708,7 +754,8 @@ function moods(t) {
   if (URGENCY_EMOJI[u]) out.push(`<span class="em" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>`);
   const k = kindOf(t);
   if (k) out.push(`<span class="em" title="${esc(k)}">${KIND_EMOJI[k] || '💬'}</span>`);
-  const rx = [...(t.reactions || [])].sort((a, b) => b.count - a.count).slice(0, 5);
+  const rx = [...(t.reactions || [])].filter((r) => !/^:.*:$/.test(emoji(r.emoji)))
+    .sort((a, b) => b.count - a.count).slice(0, 5);
   for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${esc(emoji(r.emoji))}</span>`);
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
@@ -754,14 +801,17 @@ function baseScore(t) {
   const team = teamIds();
   let near = 1;
   if ((t.mentioned || []).some((m) => m.person === me) || t.mentionedMe) near = 3;
-  else if ((t.posters || []).includes(me)) near = 2;
+  else if ((t.posters || []).includes(me) || signals(t).mine) near = 2;
   else if ((t.mentioned || []).some((m) => team.has(m.person))) near = 1.5;
   else if ((t.posters || []).some((p) => team.has(p))) near = 1.2;
   const waitsOnUs = t.waiting_on === 'us';
   const waiting = waitsOnUs ? 1 + Math.log2(1 + ageH / 2) : 0.3;
   const unseen = t.unseenByAdobe ? 1.5 : 1;
   const alert = t.kind === 'alert' ? 0.3 : 1;
-  return alert * (2 * recency + urgency * open * waiting * near * unseen);
+  const sig = signals(t);
+  // 👀 by a colleague lowers it for you; 🛟 by a colleague raises it.
+  const steer = (sig.others && !sig.mine ? 0.5 : 1) * (sig.help ? 2 : 1);
+  return alert * (2 * recency + urgency * open * waiting * near * unseen * steer);
 }
 
 const tpl = document.createElement('template');
@@ -866,7 +916,7 @@ function resolveButton(thread, r) {
   // Without the first message there is nothing to put the ✅ on.
   if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r)) return '';
   const mine = r?.state === 'resolved' && r.mine;
-  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
+  return `<button class="resolve" id="resolve" hidden aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
 }
 
 function message(m, prev, fresh) {
@@ -890,17 +940,21 @@ function message(m, prev, fresh) {
     return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
       : `<span title="${tip}">${chip}</span>`;
   }).join('');
+  const quick = can ? `<div class="quick" role="toolbar" aria-label="React, as you">${QUICK.map((n) => {
+    const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
+    return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
+  }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button></div>` : '';
   const add = can ? `<button class="react" data-picker="1" aria-haspopup="true" aria-expanded="false" title="Add a reaction, as you">☺ React</button>` : '';
   return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
-    <div class="col"><div class="who">${who}</div>
+    <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
       ${rx ? `<div class="rx">${rx}</div>` : ''}
       ${m.editedAt || m.permalink || m.pending || add ? `<div class="meta">${add}${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
     </div></div>`;
 }
 
-function composer(thread) {
+function composer(thread, resolve = '') {
   if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
   const p = thread.source;
   const name = p === 'slack' ? 'Slack' : 'Microsoft';
@@ -910,7 +964,7 @@ function composer(thread) {
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (@ to mention, Enter to send, Shift+Enter for a new line)"></textarea>
-    <button class="send" id="send">Send</button></div>`;
+    <span class="sendwrap">${resolve}<button class="send" id="send" title="${resolve ? 'Enter to send. Keep the pointer here to resolve with ✅' : 'Enter to send'}">Send</button></span></div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -978,7 +1032,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }).join(' ');
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
-  pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}${resolveButton(thread, resolution)}</h2>
+  pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
       <div class="sub">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="">` : ''}<span>${esc(thread.org)}</span> ·
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
@@ -988,7 +1042,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
       ${state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
       <div class="feed">${thread.root_at ? '' : '<div class="sys">Earlier messages were posted before opspile started listening.</div>'}${feed}</div>
     </div>
-    ${composer(thread)}`;
+    ${composer(thread, resolveButton(thread, resolution))}`;
   state.shownIds = ids;
   cardGone();
   const scroller = pane.querySelector('.scroller');
@@ -1015,15 +1069,55 @@ async function openThread(key, { live = false, cached = false } = {}) {
       if (mentionKey(e, key)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(key, thread); }
     };
-    $('send').onclick = () => send(key, thread);
+    $('send').onclick = (e) => { if (!sendHold.held) send(key, thread); e.preventDefault(); };
+    wireResolveReveal(key, thread);
   }
   if (state.data?.threads.some((x) => x.thread === key) && (switching || !live)) markRead(t);
+}
+
+// Keeping the pointer on Send for a second (or pressing it for a second on touch) reveals
+// the ✅ Resolve button above it; with a draft it sends the reply first.
+const sendHold = { timer: null, hide: null, held: false };
+function wireResolveReveal(key, thread) {
+  const wrap = document.querySelector('.sendwrap');
+  const btn = $('resolve');
+  if (!wrap || !btn) return;
+  const label = () => {
+    const draft = $('reply')?.value.trim();
+    if (btn.dataset.mine) btn.textContent = '✅ Resolved · undo';
+    else btn.textContent = draft ? 'Send and ✅ resolve' : '✅ Resolve';
+  };
+  const show = () => { label(); btn.hidden = false; };
+  const hide = () => { btn.hidden = true; };
+  $('send').onpointerenter = (e) => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(sendHold.hide);
+    clearTimeout(sendHold.timer);
+    sendHold.timer = setTimeout(show, 1000);
+  };
+  $('send').onpointerdown = (e) => {
+    sendHold.held = false;
+    if (e.pointerType !== 'touch') return;
+    clearTimeout(sendHold.timer);
+    sendHold.timer = setTimeout(() => { sendHold.held = true; show(); }, 1000);
+  };
+  $('send').onpointerup = () => clearTimeout(sendHold.timer);
+  wrap.onpointerenter = () => clearTimeout(sendHold.hide);
+  wrap.onpointerleave = () => {
+    clearTimeout(sendHold.timer);
+    sendHold.hide = setTimeout(hide, 500);
+  };
+  btn.onclick = async () => {
+    hide();
+    if (!btn.dataset.mine && $('reply')?.value.trim() && !(await send(key, thread))) return;
+    toggleResolve();
+  };
 }
 
 async function send(key, thread) {
   const box = $('reply');
   const body = box.value.trim();
-  if (!body) return;
+  if (!body) return false;
   $('send').disabled = true;
   closeMentions();
   const mentions = mentionsIn(key, body);
@@ -1034,13 +1128,14 @@ async function send(key, thread) {
     if (data.connect) { state.me.connected = { ...state.me.connected, [data.connect]: false }; }
     toast(data.error || `could not send (${res.status})`);
     if (data.connect) openThread(key, { live: true });
-    return;
+    return false;
   }
   box.value = '';
   mention.picked.delete(key);
   const last = state.shownIds ? [...state.shownIds].pop() : null;
   state.sending.push({ thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, source: thread.source, last });
   openThread(key, { live: true });
+  return true;
 }
 
 // ---------------------------------------------------------------- mentions
@@ -1357,12 +1452,13 @@ async function start() {
     const msg = e.target.closest('.msg');
     const pick = e.target.closest('[data-pick]');
     const chip = e.target.closest('.rx button');
-    if (e.target.closest('#resolve')) { toggleResolve(); return; }
     if (msg && e.target.closest('[data-picker]')) { openPicker(e.target.closest('[data-picker]')); return; }
     if (msg && pick) {
-      const mine = msg.querySelector(`.rx button[data-emoji="${CSS.escape(pick.dataset.pick)}"]`)?.dataset.mine;
+      const same = [...msg.querySelectorAll('.rx button')].find((b) => emoji(b.dataset.emoji) === emoji(pick.dataset.pick));
+      const mine = same?.dataset.mine;
       closePicker();
-      react(msg.dataset.id, pick.dataset.pick, Boolean(mine));
+      // Taking one off uses the name it is stored under (Slack has aliases).
+      react(msg.dataset.id, mine ? same.dataset.emoji : pick.dataset.pick, Boolean(mine));
       return;
     }
     if (msg && chip) { react(msg.dataset.id, chip.dataset.emoji, Boolean(chip.dataset.mine)); return; }
