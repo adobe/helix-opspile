@@ -198,6 +198,7 @@ describe('bursts', () => {
       const a = await seed(env, '5.0', 'Hi Amol', at0);
       // eslint-disable-next-line no-await-in-loop
       const b = await seed(env, '5.1', 'we are on call, can you join?', at1);
+      env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
       for (const [k, at, id] of [[a, at0, '5.0'], [b, at1, '5.1']]) {
         env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted)
           VALUES ('slack', 'E1', 'C1', ?, ?, ?, 'slack:E1:U7', 1)`).run(id, k, at);
@@ -209,6 +210,23 @@ describe('bursts', () => {
       const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
       assert.deepEqual(rows, [{ logical_thread: null, logical_via: null }, { logical_thread: a, logical_via: 'burst' }], `order ${order}`);
     }
+  });
+});
+
+describe('bursts and bots', () => {
+  it('never treats a bot posting different alerts as a burst', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const at0 = new Date(T0).toISOString();
+    const at1 = new Date(T0 + 60000).toISOString();
+    const a = await seed(env, '6.0', alert(422, 'a4e16b8edcc84c7a', at0), at0);
+    const b = await seed(env, '6.1', 'Disk full on build-7', at1);
+    for (const [k, at, id] of [[a, at0, '6.0'], [b, at1, '6.1']]) {
+      env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted)
+        VALUES ('slack', 'E1', 'C1', ?, ?, ?, 'slack:E1:B1', 0)`).run(id, k, at);
+    }
+    await rethread(env, a);
+    await rethread(env, b);
+    assert.deepEqual(env.DB.rows('SELECT logical_via FROM threads ORDER BY root_at').map((r) => r.logical_via), [null, null]);
   });
 });
 
