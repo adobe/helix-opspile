@@ -258,6 +258,65 @@ async function accessToken(env, person, platform) {
 const htmlEscape = (s) => s.replace(/[&<>"]/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
 }[c]));
+// Slack wants exactly these three escaped in `text`; everything else is sent as written.
+const slackEscape = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const MAX_MENTIONS = 20;
+const MAX_SUGGESTIONS = 8;
+
+/**
+ * The reply split into text and mentions: every `@Name` of a mentioned account becomes a
+ * mention part, longest names first so that "@Ada Lovelace" wins over "@Ada".
+ *
+ * @param {string} body
+ * @param {{ id: string, name: string }[]} mentions
+ * @returns {(string|{ id: string, name: string })[]}
+ */
+export function splitMentions(body, mentions) {
+  const named = mentions.filter((m) => m.name).sort((a, b) => b.name.length - a.name.length);
+  if (!named.length) {
+    return [body];
+  }
+  const re = new RegExp(`@(${named.map((m) => reEscape(m.name)).join('|')})(?![\\p{L}\\p{N}_])`, 'gu');
+  const parts = [];
+  let last = 0;
+  for (const match of body.matchAll(re)) {
+    parts.push(body.slice(last, match.index));
+    parts.push(named.find((m) => m.name === match[1]));
+    last = match.index + match[0].length;
+  }
+  parts.push(body.slice(last));
+  return parts.filter((p) => p !== '');
+}
+
+/** Slack `text`: mentions as `<@U…>`, so the person is notified. */
+export function slackText(body, mentions = []) {
+  return splitMentions(body, mentions)
+    .map((p) => (typeof p === 'string' ? slackEscape(p) : `<@${p.id}>`)).join('');
+}
+
+/** Teams message `body` and `mentions`: each mention an `<at id>` with its entry. */
+export function teamsMessage(body, mentions = []) {
+  const entries = [];
+  const content = splitMentions(body, mentions).map((p) => {
+    if (typeof p === 'string') {
+      return htmlEscape(p).replace(/\n/g, '<br>');
+    }
+    const id = entries.length;
+    entries.push({
+      id,
+      mentionText: p.name,
+      mentioned: { user: { id: p.id, displayName: p.name, userIdentityType: 'aadUser' } },
+    });
+    return `<at id="${id}">${htmlEscape(p.name)}</at>`;
+  }).join('');
+  return { body: { contentType: 'html', content }, ...(entries.length ? { mentions: entries } : {}) };
+}
+
+const NAME = 'COALESCE(p.name, i.name)';
+const ACCOUNTS = `FROM identities i LEFT JOIN people p ON p.id = i.person
+  WHERE i.source = ? AND i.tenant = ? AND i.kind = 'person' AND ${NAME} IS NOT NULL`;
 
 /** The latest platform thread of an inbox entry: replies go there. */
 async function target(env, key) {
@@ -268,11 +327,61 @@ async function target(env, key) {
 }
 
 /**
- * POST /api/post `{ thread, text }`: replies in the thread as the signed-in person. The
- * reply then arrives like any other message, through the platform's events.
+ * The accounts a reply mentions, as opspile knows them: only platform accounts already in
+ * D1, in the thread's workspace or tenant, can be mentioned. The name is D1's, so the text
+ * of a mention is the same `@Name` the message shows when it comes back.
+ */
+async function knownMentions(env, t, ids) {
+  const wanted = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((m) => String((m && m.id) || m || '')).filter(Boolean))].slice(0, MAX_MENTIONS);
+  if (!wanted.length) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
+    AND i.user_id IN (SELECT value FROM json_each(?))`)
+    .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
+  return results || [];
+}
+
+/**
+ * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1
+ * for the thread's platform and workspace. Whoever posted in the thread comes first, then
+ * staff, then everyone else, by name. `q` matches the start of any word of the name.
+ */
+export async function mentionable(env, key, q, inTeam) {
+  const t = key && await target(env, key);
+  if (!t || !inTeam(t.team)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const like = String(q || '').trim().slice(0, 60).replace(/[\\%_]/g, '\\$&');
+  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.avatar,
+      COALESCE(p.staff, 0) AS staff, EXISTS (SELECT 1 FROM messages m
+        WHERE m.thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)
+        AND m.author_key = i.source || ':' || i.tenant || ':' || i.user_id) AS here
+    ${ACCOUNTS} AND (? = '' OR ${NAME} LIKE ? || '%' ESCAPE '\\'
+      OR ${NAME} LIKE '% ' || ? || '%' ESCAPE '\\')
+    ORDER BY here DESC, staff DESC, ${NAME} COLLATE NOCASE LIMIT ${MAX_SUGGESTIONS * 2}`)
+    .bind(key, key, t.source, t.tenant, like, like, like).all();
+  const seen = new Set();
+  const people = (results || []).filter((r) => !seen.has(r.id) && seen.add(r.id))
+    .slice(0, MAX_SUGGESTIONS).map((r) => ({
+      id: r.id,
+      name: r.name,
+      avatar: r.avatar || null,
+      here: Boolean(r.here),
+      staff: Boolean(r.staff),
+    }));
+  return json({ platform: t.source, people });
+}
+
+/**
+ * POST /api/post `{ thread, text, mentions? }`: replies in the thread as the signed-in
+ * person. `mentions` are account ids from /api/mentionable; each `@Name` of one of them in
+ * the text becomes a real platform mention, so the person is notified. The reply then
+ * arrives like any other message, through the platform's events.
  */
 export async function post(env, me, request, inTeam) {
-  const { thread: key, text } = request || {};
+  const { thread: key, text, mentions: ids } = request || {};
   const body = String(text || '').trim();
   if (!body || body.length > MAX_TEXT) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
@@ -289,11 +398,14 @@ export async function post(env, me, request, inTeam) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
   }
+  const mentions = await knownMentions(env, t, ids);
   if (t.source === 'slack') {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ channel: t.channel_id, thread_ts: t.root_id, text: body }),
+      body: JSON.stringify({
+        channel: t.channel_id, thread_ts: t.root_id, text: slackText(body, mentions),
+      }),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -310,9 +422,7 @@ export async function post(env, me, request, inTeam) {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      body: { contentType: 'html', content: htmlEscape(body).replace(/\n/g, '<br>') },
-    }),
+    body: JSON.stringify(teamsMessage(body, mentions)),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

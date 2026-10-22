@@ -279,8 +279,28 @@ async function api(req, res, url) {
     const result = thread(url.searchParams.get('thread'));
     return result ? json(res, result) : json(res, { error: 'not found' }, 404);
   }
+  if (url.pathname === '/api/mentionable') {
+    // As D1 would answer: known people, those who posted in the thread first, then staff.
+    const entry = store.threads.get(url.searchParams.get('thread'));
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    const here = new Set(thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
+    const found = [...store.people.values()]
+      .filter((p) => !q || p.name.toLowerCase().startsWith(q) || p.name.toLowerCase().includes(` ${q}`))
+      .map((p) => ({
+        id: `${entry.row.source}-${p.key}`, name: p.name, avatar: null, here: here.has(p.name), staff: p.staff,
+      }))
+      .sort((a, b) => (b.here - a.here) || (b.staff - a.staff) || a.name.localeCompare(b.name))
+      .slice(0, 8);
+    return json(res, { platform: entry.row.source, people: found });
+  }
   if (url.pathname === '/api/post' && req.method === 'POST') {
-    const { thread: key, text: reply } = await readJson(req);
+    const { thread: key, text: reply, mentions = [] } = await readJson(req);
+    if (mentions.length) {
+      console.log(`post mentions ${JSON.stringify(mentions)}`);
+    }
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team) || !String(reply || '').trim()) {
       return json(res, { error: 'not found' }, 404);

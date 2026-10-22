@@ -15,7 +15,8 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  checkState, connections, finishAuth, makeState, post, seal, unseal,
+  checkState, connections, finishAuth, makeState, mentionable, post, seal, slackText, splitMentions,
+  teamsMessage, unseal,
 } from '../src/post.js';
 import { d1 } from './d1.js';
 
@@ -54,6 +55,65 @@ function env() {
   };
 }
 const inTeam = (t) => t === 'helix';
+
+// Made-up accounts: two Slack people (one a bot) and one Teams person, all in D1 already.
+function withAccounts(e) {
+  const add = (source, tenant, id, kind, name, person = null) => e.DB.sqlite.prepare(`INSERT INTO
+    identities (source, tenant, user_id, kind, name, person, fetched_at) VALUES (?, ?, ?, ?, ?, ?,
+    '2026-10-21T10:00:00Z')`).run(source, tenant, id, kind, name, person);
+  add('slack', 'E1', 'U1', 'person', 'ada.l', 1);
+  add('slack', 'E1', 'U2', 'person', 'Bob Builder');
+  add('slack', 'E1', 'U3', 'person', 'Bea Bunny');
+  add('slack', 'E1', 'B1', 'bot', 'Bobbot');
+  add('slack', 'E9', 'U4', 'person', 'Bob Elsewhere');
+  add('teams', 'T', 'u-bob', 'person', 'Bob Builder');
+  e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
+    VALUES ('slack', 'E1', 'C1', '1.2', 'slack:E1:C1:1.1', '2026-10-21T10:00:00Z', 'slack:E1:U3')`).run();
+  return e;
+}
+
+describe('mentions', () => {
+  const ada = { id: 'U1', name: 'Ada' };
+  const lovelace = { id: 'U5', name: 'Ada Lovelace' };
+
+  it('splits @Name into mentions, longest name first, at word ends only', () => {
+    assert.deepEqual(splitMentions('hi @Ada Lovelace and @Ada, not @Adam', [ada, lovelace]), [
+      'hi ', lovelace, ' and ', ada, ', not @Adam',
+    ]);
+    assert.deepEqual(splitMentions('plain @Ada', []), ['plain @Ada']);
+  });
+
+  it('writes Slack mentions as <@id> and escapes the rest', () => {
+    assert.equal(slackText('@Ada see a<b & c>d', [ada]), '<@U1> see a&lt;b &amp; c&gt;d');
+    assert.equal(slackText('<@U9> by hand', []), '&lt;@U9&gt; by hand');
+  });
+
+  it('writes Teams mentions as <at> with a mention entry each', () => {
+    assert.deepEqual(teamsMessage('@Ada &\n@Ada', [ada]), {
+      body: { contentType: 'html', content: '<at id="0">Ada</at> &amp;<br><at id="1">Ada</at>' },
+      mentions: [0, 1].map((id) => ({
+        id,
+        mentionText: 'Ada',
+        mentioned: { user: { id: 'U1', displayName: 'Ada', userIdentityType: 'aadUser' } },
+      })),
+    });
+    assert.deepEqual(teamsMessage('no one', [ada]), { body: { contentType: 'html', content: 'no one' } });
+  });
+
+  it('suggests people in D1 on the thread platform, those in the thread first', async () => {
+    const e = withAccounts(env());
+    const names = async (thread, q) => (await (await mentionable(e, thread, q, inTeam)).json())
+      .people.map((p) => p.name);
+    assert.deepEqual(await names('slack:E1:C1:1.1', 'b'), ['Bea Bunny', 'Bob Builder']);
+    assert.deepEqual(await names('slack:E1:C1:1.1', 'build'), ['Bob Builder']);
+    assert.deepEqual(await names('slack:E1:C1:1.1', 'bob b'), ['Bob Builder']);
+    // Staff (a known person) before others, then by name; never bots or other workspaces.
+    assert.deepEqual(await names('slack:E1:C1:1.1', ''), ['Bea Bunny', 'Ada', 'Bob Builder']);
+    assert.deepEqual(await names('slack:E1:C1:1.1', '%'), []);
+    assert.deepEqual(await names('teams:T:G:19:c:5', 'bo'), ['Bob Builder']);
+    assert.equal((await mentionable(e, 'slack:E1:C1:1.1', 'b', () => false)).status, 404);
+  });
+});
 
 describe('token sealing and OAuth state', () => {
   it('round-trips a sealed token and never stores it in the clear', async () => {
@@ -136,6 +196,20 @@ describe('connecting and posting', () => {
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
   });
 
+  it('turns picked @Names into Slack mentions, only for accounts in D1', async () => {
+    const e = withAccounts(env());
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const res = await post(e, ME, {
+      thread: 'slack:E1:C1:1.1',
+      text: '@Bob Builder @Bobbot @Bob Elsewhere see this',
+      mentions: [{ id: 'U2' }, { id: 'B1' }, { id: 'U4' }],
+    }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = JSON.parse(calls.find((c) => c.u.endsWith('/chat.postMessage')).init.body);
+    assert.equal(sent.text, '<@U2> @Bobbot @Bob Elsewhere see this');
+  });
+
   it('refuses a Slack account that belongs to someone else', async () => {
     const inner = globalThis.fetch;
     globalThis.fetch = async (url, init) => (String(url).endsWith('/oauth.v2.access')
@@ -158,6 +232,14 @@ describe('connecting and posting', () => {
     assert.match(sent.u, /\/teams\/G1\/channels\/19%3Ac\/messages\/5\/replies$/);
     assert.equal(sent.init.headers.authorization, 'Bearer ms-ada');
     assert.deepEqual(JSON.parse(sent.init.body).body, { contentType: 'html', content: 'a &lt; b<br>next' });
+
+    withAccounts(e);
+    await post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'thanks @Bob Builder', mentions: ['u-bob'] }, inTeam);
+    const mentioned = JSON.parse(calls.filter((c) => c.u.includes('/replies')).pop().init.body);
+    assert.equal(mentioned.body.content, 'thanks <at id="0">Bob Builder</at>');
+    assert.deepEqual(mentioned.mentions[0].mentioned.user, {
+      id: 'u-bob', displayName: 'Bob Builder', userIdentityType: 'aadUser',
+    });
   });
 
   it('only lets staff reply, and only in their teams', async () => {
