@@ -39,6 +39,7 @@ import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
+import { ICONS } from '../src/icons.js';
 import { inboxPage as withEmoji } from '../src/page.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
@@ -742,8 +743,9 @@ const server = createServer(async (req, res) => {
       res.end(await inboxPage());
       return;
     }
-    if (url.pathname === '/favicon.ico') {
-      res.writeHead(204).end();
+    if (ICONS[url.pathname]) {
+      const { type, base64 } = ICONS[url.pathname];
+      res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
       return;
     }
     if (url.pathname === '/__dev/reload') {
