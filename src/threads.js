@@ -147,6 +147,26 @@ export async function findMessage(db, {
 /** Attention levels, most pressing first. */
 export const ATTENTION = ['adobe', 'mentioned-me', 'mentioned-team', 'team', 'me'];
 
+/**
+ * Who a thread waits on: `us`, `customer`, `vendor` or `nobody`. Clef's `next_actor` (on
+ * `label`) answers it, but a label can be stale or wrong: when Adobe posted last, the thread
+ * does not wait on us, whatever the label says. Without a label, a thread waits on us when
+ * someone outside Adobe posted last. Alerts and threads nobody posted in wait on nobody.
+ *
+ * @param {object} t a thread with `kind`, `last_staff` (1, 0, or null) and `label`
+ */
+export function waitingOn(t) {
+  if (t.kind === 'alert' || t.last_staff == null) {
+    return 'nobody';
+  }
+  const ours = Boolean(Number(t.last_staff));
+  const actor = t.label && t.label.next_actor;
+  if (!actor || actor === 'us') {
+    return ours ? 'nobody' : 'us';
+  }
+  return actor === 'customer' || actor === 'vendor' ? actor : 'nobody';
+}
+
 function group(rows) {
   const by = new Map();
   for (const r of rows) {

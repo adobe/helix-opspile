@@ -20,7 +20,7 @@ import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
-import { ATTENTION, readState } from './threads.js';
+import { ATTENTION, readState, waitingOn } from './threads.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -273,7 +273,8 @@ export async function inbox(env, me, team) {
       })).map((t) => {
       const g = sizes.get(t.thread);
       // Totals over the whole group, not just the members loaded here.
-      return g && g.n > 1 ? { ...t, occurrences: g.n, messages: g.total } : t;
+      const entry = g && g.n > 1 ? { ...t, occurrences: g.n, messages: g.total } : t;
+      return { ...entry, waiting_on: waitingOn(entry) };
     }),
   };
 }

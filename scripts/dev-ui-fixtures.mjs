@@ -354,6 +354,32 @@ export function createStore(now = Date.now()) {
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
   });
 
+  // Labeled "us", but Adobe asked last: not waiting on us, whatever the label says.
+  seed({
+    ch: CHANNELS.aemAcme,
+    messages: [
+      ['sam', 520, 'Can we get a second preview environment for the campaign?'],
+      ['priya', 500, 'Sure. Which branch should it build from?'],
+    ],
+    reads: { priya: 500 },
+    label: {
+      kind: 'request', next_actor: 'us', urgency: 0.8, resolved_p: 0.1,
+    },
+  });
+
+  // Waiting on the customer for more than a day: "Customer silent".
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 2100, 'Search results show unpublished pages.'],
+      ['tom', 2000, 'Can you share one URL where this happens?'],
+    ],
+    reads: { tom: 2000 },
+    label: {
+      kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1,
+    },
+  });
+
   seed({
     ch: CHANNELS.release,
     messages: [
