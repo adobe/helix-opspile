@@ -67,6 +67,13 @@ function withAccounts(e) {
   add('slack', 'E1', 'B1', 'bot', 'Bobbot');
   add('slack', 'E9', 'U4', 'person', 'Bob Elsewhere');
   add('teams', 'T', 'u-bob', 'person', 'Bob Builder');
+  // Teams bots: one seen in the thread's Teams team (G1), one only in another team.
+  add('teams', 'T', 'b-help', 'bot', 'helper-agent');
+  add('teams', 'T', 'b-else', 'bot', 'bob-bot');
+  e.DB.sqlite.prepare("UPDATE identities SET handle = 'helper' WHERE user_id = 'b-help'").run();
+  e.DB.sqlite.prepare(`INSERT INTO bot_teams (source, tenant, bot_id, group_id, at) VALUES
+    ('teams', 'T', 'b-help', 'G1', '2026-10-21T10:00:00Z'),
+    ('teams', 'T', 'b-else', 'G2', '2026-10-21T10:00:00Z')`).run();
   e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
     VALUES ('slack', 'E1', 'C1', '1.2', 'slack:E1:C1:1.1', '2026-10-21T10:00:00Z', 'slack:E1:U3')`).run();
   return e;
@@ -100,6 +107,18 @@ describe('mentions', () => {
     assert.deepEqual(teamsMessage('no one', [ada]), { body: { contentType: 'html', content: 'no one' } });
   });
 
+  it('writes a Teams bot mention as an application, so the bot receives it', () => {
+    const bot = { id: 'b-help', name: 'helper', kind: 'bot' };
+    assert.deepEqual(teamsMessage('@helper add x@example.com', [bot]), {
+      body: { contentType: 'html', content: '<at id="0">helper</at> add x@example.com' },
+      mentions: [{
+        id: 0,
+        mentionText: 'helper',
+        mentioned: { application: { id: 'b-help', displayName: 'helper', applicationIdentityType: 'bot' } },
+      }],
+    });
+  });
+
   it('suggests people in D1 on the thread platform, those in the thread first', async () => {
     const e = withAccounts(env());
     const names = async (thread, q) => (await (await mentionable(e, thread, q, inTeam)).json())
@@ -111,6 +130,13 @@ describe('mentions', () => {
     assert.deepEqual(await names('slack:E1:C1:1.1', ''), ['Bea Bunny', 'Ada', 'Bob Builder']);
     assert.deepEqual(await names('slack:E1:C1:1.1', '%'), []);
     assert.deepEqual(await names('teams:T:G:19:c:5', 'bo'), ['Bob Builder']);
+    // Teams bots of the thread's Teams team, by handle, after the people.
+    assert.deepEqual(await names('teams:T:G:19:c:5', 'help'), ['helper']);
+    assert.deepEqual(await names('teams:T:G:19:c:5', ''), ['Bob Builder', 'helper']);
+    const helper = (await (await mentionable(e, 'teams:T:G:19:c:5', 'h', inTeam)).json()).people[0];
+    assert.deepEqual(helper, {
+      id: 'b-help', name: 'helper', avatar: null, here: false, staff: false, kind: 'bot',
+    });
     assert.equal((await mentionable(e, 'slack:E1:C1:1.1', 'b', () => false)).status, 404);
   });
 });
@@ -240,6 +266,18 @@ describe('connecting and posting', () => {
     assert.deepEqual(mentioned.mentions[0].mentioned.user, {
       id: 'u-bob', displayName: 'Bob Builder', userIdentityType: 'aadUser',
     });
+
+    // A bot of this Teams team becomes an application mention; one from elsewhere does not.
+    await post(e, ME, {
+      thread: 'teams:T:G:19:c:5', text: '@helper add x@example.com @bob-bot', mentions: ['b-help', 'b-else'],
+    }, inTeam);
+    const asked = JSON.parse(calls.filter((c) => c.u.includes('/replies')).pop().init.body);
+    assert.equal(asked.body.content, '<at id="0">helper</at> add x@example.com @bob-bot');
+    assert.deepEqual(asked.mentions, [{
+      id: 0,
+      mentionText: 'helper',
+      mentioned: { application: { id: 'b-help', displayName: 'helper', applicationIdentityType: 'bot' } },
+    }]);
   });
 
   it('only lets staff reply, and only in their teams', async () => {

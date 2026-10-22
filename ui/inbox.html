@@ -184,7 +184,19 @@
     border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; overflow: auto; margin: 6px 0; white-space: pre-wrap; }
   .bubble blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid currentColor; opacity: .85; }
   .bubble ul, .bubble ol { margin: 4px 0; padding-left: 20px; }
-  .bubble img.att { display: block; max-width: 100%; max-height: 360px; border-radius: 10px; margin: 6px 0; }
+  .bubble img.att { display: block; max-width: 100%; max-height: 360px; border-radius: 10px; margin: 6px 0; cursor: zoom-in; }
+  /* Lightbox: an image full screen, dismissed by a click anywhere, the close button or Escape. */
+  dialog.lightbox { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+    background: transparent; color: #fff; place-items: center; cursor: zoom-out; overflow: hidden; outline: none; }
+  dialog.lightbox[open] { display: grid; }
+  dialog.lightbox::backdrop { background: rgba(0,0,0,.88); }
+  dialog.lightbox > img { max-width: calc(100vw - 32px); max-height: calc(100vh - 80px); object-fit: contain;
+    border-radius: 6px; box-shadow: 0 12px 48px rgba(0,0,0,.5); background: #fff; }
+  dialog.lightbox .bar { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; }
+  dialog.lightbox .bar a, dialog.lightbox .bar button { color: #fff; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 8px; padding: 4px 10px; font-size: 13px; text-decoration: none; cursor: pointer; }
+  dialog.lightbox .bar a:hover, dialog.lightbox .bar button:hover { background: rgba(255,255,255,.15); }
+  body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   .bubble .mention { font-weight: 600; }
   .msg.deleted .bubble { font-style: italic; opacity: .6; }
   .msg .meta { font-size: 11px; color: var(--faint); margin: 3px 12px 0; min-height: 15px; }
@@ -548,7 +560,7 @@ function setMentionNames(names) {
 const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
 function inline(s) {
   return s
-    .replace(/!\[([^\]\n]*)\]\((https:\/\/[^)\s]+)\)/g, (_, alt, u) => `<img class="att" src="${esc(proxied(u.replace(/&amp;/g, '&')))}" alt="${alt}" loading="lazy">`)
+    .replace(/!\[([^\]\n]*)\]\((https:\/\/[^)\s]+)\)/g, (_, alt, u) => `<img class="att" src="${esc(proxied(u.replace(/&amp;/g, '&')))}" alt="${alt}" loading="lazy" tabindex="0">`)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(>])\*([^*\n]+)\*(?=[\s).,!?:;<]|$)/g, '$1<em>$2</em>')
@@ -1342,8 +1354,9 @@ async function send(key, thread) {
 
 // ---------------------------------------------------------------- mentions
 // Typing @ suggests people opspile already knows on the thread's platform (D1 accounts),
-// those in the thread first. Picking one writes @Name and remembers the account, and the
-// reply sends its id along, so the server turns @Name into a real Slack or Teams mention.
+// those in the thread first, and on Teams the bots of the thread's Teams team.
+// Picking one writes @Name and remembers the account, and the reply sends its id along, so
+// the server turns @Name into a real Slack or Teams mention.
 const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
 const MENTION_AT = /(?:^|[\s(])@([\p{L}\p{N}._'-]*(?: [\p{L}\p{N}._'-]*){0,2})$/u;
 
@@ -1381,7 +1394,7 @@ function renderMentions(key) {
   if (!ul || !box) return;
   if (!mention.list.length) { closeMentions(); return; }
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.here ? '<span class="hint">in thread</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
+    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
@@ -1713,11 +1726,13 @@ async function start() {
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
+    if (document.querySelector('dialog[open]')) return;
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
+  wireLightbox();
   window.addEventListener('popstate', async () => {
     const team = state.team;
     const { open, review } = fromUrl();
@@ -2090,6 +2105,50 @@ function confirmInPage(question, body, signal) {
     document.body.append(dlg);
     dlg.showModal();
     dlg.querySelector('[value="yes"]').focus();
+  });
+}
+
+/**
+ * Images in messages open full screen in a modal dialog: a click anywhere (but the link to
+ * the original), the close button or Escape dismisses it, and focus goes back to the image.
+ */
+function openLightbox(img) {
+  const src = img.currentSrc || img.src;
+  const dlg = toNode(`<dialog class="lightbox" aria-label="${esc(img.alt || 'Image')}">
+    <img src="${esc(src)}" alt="${esc(img.alt)}">
+    <div class="bar"><a href="${esc(src)}" target="_blank" rel="noopener">Open original ↗</a>
+    <button type="button" aria-label="Close">✕</button></div></dialog>`);
+  const dismiss = () => {
+    if (!dlg.isConnected) return;
+    if (dlg.open) dlg.close();
+    dlg.remove();
+    img.focus({ preventScroll: true });
+  };
+  dlg.addEventListener('click', (e) => { if (!e.target.closest('a')) dismiss(); });
+  // Escape: tidy up right away instead of waiting for the close event.
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); dismiss(); });
+  dlg.addEventListener('close', dismiss);
+  document.body.append(dlg);
+  dlg.showModal();
+  dlg.querySelector('button').focus();
+}
+function wireLightbox() {
+  const target = (e) => {
+    const img = e.target.closest?.('img.att');
+    // Nothing to show for an image that did not load.
+    return img && img.naturalWidth ? img : null;
+  };
+  document.addEventListener('click', (e) => {
+    const img = target(e);
+    if (!img || e.button !== 0) return;
+    e.preventDefault();
+    openLightbox(img);
+  });
+  document.addEventListener('keydown', (e) => {
+    const img = target(e);
+    if (!img || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    openLightbox(img);
   });
 }
 

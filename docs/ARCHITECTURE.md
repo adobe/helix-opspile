@@ -259,6 +259,9 @@ and an unchanged thread is never labeled twice):
 - **Rules** extract CVE ids, ticket keys, Edge Delivery `org/site` pairs, GitHub repos and URLs.
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
+  The title leaves out what the inbox shows next to it: the customer, the channel, the
+  platform, the kind of thread and Edge Delivery itself; a customer or product name the model
+  still writes is removed afterwards.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …). The channel keeps the
   highest probability any thread showed, so every thread of a customer shows their stack.
@@ -280,6 +283,15 @@ account (delegated `ChannelMessage.Send`, which also allows reactions) once. The
 email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
 A reply goes to the latest platform thread of an inbox entry and comes back through the
 normal ingestion path, like any other message.
+
+**Mentions.** `@` in a reply suggests the people opspile knows on the thread's platform, and
+on Teams also the bots seen in the thread's Teams team (a bot that posted, or was mentioned,
+in one of its channels; `bot_teams` in D1). A picked bot is sent as an `application` mention,
+which the bot receives exactly like a mention typed in Teams, from the person who wrote the
+reply. That is how a team member is added from the inbox: `@<admin bot> add someone@example.com`
+asks the bot that manages the Teams team, which answers in the thread (and in turn comes back
+through ingestion). A bot is mentioned by the name people use for it (`handle`, the mention text),
+which can differ from the name it posts under.
 
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
@@ -406,7 +418,9 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
   another workspace with `user_team`.
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
-  derived from the person's **mail domain** instead.
+  derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
+  bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
+  stay anonymous.
 
 **Profile cards.** Hovering over (focusing, or tapping) a name or avatar in the inbox shows
 what opspile knows about the person: name, picture, platform account, job title and company

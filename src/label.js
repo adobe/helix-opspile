@@ -217,18 +217,71 @@ export function clairicFacts(answers) {
   return facts;
 }
 
-/** A short title by a language model: the specific failure, or the topic. */
-export async function writeTitle(env, state, alert) {
-  const instructions = alert
-    ? 'Name the specific failure in this alert in at most 8 words: the error or failing request, and what fails. Reply with the title only, no quotes.'
-    : 'Write a title of at most 8 words that says what this support thread is about. Reply with the title only, no quotes.';
+/**
+ * What the inbox already shows next to a title, so the title should not repeat it: the
+ * customer, the channel and the platform, the kind of thread (as an emoji), and the product
+ * that every thread is about.
+ */
+function omit(thread) {
+  const customer = thread?.org && !thread.org.startsWith('_') ? ` (${thread.org})` : '';
+  return 'The title is shown next to the customer, the channel, the platform and the kind of'
+    + ' thread, so do not repeat them: do not name the customer'
+    + `${customer} or its brands, the channel, Slack, Microsoft Teams or Adobe, and do not name`
+    + ' Edge Delivery Services (EDS, AEM, aem.live, helix, Franklin), which every thread is'
+    + ' about. Name another product only when it is the topic (for example Akamai or Universal'
+    + ' Editor). Leave out filler words such as support, help, issue, inquiry, question,'
+    + ' request, discussion or thread. For example, not "Acme EDS Sidekick Login Support"'
+    + ' but "Sidekick login fails after SSO change".';
+}
+
+// The product every thread is about, as a word in a title (not inside a host name).
+const PRODUCT = String.raw`Adobe\s+Edge\s+Delivery(?:\s+Services)?|Edge\s+Delivery(?:\s+Services)?|EDS`;
+const LOOSE = /^(?:in|on|for|with|and|of|at|-|–|—|:)$/i;
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Removes what the model was told to leave out but still wrote: the customer and the
+ * product as words of their own, and the connecting words they leave dangling at either
+ * end. Returns null when nothing is left.
+ */
+export function tidyTitle(title, thread) {
+  const names = [PRODUCT];
+  if (thread?.org && !thread.org.startsWith('_')) {
+    names.push(thread.org.split(/[-_\s]+/).map(escape).join(String.raw`[-_\s]*`));
+  }
+  const words = String(title || '')
+    .replace(new RegExp(String.raw`(?<![\w.@/-])(?:${names.join('|')})(?:'s)?(?![\w@/-]|\.\w)`, 'gi'), ' ')
+    .split(/\s+/).filter(Boolean);
+  while (words.length && LOOSE.test(words[0])) {
+    words.shift();
+  }
+  while (words.length && LOOSE.test(words[words.length - 1])) {
+    words.pop();
+  }
+  const out = words.join(' ');
+  return out ? out[0].toUpperCase() + out.slice(1) : null;
+}
+
+/**
+ * A short title by a language model: the specific failure, or the topic, without what the
+ * inbox already shows next to it.
+ */
+export async function writeTitle(env, state, alert, thread) {
+  const instructions = [
+    alert
+      ? 'Name the specific failure in this alert in at most 8 words: the error or failing request, and what fails.'
+      : 'Write a title of at most 8 words that says what this support thread is about: the specific feature, error, page, task or question.',
+    omit(thread),
+    'Reply with the title only, no quotes.',
+  ].join(' ');
   const res = await env.AI.run(TITLER, {
     messages: [{ role: 'system', content: instructions }, { role: 'user', content: state.slice(0, 6000) }],
     max_tokens: 40,
   });
   const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
     .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
-  return text ? text.slice(0, MAX_TITLE) : null;
+  const title = tidyTitle(text, thread) || text;
+  return title ? title.slice(0, MAX_TITLE) : null;
 }
 
 async function recordTech(env, thread, answers) {
@@ -282,7 +335,7 @@ async function labelAlert(env, thread, now) {
     return { result: 'skip', reason: 'no messages' };
   }
   await replaceFacts(env.DB, anchorKey, 'rule', ruleFacts(messages.map((m) => m.body || '')));
-  const title = await writeTitle(env, stateOf(anchor, messages), true);
+  const title = await writeTitle(env, stateOf(anchor, messages), true, anchor);
   await env.DB.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model, labeled_at, title)
     VALUES (?, 'alert', 1, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET title = excluded.title, labeled_at = excluded.labeled_at`)
@@ -330,7 +383,7 @@ export async function labelThread(env, key, now = new Date()) {
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
-    writeTitle(env, state, false).catch(() => null),
+    writeTitle(env, state, false, thread).catch(() => null),
   ]);
   const a = clef.answers || {};
   const choice = (q) => {

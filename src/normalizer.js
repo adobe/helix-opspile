@@ -70,7 +70,8 @@ async function botName(env, ref) {
 /** `{ author, person }`: the frontmatter author and the D1 person id, if known. */
 async function resolveAuthor(env, ref) {
   if (!ref.userId) {
-    const name = ref.name || (ref.botId ? await botName(env, ref) : null);
+    const slackBot = ref.botId && ref.source !== 'teams';
+    const name = ref.name || (slackBot ? await botName(env, ref) : null);
     return {
       author: {
         kind: ref.kind || 'bot', name: name || ref.botId || null, org: null, staff: false,
@@ -173,6 +174,39 @@ async function mentionsOf(env, message, body, author, cache) {
 }
 
 /**
+ * The Teams bots a message shows (its bot author, the bots it mentions): each gets an
+ * identity (`kind: bot`; the name it posts under, and the `handle` people mention it by)
+ * and a row in `bot_teams` for the message's Teams team, so replies there can mention it.
+ */
+export async function recordBots(env, message) {
+  if (message.source !== 'teams' || !message.groupId) {
+    return;
+  }
+  const ref = message.authorRef || {};
+  const bots = [
+    ...(ref.botId ? [{ id: ref.botId, name: ref.name || null, handle: null }] : []),
+    ...(message.botMentions || []).slice(0, MAX_MENTIONS)
+      .map((b) => ({ id: b.id, name: null, handle: b.name || null })),
+  ];
+  const now = new Date().toISOString();
+  for (const b of bots) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, handle,
+        fetched_at) VALUES ('teams', ?, ?, 'bot', ?, ?, ?)
+      ON CONFLICT (source, tenant, user_id) DO UPDATE SET
+        name = COALESCE(excluded.name, identities.name),
+        handle = COALESCE(excluded.handle, identities.handle)`)
+      .bind(message.tenant, b.id, b.name, b.handle, now).run();
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare(`INSERT INTO bot_teams (source, tenant, bot_id, group_id, at)
+        VALUES ('teams', ?, ?, ?, ?)
+      ON CONFLICT (source, tenant, bot_id, group_id) DO UPDATE SET
+        at = MAX(bot_teams.at, excluded.at)`)
+      .bind(message.tenant, b.id, message.groupId, message.at).run();
+  }
+}
+
+/**
  * Turns one pile-1 object into its pile-2 file. Returns a short result for the log.
  *
  * @param {object} env bindings
@@ -212,6 +246,9 @@ export async function processKey(env, key, cache = {}) {
 
   const deleted = op.op === 'delete';
   const { author, person } = await resolveAuthor(env, message.authorRef);
+  if (!deleted) {
+    await recordBots(env, message);
+  }
   const meta = {
     source: message.source,
     thread: message.thread,

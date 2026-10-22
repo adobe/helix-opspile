@@ -18,7 +18,7 @@ import { parse } from '../src/channels.js';
 import { runBackfill, slackBackfillKey } from '../src/backfill.js';
 import { ruleFacts } from '../src/facts.js';
 import { labelThread, QUESTIONS } from '../src/label.js';
-import { consume, processKey } from '../src/normalizer.js';
+import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
@@ -429,6 +429,38 @@ describe('backfill, mentions and labels', () => {
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, 3); // Clef, Clairic and the title, once
+  });
+});
+
+describe('recordBots', () => {
+  const teamsMessage = (extra) => ({
+    source: 'teams', tenant: 'T', groupId: 'G1', at: '2026-10-21T12:00:00Z', authorRef: {}, ...extra,
+  });
+
+  it('keeps a Teams bot\'s name and handle, and the Teams teams it was seen in', async () => {
+    const e = env({});
+    // Mentioned first (by its handle), then it answers (under its own name), in two teams.
+    await recordBots(e, teamsMessage({ botMentions: [{ id: 'b-1', name: 'helper' }] }));
+    await recordBots(e, teamsMessage({
+      at: '2026-10-21T12:01:00Z',
+      authorRef: { kind: 'bot', name: 'helper-agent', botId: 'b-1' },
+    }));
+    await recordBots(e, teamsMessage({ groupId: 'G2', botMentions: [{ id: 'b-1', name: 'helper' }] }));
+    // An older message, replayed late, does not move the time back.
+    await recordBots(e, teamsMessage({ at: '2026-10-20T08:00:00Z', botMentions: [{ id: 'b-1' }] }));
+    assert.deepEqual(e.DB.rows(`SELECT kind, name, handle FROM identities
+      WHERE source = 'teams' AND user_id = 'b-1'`), [{ kind: 'bot', name: 'helper-agent', handle: 'helper' }]);
+    assert.deepEqual(e.DB.rows('SELECT group_id, at FROM bot_teams ORDER BY group_id'), [
+      { group_id: 'G1', at: '2026-10-21T12:01:00Z' },
+      { group_id: 'G2', at: '2026-10-21T12:00:00Z' },
+    ]);
+  });
+
+  it('ignores Slack and messages without a Teams team', async () => {
+    const e = env({});
+    await recordBots(e, { ...teamsMessage({ botMentions: [{ id: 'b-1', name: 'x' }] }), source: 'slack' });
+    await recordBots(e, teamsMessage({ groupId: undefined, botMentions: [{ id: 'b-1', name: 'x' }] }));
+    assert.deepEqual(e.DB.rows('SELECT * FROM bot_teams'), []);
   });
 });
 

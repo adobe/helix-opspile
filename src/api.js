@@ -90,6 +90,20 @@ async function personWithTeams(env, person) {
  * The signed-in person, from the verified Access email. An admin may look at the inbox as
  * someone else (`x-opspile-as: <person id>`): reads only, never their read state or a reply.
  */
+/** A person by id, with their teams (an MCP client's token names the person). */
+export async function personById(env, id) {
+  const person = await env.DB.prepare('SELECT id, name, email FROM people WHERE id = ?')
+    .bind(id).first();
+  return person ? personWithTeams(env, person) : null;
+}
+
+/** A person by email, with their teams, or null. */
+export async function personByEmail(env, email) {
+  const person = await env.DB.prepare('SELECT id, name, email FROM people WHERE email = ?')
+    .bind(email).first();
+  return person ? personWithTeams(env, person) : null;
+}
+
 export async function viewer(request, env, options) {
   const email = await accessEmail(request, env, options);
   if (!email) {

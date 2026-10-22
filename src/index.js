@@ -11,14 +11,16 @@
  */
 
 import inboxHtml from '../ui/inbox.html';
+import { accessEmail } from './access.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
-import { api } from './api.js';
+import { api, personByEmail } from './api.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { mcp } from './mcp.js';
+import { oauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
@@ -87,6 +89,17 @@ export default {
     }
     if (pathname === '/mcp') {
       return mcp(request, env);
+    }
+    // OAuth for MCP clients: discovery, registration and tokens are public; the consent page
+    // is under /api, behind Access.
+    const oauthResponse = await oauth(request, env, url, {
+      who: async (r) => {
+        const email = await accessEmail(r, env);
+        return email ? personByEmail(env, email) : null;
+      },
+    });
+    if (oauthResponse) {
+      return oauthResponse;
     }
     if (pathname === '/inbox') {
       return new Response(INBOX_PAGE, {

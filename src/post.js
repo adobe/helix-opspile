@@ -316,7 +316,10 @@ export function slackText(body, mentions = []) {
     .map((p) => (typeof p === 'string' ? slackEscape(p) : `<@${p.id}>`)).join('');
 }
 
-/** Teams message `body` and `mentions`: each mention an `<at id>` with its entry. */
+/**
+ * Teams message `body` and `mentions`: each mention an `<at id>` with its entry, a person
+ * as `user`, a bot as `application` (which the bot receives like a mention typed in Teams).
+ */
 export function teamsMessage(body, mentions = []) {
   const entries = [];
   const content = splitMentions(body, mentions).map((p) => {
@@ -327,7 +330,9 @@ export function teamsMessage(body, mentions = []) {
     entries.push({
       id,
       mentionText: p.name,
-      mentioned: { user: { id: p.id, displayName: p.name, userIdentityType: 'aadUser' } },
+      mentioned: p.kind === 'bot'
+        ? { application: { id: p.id, displayName: p.name, applicationIdentityType: 'bot' } }
+        : { user: { id: p.id, displayName: p.name, userIdentityType: 'aadUser' } },
     });
     return `<at id="${id}">${htmlEscape(p.name)}</at>`;
   }).join('');
@@ -337,6 +342,13 @@ export function teamsMessage(body, mentions = []) {
 const NAME = 'COALESCE(p.name, i.name)';
 const ACCOUNTS = `FROM identities i LEFT JOIN people p ON p.id = i.person
   WHERE i.source = ? AND i.tenant = ? AND i.kind = 'person' AND ${NAME} IS NOT NULL`;
+// Teams bots seen in the thread's Teams team, by the name people mention them by.
+const BOT_NAME = 'COALESCE(i.handle, i.name)';
+const BOTS = `FROM identities i JOIN bot_teams b ON b.source = i.source AND b.tenant = i.tenant
+    AND b.bot_id = i.user_id
+  WHERE i.source = 'teams' AND i.tenant = ? AND b.group_id = ? AND i.kind = 'bot'
+    AND ${BOT_NAME} IS NOT NULL`;
+const MAX_BOTS = 3;
 
 /** The latest platform thread of an inbox entry: replies go there. */
 export async function target(env, key) {
@@ -348,8 +360,9 @@ export async function target(env, key) {
 
 /**
  * The accounts a reply mentions, as opspile knows them: only platform accounts already in
- * D1, in the thread's workspace or tenant, can be mentioned. The name is D1's, so the text
- * of a mention is the same `@Name` the message shows when it comes back.
+ * D1, in the thread's workspace or tenant, can be mentioned, and on Teams the bots seen in
+ * the thread's Teams team. The name is D1's, so the text of a mention is the same `@Name`
+ * the message shows when it comes back.
  */
 async function knownMentions(env, t, ids) {
   const wanted = [...new Set((Array.isArray(ids) ? ids : [])
@@ -360,13 +373,21 @@ async function knownMentions(env, t, ids) {
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
     AND i.user_id IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
-  return results || [];
+  const people = (results || []).map((r) => ({ ...r, kind: 'person' }));
+  if (t.source !== 'teams' || !t.group_id) {
+    return people;
+  }
+  const { results: bots } = await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name
+    ${BOTS} AND i.user_id IN (SELECT value FROM json_each(?))`)
+    .bind(t.tenant, t.group_id, JSON.stringify(wanted)).all();
+  return [...people, ...(bots || []).map((r) => ({ ...r, kind: 'bot' }))];
 }
 
 /**
  * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1
  * for the thread's platform and workspace. Whoever posted in the thread comes first, then
- * staff, then everyone else, by name. `q` matches the start of any word of the name.
+ * staff, then everyone else, by name. `q` matches the start of any word of the name. On
+ * Teams, the bots seen in the thread's Teams team are offered as well.
  */
 export async function mentionable(env, key, q, inTeam) {
   const t = key && await target(env, key);
@@ -374,6 +395,17 @@ export async function mentionable(env, key, q, inTeam) {
     return json({ error: 'not found' }, 404);
   }
   const like = String(q || '').trim().slice(0, 60).replace(/[\\%_]/g, '\\$&');
+  const { results: botRows } = t.source === 'teams' && t.group_id
+    ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.avatar ${BOTS}
+      AND (? = '' OR ${BOT_NAME} LIKE ? || '%' ESCAPE '\\'
+        OR ${BOT_NAME} LIKE '% ' || ? || '%' ESCAPE '\\'
+        OR ${BOT_NAME} LIKE '%-' || ? || '%' ESCAPE '\\')
+      ORDER BY b.at DESC LIMIT ${MAX_BOTS}`)
+      .bind(t.tenant, t.group_id, like, like, like, like).all()
+    : { results: [] };
+  const bots = (botRows || []).map((r) => ({
+    id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
+  }));
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.avatar,
       COALESCE(p.staff, 0) AS staff, EXISTS (SELECT 1 FROM messages m
         WHERE m.thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)
@@ -384,14 +416,15 @@ export async function mentionable(env, key, q, inTeam) {
     .bind(key, key, t.source, t.tenant, like, like, like).all();
   const seen = new Set();
   const people = (results || []).filter((r) => !seen.has(r.id) && seen.add(r.id))
-    .slice(0, MAX_SUGGESTIONS).map((r) => ({
+    .slice(0, MAX_SUGGESTIONS - bots.length).map((r) => ({
       id: r.id,
       name: r.name,
       avatar: r.avatar || null,
       here: Boolean(r.here),
       staff: Boolean(r.staff),
+      kind: 'person',
     }));
-  return json({ platform: t.source, people });
+  return json({ platform: t.source, people: [...people, ...bots] });
 }
 
 /**

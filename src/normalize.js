@@ -227,8 +227,13 @@ export function normalizeTeams(key, msg) {
       home: msg.from.user.tenantId,
     };
   } else {
+    // Bots carry their bot id (the `28:` id without the prefix): with it they get an identity,
+    // and a reply can mention them. Connectors and webhooks stay anonymous.
     const app = (msg.from && msg.from.application) || {};
     authorRef = { kind: 'bot', name: app.displayName || 'bot' };
+    if (app.id && (app.applicationIdentityType || 'bot') === 'bot') {
+      Object.assign(authorRef, { source: 'teams', tenant, botId: app.id });
+    }
   }
   const attachments = (msg.attachments || [])
     .filter((a) => a && a.contentType === 'reference')
@@ -260,6 +265,13 @@ export function normalizeTeams(key, msg) {
     mentionIds: [...new Set((msg.mentions || [])
       .map((x) => x && x.mentioned && x.mentioned.user && x.mentioned.user.id)
       .filter(Boolean))],
+    // Bots people mentioned, by the name they used (the mention text), for mentions in replies.
+    botMentions: [...new Map((msg.mentions || [])
+      .filter((x) => x && x.mentioned && x.mentioned.application && x.mentioned.application.id
+        && x.mentioned.application.applicationIdentityType === 'bot')
+      .map(({ mentionText, mentioned: { application: a } }) => [a.id, {
+        id: a.id, name: mentionText || a.displayName || null,
+      }])).values()],
     // Teams reports reactions on the message itself; each reactor has read up to here.
     reactors: [...new Set((msg.reactions || [])
       .map((r) => r && r.user && r.user.user && r.user.user.id)
