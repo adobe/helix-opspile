@@ -39,6 +39,7 @@ import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
+import { inboxPage as withEmoji } from '../src/page.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
@@ -671,7 +672,7 @@ function banner() {
 }
 
 async function inboxPage() {
-  const html = await readFile(join(uiDir, 'inbox.html'), 'utf8');
+  const html = withEmoji(await readFile(join(uiDir, 'inbox.html'), 'utf8'));
   return html.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`);
 }
 
