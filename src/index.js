@@ -16,6 +16,7 @@ import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
+import { mcp } from './mcp.js';
 import { consume } from './normalizer.js';
 import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
@@ -63,6 +64,9 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (pathname === '/mcp') {
+      return mcp(request, env);
     }
     if (pathname === '/inbox') {
       return new Response(INBOX_PAGE, {
