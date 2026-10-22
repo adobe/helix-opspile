@@ -386,7 +386,8 @@ function row(t) {
   const faces = (t.participants || []).map((p) => avatar(`${p.name || '?'}${p.staff ? ' (Adobe)' : ''}`, p.avatar)).join('');
   const replies = Math.max(0, (t.messages || 1) - 1);
   const fresh = state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
-  const occurrences = (t.members || []).length > 1 ? `<span class="replies">${t.members.length}×</span>` : '';
+  const n = t.occurrences || (t.members || []).length;
+  const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
   return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}" data-thread="${esc(t.thread)}">
     <div class="l1"><span class="dot ${status === 'none' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(t.attention || 'caught up')}${ourMove(t) ? ' · our move' : ''}"></span>
       <span class="title">${t.root_known ? '' : '↳ '}${emojify(t.title || '(no text)')}</span>

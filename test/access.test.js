@@ -118,6 +118,33 @@ describe('viewer and inbox', () => {
   });
 });
 
+describe('inbox groups', () => {
+  it('shows a big group once, with its first thread\'s title and the full count', async () => {
+    const DB = d1({
+      teams: [{ slug: 'helix', name: 'Helix' }],
+      people: [{
+        id: 1, email: 'a@staff.example', name: 'A', staff: 1, teams: ['helix'],
+      }],
+    });
+    const row = DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      kind, title, path, root_at, any_at, messages, logical_thread, updated_at)
+      VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix', 'alert', 'generic', ?, ?, ?, 1, ?, ?)`);
+    for (let i = 0; i < 12; i += 1) {
+      const at = new Date(Date.UTC(2026, 9, 20, 0, i)).toISOString();
+      row.run(`a${i}`, `${i}`, `p${i}/`, at, at, i ? 'a0' : null, at);
+    }
+    DB.sqlite.prepare(`INSERT INTO labels (thread, kind, labeled_through, model, labeled_at, title)
+      VALUES ('a0', 'alert', '', 'm', '', 'Checkout fails with 422')`).run();
+    const { threads } = await inbox({ DB }, { id: 1 }, 'helix');
+    assert.equal(threads.length, 1);
+    assert.deepEqual(
+      [threads[0].thread, threads[0].title, threads[0].occurrences, threads[0].messages],
+      ['a0', 'Checkout fails with 422', 12, 12],
+    );
+    assert.equal(threads[0].members.length, 6); // the first thread and the five most recent
+  });
+});
+
 describe('media proxy', () => {
   it('only fetches Slack files and Teams hosted contents', async () => {
     const { media } = await import('../src/api.js');
