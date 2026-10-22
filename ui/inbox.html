@@ -181,7 +181,21 @@
   .msg:hover .meta a { visibility: visible; }
   .msg .meta a { color: inherit; }
   .rx { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 6px 0; }
-  .rx span { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  .rx span, .rx button { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+  .rx button.mine { background: var(--sel); border-color: var(--accent); }
+  .msg .col { position: relative; }
+  .msg .meta .react { visibility: hidden; font-size: 11px; padding: 0 6px; border-radius: 9px; color: var(--mute); margin-right: 6px; }
+  .msg:hover .meta .react, .msg .meta .react:focus-visible, .msg .meta .react[aria-expanded="true"] { visibility: visible; }
+  .picker { position: absolute; bottom: 100%; z-index: 4; display: flex; gap: 2px; padding: 4px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+  .msg.adobe .picker { right: 0; }
+  .picker button { border: 0; background: none; font-size: 18px; padding: 2px 5px; border-radius: 8px; }
+  .picker button:hover, .picker button:focus-visible { background: var(--hover); }
+  .ph .resolve { margin-left: auto; align-self: center; font-size: 12px; font-weight: 400; padding: 2px 10px; white-space: nowrap; flex: none; }
+  .ph .resolve[aria-pressed="true"] { background: var(--sel); border-color: var(--green); }
+  .ph .resolved { color: var(--green); }
+  .ph .reopened { color: var(--yellow); }
+  .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }
   .sys { text-align: center; color: var(--faint); font-size: 12px; margin: 8px 0; }
   .seen { text-align: right; color: var(--faint); font-size: 11px; margin-top: 6px; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
@@ -229,6 +243,7 @@
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
   <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
+  <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd> ✅</span>
 </header>
 <main>
   <section id="filters" aria-label="Filters"></section>
@@ -454,8 +469,10 @@ const EMOJI = {
   wave: '👋', muscle: '💪', sparkles: '✨', star: '⭐', point_up: '☝️', point_right: '👉', see_no_evil: '🙈',
   sweat_smile: '😅', grinning: '😀', confused: '😕', facepalm: '🤦', face_palm: '🤦', hourglass: '⌛', 'heavy_plus_sign': '➕',
   rofl: '🤣', heart_eyes: '😍', partying_face: '🥳', saluting_face: '🫡', ack: '✅', done: '✅', yes: '✅', no: '❌',
-  thank_you: '🙏', thanks: '🙏', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡',
+  thank_you: '🙏', thanks: '🙏', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡', open_mouth: '😮',
 };
+// The reaction picker, by Slack name (the server turns them into Teams emoji).
+const PICKER = ['thumbsup', 'heart', 'joy', 'open_mouth', 'eyes', 'pray', 'tada', 'white_check_mark'];
 const emoji = (name) => EMOJI[name] || EMOJI[String(name).replace(/::skin-tone-\d/, '')] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 
 // A safe markdown subset: escape first, then format. Images from Slack and Teams go
@@ -506,7 +523,11 @@ const KIND_EMOJI = {
 };
 const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
-const resolvedOf = (t) => (t.label?.resolved_p == null ? null : (t.label.resolved_p >= 0.5 ? 'resolved' : 'open'));
+// A staff ✅ on the root decides (until a customer writes again), else Clef does.
+const resolvedOf = (t) => t.resolution?.verdict
+  || (t.label?.resolved_p == null ? null : (t.label.resolved_p >= 0.5 ? 'resolved' : 'open'));
+const checked = (t) => t.resolution?.verdict === 'resolved';
+const resolvedP = (t) => (t.resolution?.verdict ? Number(checked(t)) : (t.label?.resolved_p ?? 0));
 const viewerId = () => state.data?.me?.id ?? state.me.id;
 const teamIds = () => new Set(Object.values(state.data?.teams || {}).flatMap((x) => x.members));
 /**
@@ -544,11 +565,12 @@ function statusOf(t) {
   if (!alert && t.unseenByAdobe && u === 'critical') return 'critical';
   if (!alert && t.unseenByAdobe && u === 'high') return 'hot';
   const mine = (t.posters || []).includes(me) || (t.mentioned || []).some((m) => m.person === me);
-  if (!alert && mine && (t.last_staff === 0 || t.mentionedMe)) return 'you';
+  // Resolved with ✅ by staff: nobody is waiting, whoever spoke last.
+  if (!alert && mine && !checked(t) && (t.last_staff === 0 || t.mentionedMe)) return 'you';
   const age = Date.now() - (Date.parse(lastOf(t)) || Date.now());
   const on = waitingOn(t);
-  if (!alert && on === 'Us' && age > WAIT_US[u]) return 'waiting';
-  if (!alert && on === 'Customer' && age > WAIT_THEM[u]) return 'silent';
+  if (!alert && !checked(t) && on === 'Us' && age > WAIT_US[u]) return 'waiting';
+  if (!alert && !checked(t) && on === 'Customer' && age > WAIT_THEM[u]) return 'silent';
   const team = teamIds();
   if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
   return 'quiet';
@@ -560,7 +582,7 @@ const STATUS_LABEL = {
 const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
-  you: 'You posted or were mentioned, and the customer spoke last or you were mentioned',
+  you: 'You posted or were mentioned, and the customer spoke last or you were mentioned (not once resolved with ✅)',
   waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal), and Adobe did not post last',
   silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal): follow up or close',
   team: 'Your team is in it, you were not mentioned, all is well',
@@ -727,7 +749,7 @@ function baseScore(t) {
   const ageH = Math.max(0, (now - last) / 3600000);
   const recency = Math.exp(-ageH / 48);
   const urgency = 1 + (t.label?.urgency ?? 0.5);
-  const open = 1 - 0.8 * (t.label?.resolved_p ?? 0);
+  const open = 1 - 0.8 * resolvedP(t);
   const me = viewerId();
   const team = teamIds();
   let near = 1;
@@ -829,6 +851,24 @@ function reviewPanel(thread, model, reviews) {
     <div class="apply"><button class="send" data-apply="1" ${n ? '' : 'disabled'}>Apply ${n || ''} ${n === 1 ? 'correction' : 'corrections'}</button>
       <button data-confirm="1" title="Clef got everything right">All correct</button></div></div>`;
 }
+const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system';
+
+/** What the ✅ says, for the thread header's second line. */
+function resolveNote(r) {
+  const names = (r?.by || []).join(', ');
+  let note = '';
+  if (r?.state === 'resolved') note = `<span class="resolved" title="${esc(new Date(r.at).toLocaleString())}">✅ Resolved by ${esc(names || 'Adobe')}</span>`;
+  else if (r?.state === 'reopened') note = `<span class="reopened" title="✅ by ${esc(names || 'Adobe')}, then the customer wrote again${r.verdict ? '' : '; Clef decides again'}">Reopened: the customer wrote after the ✅</span>`;
+  return note ? `· ${note}` : '';
+}
+/** The ✅ button: resolve, or take your ✅ off again. */
+function resolveButton(thread, r) {
+  // Without the first message there is nothing to put the ✅ on.
+  if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r)) return '';
+  const mine = r?.state === 'resolved' && r.mine;
+  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
+}
+
 function message(m, prev, fresh) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
@@ -842,13 +882,21 @@ function message(m, prev, fresh) {
   });
   const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' ? ' bot' : ''} · ${clock(m.at)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
-  const rx = (m.reactions || []).map((r) => `<span title="${esc(r.names.join(', ') || r.emoji)}">${esc(emoji(r.emoji))} ${r.count}</span>`).join('');
+  // Reactions: who reacted on hover; a click adds yours, or takes it off again.
+  const can = canReact(m);
+  const rx = (m.reactions || []).map((r) => {
+    const tip = esc(`${r.names.join(', ') || r.emoji}${can ? (r.mine ? ' · click to take yours off' : ' · click to add yours') : ''}`);
+    const chip = `${esc(emoji(r.emoji))} ${r.count}`;
+    return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
+      : `<span title="${tip}">${chip}</span>`;
+  }).join('');
+  const add = can ? `<button class="react" data-picker="1" aria-haspopup="true" aria-expanded="false" title="Add a reaction, as you">☺ React</button>` : '';
   return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col"><div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${m.editedAt || m.permalink || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
+      ${m.editedAt || m.permalink || m.pending || add ? `<div class="meta">${add}${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
     </div></div>`;
 }
 
@@ -892,7 +940,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   mergeProfiles(data.profiles);
   // Shown from the preload: fetch the current state behind it.
   if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
-  const { thread, members = [], messages, watermarks, label, model, reviews, facts } = data;
+  const { thread, members = [], messages, watermarks, label, model, reviews, facts, resolution } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
   const t = state.data?.threads.find((x) => x.thread === key) || {};
@@ -930,11 +978,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }).join(' ');
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
-  pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
+  pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}${resolveButton(thread, resolution)}</h2>
       <div class="sub">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="">` : ''}<span>${esc(thread.org)}</span> ·
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
-        ${sites ? `· ${sites}` : ''} ${chips}</div>
+        ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>
       ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>
     <div class="scroller">
       ${state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
@@ -1096,12 +1144,76 @@ function mentionsIn(key, body) {
     .map((p) => ({ id: p.id, name: p.name }));
 }
 
-function toast(text) {
+/** A short note at the bottom; `action` adds a link (`href`) or a button (`run`). */
+function toast(text, action) {
+  document.querySelector('.toast')?.remove();
   const el = document.createElement('div');
   el.className = 'toast';
+  el.setAttribute('role', 'status');
   el.textContent = text;
+  if (action) {
+    const a = document.createElement(action.href ? 'a' : 'button');
+    a.textContent = action.label;
+    if (action.href) a.href = action.href;
+    else a.onclick = () => { el.remove(); action.run(); };
+    el.append(a);
+  }
   document.body.append(el);
-  setTimeout(() => el.remove(), 5000);
+  setTimeout(() => el.remove(), action ? 8000 : 5000);
+}
+
+// ---------------------------------------------------------------- reactions, resolving
+/** POSTs as the signed-in person; read-only views send who they view as, so it is refused. */
+async function write(path, body) {
+  const headers = { 'content-type': 'application/json', ...(state.as ? { 'x-opspile-as': String(state.as) } : {}) };
+  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  const p = data.connect || data.reconnect;
+  if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
+  toast(data.error || `failed (${res.status})`, p ? { label: data.reconnect ? 'Connect again' : 'Connect', href: `/api/auth/${p}/start` } : null);
+  if (data.connect && state.open) openThread(state.open, { live: true });
+  return null;
+}
+
+async function react(id, emojiName, remove) {
+  const at = id.indexOf('|');
+  const ok = await write('/api/react', { thread: id.slice(0, at), id: id.slice(at + 1), emoji: emojiName, remove });
+  if (ok) reloadSoon(state.open);
+}
+
+async function resolveThread(key, undo) {
+  const btn = state.open === key && $('resolve');
+  if (btn) { btn.disabled = true; btn.textContent = undo ? 'Taking ✅ off…' : 'Resolving…'; }
+  const ok = await write('/api/resolve', { thread: key, undo });
+  if (!ok) { if (btn) openThread(key, { live: true }); return; }
+  toast(undo ? 'Your ✅ is off again.' : 'Resolved: ✅ on the first message, as you.', { label: 'Undo', run: () => resolveThread(key, !undo) });
+  reloadSoon(key);
+}
+
+function toggleResolve() {
+  const key = state.open;
+  if (!key || state.data?.me?.readonly || !$('resolve') || $('resolve').disabled) return;
+  const r = state.cache.get(key)?.data?.resolution;
+  resolveThread(key, Boolean(r && r.state === 'resolved' && r.mine));
+}
+
+function closePicker() {
+  const p = document.querySelector('.picker');
+  if (!p) return;
+  p.closest('.col')?.querySelector('[data-picker]')?.setAttribute('aria-expanded', 'false');
+  p.remove();
+}
+
+function openPicker(button) {
+  const col = button.closest('.col');
+  const open = col.querySelector('.picker');
+  closePicker();
+  if (open) return;
+  const picker = toNode(`<div class="picker" role="menu">${PICKER.map((n) => `<button role="menuitem" data-pick="${n}" title=":${n}:">${emoji(n)}</button>`).join('')}</div>`);
+  col.append(picker);
+  button.setAttribute('aria-expanded', 'true');
+  picker.querySelector('button').focus();
 }
 
 // ---------------------------------------------------------------- read state, live
@@ -1242,6 +1354,19 @@ async function start() {
     if (el) openThread(el.dataset.thread);
   };
   $('pane').onclick = async (e) => {
+    const msg = e.target.closest('.msg');
+    const pick = e.target.closest('[data-pick]');
+    const chip = e.target.closest('.rx button');
+    if (e.target.closest('#resolve')) { toggleResolve(); return; }
+    if (msg && e.target.closest('[data-picker]')) { openPicker(e.target.closest('[data-picker]')); return; }
+    if (msg && pick) {
+      const mine = msg.querySelector(`.rx button[data-emoji="${CSS.escape(pick.dataset.pick)}"]`)?.dataset.mine;
+      closePicker();
+      react(msg.dataset.id, pick.dataset.pick, Boolean(mine));
+      return;
+    }
+    if (msg && chip) { react(msg.dataset.id, chip.dataset.emoji, Boolean(chip.dataset.mine)); return; }
+    if (!e.target.closest('.picker')) closePicker();
     const panel = e.target.closest('.rv');
     const b = e.target.closest('.rv button');
     if (!panel || !b) return;
@@ -1267,10 +1392,18 @@ async function start() {
     openThread(state.open, { live: true });
   };
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.querySelector('.picker')) {
+      const button = document.querySelector('.picker').closest('.col')?.querySelector('[data-picker]');
+      closePicker();
+      button?.focus();
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
+    if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
   });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
   window.addEventListener('popstate', async () => {
     const team = state.team;
     const { open, review } = fromUrl();

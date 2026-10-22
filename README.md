@@ -20,8 +20,10 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
+| `POST /api/react` | Add (or with `remove`, take off) a reaction on one message **as the signed-in person**: `{ thread, id, emoji }`, where `thread` is the message's platform thread and `emoji` a picker name (`thumbsup`, `white_check_mark`, …) or a reaction as the thread shows it. Slack `reactions.add`/`remove`, Teams `setReaction`/`unsetReaction`; recorded in D1 at once, then again by the platform's own event. `409` with `reconnect: 'slack'` for Slack tokens from before `reactions:write`. Only staff, only in their teams. |
+| `POST /api/resolve` | `{ thread, undo? }`: ✅ on the root message of the entry's latest platform thread, as the signed-in person (`white_check_mark` on Slack, `✅` on Teams), or with `undo` take their ✅ off every root of the entry. A staff ✅ on the root marks the thread resolved (see ARCHITECTURE, "Resolved"). |
 | `GET /api/mentionable?thread=&q=` | Who can be mentioned in a reply: accounts already in D1 for the thread's platform and workspace whose name (any word) starts with `q`; people in the thread first, then staff. |
-| `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scope `chat:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
+| `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
@@ -93,9 +95,11 @@ node scripts/replay.mjs --relabel           # label every thread again (titles, 
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
 `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`.
-For replies it also needs the **delegated** permissions `ChannelMessage.Send`, `offline_access`
-and `User.Read`, and the web redirect URI `<origin>/api/auth/teams/callback`. The Slack app
-needs the user scope `chat:write` and the redirect URL `<origin>/api/auth/slack/callback`.
+For replies and reactions it also needs the **delegated** permissions `ChannelMessage.Send`
+(which covers `setReaction`/`unsetReaction` on channel messages), `offline_access` and
+`User.Read`, and the web redirect URI `<origin>/api/auth/teams/callback`. The Slack app needs
+the user scopes `chat:write` and `reactions:write` and the redirect URL
+`<origin>/api/auth/slack/callback`; the bot needs `reactions:read` for the reaction events.
 
 ### Iterate on the inbox UI
 

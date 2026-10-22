@@ -266,11 +266,32 @@ and is labeled again, the model answers again and the old review only counts as 
 ## Replying
 
 Replies are written in the inbox and sent **as the person**, never as a bot: each person
-connects their own Slack account (user scope `chat:write`) and Microsoft account (delegated
-`ChannelMessage.Send`) once. The account must be theirs (the same person in D1, or the same
+connects their own Slack account (user scopes `chat:write` and `reactions:write`) and Microsoft
+account (delegated `ChannelMessage.Send`, which also allows reactions) once. The account must be theirs (the same person in D1, or the same
 email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
 A reply goes to the latest platform thread of an inbox entry and comes back through the
 normal ingestion path, like any other message.
+
+Reactions are made the same way, from a small picker or by clicking a reaction a message
+already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
+the platform accepts it, exactly as the platform's event will, so it shows at once; the event
+then changes nothing. A removal only takes away a reaction made before it, and a later add
+moves the reaction's time forward, so a remove-and-add comes out right in either order.
+
+### Resolved
+
+✅ on a thread's root message (`white_check_mark` on Slack, `✅` on Teams) by a staff member
+means **resolved**. One click or `e` in the inbox adds it as the person, on the root of the
+entry's latest platform thread; undo takes the person's own ✅ off again (someone else's ✅ is
+theirs to remove). It overrides Clef's `resolved_p`, and a thread resolved this way is not in
+the "you", "waiting" or "silent" status piles.
+
+A **customer message after the ✅ reopens** the thread: it is open until Clef has labeled the
+thread with that message in it, and from then on Clef decides again (so "thanks, works now"
+does not keep it open), until staff resolve it again, which moves the ✅ (off and on again) so
+that it is newer than the customer's message. Staff and bot messages after the ✅ change
+nothing. A ✅ without a time (from a backfilled Slack message) counts from the root message's
+time.
 
 ## People
 

@@ -13,8 +13,10 @@
 import { accessEmail } from './access.js';
 import { cachedGraph } from './graph.js';
 import {
-  connections, disconnect, finishAuth, mentionable, post, startAuth,
+  connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
 } from './post.js';
+import { react, resolve } from './react.js';
+import { mergeFacts, resolution, resolutionFacts } from './resolve.js';
 import { parse } from './channels.js';
 import { profiles } from './profiles.js';
 import { json, text } from './http.js';
@@ -168,6 +170,7 @@ export function fold(threads) {
       }, {})),
       posters: [...new Set(ms.flatMap((m) => m.posters || []))],
       mentioned: ms.flatMap((m) => m.mentioned || []),
+      resolutionFacts: mergeFacts(ms.map((m) => m.resolutionFacts)),
       members: byRoot.map((m) => ({ thread: m.thread, last_at: m.last_at, any_at: m.any_at })),
     };
   }).sort((a, b) => String(b.last_at || b.any_at).localeCompare(String(a.last_at || a.any_at)));
@@ -242,6 +245,7 @@ export async function inbox(env, me, team) {
   const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
+  const resolved = await resolutionFacts(env, threads.map((t) => t.thread));
   const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
@@ -280,12 +284,15 @@ export async function inbox(env, me, team) {
           reactions: rxBy.get(t.thread) || [],
           posters: postersBy.get(t.thread) || [],
           mentioned: namedBy.get(t.thread) || [],
+          resolutionFacts: resolved.get(t.thread),
         };
-      })).map((t) => {
+      })).map(({ resolutionFacts: facts, ...t }) => {
       const g = sizes.get(t.thread);
+      // A staff ✅ on the root overrides Clef's `resolved_p` (see resolve.js).
+      const entry = { ...t, resolution: resolution(facts, t.label, me.id) };
       // Totals over the whole group, not just the members loaded here.
-      const entry = g && g.n > 1 ? { ...t, occurrences: g.n, messages: g.total } : t;
-      return { ...entry, waiting_on: waitingOn(entry) };
+      const sized = g && g.n > 1 ? { ...entry, occurrences: g.n, messages: g.total } : entry;
+      return { ...sized, waiting_on: waitingOn(sized) };
     }),
   };
 }
@@ -318,21 +325,24 @@ export async function thread(env, me, key) {
     FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
     .bind(keys).all();
   const { results: rx } = await env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
-      COALESCE(p.name, i.name) AS name
+      COALESCE(p.name, i.name) AS name, i.person = ? AS mine
     FROM reactions r
     LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
     LEFT JOIN people p ON p.id = i.person
-    WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(keys).all();
+    WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all();
   const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
   const reactionsBy = new Map();
   for (const r of rx || []) {
     const list = reactionsBy.get(r.message) || [];
     let e = list.find((x) => x.emoji === r.emoji);
     if (!e) {
-      e = { emoji: r.emoji, count: 0, names: [] };
+      e = {
+        emoji: r.emoji, count: 0, names: [], mine: false,
+      };
       list.push(e);
     }
     e.count += 1;
+    e.mine = e.mine || Boolean(r.mine);
     if (r.name) {
       e.names.push(r.name);
     }
@@ -362,11 +372,12 @@ export async function thread(env, me, key) {
     FROM label_reviews r JOIN people p ON p.id = r.reviewer
     WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()).results || [] : [];
   const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [labelKey]) : []);
+  const facts = await resolutionFacts(env, group.map((m) => m.thread));
   const anchorLabel = await env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first();
   const { results: tech } = await env.DB.prepare(`SELECT tech, p FROM channel_tech
     WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
     .bind(row.source, row.tenant, row.channel_id).all();
-  const { results: facts } = await env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
+  const { results: found } = await env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
     FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
     .bind(keys).all();
   return {
@@ -389,7 +400,8 @@ export async function thread(env, me, key) {
     label,
     model,
     reviews,
-    facts: facts || [],
+    facts: found || [],
+    resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
   };
 }
 
@@ -449,7 +461,11 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   const team = url.searchParams.get('team');
 
   if (url.pathname === '/api/me') {
-    return json({ ...me, connected: me.readonly ? {} : await connections(env, me.id) });
+    return json({
+      ...me,
+      connected: me.readonly ? {} : await connections(env, me.id),
+      react: me.readonly ? {} : await reactable(env, me.id),
+    });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
   const writes = request.method !== 'GET' || /^\/api\/auth\//.test(url.pathname);
@@ -480,6 +496,14 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   if (url.pathname === '/api/post' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return post(env, me, body, (t) => inTeam(me, t));
+  }
+  if (url.pathname === '/api/react' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return react(env, me, body, (t) => inTeam(me, t));
+  }
+  if (url.pathname === '/api/resolve' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return resolve(env, me, body, (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t));

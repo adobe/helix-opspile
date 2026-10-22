@@ -16,13 +16,15 @@ import { getIdentity, isStaffDomain } from './lookup.js';
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
  * their own Slack and Microsoft accounts once (OAuth); the tokens are stored encrypted with
- * TOKEN_KEY and are only used to post replies the person writes in the inbox.
+ * TOKEN_KEY and are only used to post the replies and reactions the person makes in the inbox.
  *
- * Slack: user scope `chat:write`. Teams: delegated `ChannelMessage.Send` (+ offline_access
- * for a refresh token), redeemed server-side with the Entra app's secret.
+ * Slack: user scopes `chat:write` and `reactions:write`. Teams: delegated
+ * `ChannelMessage.Send`, which covers replies and setReaction/unsetReaction on channel
+ * messages (+ offline_access for a refresh token), redeemed server-side with the Entra app's
+ * secret.
  */
 
-const SLACK_SCOPE = 'chat:write';
+export const SLACK_SCOPE = 'chat:write,reactions:write';
 const TEAMS_SCOPE = 'offline_access https://graph.microsoft.com/ChannelMessage.Send https://graph.microsoft.com/User.Read';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_TEXT = 8000;
@@ -102,6 +104,20 @@ async function saveToken(env, person, platform, t) {
       new Date().toISOString(),
     )
     .run();
+}
+
+/**
+ * Whether the person's tokens may react: Slack tokens from before `reactions:write` was
+ * asked for may not (they need to connect again); `ChannelMessage.Send` already may.
+ */
+export async function reactable(env, person) {
+  const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
+    .bind(person).all();
+  const by = new Map((results || []).map((r) => [r.platform, String(r.scope || '')]));
+  return {
+    slack: by.has('slack') && by.get('slack').split(/[\s,]+/).includes('reactions:write'),
+    teams: by.has('teams'),
+  };
 }
 
 export async function connections(env, person) {
@@ -230,14 +246,18 @@ export async function finishAuth(env, me, platform, url) {
   return Response.redirect(back.toString(), 302);
 }
 
-async function accessToken(env, person, platform) {
+/**
+ * The person's token for a platform, refreshed if it has expired: `{ token, userId, scope }`,
+ * or null when they have not connected (or a Slack token expired).
+ */
+export async function personalToken(env, person, platform) {
   const row = await env.DB.prepare('SELECT * FROM user_tokens WHERE person = ? AND platform = ?')
     .bind(person, platform).first();
   if (!row) {
     return null;
   }
   if (!row.expires_at || Date.parse(row.expires_at) > Date.now()) {
-    return unseal(env, row.access_token);
+    return { token: await unseal(env, row.access_token), userId: row.user_id, scope: row.scope || '' };
   }
   if (!row.refresh_token || platform !== 'teams') {
     return null;
@@ -252,7 +272,7 @@ async function accessToken(env, person, platform) {
     expiresIn: data.expires_in,
     scope: data.scope,
   });
-  return data.access_token;
+  return { token: data.access_token, userId: row.user_id, scope: data.scope || row.scope || '' };
 }
 
 const htmlEscape = (s) => s.replace(/[&<>"]/g, (c) => ({
@@ -319,7 +339,7 @@ const ACCOUNTS = `FROM identities i LEFT JOIN people p ON p.id = i.person
   WHERE i.source = ? AND i.tenant = ? AND i.kind = 'person' AND ${NAME} IS NOT NULL`;
 
 /** The latest platform thread of an inbox entry: replies go there. */
-async function target(env, key) {
+export async function target(env, key) {
   const { results } = await env.DB.prepare(`SELECT t.*, c.group_id FROM threads t
     LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
     WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC LIMIT 1`).bind(key, key).all();
@@ -393,7 +413,7 @@ export async function post(env, me, request, inTeam) {
   if (!isStaffDomain(env, me.email)) {
     return json({ error: 'only staff can reply' }, 403);
   }
-  const token = await accessToken(env, me.id, t.source);
+  const { token } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
