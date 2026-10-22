@@ -27,10 +27,10 @@ const TENANT = 'T-FAKE';
 
 const PEOPLE = [
   {
-    key: 'dana', id: 1, name: 'Dana Ops', email: 'dana@example.com', staff: true,
+    key: 'dana', id: 1, name: 'Dana Ops', email: 'dana@example.com', staff: true, title: 'Site reliability engineer',
   },
   {
-    key: 'priya', id: 2, name: 'Priya Nair', email: 'priya@example.com', staff: true,
+    key: 'priya', id: 2, name: 'Priya Nair', email: 'priya@example.com', staff: true, title: 'Support engineer',
   },
   {
     key: 'lena', id: 3, name: 'Lena Berg', email: 'lena@example.com', staff: true,
@@ -39,7 +39,7 @@ const PEOPLE = [
     key: 'tom', id: 4, name: 'Tom Okafor', email: 'tom@example.com', staff: true,
   },
   {
-    key: 'sam', id: 5, name: 'Sam Reyes', email: 'sam@acme.example', org: 'acme', staff: false,
+    key: 'sam', id: 5, name: 'Sam Reyes', email: 'sam@acme.example', org: 'acme', staff: false, title: 'Web lead',
   },
   {
     key: 'mei', id: 6, name: 'Mei Lin', email: 'mei@globex.example', org: 'globex', staff: false,
@@ -47,7 +47,21 @@ const PEOPLE = [
   {
     key: 'jonas', id: 7, name: 'Jonas Weber', email: 'jonas@initech.example', org: 'initech', staff: false,
   },
+  {
+    // From a partner domain (see PARTNERS), working in a customer's channel.
+    key: 'ravi',
+    id: 8,
+    name: 'Ravi Kumar',
+    email: 'ravi@agency.example',
+    org: 'acme',
+    staff: false,
+    title: 'Solution architect',
+    company: 'Agency Co',
+  },
 ];
+
+/** The `partner_domains` table: mail domain -> partner name. */
+const PARTNERS = new Map([['agency.example', 'Agency Co']]);
 
 const TEAMS = [
   { slug: 'platform', name: 'Platform ops', members: [1, 2, 3, 4] },
@@ -312,6 +326,7 @@ export function createStore(now = Date.now()) {
       ['sam', 340, 'Our preview site is returning 503s since this morning\'s deploy.'],
       ['priya', 332, 'Thanks for flagging. Which paths are affected?'],
       ['sam', 330, '/en/* and /de/*. Same deploy as the 14:00 cache flush.', { editedAgo: 329 }],
+      ['ravi', 20, 'We implement this site for them; happy to share the deploy logs.'],
       ['sam', 12, 'Can someone take a look? We are blocked on it.'],
     ],
     reads: { priya: 332 },
@@ -421,6 +436,7 @@ export function createStore(now = Date.now()) {
       ...people.get(1), teams: TEAMS.map(({ slug, name }) => ({ slug, name })), admin: false,
     },
     teams: TEAMS,
+    partners: PARTNERS,
     people,
     threads,
     files,

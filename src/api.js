@@ -16,6 +16,7 @@ import {
   connections, disconnect, finishAuth, mentionable, post, startAuth,
 } from './post.js';
 import { parse } from './channels.js';
+import { profiles } from './profiles.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
@@ -39,7 +40,8 @@ const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop
  */
 async function participants(env, keys) {
   const { results } = await env.DB.prepare(`SELECT m.thread, m.author, MAX(m.staff) AS staff,
-      MIN(m.at) AS first_at, MAX(i.avatar) AS avatar, MAX(i.email) AS email
+      MIN(m.at) AS first_at, MAX(i.avatar) AS avatar, MAX(i.email) AS email,
+      MAX(m.author_key) AS author_key
     FROM messages m ${identityJoin}
     WHERE m.thread IN (SELECT value FROM json_each(?)) AND m.deleted = 0 AND m.counted = 1
     GROUP BY m.thread, COALESCE(m.author_key, m.author)
@@ -51,7 +53,12 @@ async function participants(env, keys) {
     }
     const t = by.get(r.thread);
     if (t.people.length < MAX_PARTICIPANTS) {
-      t.people.push({ name: r.author, staff: Boolean(r.staff), avatar: r.avatar || null });
+      t.people.push({
+        name: r.author,
+        staff: Boolean(r.staff),
+        avatar: r.avatar || null,
+        key: r.author_key || null,
+      });
     }
     const domain = domainOf(r.email);
     if (domain && !r.staff) {
@@ -251,9 +258,13 @@ export async function inbox(env, me, team) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
     myTeams[r.team].members.push(r.person);
   }
+  // Profile cards of everyone in the avatar stacks, once per person.
+  const cards = await profiles(env, [...people.values()]
+    .flatMap((t) => t.participants.map((p) => p.key)));
   return {
     team,
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
+    profiles: cards,
     people: Object.fromEntries((names || [])
       .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
     teams: myTeams,
@@ -303,7 +314,7 @@ export async function thread(env, me, key) {
     }));
   }))).flat();
   const { results: idx } = await env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-      || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar
+      || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key
     FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
     .bind(keys).all();
   const { results: rx } = await env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
@@ -331,7 +342,11 @@ export async function thread(env, me, key) {
     .map(({ meta, body }) => {
       const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
-        ...meta, body, avatar: m.avatar || null, reactions: reactionsBy.get(m.mkey) || [],
+        ...meta,
+        body,
+        avatar: m.avatar || null,
+        authorKey: m.author_key || null,
+        reactions: reactionsBy.get(m.mkey) || [],
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
@@ -369,6 +384,7 @@ export async function thread(env, me, key) {
       logical_via: m.logical_via,
     })),
     messages,
+    profiles: await profiles(env, messages.map((m) => m.authorKey)),
     watermarks: marks || [],
     label,
     model,

@@ -17,7 +17,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
-| `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
+| `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
 | `GET /api/mentionable?thread=&q=` | Who can be mentioned in a reply: accounts already in D1 for the thread's platform and workspace whose name (any word) starts with `q`; people in the thread first, then staff. |
@@ -52,7 +52,7 @@ Nothing below is committed; set it on the Worker.
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
-| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, threads, messages, watermarks, mentions, backfills, labels, facts |
+| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts |
 | `AI` | Workers AI | Clef (thread labels, re-threading) and Clairic (facts), `bge-base-en-v1.5` embeddings |
 | `VECTORS` | Vectorize | `helix-opspile-roots` (`-stage`): one vector per root message. Create it by hand: 768 dimensions, cosine, metadata indexes `channel` (string) and `at` (number) |
 | `ARTIFACTS` | Artifacts | Pile 3: namespace `helix-opspile` (`-stage`), one repo per org (`kb-org-<slug>`) and per team (`kb-team-<slug>`), created when a channel is discovered and by the cron for every team |
@@ -76,6 +76,10 @@ the matching rule with the lowest `priority` wins. `field` is `channel_id`, `nam
 `group_name` (the Teams team) or `connected` (Slack Connect team ids); `pattern` is a
 case-insensitive regular expression and `value` may use `$1`. For example
 `org | name | ^aem-(.+)$ | $1` files `aem-acme` under the org `acme`.
+
+Rows in `partner_domains` (`domain`, `name`) mark people from a partner's mail domain (or a
+subdomain of it) as partners on their profile card, instead of customers:
+`INSERT INTO partner_domains (domain, name) VALUES ('agency.example', 'Agency')`.
 
 Pile 2 is derived, so it can always be rebuilt from pile 1:
 

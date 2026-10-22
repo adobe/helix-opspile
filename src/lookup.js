@@ -168,6 +168,8 @@ async function fetchSlackUser(env, userId) {
     name: u.real_name || (u.profile && u.profile.real_name) || u.name,
     email: (u.profile && u.profile.email) || null,
     home: u.team_id || null,
+    title: p.title || null,
+    company: null,
   };
 }
 
@@ -192,7 +194,7 @@ async function fetchTeamsUser(env, userId, fallbackName) {
   try {
     const u = await graphJson(
       env,
-      `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName`,
+      `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName,jobTitle,companyName`,
     );
     const upn = /#EXT#/i.test(u.userPrincipalName || '') ? null : u.userPrincipalName;
     const email = u.mail || upn || null;
@@ -202,6 +204,8 @@ async function fetchTeamsUser(env, userId, fallbackName) {
       email,
       home: null,
       avatar: await slackAvatarByEmail(env, email) || await gravatar(email),
+      title: u.jobTitle || null,
+      company: u.companyName || null,
     };
   } catch (e) {
     // Users from other tenants cannot always be read; keep what the message says.
@@ -248,11 +252,12 @@ export async function getIdentity(env, ref, now = Date.now()) {
     : null;
   const home = f.home || ref.home || null;
   await env.DB.prepare(`INSERT INTO identities
-    (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
-      person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar`)
+      person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
+      title = excluded.title, company = excluded.company`)
     .bind(
       ref.source,
       ref.tenant,
@@ -264,6 +269,8 @@ export async function getIdentity(env, ref, now = Date.now()) {
       person ? person.id : null,
       new Date(now).toISOString(),
       f.avatar || '',
+      f.title || null,
+      f.company || null,
     )
     .run();
   return {
