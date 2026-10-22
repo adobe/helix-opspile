@@ -159,8 +159,14 @@ function inbox(team) {
       in_team: teamIds.has(w.person) ? 1 : 0,
     }));
   const mentions = store.mentions.filter((m) => keys.has(m.thread) && teamIds.has(m.person));
+  const byName = new Map([...store.people.values()].map((p) => [p.name, p]));
   return {
     team,
+    me: { id: ME, name: store.people.get(ME).name, readonly: false },
+    people: Object.fromEntries([...store.people.values()]
+      .map((p) => [p.id, { name: p.name, staff: p.staff }])),
+    teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
+      .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(team),
     threads: readState(rows, marks, mentions, ME)
       .map((t) => ({
@@ -168,6 +174,10 @@ function inbox(team) {
         label: store.labels.get(t.thread) || null,
         ...people(store.threads.get(t.thread)),
         members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
+        posters: [...new Set(store.threads.get(t.thread).messages
+          .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
+        mentioned: store.mentions.filter((m) => m.thread === t.thread)
+          .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
       })),
   };
 }

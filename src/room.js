@@ -71,8 +71,9 @@ export class TeamRoom extends DurableObject {
     const url = new URL(request.url);
     if (url.pathname === '/connect') {
       const person = Number(request.headers.get('x-opspile-person'));
+      const readonly = request.headers.get('x-opspile-readonly') === '1';
       const pair = new WebSocketPair();
-      this.ctx.acceptWebSocket(pair[1], [String(person)]);
+      this.ctx.acceptWebSocket(pair[1], [String(person), readonly ? 'readonly' : 'readwrite']);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname === '/notify' && request.method === 'POST') {
@@ -95,8 +96,9 @@ export class TeamRoom extends DurableObject {
       return;
     }
     // The person comes from the authenticated connection, never from the message.
-    const [tag] = this.ctx.getTags(ws);
-    if (msg.type === 'read') {
+    const [tag, mode] = this.ctx.getTags(ws);
+    // An admin looking as someone else must not move their read state.
+    if (msg.type === 'read' && mode !== 'readonly') {
       await this.read(Number(tag), msg.thread, msg.at);
     }
   }

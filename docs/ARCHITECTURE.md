@@ -194,6 +194,15 @@ signed-in user's own state only coarsely, so opspile owns read state. Most of it
 | A message is edited, or a reaction is added by someone else | No change; edits never make a thread unread |
 | Bot or system message | Stored and shown, but does not count as new activity |
 
+### Status piles
+
+The inbox sorts every thread into one pile, most pressing first: **critical** (critical
+urgency, nobody at Adobe has seen it), **hot** (high urgency, unseen by Adobe), **you** (you
+posted or were mentioned, and the customer spoke last or you were mentioned), **waiting**
+(waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal, or on the
+customer longer than 30 min / 1 h / 1 day), **team** (your team is in it and all is well) and
+**quiet**. Admins can look at the inbox as another person, read-only.
+
 ### Attention
 
 Read state answers "who has seen this"; attention ranks what that means for the person

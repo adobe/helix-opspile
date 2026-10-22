@@ -15,7 +15,7 @@ import {
   before, beforeEach, describe, it,
 } from 'node:test';
 import { accessEmail, resetKeyCache } from '../src/access.js';
-import { inbox, viewer } from '../src/api.js';
+import { api, inbox, viewer } from '../src/api.js';
 import { indexMessage } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -115,6 +115,35 @@ describe('viewer and inbox', () => {
       ['t2', true, true, false, 1],
       ['t1', true, false, true, 0],
     ]);
+  });
+});
+
+describe('viewing as someone else', () => {
+  const people = [
+    {
+      id: 1, email: 'a@staff.example', name: 'A', staff: 1, teams: ['admin', 'helix'],
+    },
+    {
+      id: 2, email: 'b@staff.example', name: 'B', staff: 1, teams: ['helix'],
+    },
+  ];
+  const fresh = () => d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'admin', name: 'Admin' }], people });
+  const as = (jwt, who) => new Request('https://opspile.test/api/me', {
+    headers: { 'cf-access-jwt-assertion': jwt, 'x-opspile-as': String(who) },
+  });
+
+  it('lets an admin see the inbox as another person, read-only', async () => {
+    const DB = fresh();
+    const me = await viewer(as(await sign(claims()), 2), { ...env, DB }, { fetchImpl, now: NOW });
+    assert.deepEqual([me.id, me.readonly, me.viewer.id, me.teams.map((t) => t.slug)], [2, true, 1, ['helix']]);
+    const res = await api(new Request('https://opspile.test/api/read', { method: 'POST', body: '{}' }), { DB }, new URL('https://opspile.test/api/read'), { viewer: me });
+    assert.equal(res.status, 403);
+  });
+
+  it('ignores the header for everyone else', async () => {
+    const DB = fresh();
+    const me = await viewer(as(await sign(claims({ email: 'b@staff.example' })), 1), { ...env, DB }, { fetchImpl, now: NOW });
+    assert.deepEqual([me.id, me.readonly], [2, undefined]);
   });
 });
 

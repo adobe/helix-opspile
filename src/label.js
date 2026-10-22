@@ -71,11 +71,11 @@ export const QUESTIONS = {
     instructions: 'What kind of thread is this?',
     criteria: {
       incident: 'Something is broken, down or degraded, usually in production',
-      security: 'A vulnerability, CVE, exposure, abuse or access concern',
+      security: 'A vulnerability, CVE, exposure, abuse or excessive traffic, or an access concern',
       question: 'A question about how something works or how to do something',
-      request: 'A request for a change, access, configuration, or new work',
-      alert: 'An automated alert or monitoring notification',
-      other: 'An announcement, coordination, social chatter or anything else',
+      request: 'A request for a change, configuration or new work (not access)',
+      access: 'Onboarding or access: adding or removing people, invitations, channel or team setup, welcome messages, or permissions to a tool or repository',
+      other: 'FYI, shared material, an announcement or social; nothing is asked',
     },
   },
   urgency: {
@@ -243,6 +243,10 @@ export async function labelThread(env, key, now = new Date()) {
   }
   if (thread.kind !== 'channel') {
     return { result: 'skip', reason: thread.kind };
+  }
+  if (!thread.last_at) {
+    // Only system events or bots (a member joined, an app was added): nothing to label.
+    return { result: 'skip', reason: 'no person posted' };
   }
   const done = await env.DB.prepare('SELECT labeled_through FROM labels WHERE thread = ?')
     .bind(key).first();
