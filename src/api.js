@@ -64,6 +64,17 @@ async function participants(env, keys) {
   }]));
 }
 
+async function personWithTeams(env, person) {
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
+    JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
+  const teams = results || [];
+  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
+}
+
+/**
+ * The signed-in person, from the verified Access email. An admin may look at the inbox as
+ * someone else (`x-opspile-as: <person id>`): reads only, never their read state or a reply.
+ */
 export async function viewer(request, env, options) {
   const email = await accessEmail(request, env, options);
   if (!email) {
@@ -74,10 +85,16 @@ export async function viewer(request, env, options) {
   if (!person) {
     return null;
   }
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
-    JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
-  const teams = results || [];
-  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
+  const me = await personWithTeams(env, person);
+  const as = Number(request.headers.get('x-opspile-as') || new URL(request.url).searchParams.get('as'));
+  if (me.admin && as && as !== me.id) {
+    const other = await env.DB.prepare('SELECT id, name, email FROM people WHERE id = ?').bind(as).first();
+    if (other) {
+      const them = await personWithTeams(env, other);
+      return { ...them, viewer: { id: me.id, name: me.name }, readonly: true };
+    }
+  }
+  return me;
 }
 
 const inTeam = (me, team) => me.teams.some((t) => t.slug === team);
@@ -155,6 +172,8 @@ export async function inbox(env, me, team) {
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
       COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
     FROM threads WHERE team = ? AND kind != 'ignore'
+      -- Threads of nothing but system events (a member was added) are not shown.
+      AND NOT (kind = 'channel' AND last_at IS NULL AND COALESCE(title, '') = '')
     GROUP BY g ORDER BY latest DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
@@ -218,8 +237,24 @@ export async function inbox(env, me, team) {
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
   ]));
+  // Names of everyone posting or mentioned (for "involves"), and the viewer's teams.
+  const ids = [...new Set([...(posted || []), ...(named || [])].map((r) => r.person))];
+  const { results: names } = await env.DB.prepare(`SELECT id, name, staff FROM people
+    WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all();
+  const { results: teamRows } = await env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
+    JOIN teams t ON t.slug = m.team
+    WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
+  const myTeams = {};
+  for (const r of teamRows || []) {
+    myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
+    myTeams[r.team].members.push(r.person);
+  }
   return {
     team,
+    me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
+    people: Object.fromEntries((names || [])
+      .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
+    teams: myTeams,
     members: await members(env, team),
     threads: fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
@@ -395,7 +430,20 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   const team = url.searchParams.get('team');
 
   if (url.pathname === '/api/me') {
-    return json({ ...me, connected: await connections(env, me.id) });
+    return json({ ...me, connected: me.readonly ? {} : await connections(env, me.id) });
+  }
+  // Looking as someone else is read-only: no reads, replies, reviews or connections.
+  const writes = request.method !== 'GET' || /^\/api\/auth\//.test(url.pathname);
+  if (me.readonly && writes) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (url.pathname === '/api/people') {
+    if (!(me.admin || (me.viewer))) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    const { results } = await env.DB.prepare(`SELECT DISTINCT p.id, p.name FROM people p
+      JOIN team_members m ON m.person = p.id ORDER BY p.name`).all();
+    return json({ people: results || [] });
   }
   const auth = /^\/api\/auth\/(slack|teams)(\/start|\/callback)?$/.exec(url.pathname);
   if (auth) {
@@ -462,6 +510,7 @@ export async function api(request, env, url, { viewer: injected } = {}) {
     }
     const headers = new Headers(request.headers);
     headers.set('x-opspile-person', String(me.id));
+    headers.set('x-opspile-readonly', me.readonly ? '1' : '0');
     return room(env, team).fetch(new Request('https://room/connect', { headers }));
   }
   return json({ error: 'not found' }, 404);

@@ -57,6 +57,10 @@
   .fr .bar.stack i { display: block; height: 100%; min-width: 2px; }
   .c-red { background: var(--red) !important; } .c-yellow { background: var(--yellow) !important; }
   .c-green { background: var(--green) !important; } .c-none { background: var(--faint) !important; }
+  .c-critical { background: #8e1b1b !important; } .c-hot { background: var(--red) !important; }
+  .c-you { background: var(--accent) !important; } .c-waiting { background: var(--yellow) !important; }
+  .c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
+  .fr .ico.em { font-size: 13px; line-height: 16px; text-align: center; }
   .c-accent { background: var(--accent) !important; }
 
   /* Threads: fixed-height rows, two lines, as in Apple Mail. */
@@ -92,7 +96,8 @@
   .tag.hot { color: var(--red); border-color: var(--red); }
   .tag.us { color: var(--yellow); border-color: var(--yellow); }
   .t .dot { --ring: var(--faint); }
-  .t .dot.c-red { --ring: var(--red); } .t .dot.c-yellow { --ring: var(--yellow); } .t .dot.c-green { --ring: var(--green); }
+  .t .dot.c-critical { --ring: #8e1b1b; } .t .dot.c-hot { --ring: var(--red); } .t .dot.c-you { --ring: var(--accent); }
+  .t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-team { --ring: var(--green); }
   .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--ring); }
   .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--ring); }
   .t .dot.ring:not([class*="c-"]) { background: transparent; }
@@ -188,6 +193,7 @@
 <header>
   <h1>opspile</h1>
   <select id="team" aria-label="Team"></select>
+  <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
   <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
@@ -210,7 +216,7 @@ const state = {
 
 // ---------------------------------------------------------------- helpers
 async function get(path) {
-  const res = await fetch(path, { credentials: 'same-origin' });
+  const res = await fetch(path, { credentials: 'same-origin', headers: state.as ? { 'x-opspile-as': String(state.as) } : {} });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
   return res.json();
 }
@@ -292,45 +298,114 @@ function md(src) {
 // ---------------------------------------------------------------- facets
 // Status: red = nobody at Adobe has seen it, or you were mentioned; yellow = a teammate was
 // mentioned, or nobody on the team has seen it; green = only you have not; none = caught up.
-const STATUS = { adobe: 'red', 'mentioned-me': 'red', 'mentioned-team': 'yellow', team: 'yellow', me: 'green' };
-const statusOf = (t) => STATUS[t.attention] || 'none';
 const URGENCY = ['low', 'normal', 'high', 'critical'];
-const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : null);
+// None and low are one bucket.
+const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : 'low');
 const KIND_EMOJI = {
-  incident: '🔥', security: '🔒', question: '❓', request: '🙋', alert: '🚨', other: '💬',
+  incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', alert: '🚨', other: '💬',
 };
-const kindOf = (t) => (t.kind === 'alert' ? 'alert' : t.label?.label_kind || null);
+const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
+const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 const resolvedOf = (t) => (t.label?.resolved_p == null ? null : (t.label.resolved_p >= 0.5 ? 'resolved' : 'open'));
-const teamIds = () => new Set((state.data?.members || []).map((m) => m.id));
-/** Which of "my / team / Adobe" a thread involves: who posted, who was mentioned. */
-function involvement(t) {
-  const me = state.me.id;
+const viewerId = () => state.data?.me?.id ?? state.me.id;
+const teamIds = () => new Set(Object.values(state.data?.teams || {}).flatMap((x) => x.members));
+/** Us, Customer (customer or vendor), Nobody (nobody, or no label). */
+const waitingOn = (t) => {
+  const n = t.label?.next_actor;
+  if (n === 'us') return 'Us';
+  if (n === 'customer' || n === 'vendor') return 'Customer';
+  return 'Nobody';
+};
+
+// How long a thread may wait before it turns yellow, by urgency.
+const MIN = 60000;
+const WAIT_US = { critical: 15 * MIN, high: 60 * MIN, normal: 180 * MIN, low: 180 * MIN };
+const WAIT_THEM = { critical: 30 * MIN, high: 60 * MIN, normal: 1440 * MIN, low: 1440 * MIN };
+
+/**
+ * The status pile a thread is in, most pressing first:
+ * - critical: critical urgency and nobody at Adobe has seen it (dark red)
+ * - hot: high urgency and nobody at Adobe has seen it (red)
+ * - you: you are in it (posted or mentioned), and the last word is not Adobe's, or it
+ *   mentions you (blue)
+ * - waiting: waits on us, or on the customer, longer than its urgency allows (yellow)
+ * - team: your team is in it, you were not mentioned, all is well (green)
+ * - quiet: everything else (grey)
+ */
+function statusOf(t) {
+  const me = viewerId();
+  const u = urgencyOf(t);
+  const alert = t.kind === 'alert';
+  if (!alert && t.unseenByAdobe && u === 'critical') return 'critical';
+  if (!alert && t.unseenByAdobe && u === 'high') return 'hot';
+  const mine = (t.posters || []).includes(me) || (t.mentioned || []).some((m) => m.person === me);
+  if (!alert && mine && (t.last_staff === 0 || t.mentionedMe)) return 'you';
+  const age = Date.now() - (Date.parse(lastOf(t)) || Date.now());
+  const on = waitingOn(t) === 'Nobody' && !t.label ? (t.last_staff === 0 ? 'Us' : 'Nobody') : waitingOn(t);
+  if (!alert && on === 'Us' && age > WAIT_US[u]) return 'waiting';
+  if (!alert && on === 'Customer' && age > WAIT_THEM[u]) return 'waiting';
   const team = teamIds();
+  if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
+  return 'quiet';
+}
+const STATUS_ORDER = ['critical', 'hot', 'you', 'waiting', 'team', 'quiet'];
+const STATUS_LABEL = {
+  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', team: 'Team on it', quiet: 'Everything else',
+};
+const STATUS_HINT = {
+  critical: 'Critical urgency and nobody at Adobe has seen it',
+  hot: 'High urgency and nobody at Adobe has seen it',
+  you: 'You posted or were mentioned, and the customer spoke last or you were mentioned',
+  waiting: 'Waiting on us (15 min critical, 1 h high, 3 h normal) or on the customer (30 min, 1 h, 1 day) for too long',
+  team: 'Your team is in it, you were not mentioned, all is well',
+  quiet: 'Everything else',
+};
+
+/** Who a thread involves, from the viewer's point of view. */
+function involvement(t) {
+  const me = viewerId();
   const out = [];
-  if ((t.posters || []).includes(me)) out.push('my threads');
-  if ((t.mentioned || []).some((m) => m.person === me)) out.push('my mentions');
-  if ((t.posters || []).some((p) => team.has(p))) out.push('team threads');
-  if ((t.mentioned || []).some((m) => team.has(m.person))) out.push('team mentions');
-  if ((t.mentioned || []).some((m) => m.staff)) out.push('Adobe mentions');
+  const people = [...(t.posters || []), ...(t.mentioned || []).map((m) => m.person)];
+  if (people.includes(me)) out.push('me');
+  for (const [slug, team] of Object.entries(state.data?.teams || {})) {
+    if (people.some((p) => team.members.includes(p))) out.push(`team:${slug}`);
+  }
+  for (const p of state.coPeople || []) if (people.includes(p)) out.push(`person:${p}`);
   return out.length ? out : null;
 }
+/** The ten people the viewer shares the most threads with. */
+function coParticipants() {
+  const me = viewerId();
+  const n = new Map();
+  for (const t of state.data?.threads || []) {
+    const people = new Set([...(t.posters || []), ...(t.mentioned || []).map((m) => m.person)]);
+    if (!people.has(me)) continue;
+    for (const p of people) if (p !== me) n.set(p, (n.get(p) || 0) + 1);
+  }
+  return [...n].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([p]) => p);
+}
+const involvesLabel = (v) => {
+  if (v === 'me') return 'Me';
+  if (v.startsWith('team:')) return state.data?.teams?.[v.slice(5)]?.name || v.slice(5);
+  if (v.startsWith('person:')) return state.data?.people?.[v.slice(7)]?.name || v;
+  return v;
+};
+
 const FACETS = [
-  { id: 'status', title: 'Status', value: statusOf, order: ['red', 'yellow', 'green', 'none'],
-    label: { red: 'Adobe / you', yellow: 'Team', green: 'Only you', none: 'Caught up' },
-    hint: { red: 'Nobody at Adobe has seen it, or you were mentioned', yellow: 'Nobody on the team has seen it, or a teammate was mentioned', green: 'Only you have not seen it', none: 'Everyone is caught up' },
+  { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
     color: (v) => `c-${v}` },
-  { id: 'involves', title: 'Involves', value: involvement, multi: true,
-    order: ['my threads', 'my mentions', 'team threads', 'team mentions', 'Adobe mentions'] },
+  { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel,
+    order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`), ...(state.coPeople || []).map((p) => `person:${p}`)] },
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
     label: { conversation: 'Conversations', alert: 'Alerts' } },
   { id: 'platform', title: 'Platform', value: platform },
   { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' }, color: (v) => (v === 'open' ? 'c-yellow' : 'c-green') },
-  { id: 'next', title: 'Next actor', value: (t) => t.label?.next_actor || null, order: ['us', 'customer', 'vendor', 'nobody'],
-    color: (v) => (v === 'us' ? 'c-yellow' : 'c-none') },
+    label: { open: 'Unresolved', resolved: 'Resolved' } },
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'] },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
-    color: (v) => ({ critical: 'c-red', high: 'c-yellow', normal: 'c-green', low: 'c-none' }[v]) },
-  { id: 'kind', title: 'Kind', value: kindOf, label: Object.fromEntries(Object.entries(KIND_EMOJI).map(([k, e]) => [k, `${e} ${k}`])) },
+    emoji: (v) => URGENCY_ICON[v] },
+  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v],
+    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => ts.find((t) => t.org === v && t.customerDomain)?.customerDomain, limit: 12 },
 ];
 const valuesOf = (f, t) => {
@@ -348,8 +423,8 @@ const passes = (t, except) => FACETS.every((f) => f.id === except || !state.sel[
 function bar(f, v, n, max, m, color) {
   const width = `${Math.max(2, Math.round((n / max) * 100))}%`;
   if (f.id === 'status' || !m || !n) return `<span class="bar ${color}" style="width:${width}"></span>`;
-  const seg = ['red', 'yellow', 'green', 'none'].filter((k) => m[k])
-    .map((k) => `<i class="c-${k}" style="flex:${m[k]}" title="${m[k]} ${k === 'none' ? 'caught up' : k}"></i>`).join('');
+  const seg = STATUS_ORDER.filter((k) => m[k])
+    .map((k) => `<i class="c-${k}" style="flex:${m[k]}" title="${m[k]} ${esc(STATUS_LABEL[k])}"></i>`).join('');
   return `<span class="bar stack" style="width:${width}">${seg}</span>`;
 }
 
@@ -362,15 +437,17 @@ function renderFilters() {
     for (const t of pool) {
       for (const v of valuesOf(f, t)) {
         counts.set(v, (counts.get(v) || 0) + 1);
-        const m = mix.get(v) || { red: 0, yellow: 0, green: 0, none: 0 };
-        m[statusOf(t)] += 1;
+        const m = mix.get(v) || {};
+        m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
         mix.set(v, m);
       }
     }
     if (f.multi) counts.delete('(none)');
     for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
     let rows = [...counts];
-    rows.sort((a, b) => (f.order ? (f.order.indexOf(a[0]) + 1 || 99) - (f.order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
+    const order = typeof f.order === 'function' ? f.order() : f.order;
+    if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
+    rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
     if (f.limit) rows = rows.slice(0, f.limit);
     const max = Math.max(1, ...rows.map((r) => r[1]));
     const on = state.sel[f.id] || new Set();
@@ -378,10 +455,11 @@ function renderFilters() {
       ${rows.map(([v, n]) => {
         const color = f.color ? f.color(v) : 'c-accent';
         const ic = f.icon && f.icon(v, all);
+        const em = f.emoji && f.emoji(v);
         return `<div class="fr ${on.has(v) ? 'on' : ''}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
           <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-          ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : '<span></span>'}
-          <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.label && f.label[v]) || v)}</span>
+          ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
+          <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
           <span class="n">${n}</span>
           ${bar(f, v, n, max, mix.get(v), color)}</div>`;
       }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>'}</div>`;
@@ -415,7 +493,7 @@ function row(t) {
   const n = t.occurrences || (t.members || []).length;
   const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
   return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}" data-thread="${esc(t.thread)}">
-    <div class="l1"><span class="dot ${status === 'none' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(t.attention || 'caught up')}${ourMove(t) ? ' · our move' : ''}"></span>
+    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
       <span class="title">${t.root_known ? '' : '↳ '}${emojify(t.title || '(no text)')}</span>
       <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
     <div class="l2">
@@ -429,14 +507,20 @@ function row(t) {
 // Smart order: what needs me most, first. Recency always counts; a thread that waits on
 // us counts more the longer it waits, the more urgent and unresolved it is, and the closer
 // it is to me (mentioned me > I posted > mentioned the team > the team posted).
+const STATUS_WEIGHT = {
+  critical: 6, hot: 5, you: 4, waiting: 3, team: 1.5, quiet: 1,
+};
 function smartScore(t) {
+  return STATUS_WEIGHT[statusOf(t)] * 100 + baseScore(t);
+}
+function baseScore(t) {
   const now = Date.now();
   const last = Date.parse(lastOf(t) || t.any_at || 0) || 0;
   const ageH = Math.max(0, (now - last) / 3600000);
   const recency = Math.exp(-ageH / 48);
   const urgency = 1 + (t.label?.urgency ?? 0.5);
   const open = 1 - 0.8 * (t.label?.resolved_p ?? 0);
-  const me = state.me.id;
+  const me = viewerId();
   const team = teamIds();
   let near = 1;
   if ((t.mentioned || []).some((m) => m.person === me) || t.mentionedMe) near = 3;
@@ -474,10 +558,25 @@ function renderThreads() {
   const existing = new Map([...list.children].filter((c) => c.dataset.thread).map((c) => [c.dataset.thread, c]));
   const nodes = shown.map((t) => {
     const html = row(t);
+    // Selection, read state and the status dot change on a click; only the first line is
+    // updated then, so the second line (avatars, favicon) keeps its DOM and does not flicker.
+    const cls = /^<div class="([^"]*)"/.exec(html.trim())[1];
+    const body = html.trim().replace(/^<div class="[^"]*"/, '<div');
     const old = existing.get(t.thread);
-    if (old && old.__html === html.replace(/ enter /, '  ')) return old;
+    const l2 = /<div class="l2">[\s\S]*$/.exec(body)[0];
+    if (old && old.__body === body) {
+      old.className = cls.replace(/\benter\b/, '').trim();
+      return old;
+    }
+    if (old && old.__l2 === l2) {
+      old.className = cls.replace(/\benter\b/, '').trim();
+      old.querySelector('.l1').outerHTML = /<div class="l1">[\s\S]*?<\/div>/.exec(body)[0];
+      old.__body = body;
+      return old;
+    }
     const node = toNode(html);
-    node.__html = html.replace(/ enter /, '  ');
+    node.__body = body;
+    node.__l2 = l2;
     preload.observe(node);
     return node;
   });
@@ -542,6 +641,7 @@ function message(m, prev, fresh) {
 }
 
 function composer(thread) {
+  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
   const p = thread.source;
   const name = p === 'slack' ? 'Slack' : 'Microsoft';
   if (!state.me.connected?.[p]) {
@@ -674,7 +774,7 @@ function toast(text) {
 // ---------------------------------------------------------------- read state, live
 const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
 function markRead(t) {
-  if (!t || !t.thread) return;
+  if (!t || !t.thread || state.data?.me?.readonly) return;
   // A folded entry is several platform threads: each one is read up to its own end.
   for (const m of t.members || [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }]) {
     const at = memberLast(m, t.kind);
@@ -700,8 +800,18 @@ function reloadSoon(thread) {
     }
   }, 500);
 }
+/** The teams of whoever the inbox is shown for (you, or the person you view as). */
+async function loadWho() {
+  const who = state.as ? await get('/api/me') : state.me;
+  $('team').innerHTML = who.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
+  if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
+  $('team').value = state.team;
+}
+
 async function loadInbox() {
   state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+  $('me').textContent = state.data.me?.readonly ? `${state.me.name} · viewing as ${state.data.me.name}` : (state.me.name || state.me.email);
+  state.coPeople = coParticipants();
   state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
   render();
 }
@@ -716,7 +826,7 @@ async function prefetch(key) {
 }
 function connect() {
   state.ws?.close();
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}`);
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}${state.as ? `&as=${state.as}` : ''}`);
   state.ws = ws;
   ws.onopen = () => $('live').classList.add('on');
   ws.onclose = () => { $('live').classList.remove('on'); if (state.ws === ws) setTimeout(connect, 3000); };
@@ -736,18 +846,20 @@ function toUrl(push = true) {
   if (state.open) q.set('t', state.open);
   if (state.review) q.set('review', '1');
   if (state.sort !== 'smart') q.set('sort', state.sort);
+  if (state.as) q.set('as', String(state.as));
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](null, '', url);
 }
 function fromUrl() {
   const q = new URLSearchParams(location.search);
   const team = q.get('team');
-  state.team = state.me.teams.some((t) => t.slug === team) ? team : state.me.teams[0]?.slug;
+  state.team = team || state.me.teams[0]?.slug;
   if (q.has('filters')) {
     state.sel = {};
     for (const [k, v] of q) if (k.startsWith('f.') && v) state.sel[k.slice(2)] = new Set(v.split('|'));
   }
   state.sort = q.get('sort') === 'recent' ? 'recent' : 'smart';
+  state.as = Number(q.get('as')) || null;
   return { open: q.get('t'), review: q.get('review') === '1' };
 }
 
@@ -770,7 +882,7 @@ async function start() {
   if (q.get('connected')) toast(`Connected your ${q.get('connected') === 'slack' ? 'Slack' : 'Microsoft'} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
   const initial = fromUrl();
-  $('team').value = state.team;
+  await loadWho();
   toUrl(false);
   $('team').onchange = async () => {
     state.team = $('team').value; state.open = null; state.prevKeys = null;
@@ -836,6 +948,23 @@ async function start() {
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
   });
   if (state.me.admin) {
+    const sel = $('as');
+    sel.hidden = false;
+    get('/api/people').then(({ people }) => {
+      sel.innerHTML = `<option value="">View as: me</option>${people.filter((p) => p.id !== state.me.id).map((p) => `<option value="${p.id}">View as ${esc(p.name)}</option>`).join('')}`;
+      sel.value = state.as ? String(state.as) : '';
+    });
+    sel.onchange = async () => {
+      state.as = Number(sel.value) || null;
+      state.cache.clear();
+      state.prevKeys = null;
+      state.open = null;
+      $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+      await loadWho();
+      toUrl();
+      await loadInbox();
+      connect();
+    };
     $('review').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {
