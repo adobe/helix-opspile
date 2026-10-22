@@ -3,7 +3,7 @@
 An inbox for opsophiles: one place for an ops team to work through every Slack and Microsoft
 Teams channel it is responsible for, with per-person and per-team read state.
 
-Status: **piles 1, 2 and 4 live, with a first inbox.** Signed Slack events are stored in R2 and queued for
+Status: **piles 1, 2 and 4 live, with a first inbox; thread agents that fill pile 3, in one test channel.** Signed Slack events are stored in R2 and queued for
 normalization; Teams: a cron keeps one tenant-wide Graph subscription alive, and its notifications and the messages they name are stored the same way. A queue consumer turns every raw object into one markdown file per message (pile 2), filed by the channel rules in D1. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 design and the open issues for what comes next.
 
@@ -29,9 +29,11 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
 | `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), behind Access with Managed OAuth. See "MCP server" below. |
+| `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. Only in their teams. See "Thread agents". |
+| `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, or `kb:<team>:<org>`), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
-| queue `helix-opspile-normalize` | Also carries thread backfill requests and label jobs (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
-| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3). Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
+| queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs and thread-agent pokes (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
+| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -53,14 +55,24 @@ Nothing below is committed; set it on the Worker.
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox`, `/api` and `/mcp` |
+| `AGENT_MODEL` | var | Optional: the Bedrock model id of the thread agents (an `anthropic.` id served by `bedrock-mantle`). Agents are off without it. |
+| `AGENT_CHANNELS` | var | Comma-separated channel ids (Slack or Teams) where thread agents run |
+| `AGENT_GATEWAY` | var | The AI Gateway (id) agents call Bedrock through |
+| `AGENT_REGION` | var | Optional: Bedrock region, default `us-east-1` |
+| `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
+| `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
+| `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
+| `BEDROCK_API_KEY` | secret | Amazon Bedrock API key (bearer token). Required when `AGENT_MODEL` is set |
+| `AI_GATEWAY_TOKEN` | secret | Optional: a token for an authenticated gateway, sent as `cf-aig-authorization`; set `AI_GATEWAY_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
+| `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
-| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts |
-| `AI` | Workers AI | Clef (thread labels, re-threading) and Clairic (facts), `bge-base-en-v1.5` embeddings |
+| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
+| `AI` | Workers AI | Clef (thread labels, re-threading, the agents' prompt-injection check) and Clairic (facts), `bge-base-en-v1.5` embeddings |
 | `VECTORS` | Vectorize | `helix-opspile-roots` (`-stage`): one vector per root message. Create it by hand: 768 dimensions, cosine, metadata indexes `channel` (string) and `at` (number) |
-| `ARTIFACTS` | Artifacts | Pile 3: namespace `helix-opspile` (`-stage`), one repo per org (`kb-org-<slug>`) and per team (`kb-team-<slug>`), created when a channel is discovered and by the cron for every team |
+| `ARTIFACTS` | Artifacts | Pile 3: namespace `helix-opspile` (`-stage`), one repo per org (`kb-org-<slug>`) and per team (`kb-team-<slug>`), created when a channel is discovered and by the cron for every team; and read-only mirrors of GitHub repositories for the agents (`gh-<owner>-<name>-<time>`) |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
 
 `cf deploy` creates the buckets and queues when they are missing. The D1 schema is in
@@ -77,8 +89,8 @@ email is a person in D1, and shows them the threads of their own teams.
 ### MCP server
 
 `/mcp` lets an agent outside the browser (Claude, an IDE, a CLI) work the inbox as the person
-signed in, with six tools: `whoami`, `list_threads`,
-`get_thread`, `reply`, `react_to_message` and `resolve_thread`. It speaks MCP `2026-07-28`
+signed in, with seven tools: `whoami`, `list_threads`,
+`get_thread`, `reply`, `react_to_message`, `resolve_thread` and `seed_agent`. It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each
 request's `_meta`, header checks (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), caching
 hints, and plain JSON responses (no SSE, no `subscriptions/listen`). Clients of the 2025
@@ -95,6 +107,25 @@ documents, signs the person in with the same policy, and forwards each request w
 usual `Cf-Access-Jwt-Assertion`, so the Worker needs no new secret. To let a hosted client
 sign in, list its redirect URIs under **Allowed redirect URIs**; local clients need
 **Allow localhost clients**. Connect a client to `<origin>/mcp`.
+
+### Thread agents
+
+An agent per thread in the channels listed in `AGENT_CHANNELS` follows the thread, keeps its
+shared draft current (a person sends it), and fills the customer's and the team's knowledge
+bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
+
+1. Create an AI Gateway in the Worker's account (`AGENT_GATEWAY` is its id). Leave it
+   unauthenticated, or create a token and set the secret `AI_GATEWAY_TOKEN`.
+2. Create an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
+   allowed to call `bedrock-mantle` (`bedrock-mantle:CreateInference`) in `AGENT_REGION`, and
+   set it as the secret `BEDROCK_API_KEY`.
+3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and `AGENT_CHANNELS` (and for CI, add them as
+   repository secrets), apply the migrations and deploy.
+
+GitHub repositories the agents may read are rows in `agent_repos`, data like the rules:
+`INSERT INTO agent_repos (scope, slug, url, note) VALUES ('org', 'acme', 'https://github.com/acme/site', 'their site')`
+(`scope` is `all`, `team` or `org`). The cron mirrors them into Artifacts within 20 minutes.
+`GET /diag/agent?name=<thread key>` shows what an agent is doing.
 
 ### Rules and replay
 

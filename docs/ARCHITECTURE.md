@@ -10,7 +10,8 @@ plain JavaScript, fed by separate ingestion services, with the data store doing 
 lifting.
 
 Everything runs on Cloudflare (Workers, R2, D1, Durable Objects, Workers AI, AI Search,
-Artifacts) in a single account.
+Artifacts, AI Gateway) in a single account; the thread agents' model is Claude on Amazon
+Bedrock, reached through AI Gateway.
 
 ## The four piles
 
@@ -147,10 +148,19 @@ kb-org-<slug>    what we know about this customer or vendor, across all teams
 kb-team-<slug>   product and process knowledge for this team, across all customers
 ```
 
-An agent working on a thread clones both repositories it applies to, reads them, and commits
-what it learned to the right one. Each commit carries a git note pointing to the threads and
-raw events that justify it, so every memory is traceable to its source, and a bad one is a
-`git revert`.
+The repositories follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+(OKF v0.2), the formalised [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+pattern: one markdown file per concept (a site, a known issue, a playbook, a decision), YAML
+frontmatter with a required `type`, links between concepts, an `index.md` per directory and a
+`log.md` at the root. Provenance is in each concept's frontmatter: `sources` lists the threads
+(permalinks) a concept was learned from, with who said it and when, and footnotes tie claims
+to them; `generated` says which agent wrote it and when, and `verified` will record staff
+review. Every change is a commit, so a bad memory is a `git revert`.
+
+[Thread agents](#thread-agents) are the writers. Code, not the agent, writes `index.md` and `log.md`
+and stamps `generated`, and a write that is not a well-formed concept is refused. For now
+every write is trusted and lands on `main`; staff review comes later, against the git
+history and the trust tiers OKF derives from `verified`.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
@@ -158,7 +168,6 @@ known: when the normalizer discovers a channel, it makes sure the repositories f
 channel's org and team exist, and the cron creates one for every team in D1, so a team that
 was added by hand gets one before it has any channel. `knowledge_bases` in D1 records the
 repositories that exist and their git remotes. Internal slugs (`_unassigned`) get none.
-Filling the repositories is separate work.
 
 ### 4. Fast index
 
@@ -333,6 +342,58 @@ inbox, on any message of the thread:
 - **🙏 thanks**: after the last message, nothing is pending (`waiting_on` is nobody).
 - **🛟 help**: a colleague asks the team to look: the thread is in "you" for everyone else
   and its smart score doubles, until it is resolved.
+
+## Thread agents
+
+One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
+for now only in the channels listed in `AGENT_CHANNELS`. Each is a Durable Object
+(`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
+the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
+SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
+
+**When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
+(after 15 seconds, so a burst arrives together); it reads the messages after its watermark
+from pile 2 and gets them as one input, the whole thread on first contact. A new message
+during a run joins that run. A day after the latest message, a schedule wakes it once more to
+wrap up: file what was learned, or put a follow-up in the draft.
+
+**Prompt injection.** Before an agent sees a message that Adobe staff did not write
+(customers, partners, bots), Clef answers one yes/no question: does it try to instruct or
+reconfigure an AI that reads it? A message at or above p = 0.5, or one the check could not
+answer, is withheld: the agent only learns that it exists. Verdicts are kept per message in
+the agent's storage, so each message is checked once. Text the agent does see is fenced and
+labelled as written by people outside its control.
+
+**What it can do.**
+
+| Tool | |
+|---|---|
+| `read_thread` | the whole entry, flagged messages withheld |
+| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. This is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
+| `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+
+GitHub repositories are read from Artifacts mirrors: the cron imports each listed repository
+into a fresh Artifacts repo, promotes it once it is readable and deletes the mirror it
+replaces, at most every six hours. Reads need no GitHub token and hit no rate limit; private
+repositories cannot be imported yet.
+
+Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
+indexes and the log, commit and push with a short-lived write token. Many agents write the
+same team knowledge base, so a rejected push starts over from a fresh clone; a change that
+names the blob it was written from (`base`) fails instead of overwriting a newer version.
+
+**Seeding.** Staff can teach an agent: `POST /api/agent/seed` (or the MCP tool `seed_agent`)
+with a thread hands the note to that thread's agent, and with a team and a customer slug to a
+knowledge-base agent (`kb:<team>:<org>`) that has the same tools minus the thread and the
+draft. Staff notes are trusted and not checked by Clef.
+
+**The model.** Claude on Amazon Bedrock, through Cloudflare AI Gateway: Bedrock's
+`bedrock-mantle` endpoint speaks the Anthropic Messages API, AI Gateway passes it through, and
+the Bedrock API key goes in `Authorization: Bearer`. The gateway logs and meters every request.
+
+**Replay.** Agents are not part of the replay path. Their output is user state (drafts) or
+pile 3 (git history); replaying pile 1 pokes them, but they find nothing past their watermark.
 
 ## People
 

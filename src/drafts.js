@@ -11,7 +11,7 @@
  */
 
 import { json } from './http.js';
-import { notifyRoom } from './normalizer.js';
+import { notifyRoom } from './notify.js';
 
 /**
  * Shared drafts: an inbox entry carries at most one unsent reply, which everyone in the team
@@ -26,7 +26,7 @@ const MAX_MENTIONS = 20;
 const PREVIEW = 140;
 
 /** The entry a thread key belongs to: its key, team, and every member thread. */
-async function entryOf(env, key) {
+export async function entryOf(env, key) {
   const row = key && await env.DB.prepare('SELECT thread, team, logical_thread FROM threads WHERE thread = ?')
     .bind(String(key)).first();
   if (!row) {

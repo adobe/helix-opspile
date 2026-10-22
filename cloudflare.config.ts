@@ -37,10 +37,23 @@ const VARS = [
   'SLACK_CLIENT_ID',
 ] as const;
 
+// Thread agents, optional: they run only when AGENT_MODEL is set, and only in AGENT_CHANNELS
+// (comma-separated channel ids). AGENT_GATEWAY names the AI Gateway in front of Amazon Bedrock,
+// in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
+// region (default us-east-1).
+const AGENT_VARS = [
+  'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
+  'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',
+] as const;
+
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
   // Posting as the user: the Slack app's client secret, and the key that encrypts tokens.
   'SLACK_CLIENT_SECRET', 'TOKEN_KEY',
+  // Thread agents: the Amazon Bedrock API key, and (AI_GATEWAY_TOKEN_REQUIRED=1) a token for
+  // an authenticated AI Gateway. Required only where agents are on.
+  ...(process.env.AGENT_MODEL ? ['BEDROCK_API_KEY'] : []),
+  ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -80,9 +93,15 @@ function vars(deployed: boolean) {
   if (deployed && missing.length) {
     throw new Error(`export ${missing.join(', ')} before deploying (see README "Bindings")`);
   }
+  // The gateway lives in the Worker's own account unless AI_GATEWAY_ACCOUNT says otherwise.
+  const values: Record<string, string | undefined> = {
+    ...process.env,
+    AI_GATEWAY_ACCOUNT: process.env.AI_GATEWAY_ACCOUNT
+      || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
+  };
   return Object.fromEntries(
-    VARS.filter((name) => process.env[name])
-      .map((name) => [name, bindings.text(process.env[name] as string)]),
+    [...VARS, ...AGENT_VARS].filter((name) => values[name])
+      .map((name) => [name, bindings.text(values[name] as string)]),
   );
 }
 
@@ -97,9 +116,14 @@ export default defineConfig(({ mode }) => {
       previewUrls: false,
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
+      // Pi (thread agents) and isomorphic-git use Node's Buffer and friends.
+      compatibilityFlags: ['nodejs_compat'],
       // Renews the Graph subscription, which lives at most 60 minutes (#5), and creates
       // missing team knowledge bases (#12).
-      exports: { TeamRoom: workerExports.durableObject({ storage: 'sqlite' }) },
+      exports: {
+        TeamRoom: workerExports.durableObject({ storage: 'sqlite' }),
+        ThreadAgent: workerExports.durableObject({ storage: 'sqlite' }),
+      },
       triggers: deployed
         ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
         : [],
@@ -108,6 +132,8 @@ export default defineConfig(({ mode }) => {
         ...resources(mode),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
+        // One Durable Object per inbox entry: its thread agent.
+        AGENTS: bindings.durableObject({ worker: name, exportName: 'ThreadAgent' }),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

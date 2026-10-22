@@ -133,6 +133,26 @@ describe('processKey', () => {
     ]);
   });
 
+  it('pokes the thread agent in the channels that have one, and only there', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const raw = {
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1792584000.000100', text: 'hello',
+      }),
+    };
+    const off = env(raw, { AGENTS: {}, AGENT_CHANNELS: 'C9' });
+    await processKey(off, key);
+    assert.equal(off.queued.filter((q) => q.body.agent).length, 0);
+    const on = env(raw, { AGENTS: {}, AGENT_CHANNELS: 'C9, C1' });
+    await processKey(on, key);
+    assert.deepEqual(on.queued.filter((q) => q.body.agent), [{
+      body: { agent: 'slack:E1:C1:1792584000.000100' }, options: { delaySeconds: 15 },
+    }]);
+    // Seen again (a redelivered event): nothing new for the agent.
+    await processKey(on, key);
+    assert.equal(on.queued.filter((q) => q.body.agent).length, 1);
+  });
+
   it('caches channels and people in D1', async () => {
     const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';

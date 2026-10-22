@@ -43,6 +43,12 @@ jobs:
       ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
       ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+      # Thread agents (optional; off while AGENT_MODEL is empty).
+      AGENT_MODEL: ${{ secrets.AGENT_MODEL }}
+      AGENT_CHANNELS: ${{ secrets.AGENT_CHANNELS }}
+      AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
+      AGENT_REGION: ${{ secrets.AGENT_REGION }}
+      AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

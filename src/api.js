@@ -11,6 +11,7 @@
  */
 
 import { accessEmail } from './access.js';
+import { agentStatus, seedAgent } from './agent/stub.js';
 import {
   discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -527,6 +528,13 @@ export async function api(request, env, url, { viewer: injected } = {}) {
     if (request.method === 'DELETE') {
       return discardDraft(env, me, body, (t) => inTeam(me, t));
     }
+  }
+  if (url.pathname === '/api/agent' && request.method === 'GET') {
+    return agentStatus(env, url.searchParams.get('thread'), (t) => inTeam(me, t) || isAdmin(me));
+  }
+  if (url.pathname === '/api/agent/seed' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return seedAgent(env, me, body, (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/react' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
