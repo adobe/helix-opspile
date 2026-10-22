@@ -116,11 +116,14 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
   threshold are kept.
 
 **Re-threading.** People often post a follow-up as a new root message instead of replying,
-and alert channels post the same alert again and again. When a root message arrives, its
+or split one request over several messages, and alert channels post the same alert again
+and again. A root by the same person within ten minutes of their previous root in the channel,
+with nobody else's root between them, continues it (a *burst*). When a root message arrives, its
 *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query strings and user
 agents; short numbers like status codes stay) is embedded and the most similar earlier roots in
 the same channel, within 14 days, are found by vector search. A near-identical one (cosine ≥
-0.97) is a match outright; otherwise, above 0.82, Clef chooses between up to four candidates
+0.97) is a match outright; otherwise, above 0.82 (0.6 in conversation channels, where
+follow-ups are worded differently), Clef chooses between up to four candidates
 and "a new topic", and a match needs a probability of at least 0.7. A match sets
 `logicalThread` on that one message file and on its thread row, always pointing at the group's
 first thread. The file stays where it is and the platform thread is never modified, so undoing

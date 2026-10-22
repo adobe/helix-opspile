@@ -188,6 +188,30 @@ describe('rethread', () => {
   });
 });
 
+describe('bursts', () => {
+  it('folds a second root by the same person minutes later, in any order', async () => {
+    for (const order of [[0, 1], [1, 0]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+      const at0 = new Date(T0).toISOString();
+      const at1 = new Date(T0 + 12000).toISOString();
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '5.0', 'Hi Amol', at0);
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '5.1', 'we are on call, can you join?', at1);
+      for (const [k, at, id] of [[a, at0, '5.0'], [b, at1, '5.1']]) {
+        env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted)
+          VALUES ('slack', 'E1', 'C1', ?, ?, ?, 'slack:E1:U7', 1)`).run(id, k, at);
+      }
+      for (const i of order) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, [a, b][i]);
+      }
+      const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
+      assert.deepEqual(rows, [{ logical_thread: null, logical_via: null }, { logical_thread: a, logical_via: 'burst' }], `order ${order}`);
+    }
+  });
+});
+
 describe('fold', () => {
   it('shows a group as one entry with the latest activity and the most pressing attention', () => {
     const t = (thread, at, extra = {}) => ({
