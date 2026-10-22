@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { agentEnabled } from './agent/enabled.js';
+import { AGENT_DELAY_SECONDS, pokeAgent } from './agent/stub.js';
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
@@ -20,11 +22,14 @@ import {
 } from './lookup.js';
 import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
+import { notifyRoom } from './notify.js';
 import { classify } from './rules.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
   replaceReactions, titleOf,
 } from './threads.js';
+
+export { notifyRoom };
 
 const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
@@ -76,22 +81,6 @@ async function resolveAuthor(env, ref) {
   }
   const identity = await getIdentity(env, ref);
   return { author: toAuthor(env, identity), person: identity.person || null };
-}
-
-/**
- * Tells the team's room (a Durable Object) about a change, so connected inboxes update.
- * Best effort: the index in D1 is the record, the room only fans out.
- */
-export async function notifyRoom(env, team, event) {
-  if (!env.ROOMS || !team) {
-    return;
-  }
-  try {
-    const room = env.ROOMS.get(env.ROOMS.idFromName(team));
-    await room.fetch('https://room/notify', { method: 'POST', body: JSON.stringify(event) });
-  } catch (e) {
-    console.warn(JSON.stringify({ route: 'normalize', room: team, error: e.message }));
-  }
 }
 
 async function personOf(env, source, tenant, userId) {
@@ -336,6 +325,10 @@ export async function processKey(env, key, cache = {}) {
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
+  // A thread agent reads every new message of its thread (only in the listed channels).
+  if (written && !deleted && cls.kind === 'channel' && agentEnabled(env, message.channelId)) {
+    await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
+  }
   await notifyRoom(env, cls.team, { type: 'thread', thread: message.thread });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
@@ -353,7 +346,8 @@ export async function consume(batch, env) {
     const key = body.key
       || (body.label && `label:${body.label}`)
       || (body.backfill && `backfill:${body.backfill.thread}`)
-      || (body.rethread && `rethread:${body.rethread}`);
+      || (body.rethread && `rethread:${body.rethread}`)
+      || (body.agent && `agent:${body.agent}`);
     try {
       let r;
       if (body.backfill) {
@@ -362,6 +356,9 @@ export async function consume(batch, env) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
+      } else if (body.agent) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await pokeAgent(env, body.agent) };
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };

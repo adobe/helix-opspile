@@ -12,6 +12,8 @@
 
 import inboxHtml from '../ui/inbox.html';
 import { accessEmail } from './access.js';
+import { refreshMirrors } from './agent/repos.js';
+import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
@@ -67,6 +69,24 @@ export default {
         return json({ error: e.message }, 500);
       }
     }
+    if (pathname === '/diag/agent') {
+      // One agent, by its name (an inbox entry key, or kb:<team>:<org>): GET says what it is
+      // doing; POST `deliver` tells it about new messages, POST `{ text }` seeds it.
+      if (!authorizedDiag(request, env) || !env.AGENTS || !url.searchParams.get('name')) {
+        return text('forbidden\n', 403);
+      }
+      try {
+        const agent = await agentStub(env, url.searchParams.get('name'));
+        if (request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          return json(body.text ? await agent.seed({ by: 'diag', text: String(body.text) })
+            : await agent.deliver());
+        }
+        return json(await agent.status());
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
     if (pathname === '/mcp') {
       return mcp(request, env);
     }
@@ -108,7 +128,10 @@ export default {
     await consume(batch, env);
   },
 
-  /** Cron: keep the Graph subscription alive (#5), and give every team a knowledge base. */
+  /**
+ * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, and keep the
+ * agents' GitHub mirrors fresh.
+ */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cron: controller.cron, ...r })))
@@ -116,7 +139,11 @@ export default {
     ctx.waitUntil(ensureTeamKnowledgeBases(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'teams', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'teams', error: e.message }))));
+    ctx.waitUntil(refreshMirrors(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mirrors: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mirrors: 'error', error: e.message }))));
   },
 };
 
 export { TeamRoom } from './room.js';
+export { ThreadAgent } from './agent/agent.js';

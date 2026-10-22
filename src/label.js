@@ -174,7 +174,7 @@ export function stateOf(thread, messages, reactions = new Map()) {
   return `${header}\n\n${body}`;
 }
 
-async function threadMessages(env, thread) {
+export async function threadMessages(env, thread) {
   const listed = await env.CHANNELS.list({ prefix: thread.path });
   const files = await Promise.all(listed.objects.map(async (o) => {
     const obj = await env.CHANNELS.get(o.key);

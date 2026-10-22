@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { seedAgent } from './agent/stub.js';
 import { inbox, thread as loadThread } from './api.js';
 import {
   connections, mentionable, post, reactable,
@@ -355,6 +356,14 @@ async function resolveTool(env, me, args) {
   return res.error ? res : { data: { ok: true, thread: key, resolved: !args.undo } };
 }
 
+async function seedTool(env, me, args) {
+  const body = {
+    thread: args.thread, team: args.team, org: args.org, text: args.text,
+  };
+  const res = await fromResponse(await seedAgent(env, me, body, inTeamOf(me)));
+  return res.error ? res : { data: { ok: true, accepted: Boolean(res.data.accepted) } };
+}
+
 async function whoami(env, me) {
   return {
     data: {
@@ -481,6 +490,26 @@ export const TOOLS = [
       readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
     },
     run: resolveTool,
+  },
+  {
+    name: 'seed_agent',
+    title: 'Teach an agent',
+    description: 'Shares knowledge with a thread agent, which files it in the knowledge bases of the customer and the ops team. Give a `thread` (in a channel that has an agent), or a `team` and a customer `org` slug to fill their knowledge bases directly. The agent treats it as trusted staff knowledge.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: THREAD_ARG,
+        team: { type: 'string', description: 'Ops team slug from whoami (instead of thread)' },
+        org: { type: 'string', description: 'Customer slug (instead of thread)' },
+        text: { type: 'string', description: 'The facts, in Markdown (up to 8000 characters)' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    },
+    run: seedTool,
   },
 ];
 
