@@ -37,7 +37,9 @@ async function botName(env, ref) {
     return cached.name;
   }
   try {
-    const params = new URLSearchParams({ bot: ref.botId, ...(ref.teamId ? { team_id: ref.teamId } : {}) });
+    const params = new URLSearchParams({
+      bot: ref.botId, ...(ref.teamId ? { team_id: ref.teamId } : {}),
+    });
     const res = await fetch(`https://slack.com/api/bots.info?${params}`, {
       headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` },
     });
