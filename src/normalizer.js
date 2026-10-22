@@ -118,7 +118,8 @@ export async function processReaction(env, key, r) {
     at: r.at,
     removed: r.removed,
   });
-  const row = await env.DB.prepare('SELECT team FROM threads WHERE thread = ?').bind(msg.thread).first();
+  const row = await env.DB.prepare('SELECT team, kind FROM threads WHERE thread = ?')
+    .bind(msg.thread).first();
   const person = r.removed ? null : await personOf(env, r.source, r.tenant, r.userId);
   if (person) {
     await advanceWatermark(env.DB, person, msg.thread, msg.at, 'react');
@@ -127,6 +128,10 @@ export async function processReaction(env, key, r) {
     });
   }
   await notifyRoom(env, row && row.team, { type: 'thread', thread: msg.thread });
+  // The models see reactions (a customer's ✅ confirms a fix): label the thread again.
+  if (row && row.kind === 'channel' && env.AI && env.NORMALIZE) {
+    await env.NORMALIZE.send({ label: msg.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
+  }
   return { key, result: r.removed ? 'reaction-removed' : 'reaction' };
 }
 

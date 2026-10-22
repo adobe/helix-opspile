@@ -16,7 +16,9 @@ import {
   connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
 } from './post.js';
 import { react, resolve } from './react.js';
-import { mergeFacts, resolution, resolutionFacts } from './resolve.js';
+import {
+  mergeFacts, resolution, resolutionFacts, signalFacts,
+} from './resolve.js';
 import { parse } from './channels.js';
 import { profiles } from './profiles.js';
 import { json, text } from './http.js';
@@ -171,6 +173,7 @@ export function fold(threads) {
       posters: [...new Set(ms.flatMap((m) => m.posters || []))],
       mentioned: ms.flatMap((m) => m.mentioned || []),
       resolutionFacts: mergeFacts(ms.map((m) => m.resolutionFacts)),
+      signals: ms.flatMap((m) => m.signals || []),
       members: byRoot.map((m) => ({ thread: m.thread, last_at: m.last_at, any_at: m.any_at })),
     };
   }).sort((a, b) => String(b.last_at || b.any_at).localeCompare(String(a.last_at || a.any_at)));
@@ -246,6 +249,7 @@ export async function inbox(env, me, team) {
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const resolved = await resolutionFacts(env, threads.map((t) => t.thread));
+  const signals = await signalFacts(env, threads.map((t) => t.thread));
   const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
@@ -285,6 +289,7 @@ export async function inbox(env, me, team) {
           posters: postersBy.get(t.thread) || [],
           mentioned: namedBy.get(t.thread) || [],
           resolutionFacts: resolved.get(t.thread),
+          signals: signals.get(t.thread) || [],
         };
       })).map(({ resolutionFacts: facts, ...t }) => {
       const g = sizes.get(t.thread);

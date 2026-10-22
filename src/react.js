@@ -30,14 +30,19 @@ import { isResolvedEmoji, RESOLVED_EMOJI } from './resolve.js';
  * emoji as a reaction type).
  */
 export const PICKER = {
+  white_check_mark: '✅',
+  eyes: '👀',
+  pray: '🙏',
+  '+1': '👍',
   thumbsup: '👍',
+  grinning: '😀',
+  rocket: '🚀',
+  ring_buoy: '🛟',
+  heavy_check_mark: '✔️',
   heart: '❤️',
   joy: '😂',
   open_mouth: '😮',
-  eyes: '👀',
-  pray: '🙏',
   tada: '🎉',
-  white_check_mark: '✅',
 };
 const TEAMS_LEGACY = new Set(['like', 'angry', 'sad', 'laugh', 'heart', 'surprised']);
 
@@ -154,6 +159,15 @@ async function reactAs(env, t, tok, messageId, emoji, removed) {
   return done;
 }
 
+/** The person's "resolved" reactions on a thread's first message. */
+async function mineResolvedOn(env, t, tok) {
+  const { results: rows } = await env.DB.prepare(`SELECT emoji FROM reactions
+    WHERE message = ? AND user_key = ?`)
+    .bind(`${t.source}:${t.tenant}:${t.channel_id}:${t.root_id}`, `${t.source}:${t.tenant}:${tok.userId}`)
+    .all();
+  return (rows || []).map((r) => r.emoji).filter(isResolvedEmoji);
+}
+
 const failed = (r) => json({
   error: r.error, connect: r.connect, reconnect: r.reconnect,
 }, r.status || 502);
@@ -185,7 +199,22 @@ export async function react(env, me, request, inTeam) {
     return response;
   }
   const done = await reactAs(env, t, tok, msg.id, native, Boolean(remove));
-  return done.ok ? json({ ok: true, emoji: native }) : failed(done);
+  if (!done.ok) {
+    return failed(done);
+  }
+  // A ✅ on a reply is also put on the thread's first message, which is what the channel
+  // shows (and what makes the thread resolved); taking it off a reply takes yours off there.
+  if (isResolvedEmoji(native) && msg.id !== t.root_id && t.root_at) {
+    const root = remove ? await mineResolvedOn(env, t, tok) : [RESOLVED_EMOJI[t.source]];
+    for (const e of root) {
+      // eslint-disable-next-line no-await-in-loop
+      const also = await reactAs(env, t, tok, t.root_id, e, Boolean(remove));
+      if (!also.ok) {
+        return failed(also);
+      }
+    }
+  }
+  return json({ ok: true, emoji: native });
 }
 
 /**
@@ -207,13 +236,7 @@ export async function resolve(env, me, request, inTeam) {
   if (response) {
     return response;
   }
-  const userKey = (t) => `${t.source}:${t.tenant}:${tok.userId}`;
-  const rootKey = (t) => `${t.source}:${t.tenant}:${t.channel_id}:${t.root_id}`;
-  const mineOn = async (t) => {
-    const { results: rows } = await env.DB.prepare(`SELECT emoji FROM reactions
-      WHERE message = ? AND user_key = ?`).bind(rootKey(t), userKey(t)).all();
-    return (rows || []).map((r) => r.emoji).filter(isResolvedEmoji);
-  };
+  const mineOn = (t) => mineResolvedOn(env, t, tok);
   if (undo) {
     let removed = 0;
     for (const t of members) {

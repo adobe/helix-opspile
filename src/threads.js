@@ -159,6 +159,11 @@ export function waitingOn(t) {
   if (t.kind === 'alert' || t.last_staff == null) {
     return 'nobody';
   }
+  // 🙏 after the last message: thanks, nothing is pending.
+  const last = t.last_at || t.any_at;
+  if ((t.signals || []).some((x) => x.signal === 'thanks' && x.at && last && x.at >= last)) {
+    return 'nobody';
+  }
   const ours = Boolean(Number(t.last_staff));
   const actor = t.label && t.label.next_actor;
   if (!actor || actor === 'us') {
