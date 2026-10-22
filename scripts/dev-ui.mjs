@@ -19,10 +19,10 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *
  * What is shared with the Worker: `ui/inbox.html`, served from disk on every request (the
- * Worker imports the same file), and the pure helpers `readState`, `titleOf` (src/threads.js)
- * and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the TeamRoom Durable
- * Object and Cloudflare Access, which are an in-memory store (dev-ui-fixtures.mjs) and
- * "signed in as Dana".
+ * Worker imports the same file), and the pure helpers `readState`, `waitingOn`, `titleOf`
+ * (src/threads.js) and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the
+ * TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
+ * (dev-ui-fixtures.mjs) and "signed in as Dana".
  *
  * With a production session (see scripts/dev-ui-session.mjs), `/api/*` is proxied to the
  * production Worker instead, read-only, and the page's banner says so.
@@ -39,7 +39,7 @@ import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
-import { readState } from '../src/threads.js';
+import { readState, waitingOn } from '../src/threads.js';
 import { createStore } from './dev-ui-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -178,7 +178,8 @@ function inbox(team) {
           .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
         mentioned: store.mentions.filter((m) => m.thread === t.thread)
           .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
-      })),
+      }))
+      .map((t) => ({ ...t, waiting_on: waitingOn(t) })),
   };
 }
 

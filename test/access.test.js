@@ -107,13 +107,18 @@ describe('viewer and inbox', () => {
     await indexMessage(DB, {
       ...base, rootId: '2', id: '3', thread: 't2', at: '2026-10-21T11:05:00Z', person: 2, staff: true, path: 'p2/',
     });
+    DB.sqlite.prepare(`INSERT INTO labels (thread, next_actor, labeled_through, model, labeled_at)
+      VALUES (?, 'us', '', 'm', '')`).run('t2');
     const { threads, members } = await inbox({ DB }, { id: 1 }, 'helix');
     assert.deepEqual(members.map((m) => m.name), ['A', 'B']);
     assert.deepEqual(threads.map((t) => t.permalink), [null, 'https://chat.example/1']);
-    const view = threads.map((t) => [t.thread, t.unread, t.seenByOthers, t.unseen, t.last_staff]);
+    const view = threads.map((t) => [
+      t.thread, t.unread, t.seenByOthers, t.unseen, t.last_staff, t.waiting_on,
+    ]);
+    // t2 is labeled "us", but Adobe posted last: it does not wait on us.
     assert.deepEqual(view, [
-      ['t2', true, true, false, 1],
-      ['t1', true, false, true, 0],
+      ['t2', true, true, false, 1, 'nobody'],
+      ['t1', true, false, true, 0, 'us'],
     ]);
   });
 });

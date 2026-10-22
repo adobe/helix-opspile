@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, mentionedByName, readState, titleOf,
+  advanceWatermark, indexMessage, mentionedByName, readState, titleOf, waitingOn,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -190,6 +190,32 @@ describe('readState', () => {
   it('uses any message for alert threads, and never asks Adobe to look at them', () => {
     const [alert] = readState([t('x', null, { kind: 'alert', any_at: LAST })], [], [], 1);
     assert.deepEqual([alert.unread, alert.unseenByAdobe, alert.attention], [true, false, 'team']);
+  });
+});
+
+describe('waitingOn', () => {
+  const t = (lastStaff, nextActor, kind = 'channel') => ({
+    kind, last_staff: lastStaff, label: nextActor === undefined ? null : { next_actor: nextActor },
+  });
+
+  it('never waits on us when Adobe posted last, whatever the label says', () => {
+    assert.equal(waitingOn(t(1, 'us')), 'nobody');
+    assert.equal(waitingOn(t(0, 'us')), 'us');
+  });
+
+  it('follows the label for the customer, the vendor and nobody', () => {
+    assert.deepEqual(
+      [t(1, 'customer'), t(0, 'customer'), t(1, 'vendor'), t(0, 'nobody')].map(waitingOn),
+      ['customer', 'customer', 'vendor', 'nobody'],
+    );
+  });
+
+  it('without a label, waits on us when the customer posted last', () => {
+    assert.deepEqual([t(0), t(1), t(0, null)].map(waitingOn), ['us', 'nobody', 'us']);
+  });
+
+  it('never waits for alerts or threads nobody posted in', () => {
+    assert.deepEqual([t(0, 'us', 'alert'), t(null, 'us'), t(null)].map(waitingOn), ['nobody', 'nobody', 'nobody']);
   });
 });
 

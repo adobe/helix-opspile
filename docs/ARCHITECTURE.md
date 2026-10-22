@@ -207,9 +207,12 @@ signed-in user's own state only coarsely, so opspile owns read state. Most of it
 The inbox sorts every thread into one pile, most pressing first: **critical** (critical
 urgency, nobody at Adobe has seen it), **hot** (high urgency, unseen by Adobe), **you** (you
 posted or were mentioned, and the customer spoke last or you were mentioned), **waiting**
-(waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal, or on the
-customer longer than 30 min / 1 h / 1 day), **team** (your team is in it and all is well) and
-**quiet**. Admins can look at the inbox as another person, read-only.
+(waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal), **silent**
+(waiting on the customer or vendor longer than 30 min / 1 h / 1 day: follow up or close),
+**team** (your team is in it and all is well) and **quiet**. Who a thread waits on is Clef's
+`next_actor`, except that a thread where Adobe posted last never waits on us (the label can
+be stale or wrong), and an unlabeled thread waits on us when the customer posted last; the
+API sends it as `waiting_on`. Admins can look at the inbox as another person, read-only.
 
 ### Attention
 

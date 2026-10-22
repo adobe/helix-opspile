@@ -9,7 +9,7 @@
     --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
     --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
     --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
-    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a;
+    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
     --me: #2f7cf6; --me-ink: #fff; --me-link: #fff;
     --them: #2b3037; --them-ink: #e8eaed;
     --code: #0b0d10;
@@ -19,7 +19,7 @@
     :root {
       --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
       --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
-      --sel: #dde9fb; --them: #e9ebee; --them-ink: #1d2025; --code: #f3f4f6;
+      --sel: #dde9fb; --purple: #8250df; --them: #e9ebee; --them-ink: #1d2025; --code: #f3f4f6;
     }
   }
   * { box-sizing: border-box; }
@@ -59,6 +59,7 @@
   .c-green { background: var(--green) !important; } .c-none { background: var(--faint) !important; }
   .c-critical { background: #8e1b1b !important; } .c-hot { background: var(--red) !important; }
   .c-you { background: var(--accent) !important; } .c-waiting { background: var(--yellow) !important; }
+  .c-silent { background: var(--purple) !important; }
   .c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
   .fr .ico.em { font-size: 13px; line-height: 16px; text-align: center; }
   .c-accent { background: var(--accent) !important; }
@@ -97,7 +98,8 @@
   .tag.us { color: var(--yellow); border-color: var(--yellow); }
   .t .dot { --ring: var(--faint); }
   .t .dot.c-critical { --ring: #8e1b1b; } .t .dot.c-hot { --ring: var(--red); } .t .dot.c-you { --ring: var(--accent); }
-  .t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-team { --ring: var(--green); }
+  .t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-silent { --ring: var(--purple); }
+  .t .dot.c-team { --ring: var(--green); }
   .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--ring); }
   .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--ring); }
   .t .dot.ring:not([class*="c-"]) { background: transparent; }
@@ -324,9 +326,13 @@ const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.
 const resolvedOf = (t) => (t.label?.resolved_p == null ? null : (t.label.resolved_p >= 0.5 ? 'resolved' : 'open'));
 const viewerId = () => state.data?.me?.id ?? state.me.id;
 const teamIds = () => new Set(Object.values(state.data?.teams || {}).flatMap((x) => x.members));
-/** Us, Customer (customer or vendor), Nobody (nobody, or no label). */
+/**
+ * Us, Customer (customer or vendor), Nobody. The API works it out (`waitingOn` in
+ * src/threads.js): Clef's label, except that a thread where Adobe posted last never waits on
+ * us, and without a label, a thread waits on us when the customer posted last.
+ */
 const waitingOn = (t) => {
-  const n = t.label?.next_actor;
+  const n = t.waiting_on;
   if (n === 'us') return 'Us';
   if (n === 'customer' || n === 'vendor') return 'Customer';
   return 'Nobody';
@@ -343,7 +349,8 @@ const WAIT_THEM = { critical: 30 * MIN, high: 60 * MIN, normal: 1440 * MIN, low:
  * - hot: high urgency and nobody at Adobe has seen it (red)
  * - you: you are in it (posted or mentioned), and the last word is not Adobe's, or it
  *   mentions you (blue)
- * - waiting: waits on us, or on the customer, longer than its urgency allows (yellow)
+ * - waiting: waits on us longer than its urgency allows (yellow); never when Adobe posted last
+ * - silent: waits on the customer or vendor longer than its urgency allows (purple)
  * - team: your team is in it, you were not mentioned, all is well (green)
  * - quiet: everything else (grey)
  */
@@ -356,22 +363,23 @@ function statusOf(t) {
   const mine = (t.posters || []).includes(me) || (t.mentioned || []).some((m) => m.person === me);
   if (!alert && mine && (t.last_staff === 0 || t.mentionedMe)) return 'you';
   const age = Date.now() - (Date.parse(lastOf(t)) || Date.now());
-  const on = waitingOn(t) === 'Nobody' && !t.label ? (t.last_staff === 0 ? 'Us' : 'Nobody') : waitingOn(t);
+  const on = waitingOn(t);
   if (!alert && on === 'Us' && age > WAIT_US[u]) return 'waiting';
-  if (!alert && on === 'Customer' && age > WAIT_THEM[u]) return 'waiting';
+  if (!alert && on === 'Customer' && age > WAIT_THEM[u]) return 'silent';
   const team = teamIds();
   if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
   return 'quiet';
 }
-const STATUS_ORDER = ['critical', 'hot', 'you', 'waiting', 'team', 'quiet'];
+const STATUS_ORDER = ['critical', 'hot', 'you', 'waiting', 'silent', 'team', 'quiet'];
 const STATUS_LABEL = {
-  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', team: 'Team on it', quiet: 'Everything else',
+  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'Customer silent', team: 'Team on it', quiet: 'Everything else',
 };
 const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
   you: 'You posted or were mentioned, and the customer spoke last or you were mentioned',
-  waiting: 'Waiting on us (15 min critical, 1 h high, 3 h normal) or on the customer (30 min, 1 h, 1 day) for too long',
+  waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal), and Adobe did not post last',
+  silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal): follow up or close',
   team: 'Your team is in it, you were not mentioned, all is well',
   quiet: 'Everything else',
 };
@@ -486,7 +494,7 @@ function renderFilters() {
 const emojify = (text) => esc(text).replace(/:([a-z0-9_+-]+):/g, (m, n) => EMOJI[n] || m);
 
 const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
-const ourMove = (t) => t.kind !== 'alert' && t.label?.next_actor === 'us';
+const ourMove = (t) => t.waiting_on === 'us';
 
 /** The thread's mood: its kind first, then the reactions people left in it. */
 function moods(t) {
@@ -523,7 +531,7 @@ function row(t) {
 // us counts more the longer it waits, the more urgent and unresolved it is, and the closer
 // it is to me (mentioned me > I posted > mentioned the team > the team posted).
 const STATUS_WEIGHT = {
-  critical: 6, hot: 5, you: 4, waiting: 3, team: 1.5, quiet: 1,
+  critical: 6, hot: 5, you: 4, waiting: 3, silent: 2, team: 1.5, quiet: 1,
 };
 function smartScore(t) {
   return STATUS_WEIGHT[statusOf(t)] * 100 + baseScore(t);
@@ -542,7 +550,7 @@ function baseScore(t) {
   else if ((t.posters || []).includes(me)) near = 2;
   else if ((t.mentioned || []).some((m) => team.has(m.person))) near = 1.5;
   else if ((t.posters || []).some((p) => team.has(p))) near = 1.2;
-  const waitsOnUs = t.kind !== 'alert' && (t.label ? t.label.next_actor === 'us' : t.last_staff === 0);
+  const waitsOnUs = t.waiting_on === 'us';
   const waiting = waitsOnUs ? 1 + Math.log2(1 + ageH / 2) : 0.3;
   const unseen = t.unseenByAdobe ? 1.5 : 1;
   const alert = t.kind === 'alert' ? 0.3 : 1;
