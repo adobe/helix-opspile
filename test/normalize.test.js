@@ -161,6 +161,38 @@ describe('normalize (teams)', () => {
     const bot = normalize(TKEY, msg({ from: { application: { displayName: 'Alerts' } } }));
     assert.deepEqual(bot.message.authorRef, { kind: 'bot', name: 'Alerts' });
   });
+
+  it('keeps a bot author\'s id, but not a webhook\'s', () => {
+    const bot = normalize(TKEY, msg({
+      from: { application: { id: 'b-1', displayName: 'helper-agent', applicationIdentityType: 'bot' } },
+    }));
+    assert.deepEqual(bot.message.authorRef, {
+      kind: 'bot', name: 'helper-agent', source: 'teams', tenant: 'tenant-1', botId: 'b-1',
+    });
+    const hook = normalize(TKEY, msg({
+      from: { application: { id: 'w-1', displayName: 'Hook', applicationIdentityType: 'webhook' } },
+    }));
+    assert.deepEqual(hook.message.authorRef, { kind: 'bot', name: 'Hook' });
+  });
+
+  it('lists the bots a message mentions, by the name it used', () => {
+    const app = (id, type = 'bot') => ({
+      application: { id, displayName: `${id}-long`, applicationIdentityType: type },
+    });
+    const { message } = normalize(TKEY, msg({
+      mentions: [
+        { id: 0, mentionText: 'helper', mentioned: app('b-1') },
+        { id: 1, mentionText: 'helper', mentioned: app('b-1') },
+        { id: 2, mentioned: app('b-2') },
+        { id: 3, mentionText: 'Hook', mentioned: app('w-1', 'webhook') },
+        { id: 4, mentionText: 'Ada', mentioned: { user: { id: 'u-1' } } },
+      ],
+    }));
+    assert.deepEqual(message.botMentions, [
+      { id: 'b-1', name: 'helper' }, { id: 'b-2', name: 'b-2-long' },
+    ]);
+    assert.deepEqual(message.mentionIds, ['u-1']);
+  });
 });
 
 describe('pile-2 files', () => {
