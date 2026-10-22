@@ -109,6 +109,8 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
       name: (msg.bot_profile && msg.bot_profile.name) || msg.username || null,
       botId: msg.bot_id,
       tenant,
+      // Org-wide tokens need the workspace for bots.info.
+      teamId: msg.team || payload.team_id || undefined,
     };
   } else {
     authorRef = {

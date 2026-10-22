@@ -37,11 +37,15 @@ async function botName(env, ref) {
     return cached.name;
   }
   try {
-    const res = await fetch(`https://slack.com/api/bots.info?bot=${encodeURIComponent(ref.botId)}`, {
+    const params = new URLSearchParams({ bot: ref.botId, ...(ref.teamId ? { team_id: ref.teamId } : {}) });
+    const res = await fetch(`https://slack.com/api/bots.info?${params}`, {
       headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` },
     });
     const data = await res.json();
     const name = data.ok && data.bot ? data.bot.name : null;
+    if (!data.ok) {
+      console.warn(JSON.stringify({ route: 'normalize', lookup: 'bot', error: data.error }));
+    }
     if (name) {
       const icon = (data.bot.icons && (data.bot.icons.image_72 || data.bot.icons.image_48)) || '';
       await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at, avatar)

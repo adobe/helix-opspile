@@ -94,7 +94,7 @@ describe('normalize (slack)', () => {
       type: 'message', subtype: 'bot_message', channel: 'C1', ts: '1.1', bot_id: 'B1', username: 'ci',
     }));
     assert.deepEqual(bot.message.authorRef, {
-      kind: 'bot', name: 'ci', botId: 'B1', tenant: 'E1',
+      kind: 'bot', name: 'ci', botId: 'B1', tenant: 'E1', teamId: 'T1',
     });
     const join = normalize(SKEY, slack({
       type: 'message', subtype: 'channel_join', channel: 'C1', ts: '1.2', user: 'U1',
