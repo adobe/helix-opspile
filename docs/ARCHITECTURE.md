@@ -388,9 +388,12 @@ with a thread hands the note to that thread's agent, and with a team and a custo
 knowledge-base agent (`kb:<team>:<org>`) that has the same tools minus the thread and the
 draft. Staff notes are trusted and not checked by Clef.
 
-**The model.** Claude on Amazon Bedrock, through Cloudflare AI Gateway: Bedrock's
-`bedrock-mantle` endpoint speaks the Anthropic Messages API, AI Gateway passes it through, and
-the Bedrock API key goes in `Authorization: Bearer`. The gateway logs and meters every request.
+**The model.** Claude Opus 5.5 on Amazon Bedrock (the inference profile
+`us.anthropic.claude-opus-5-5` in `us-east-2`), through Cloudflare AI Gateway: Bedrock's
+`bedrock-runtime` endpoint speaks the Anthropic Messages API at `/anthropic`, AI Gateway
+passes it through, and the Bedrock API key goes in `Authorization: Bearer`. (`bedrock-mantle`
+speaks it too, but serves only older Claude models in that region.) The gateway logs and
+meters every request.
 
 **Replay.** Agents are not part of the replay path. Their output is user state (drafts) or
 pile 3 (git history); replaying pile 1 pokes them, but they find nothing past their watermark.

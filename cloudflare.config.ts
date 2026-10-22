@@ -40,7 +40,7 @@ const VARS = [
 // Thread agents, optional: they run only when AGENT_MODEL is set, and only in AGENT_CHANNELS
 // (comma-separated channel ids). AGENT_GATEWAY names the AI Gateway in front of Amazon Bedrock,
 // in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
-// region (default us-east-1).
+// region (default us-east-2).
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',

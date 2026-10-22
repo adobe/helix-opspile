@@ -12,18 +12,23 @@
 
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { createProvider } from '@earendil-works/pi-ai/models';
+import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models';
 
 /**
  * The agents' model: Claude on Amazon Bedrock, through Cloudflare AI Gateway. Bedrock's
- * `bedrock-mantle` endpoint speaks the Anthropic Messages API, and AI Gateway passes it
- * through: the Bedrock API key goes in `Authorization: Bearer`, and, when the gateway is
- * authenticated, a Cloudflare token in `cf-aig-authorization`.
+ * `bedrock-runtime` endpoint speaks the Anthropic Messages API at `/anthropic` and accepts a
+ * Bedrock API key as `Authorization: Bearer`; AI Gateway passes it through, with a Cloudflare
+ * token in `cf-aig-authorization` when the gateway is authenticated. (`bedrock-mantle` speaks
+ * the same API, but does not serve the newest Claude models in every region.) Newer Claude
+ * models run only through an inference profile, so AGENT_MODEL is a profile id such as
+ * `us.anthropic.claude-opus-5-5`.
  *
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/inference-messages-api.html
  * https://developers.cloudflare.com/ai-gateway/usage/providers/bedrock/
  */
 
 export const PROVIDER = 'opspile-bedrock';
-const DEFAULT_REGION = 'us-east-1';
+const DEFAULT_REGION = 'us-east-2';
 
 /** Why agents cannot run with this environment, or null. */
 export function modelProblem(env) {
@@ -43,24 +48,40 @@ export function gatewayBaseUrl(env) {
   }
   const region = env.AGENT_REGION || DEFAULT_REGION;
   return `https://gateway.ai.cloudflare.com/v1/${env.AI_GATEWAY_ACCOUNT}/${env.AGENT_GATEWAY}`
-    + `/aws-bedrock/bedrock-mantle/${region}/anthropic`;
+    + `/aws-bedrock/bedrock-runtime/${region}/anthropic`;
 }
 
-/** The model as pi-ai describes it. */
+/** pi-ai's catalog entry for the Claude model behind a Bedrock id, if it knows it. */
+export function catalogEntry(bedrockId) {
+  const id = String(bedrockId || '')
+    .replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '');
+  return ANTHROPIC_MODELS[id] || null;
+}
+
+/**
+ * The model as pi-ai describes it: what pi-ai knows about the Claude model (adaptive
+ * thinking, limits, prices, prompt caching), at Bedrock's address.
+ */
 export function agentModel(env) {
+  const known = catalogEntry(env.AGENT_MODEL);
   return {
-    id: env.AGENT_MODEL,
-    name: env.AGENT_MODEL,
-    api: 'anthropic-messages',
-    provider: PROVIDER,
-    baseUrl: gatewayBaseUrl(env),
     reasoning: true,
     input: ['text'],
-    contextWindow: Number(env.AGENT_CONTEXT_WINDOW) || 200000,
-    maxTokens: Number(env.AGENT_MAX_TOKENS) || 32000,
+    contextWindow: 200000,
+    maxTokens: 32000,
     cost: {
       input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
     },
+    ...(known || {}),
+    id: env.AGENT_MODEL,
+    name: known ? `${known.name} (Bedrock)` : env.AGENT_MODEL,
+    api: 'anthropic-messages',
+    provider: PROVIDER,
+    baseUrl: gatewayBaseUrl(env),
+    ...(Number(env.AGENT_CONTEXT_WINDOW)
+      ? { contextWindow: Number(env.AGENT_CONTEXT_WINDOW) } : {}),
+    ...(Number(env.AGENT_MAX_TOKENS) ? { maxTokens: Number(env.AGENT_MAX_TOKENS) } : {}),
     // AGENT_ANTHROPIC_BETA overrides the beta features pi asks for (`none`: none at all), in
     // case an endpoint refuses one.
     ...(env.AGENT_ANTHROPIC_BETA ? {

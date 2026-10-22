@@ -23,7 +23,7 @@ import {
   agentEnabled, deliveryText, entryMessages, formatMessage, markOf, screen, untrusted,
 } from '../src/agent/deliver.js';
 import {
-  agentModel, agentProvider, gatewayBaseUrl, modelProblem,
+  agentModel, agentProvider, catalogEntry, gatewayBaseUrl, modelProblem,
 } from '../src/agent/model.js';
 import {
   accessibleRepos, githubSlug, mirrorName, refreshMirrors,
@@ -311,13 +311,20 @@ describe('thread agents', () => {
 
   it('call Claude on Bedrock through AI Gateway with the Bedrock key as a bearer token', async () => {
     const e = {
-      AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'anthropic.made-up', BEDROCK_API_KEY: 'bedrock-key',
+      AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'us.anthropic.claude-opus-5-5', BEDROCK_API_KEY: 'bedrock-key',
     };
     assert.equal(modelProblem({}), 'missing AI_GATEWAY_ACCOUNT, AGENT_GATEWAY, AGENT_MODEL, BEDROCK_API_KEY');
     assert.equal(modelProblem(e), null);
-    assert.equal(gatewayBaseUrl(e), 'https://gateway.ai.cloudflare.com/v1/acct/gw/aws-bedrock/bedrock-mantle/us-east-1/anthropic');
+    assert.equal(gatewayBaseUrl(e), 'https://gateway.ai.cloudflare.com/v1/acct/gw/aws-bedrock/bedrock-runtime/us-east-2/anthropic');
     assert.equal(gatewayBaseUrl({ ...e, AGENT_REGION: 'eu-central-1' }).split('/').at(-2), 'eu-central-1');
-    assert.deepEqual([agentModel(e).api, agentModel(e).provider, agentModel(e).id], ['anthropic-messages', 'opspile-bedrock', 'anthropic.made-up']);
+    const model = agentModel(e);
+    assert.deepEqual([model.api, model.provider, model.id], ['anthropic-messages', 'opspile-bedrock', 'us.anthropic.claude-opus-5-5']);
+    // What pi-ai knows about the model carries over: it only thinks adaptively.
+    assert.equal(model.compat.forceAdaptiveThinking, true);
+    assert.equal(catalogEntry('global.anthropic.claude-opus-5-5').id, 'claude-opus-5-5');
+    assert.equal(catalogEntry('anthropic.claude-sonnet-4-5-20250929-v1:0').id, 'claude-sonnet-4-5-20250929');
+    assert.equal(catalogEntry('anthropic.made-up'), null);
+    assert.equal(agentModel({ ...e, AGENT_MODEL: 'anthropic.made-up' }).contextWindow, 200000);
 
     const models = createModels();
     models.setProvider(agentProvider({ ...e, AI_GATEWAY_TOKEN: 'cf-token' }));
@@ -340,7 +347,7 @@ describe('thread agents', () => {
     } finally {
       globalThis.fetch = savedFetch;
     }
-    assert.match(seen[0].url, /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/acct\/gw\/aws-bedrock\/bedrock-mantle\/us-east-1\/anthropic\/v1\/messages(\?|$)/);
+    assert.match(seen[0].url, /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/acct\/gw\/aws-bedrock\/bedrock-runtime\/us-east-2\/anthropic\/v1\/messages(\?|$)/);
     assert.equal(seen[0].headers.get('authorization'), 'Bearer bedrock-key');
     assert.equal(seen[0].headers.get('x-api-key'), null);
   });

@@ -55,10 +55,10 @@ Nothing below is committed; set it on the Worker.
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox`, `/api` and `/mcp` |
-| `AGENT_MODEL` | var | Optional: the Bedrock model id of the thread agents (an `anthropic.` id served by `bedrock-mantle`). Agents are off without it. |
+| `AGENT_MODEL` | var | Optional: the Bedrock inference profile of the thread agents' model, e.g. `us.anthropic.claude-opus-5-5`. Agents are off without it. |
 | `AGENT_CHANNELS` | var | Comma-separated channel ids (Slack or Teams) where thread agents run |
 | `AGENT_GATEWAY` | var | The AI Gateway (id) agents call Bedrock through |
-| `AGENT_REGION` | var | Optional: Bedrock region, default `us-east-1` |
+| `AGENT_REGION` | var | Optional: Bedrock region, default `us-east-2` |
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
 | `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
@@ -117,8 +117,8 @@ bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 1. Create an AI Gateway in the Worker's account (`AGENT_GATEWAY` is its id). Leave it
    unauthenticated, or create a token and set the secret `AI_GATEWAY_TOKEN`.
 2. Create an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
-   allowed to call `bedrock-mantle` (`bedrock-mantle:CreateInference`) in `AGENT_REGION`, and
-   set it as the secret `BEDROCK_API_KEY`.
+   that may invoke the model's inference profile in `AGENT_REGION`, and set it as the Worker
+   secret `BEDROCK_API_KEY` (`npx wrangler secret put BEDROCK_API_KEY --name helix-opspile-prod`).
 3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and `AGENT_CHANNELS` (and for CI, add them as
    repository secrets), apply the migrations and deploy.
 
