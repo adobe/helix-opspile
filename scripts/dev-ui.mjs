@@ -134,6 +134,30 @@ const personNamed = (name) => [...store.people.values()].find((p) => p.name === 
   }
 }
 
+// Shared drafts, one per thread, as src/drafts.js keeps them in D1. Tom has one waiting.
+const drafts = new Map();
+{
+  const tom = personNamed('Tom Okafor');
+  const open = [...store.threads.values()]
+    .find((e) => e.row.kind !== 'alert' && (store.labels.get(e.key)?.resolved_p ?? 0) < 0.5);
+  if (open && tom) {
+    const at = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    drafts.set(open.key, {
+      thread: open.key,
+      body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
+      mentions: [],
+      by: { id: tom.id, name: tom.name },
+      created_at: at,
+      updated_at: at,
+    });
+  }
+}
+const draftSummary = (d) => d && ({
+  by: d.by,
+  updated_at: d.updated_at,
+  preview: d.body.length > 140 ? `${d.body.slice(0, 139)}…` : d.body,
+});
+
 function reactionsOn(key, id) {
   const out = [];
   for (const r of reactions.get(`${key}|${id}`) || []) {
@@ -273,6 +297,7 @@ function inbox(team) {
           ...acc, [r.emoji]: { emoji: r.emoji, count: (acc[r.emoji]?.count || 0) + r.count },
         }), {})),
       resolution: resolutionOf(store.threads.get(t.thread)),
+      draft: draftSummary(drafts.get(t.thread)) || null,
     }))
     .map((t) => ({ ...t, waiting_on: waitingOn(t) }));
   return {
@@ -327,6 +352,7 @@ function thread(key) {
     reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
+    draft: drafts.get(key) || null,
   };
 }
 
@@ -413,8 +439,55 @@ async function api(req, res, url) {
       .slice(0, 8);
     return json(res, { platform: entry.row.source, people: found });
   }
+  if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
+    // As src/drafts.js: `base` is the version the text was written from.
+    const {
+      thread: key, text: body, mentions = [], base = null,
+    } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const current = drafts.get(key);
+    const conflict = () => json(res, {
+      error: `${current.by.name} changed this draft meanwhile`, conflict: true, draft: current,
+    }, 409);
+    if (req.method === 'DELETE') {
+      if (current && base && current.updated_at !== base) {
+        return conflict();
+      }
+      drafts.delete(key);
+      broadcast(entry.row.team, { type: 'draft', thread: key });
+      return json(res, { ok: true, discarded: Boolean(current), draft: current || null });
+    }
+    if (!String(body || '').trim()) {
+      return json(res, { error: 'write something to save (up to 8000 characters)' }, 400);
+    }
+    if (current && current.updated_at !== base) {
+      return conflict();
+    }
+    const at = new Date().toISOString();
+    const me = store.people.get(ME);
+    const draft = {
+      thread: key,
+      body,
+      mentions,
+      by: { id: ME, name: me.name },
+      created_at: current ? current.created_at : at,
+      updated_at: at,
+    };
+    drafts.set(key, draft);
+    console.log(`draft saved on ${key}`);
+    broadcast(entry.row.team, { type: 'draft', thread: key });
+    return json(res, { ok: true, draft });
+  }
   if (url.pathname === '/api/post' && req.method === 'POST') {
-    const { thread: key, text: reply, mentions = [] } = await readJson(req);
+    const {
+      thread: key, text: reply, mentions = [], draft: base,
+    } = await readJson(req);
+    if (base && drafts.get(key)?.updated_at === base) {
+      drafts.delete(key);
+    }
     if (mentions.length) {
       console.log(`post mentions ${JSON.stringify(mentions)}`);
     }

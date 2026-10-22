@@ -194,10 +194,24 @@
   .picker button { border: 0; background: none; font-size: 18px; padding: 2px 5px; border-radius: 8px; }
   .picker button:hover, .picker button:focus-visible { background: var(--hover); }
   .sendwrap { position: relative; flex: none; }
-  .sendwrap .resolve { position: absolute; right: 0; bottom: calc(100% + 6px); white-space: nowrap; font-size: 12.5px;
-    padding: 5px 12px; border-radius: 16px; background: var(--card); border: 1px solid var(--green); box-shadow: 0 4px 16px rgba(0,0,0,.18); }
-  .sendwrap .resolve[hidden] { display: none; }
+  /* Keeping the pointer on Send (or pressing it) shows more ways to send: save a draft, resolve. */
+  .sendwrap .hold { position: absolute; right: 0; bottom: calc(100% + 6px); display: flex; flex-direction: column;
+    align-items: flex-end; gap: 5px; z-index: 4; }
+  .sendwrap .hold[hidden], .sendwrap .hold button[hidden] { display: none; }
+  .sendwrap .hold button { white-space: nowrap; font-size: 12.5px; padding: 5px 12px; border-radius: 16px;
+    background: var(--card); box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+  .sendwrap .resolve { border: 1px solid var(--green); }
   .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
+  .sendwrap .savedraft { border: 1px solid var(--accent); }
+  /* The thread's shared draft, above the reply box. */
+  .composer { flex-wrap: wrap; }
+  .draftbar { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); min-width: 0; }
+  .draftbar[hidden] { display: none; }
+  .draftbar .pen { color: var(--accent); font-weight: 600; flex: none; }
+  .draftbar .pv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .draftbar button { font-size: 11.5px; padding: 0 8px; flex: none; }
+  .draftbar .act { display: flex; gap: 6px; flex: none; }
+  .t .drafted { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
   /* Quick reactions on hovering a message, like Slack. */
   .msg .quick { position: absolute; top: -14px; right: 8px; z-index: 3; display: none; gap: 1px; padding: 2px;
     background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.15); }
@@ -260,6 +274,7 @@
   <span class="me" id="me"></span>
   <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
   <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd></span>
+  <span title="in the reply box: save it as the thread's draft, which your team sees"><kbd>⌘S</kbd></span>
 </header>
 <main>
   <section id="filters" aria-label="Filters"></section>
@@ -273,7 +288,7 @@ const state = {
   me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', scores: new Map(),
-  cache: new Map(), staged: {}, profiles: new Map(),
+  cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -678,6 +693,16 @@ const involvesLabel = (v) => {
   return v;
 };
 
+// A thread carries at most one draft, shared with the team: saved last by you, or by a colleague.
+const draftState = (t) => (t.draft ? (t.draft.by?.id === viewerId() ? 'mine' : 'team') : 'none');
+const DRAFT_LABEL = { mine: 'By you', team: 'By a colleague', none: 'No draft' };
+const DRAFT_HINT = {
+  mine: 'A reply waits as a draft, and you saved it last',
+  team: 'A reply waits as a draft, saved last by someone else on the team',
+  none: 'No draft',
+};
+const draftBy = (d) => (d.by?.id === viewerId() ? 'you' : (d.by?.name || 'a colleague'));
+
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
     color: (v) => `c-${v}` },
@@ -688,6 +713,8 @@ const FACETS = [
   { id: 'platform', title: 'Platform', value: platform },
   { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
     label: { open: 'Unresolved', resolved: 'Resolved' } },
+  { id: 'draft', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
+    emoji: (v) => (v === 'none' ? '' : '✎') },
   { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'] },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
     emoji: (v) => URGENCY_ICON[v] },
@@ -784,6 +811,7 @@ function row(t) {
   const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
   return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}" data-thread="${esc(t.thread)}">
     <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
+      ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
       <span class="title">${t.root_known ? '' : '↳ '}${emojify(t.title || '(no text)')}</span>
       <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
     <div class="l2">
@@ -929,7 +957,7 @@ function resolveButton(thread, r) {
   // Without the first message there is nothing to put the ✅ on.
   if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r)) return '';
   const mine = r?.state === 'resolved' && r.mine;
-  return `<button class="resolve" id="resolve" hidden aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
+  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
 }
 
 function message(m, prev, fresh) {
@@ -967,17 +995,21 @@ function message(m, prev, fresh) {
     </div></div>`;
 }
 
-function composer(thread, resolve = '') {
-  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
+/** The thread's draft, read-only: who saved it, when, and how it starts. */
+const draftLine = (d) => (d ? `<div class="draftbar"><span class="pen">✎ Draft</span>
+  <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}: ${esc(d.body)}</span></div>` : '');
+
+function composer(thread, draft, resolve = '') {
+  if (state.data?.me?.readonly) return `<div class="composer">${draftLine(draft)}<span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
   const p = thread.source;
   const name = p === 'slack' ? 'Slack' : 'Microsoft';
   if (!state.me.connected?.[p]) {
-    return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
+    return `<div class="composer">${draftLine(draft)}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
   }
-  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+  return `<div class="composer"><div class="draftbar" id="draftbar" hidden></div><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (@ to mention, Enter to send, Shift+Enter for a new line)"></textarea>
-    <span class="sendwrap">${resolve}<button class="send" id="send" title="${resolve ? 'Enter to send. Keep the pointer here to resolve with ✅' : 'Enter to send'}">Send</button></span></div>`;
+      placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (@ to mention, Enter to send, Shift+Enter for a new line, ⌘S to save as draft)"></textarea>
+    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send" title="Enter to send. Keep the pointer here (or press and hold) to save a draft${resolve ? ' or resolve with ✅' : ''}">Send</button></span></div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -991,7 +1023,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const prevScroller = pane.querySelector('.scroller');
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
-  const draft = $('reply')?.value || '';
+  const typed = $('reply')?.value;
   const focused = document.activeElement === $('reply');
   const caret = focused ? [$('reply').selectionStart, $('reply').selectionEnd] : null;
   if (!live && !state.cache.get(key)) pane.innerHTML = '<div class="empty">Loading…</div>';
@@ -1055,7 +1087,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
       ${state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
       <div class="feed">${thread.root_at ? '' : '<div class="sys">Earlier messages were posted before opspile started listening.</div>'}${feed}</div>
     </div>
-    ${composer(thread, resolveButton(thread, resolution))}`;
+    ${composer(thread, data.draft, resolveButton(thread, resolution))}`;
   state.shownIds = ids;
   cardGone();
   const scroller = pane.querySelector('.scroller');
@@ -1071,37 +1103,52 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }
   const box = $('reply');
   if (box) {
-    box.value = draft;
-    if (focused) { box.focus(); box.setSelectionRange(...caret); }
+    const c = composerFor(key, data.draft);
+    box.value = c.text;
+    if (focused && !switching) { box.focus(); if (typed === c.text) box.setSelectionRange(...caret); }
+    renderDraftBar(key);
     const grow = () => { box.style.height = 'auto'; box.style.height = `${Math.min(180, box.scrollHeight)}px`; };
-    box.oninput = () => { grow(); suggest(key); };
+    box.oninput = () => {
+      // Saving, loading or discarding replaces the thread's composer state: update the current one.
+      const now = state.composers.get(key);
+      if (now) now.text = box.value; else state.composers.set(key, { text: box.value, from: '', base: null });
+      grow(); suggest(key); renderDraftBar(key);
+    };
     box.onclick = () => suggest(key);
     box.onblur = () => setTimeout(closeMentions, 150);
     grow();
     box.onkeydown = (e) => {
       if (mentionKey(e, key)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(key, thread); }
+      if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value); }
     };
     $('send').onclick = (e) => { if (!sendHold.held) send(key, thread); e.preventDefault(); };
-    wireResolveReveal(key, thread);
+    wireHoldMenu(key, thread);
   }
   if (state.data?.threads.some((x) => x.thread === key) && (switching || !live)) markRead(t);
 }
 
-// Keeping the pointer on Send for a second (or pressing it for a second on touch) reveals
-// the ✅ Resolve button above it; with a draft it sends the reply first.
+// Keeping the pointer on Send for a second (or pressing it for a second on touch) shows
+// more ways to send above it: ✎ save the text as the thread's draft, and ✅ resolve (with
+// text, it sends the reply first).
 const sendHold = { timer: null, hide: null, held: false };
-function wireResolveReveal(key, thread) {
+function wireHoldMenu(key, thread) {
   const wrap = document.querySelector('.sendwrap');
+  const menu = $('hold');
   const btn = $('resolve');
-  if (!wrap || !btn) return;
+  const save = $('savedraft');
+  if (!wrap || !menu) return;
   const label = () => {
-    const draft = $('reply')?.value.trim();
+    const text = $('reply')?.value.trim();
+    const d = state.cache.get(key)?.data?.draft;
+    save.hidden = !text;
+    save.textContent = d ? '✎ Update draft' : '✎ Save draft';
+    if (!btn) return;
     if (btn.dataset.mine) btn.textContent = '✅ Resolved · undo';
-    else btn.textContent = draft ? 'Send and ✅ resolve' : '✅ Resolve';
+    else btn.textContent = text ? 'Send and ✅ resolve' : '✅ Resolve';
   };
-  const show = () => { label(); btn.hidden = false; };
-  const hide = () => { btn.hidden = true; };
+  const show = () => { label(); menu.hidden = save.hidden && !btn; };
+  const hide = () => { menu.hidden = true; };
   $('send').onpointerenter = (e) => {
     if (e.pointerType === 'touch') return;
     clearTimeout(sendHold.hide);
@@ -1115,16 +1162,143 @@ function wireResolveReveal(key, thread) {
     sendHold.timer = setTimeout(() => { sendHold.held = true; show(); }, 1000);
   };
   $('send').onpointerup = () => clearTimeout(sendHold.timer);
+  // A long press on touch would open the context menu instead.
+  $('send').oncontextmenu = (e) => e.preventDefault();
   wrap.onpointerenter = () => clearTimeout(sendHold.hide);
   wrap.onpointerleave = () => {
     clearTimeout(sendHold.timer);
     sendHold.hide = setTimeout(hide, 500);
   };
+  save.onclick = () => { hide(); saveDraft(key, $('reply')?.value || ''); };
+  if (!btn) return;
   btn.onclick = async () => {
     hide();
     if (!btn.dataset.mine && $('reply')?.value.trim() && !(await send(key, thread))) return;
     toggleResolve();
   };
+}
+
+// ---------------------------------------------------------------- drafts
+// A thread carries at most one draft, which everyone on the team that owns the channel sees
+// and may change, send or discard. Each thread also remembers what you typed in it and did
+// not save (in this tab only). The composer of a thread is "untouched" while its text is the
+// draft it was loaded from: then it follows the draft as colleagues change or discard it.
+/** The composer state of a thread: its text, and the draft version it was written from. */
+function composerFor(key, draft) {
+  let c = state.composers.get(key);
+  if (!c || c.text === c.from) {
+    c = { text: draft?.body || '', from: draft?.body || '', base: draft?.updated_at || null };
+    state.composers.set(key, c);
+    if (draft?.mentions?.length) {
+      mention.picked.set(key, new Map(draft.mentions.map((m) => [m.name, m])));
+      for (const m of draft.mentions) mention.names.add(m.name);
+    }
+  }
+  return c;
+}
+
+function renderDraftBar(key) {
+  const bar = $('draftbar');
+  if (!bar || state.open !== key) return;
+  const d = state.cache.get(key)?.data?.draft;
+  const c = state.composers.get(key);
+  if (!d) { bar.hidden = true; bar.innerHTML = ''; return; }
+  const differs = c && c.text !== d.body;
+  const stale = c && c.base && c.base !== d.updated_at;
+  bar.hidden = false;
+  bar.innerHTML = `<span class="pen">✎ Draft</span>
+    <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}${differs ? (stale ? ` · changed since you started: ${esc(d.body)}` : ' · your text differs') : ''}</span>
+    <span class="act">${differs ? '<button data-draft="load" title="Replace your text with the draft">Load draft</button>' : ''}<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button></span>`;
+  bar.onclick = (e) => {
+    const b = e.target.closest('[data-draft]');
+    if (!b) return;
+    if (b.dataset.draft === 'load') loadDraft(key);
+    else discardDraft(key);
+  };
+}
+
+function loadDraft(key) {
+  const d = state.cache.get(key)?.data?.draft;
+  state.composers.delete(key);
+  const c = composerFor(key, d);
+  const box = $('reply');
+  if (box && state.open === key) {
+    box.value = c.text;
+    box.dispatchEvent(new Event('input'));
+    box.focus();
+  }
+}
+
+/** The draft as the inbox list shows it, without fetching the inbox again. */
+function setRowDraft(key, d) {
+  const t = state.data?.threads.find((x) => x.thread === key);
+  if (!t) return;
+  t.draft = d ? { by: d.by, updated_at: d.updated_at, preview: d.body.length > 140 ? `${d.body.slice(0, 139)}…` : d.body } : null;
+  render();
+}
+function setCachedDraft(key, d) {
+  const hit = state.cache.get(key);
+  if (hit) hit.data = { ...hit.data, draft: d };
+  setRowDraft(key, d);
+  renderDraftBar(key);
+}
+
+async function saveDraft(key, text, base) {
+  if (state.data?.me?.readonly || !text.trim()) return;
+  const c = state.composers.get(key) || { text, from: '', base: null };
+  const res = await request('PUT', '/api/draft', {
+    thread: key, text, mentions: mentionsIn(key, text), base: base === undefined ? c.base : base,
+  });
+  if (res.status === 409 && res.data.draft) {
+    // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
+    setCachedDraft(key, res.data.draft);
+    toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at) });
+    return;
+  }
+  if (!res.ok) { toast(res.data.error || `could not save the draft (${res.status})`); return; }
+  const d = res.data.draft;
+  // What the box holds now (it may have changed while saving) stays; the draft is the base.
+  const now = state.composers.get(key);
+  state.composers.set(key, { text: now ? now.text : text, from: text, base: d.updated_at });
+  const box = state.open === key && $('reply');
+  if (box && box.value !== state.composers.get(key).text) {
+    box.value = state.composers.get(key).text;
+    box.dispatchEvent(new Event('input'));
+  }
+  setCachedDraft(key, d);
+  const team = state.data?.teams?.[state.team]?.name || 'the team';
+  toast(`Draft saved. Everyone in ${team} sees it.`);
+}
+
+async function discardDraft(key) {
+  const d = state.cache.get(key)?.data?.draft;
+  if (!d || state.data?.me?.readonly) return;
+  const res = await request('DELETE', '/api/draft', { thread: key, base: d.updated_at });
+  if (res.status === 409 && res.data.draft) {
+    setCachedDraft(key, res.data.draft);
+    toast(`${res.data.error}; it is still there.`);
+    return;
+  }
+  if (!res.ok) { toast(res.data.error || `could not discard the draft (${res.status})`); return; }
+  const c = state.composers.get(key);
+  // An untouched composer empties with it; your own text stays.
+  if (c && c.text === c.from) {
+    state.composers.set(key, { text: '', from: '', base: null });
+    mention.picked.delete(key);
+    if (state.open === key && $('reply')) { $('reply').value = ''; $('reply').dispatchEvent(new Event('input')); }
+  } else if (c) {
+    c.base = null;
+  }
+  setCachedDraft(key, null);
+  toast('Draft discarded.', {
+    label: 'Undo',
+    run: () => {
+      // An untouched composer gets the draft back too.
+      const now = state.composers.get(key);
+      if (!now || now.text === now.from) state.composers.delete(key);
+      saveDraft(key, d.body, null);
+    },
+  });
 }
 
 async function send(key, thread) {
@@ -1134,7 +1308,9 @@ async function send(key, thread) {
   $('send').disabled = true;
   closeMentions();
   const mentions = mentionsIn(key, body);
-  const res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: key, text: body, mentions }) });
+  // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
+  const base = state.composers.get(key)?.base;
+  const res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: key, text: body, mentions, ...(base ? { draft: base } : {}) }) });
   const data = await res.json().catch(() => ({}));
   $('send').disabled = false;
   if (!res.ok) {
@@ -1144,6 +1320,8 @@ async function send(key, thread) {
     return false;
   }
   box.value = '';
+  state.composers.set(key, { text: '', from: '', base: null });
+  if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   mention.picked.delete(key);
   const last = state.shownIds ? [...state.shownIds].pop() : null;
   state.sending.push({ thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, source: thread.source, last });
@@ -1271,11 +1449,15 @@ function toast(text, action) {
 }
 
 // ---------------------------------------------------------------- reactions, resolving
-/** POSTs as the signed-in person; read-only views send who they view as, so it is refused. */
-async function write(path, body) {
+/** Writes as the signed-in person; read-only views send who they view as, so it is refused. */
+async function request(method, path, body) {
   const headers = { 'content-type': 'application/json', ...(state.as ? { 'x-opspile-as': String(state.as) } : {}) };
-  const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
+  const res = await fetch(path, { method, credentials: 'same-origin', headers, body: JSON.stringify(body) });
+  return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+}
+async function write(path, body) {
+  const res = await request('POST', path, body);
+  const { data } = res;
   if (res.ok) return data;
   const p = data.connect || data.reconnect;
   if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
@@ -1388,6 +1570,8 @@ function connect() {
     const ev = JSON.parse(e.data);
     if (ev.type === 'read' && ev.person === state.me.id) return;
     if (ev.type === 'read' || ev.type === 'thread') reloadSoon(ev.thread);
+    // A draft was saved or discarded (by anyone on the team, in any tab).
+    if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
   };
 }
 
