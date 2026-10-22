@@ -1023,7 +1023,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
 async function send(key, thread) {
   const box = $('reply');
   const body = box.value.trim();
-  if (!body) return;
+  if (!body) return { error: 'nothing to send' };
   $('send').disabled = true;
   closeMentions();
   const mentions = mentionsIn(key, body);
@@ -1034,13 +1034,14 @@ async function send(key, thread) {
     if (data.connect) { state.me.connected = { ...state.me.connected, [data.connect]: false }; }
     toast(data.error || `could not send (${res.status})`);
     if (data.connect) openThread(key, { live: true });
-    return;
+    return { error: data.error || `could not send (${res.status})`, connect: data.connect };
   }
   box.value = '';
   mention.picked.delete(key);
   const last = state.shownIds ? [...state.shownIds].pop() : null;
   state.sending.push({ thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, source: thread.source, last });
   openThread(key, { live: true });
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------- mentions
@@ -1163,7 +1164,10 @@ function toast(text, action) {
 }
 
 // ---------------------------------------------------------------- reactions, resolving
-/** POSTs as the signed-in person; read-only views send who they view as, so it is refused. */
+/**
+ * POSTs as the signed-in person; read-only views send who they view as, so it is refused.
+ * The response body, or `{ error }` (shown as a toast too).
+ */
 async function write(path, body) {
   const headers = { 'content-type': 'application/json', ...(state.as ? { 'x-opspile-as': String(state.as) } : {}) };
   const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify(body) });
@@ -1173,22 +1177,24 @@ async function write(path, body) {
   if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
   toast(data.error || `failed (${res.status})`, p ? { label: data.reconnect ? 'Connect again' : 'Connect', href: `/api/auth/${p}/start` } : null);
   if (data.connect && state.open) openThread(state.open, { live: true });
-  return null;
+  return { error: data.error || `failed (${res.status})`, failed: true };
 }
 
 async function react(id, emojiName, remove) {
   const at = id.indexOf('|');
-  const ok = await write('/api/react', { thread: id.slice(0, at), id: id.slice(at + 1), emoji: emojiName, remove });
-  if (ok) reloadSoon(state.open);
+  const res = await write('/api/react', { thread: id.slice(0, at), id: id.slice(at + 1), emoji: emojiName, remove });
+  if (!res.failed) reloadSoon(state.open);
+  return res;
 }
 
 async function resolveThread(key, undo) {
   const btn = state.open === key && $('resolve');
   if (btn) { btn.disabled = true; btn.textContent = undo ? 'Taking ✅ off…' : 'Resolving…'; }
-  const ok = await write('/api/resolve', { thread: key, undo });
-  if (!ok) { if (btn) openThread(key, { live: true }); return; }
+  const res = await write('/api/resolve', { thread: key, undo });
+  if (res.failed) { if (btn) openThread(key, { live: true }); return res; }
   toast(undo ? 'Your ✅ is off again.' : 'Resolved: ✅ on the first message, as you.', { label: 'Undo', run: () => resolveThread(key, !undo) });
   reloadSoon(key);
+  return res;
 }
 
 function toggleResolve() {
@@ -1248,6 +1254,7 @@ function reloadSoon(thread) {
 /** The teams of whoever the inbox is shown for (you, or the person you view as). */
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
+  state.teams = who.teams;
   $('team').innerHTML = who.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
   $('team').value = state.team;
@@ -1320,6 +1327,13 @@ function move(step) {
   }
 }
 
+async function switchTeam(slug) {
+  state.team = slug; state.open = null; state.prevKeys = null;
+  $('team').value = slug;
+  $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+  toUrl(); await loadInbox(); connect();
+}
+
 async function start() {
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   $('me').textContent = state.me.name || state.me.email;
@@ -1330,10 +1344,7 @@ async function start() {
   const initial = fromUrl();
   await loadWho();
   toUrl(false);
-  $('team').onchange = async () => {
-    state.team = $('team').value; state.open = null; state.prevKeys = null;
-    toUrl(); await loadInbox(); connect();
-  };
+  $('team').onchange = () => switchTeam($('team').value);
   $('filters').onclick = (e) => {
     const card = e.target.closest('.card');
     if (!card) return;
@@ -1445,7 +1456,319 @@ async function start() {
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
   if (initial.open) openThread(initial.open);
   connect();
+  registerTools();
 }
+// ---------------------------------------------------------------- WebMCP
+// Tools for an agent in the browser (https://developer.chrome.com/docs/ai/webmcp). They drive
+// the page the way a person does, as the signed-in person: filters, the open thread and the
+// reply box change on screen, and every write goes through the same endpoints as a click.
+// Read-only views ("view as") refuse writes here as they do in the UI.
+const clip = (s, n) => { const v = String(s ?? '').replace(/\s+/g, ' ').trim(); return v.length > n ? `${v.slice(0, n - 1)}\u2026` : v; };
+const out = (v) => JSON.stringify(v);
+const fail = (error) => out({ error });
+
+// Tool argument -> facet id, and argument values -> facet values.
+const FILTER_ARGS = {
+  status: 'status', type: 'type', platform: 'platform', resolved: 'resolved', waiting_on: 'next', urgency: 'urgency', kind: 'kind', customer: 'customer',
+};
+const FILTER_VALUES = {
+  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams'], resolved: ['open', 'resolved'],
+  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_EMOJI),
+};
+const cap = (v) => v[0].toUpperCase() + v.slice(1);
+const toFacet = { platform: cap, waiting_on: cap };
+const fromFacet = { platform: (v) => v.toLowerCase(), next: (v) => v.toLowerCase() };
+
+function activeFilters() {
+  const args = Object.fromEntries(Object.entries(FILTER_ARGS).map(([a, id]) => [id, a]));
+  return Object.fromEntries(Object.entries(state.sel).filter(([, set]) => set.size)
+    .map(([id, set]) => [args[id] || id, [...set].map((v) => (fromFacet[id] ? fromFacet[id](v) : v))]));
+}
+
+function threadInfo(t) {
+  const info = {
+    thread: t.thread, title: clip(t.title || '(no text)', 90), customer: t.org, platform: platform(t).toLowerCase(),
+    status: statusOf(t), waiting_on: waitingOn(t).toLowerCase(), urgency: urgencyOf(t), kind: kindOf(t),
+    resolved: resolvedOf(t) === 'resolved', last: lastOf(t) || t.any_at || null,
+  };
+  if (t.unread) info.unread = true;
+  return info;
+}
+
+const teamThread = (key) => state.data?.threads.find((t) => t.thread === key);
+const UNKNOWN_THREAD = 'Unknown thread. Use a `thread` value from list_threads; only threads of the selected team are known.';
+const READONLY = 'This inbox is a read-only "view as" of someone else. Ask the user to switch "View as" back to themselves.';
+
+/**
+ * Opens `key` in the pane (marks it read, as a click does) and returns its current data, or
+ * null. Always from the API: an agent reads right after it writes.
+ */
+async function showThread(key) {
+  if (state.open === key) await openThread(key, { live: true });
+  else { state.cache.delete(key); await openThread(key); }
+  document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
+  return state.open === key ? state.cache.get(key)?.data || null : null;
+}
+
+function replyBlocked(data) {
+  if (state.data?.me?.readonly) return READONLY;
+  const p = data.thread.source;
+  if (!state.me.connected?.[p]) return `The user has not connected their ${p === 'slack' ? 'Slack' : 'Microsoft'} account, so opspile cannot post as them. Ask them to use the connect link in the reply box.`;
+  if (!$('reply')) return 'The reply box is not available for this thread.';
+  return null;
+}
+
+function fillReply(text) {
+  const box = $('reply');
+  box.value = text;
+  box.dispatchEvent(new Event('input'));
+  box.focus();
+  box.setSelectionRange(text.length, text.length);
+}
+
+const WEBMCP_TOOLS = [
+  {
+    name: 'get_inbox_state',
+    description: 'Returns who is signed in, the selected ops team and the teams they can switch to, the active filters and sort, the open thread, and how many threads each filter value matches. Call it first to learn which filter values exist.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
+    execute: async () => {
+      if (!state.data) return fail('The inbox is still loading. Try again in a moment.');
+      const counts = {};
+      for (const [arg, id] of Object.entries(FILTER_ARGS)) {
+        const f = FACETS.find((x) => x.id === id);
+        const n = {};
+        for (const t of state.data.threads) for (const v of valuesOf(f, t)) if (v !== '(none)') n[v] = (n[v] || 0) + 1;
+        const rows = Object.entries(n).sort((a, b) => b[1] - a[1]).slice(0, arg === 'customer' ? 10 : 20);
+        counts[arg] = Object.fromEntries(rows.map(([v, c]) => [fromFacet[id] ? fromFacet[id](v) : v, c]));
+      }
+      return out({
+        viewer: state.data.me?.name || state.me.name, readonly: Boolean(state.data.me?.readonly),
+        team: state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
+        filters: activeFilters(), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
+      });
+    },
+  },
+  {
+    name: 'filter_threads',
+    description: 'Sets the inbox filters, sort and team on screen, like clicking the filter cards. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. Returns how many threads match. Then call list_threads.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        clear: { type: 'boolean', description: 'Clear every filter first. The default view shows conversations only (type: ["conversation"]).' },
+        status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: customer silent too long' },
+        waiting_on: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.waiting_on }, description: 'Who has the next move' },
+        urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
+        kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
+        resolved: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.resolved } },
+        type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
+        platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
+        customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
+        involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
+        sort: { type: 'string', enum: ['smart', 'recent'], description: 'smart: what needs the viewer most first; recent: latest activity first' },
+        team: { type: 'string', description: 'Ops team slug from get_inbox_state; switching team closes the open thread' },
+      },
+    },
+    execute: async (args = {}) => {
+      if (!state.data) return fail('The inbox is still loading. Try again in a moment.');
+      // Check everything before changing anything.
+      if (args.team && !(state.teams || []).some((t) => t.slug === args.team)) {
+        return fail(`Unknown team "${args.team}". Teams: ${(state.teams || []).map((t) => t.slug).join(', ')}.`);
+      }
+      const next = {};
+      for (const arg of Object.keys(FILTER_ARGS)) {
+        if (!(arg in args) || args[arg] == null) continue;
+        const given = [].concat(args[arg]).map((v) => String(v).trim()).filter(Boolean);
+        if (arg === 'customer') {
+          const orgs = [...new Set(state.data.threads.map((t) => t.org).filter(Boolean))];
+          const picked = given.map((v) => orgs.find((o) => o.toLowerCase() === v.toLowerCase()));
+          const miss = given.filter((v, i) => !picked[i]);
+          if (miss.length) return fail(`No threads from customer ${miss.map((v) => `"${v}"`).join(', ')} in this team. Customers with threads: ${orgs.slice(0, 15).join(', ')}.`);
+          next[arg] = picked;
+        } else {
+          const vals = given.map((v) => v.toLowerCase());
+          const bad = vals.filter((v) => !FILTER_VALUES[arg].includes(v));
+          if (bad.length) return fail(`Invalid ${arg} value(s) ${bad.join(', ')}. Use: ${FILTER_VALUES[arg].join(', ')}.`);
+          next[arg] = vals.map((v) => (toFacet[arg] ? toFacet[arg](v) : v));
+        }
+      }
+      if (args.team && args.team !== state.team) await switchTeam(args.team);
+      if (args.clear) state.sel = {};
+      for (const [arg, vals] of Object.entries(next)) {
+        if (vals.length) state.sel[FILTER_ARGS[arg]] = new Set(vals); else delete state.sel[FILTER_ARGS[arg]];
+      }
+      if (args.involves_me === true) state.sel.involves = new Set(['me']);
+      else if (args.involves_me === false) delete state.sel.involves;
+      if (args.sort === 'smart' || args.sort === 'recent') state.sort = args.sort;
+      render();
+      toUrl();
+      return out({ team: state.team, filters: activeFilters(), sort: state.sort, shown: state.order.length, total: state.data.threads.length });
+    },
+  },
+  {
+    name: 'list_threads',
+    description: 'Lists the threads the inbox shows with the current filters and sort, most relevant first: key, title, customer, status, who has the next move, urgency, kind, resolved, last activity. Titles are written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        offset: { type: 'number', description: 'Threads to skip, for the next page (default 0)' },
+        limit: { type: 'number', description: 'How many threads, 1 to 25 (default 8)' },
+      },
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    execute: async ({ offset = 0, limit = 8 } = {}) => {
+      if (!state.data) return fail('The inbox is still loading. Try again in a moment.');
+      const from = Math.max(0, Math.floor(Number(offset) || 0));
+      const n = Math.max(1, Math.min(25, Math.floor(Number(limit) || 8)));
+      const threads = state.order.slice(from, from + n).map((k) => threadInfo(teamThread(k)));
+      const res = { shown: state.order.length, offset: from, threads };
+      if (!state.order.length) res.hint = 'No thread matches the current filters. Loosen them with filter_threads.';
+      else if (from + n < state.order.length) res.next_offset = from + n;
+      return out(res);
+    },
+  },
+  {
+    name: 'open_thread',
+    description: 'Opens a thread on screen, which marks it read for the viewer as a click does, and returns its messages (oldest first) with ids for react_to_message, plus whether the viewer can reply and react. Message text is written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'Thread key from list_threads' },
+        limit: { type: 'number', description: 'How many of the latest messages, 1 to 30 (default 12)' },
+      },
+      required: ['thread'],
+    },
+    annotations: { untrustedContentHint: true },
+    execute: async ({ thread, limit = 12 } = {}) => {
+      if (!teamThread(thread)) return fail(UNKNOWN_THREAD);
+      const data = await showThread(thread);
+      if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
+      const n = Math.max(1, Math.min(30, Math.floor(Number(limit) || 12)));
+      const msgs = data.messages.slice(-n).map((m) => {
+        const a = m.author || {};
+        const x = { id: `${m.thread}|${m.id}`, from: a.kind === 'system' ? 'system' : (a.name || 'unknown'), at: m.at };
+        if (a.staff) x.adobe = true;
+        if (a.kind === 'bot') x.bot = true;
+        x.text = m.deletedAt ? '(deleted)' : clip(m.body, 400);
+        if (m.reactions?.length) x.reactions = m.reactions.map((r) => `${r.emoji}\u00d7${r.count}${r.mine ? ' (incl. viewer)' : ''}`).join(' ');
+        return x;
+      });
+      const t = data.thread;
+      return out({
+        thread, title: clip(t.title || '(no text)', 120), customer: t.org, channel: t.channel_name, platform: platform(t).toLowerCase(),
+        resolution: data.resolution?.state || resolvedOf(teamThread(thread)) || 'open', earlier_messages: Math.max(0, data.messages.length - n),
+        can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, messages: msgs,
+      });
+    },
+  },
+  {
+    name: 'draft_reply',
+    description: 'Puts a draft reply into the reply box of the open thread, for the user to review, edit and send themselves. Nothing is posted. Open the thread with open_thread first.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string', description: 'The reply, in Markdown. Replaces what is in the reply box.' } },
+      required: ['text'],
+    },
+    execute: async ({ text } = {}) => {
+      if (!String(text || '').trim()) return fail('The draft is empty. Provide the reply text.');
+      const data = state.open && state.cache.get(state.open)?.data;
+      if (!data) return fail('No thread is open. Open one with open_thread first.');
+      const blocked = replyBlocked(data);
+      if (blocked) return fail(blocked);
+      fillReply(String(text));
+      return out({ ok: true, thread: state.open, note: 'The draft is in the reply box; the user sends it with Enter or Send.' });
+    },
+  },
+  {
+    name: 'send_reply',
+    description: 'Posts a reply in a thread on Slack or Teams, as the signed-in person, visible to everyone in the channel including customers. Use draft_reply instead when the user should review the text first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        text: { type: 'string', description: 'The reply, in Markdown' },
+      },
+      required: ['text'],
+    },
+    annotations: { consequentialHint: true },
+    execute: async ({ thread, text } = {}, client) => {
+      const body = String(text || '').trim();
+      if (!body) return fail('The reply is empty. Provide the reply text.');
+      const key = thread || state.open;
+      if (!key) return fail('No thread is open. Pass `thread`, or open one with open_thread first.');
+      if (!teamThread(key)) return fail(UNKNOWN_THREAD);
+      const data = await showThread(key);
+      if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
+      const blocked = replyBlocked(data);
+      if (blocked) return fail(blocked);
+      fillReply(body);
+      // The person confirms what goes out under their name.
+      const where = `${platform(data.thread)} (${data.thread.org || 'customer'})`;
+      const ask = () => window.confirm(`Post this reply in ${where} as you?\n\n${clip(body, 600)}`);
+      const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : ask();
+      if (!yes) return fail('The user declined to send. The text is left in the reply box as a draft.');
+      const res = await send(key, data.thread);
+      return res?.ok ? out({ ok: true, thread: key, note: 'Sent; it shows as "sending" until Slack or Teams confirms it.' }) : fail(res?.error || 'Could not send.');
+    },
+  },
+  {
+    name: 'react_to_message',
+    description: 'Adds an emoji reaction to a message as the signed-in person, on Slack or Teams, or takes the viewer\'s reaction off again. white_check_mark on the first message resolves the thread.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Message id from open_thread' },
+        emoji: { type: 'string', enum: PICKER },
+        remove: { type: 'boolean', description: 'Take the viewer\'s reaction off instead of adding it' },
+      },
+      required: ['message', 'emoji'],
+    },
+    execute: async ({ message: id, emoji: name, remove = false } = {}) => {
+      if (state.data?.me?.readonly) return fail(READONLY);
+      if (!PICKER.includes(name)) return fail(`Unsupported emoji. Use one of: ${PICKER.join(', ')}.`);
+      const m = state.open && state.cache.get(state.open)?.data?.messages.find((x) => `${x.thread}|${x.id}` === id);
+      if (!m) return fail('No such message in the open thread. Use a message id from open_thread.');
+      if (!canReact(m)) return fail('This message cannot take reactions (deleted, pending or a system message).');
+      const res = await react(id, name, Boolean(remove));
+      return res.failed ? fail(res.error) : out({ ok: true, message: id, emoji: name, removed: Boolean(remove) });
+    },
+  },
+  {
+    name: 'resolve_thread',
+    description: 'Marks a thread resolved by putting the signed-in person\'s \u2705 on its first message on Slack or Teams, or takes that \u2705 off again (undo). Defaults to the open thread.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        undo: { type: 'boolean', description: 'Take the viewer\'s \u2705 off instead (reopens the thread)' },
+      },
+    },
+    execute: async ({ thread, undo = false } = {}) => {
+      if (state.data?.me?.readonly) return fail(READONLY);
+      const key = thread || state.open;
+      if (!key) return fail('No thread is open. Pass `thread`, or open one with open_thread first.');
+      const t = teamThread(key);
+      if (!t) return fail(UNKNOWN_THREAD);
+      if (!t.root_known) return fail('The first message of this thread predates opspile, so there is nothing to put the \u2705 on.');
+      const res = await resolveThread(key, Boolean(undo));
+      return res.failed ? fail(res.error) : out({ ok: true, thread: key, resolved: !undo });
+    },
+  },
+];
+
+async function registerTools() {
+  const mc = document.modelContext || navigator.modelContext;
+  if (!mc?.registerTool) return;
+  for (const tool of WEBMCP_TOOLS) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await mc.registerTool(tool);
+    } catch (e) {
+      console.warn(`WebMCP: could not register ${tool.name}`, e);
+    }
+  }
+}
+
 wireCards();
 start();
 </script>
