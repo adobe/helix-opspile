@@ -104,7 +104,7 @@ export async function indexMessage(db, m, now = new Date()) {
       WHERE thread = ?1 AND counted = 1 AND deleted = 0 ORDER BY at DESC LIMIT 1
     ) l ON 1
     ON CONFLICT (thread) DO UPDATE SET
-      org = excluded.org, team = excluded.team, kind = excluded.kind,
+      org = excluded.org, team = excluded.team, kind = excluded.kind, path = excluded.path,
       channel_name = COALESCE(excluded.channel_name, threads.channel_name),
       title = excluded.title,
       root_at = CASE WHEN ?14 THEN excluded.root_at ELSE COALESCE(threads.root_at, excluded.root_at) END,
