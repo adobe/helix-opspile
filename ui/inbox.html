@@ -114,6 +114,13 @@
   .composer textarea:focus { border-color: var(--accent); }
   .composer button.send { border-radius: 19px; padding: 7px 16px; background: var(--me); color: #fff; border: 0; }
   .composer button.send:disabled { opacity: .5; cursor: default; }
+  .composer { position: relative; }
+  .mentions { position: absolute; left: 22px; bottom: calc(100% - 4px); min-width: 260px; max-width: 360px; margin: 0; padding: 4px;
+    list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 5; }
+  .mentions li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+  .mentions li.on { background: var(--sel); }
+  .mentions .av { width: 22px; height: 22px; font-size: 9px; border-radius: 6px; }
+  .mentions .hint { margin-left: auto; color: var(--faint); font-size: 11px; }
   .composer .connect { color: var(--mute); font-size: 13px; }
   .composer .connect a { color: var(--link); }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line);
@@ -268,6 +275,13 @@ const emoji = (name) => EMOJI[name] || EMOJI[String(name).replace(/::skin-tone-\
 
 // A safe markdown subset: escape first, then format. Images from Slack and Teams go
 // through the inbox's media proxy, which adds the platform's credentials.
+// Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention.
+let mentionNames = null;
+function setMentionNames(names) {
+  const list = [...new Set(names.filter((n) => n && n.length <= 60))].sort((a, b) => b.length - a.length);
+  const reEsc = (n) => esc(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  mentionNames = list.length ? new RegExp(`(^|\\s)(@(?:${list.map(reEsc).join('|')}))(?![\\p{L}\\p{N}_])`, 'gu') : null;
+}
 const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
 function inline(s) {
   return s
@@ -279,6 +293,7 @@ function inline(s) {
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
     .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
     .replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(mentionNames || /$^/, '$1<span class="mention">$2</span>')
     .replace(/(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu, '$1<span class="mention">$2</span>')
     .replace(/:([a-z0-9_+-]+):/g, (m, n) => (EMOJI[n] ? EMOJI[n] : m));
 }
@@ -647,7 +662,9 @@ function composer(thread) {
   if (!state.me.connected?.[p]) {
     return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
   }
-  return `<div class="composer"><textarea id="reply" rows="1" placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (Enter to send, Shift+Enter for a new line)"></textarea>
+  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
+      placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (@ to mention, Enter to send, Shift+Enter for a new line)"></textarea>
     <button class="send" id="send">Send</button></div>`;
 }
 
@@ -663,6 +680,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   const draft = $('reply')?.value || '';
+  const focused = document.activeElement === $('reply');
+  const caret = focused ? [$('reply').selectionStart, $('reply').selectionEnd] : null;
   if (!live && !state.cache.get(key)) pane.innerHTML = '<div class="empty">Loading…</div>';
   let data;
   const hit = (!live || cached) && state.cache.get(key);
@@ -689,6 +708,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const shown = [...messages, ...state.sending.map((p) => ({
     ...p, author: { kind: 'person', name: state.me.name, staff: true }, pending: true,
   }))];
+  setMentionNames([
+    ...shown.map((m) => m.author?.name),
+    ...Object.values(state.data?.people || {}).map((p) => p.name),
+    ...mention.names,
+  ]);
   let feed = '';
   let prev = null;
   let day = null;
@@ -734,10 +758,16 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const box = $('reply');
   if (box) {
     box.value = draft;
+    if (focused) { box.focus(); box.setSelectionRange(...caret); }
     const grow = () => { box.style.height = 'auto'; box.style.height = `${Math.min(180, box.scrollHeight)}px`; };
-    box.oninput = grow;
+    box.oninput = () => { grow(); suggest(key); };
+    box.onclick = () => suggest(key);
+    box.onblur = () => setTimeout(closeMentions, 150);
     grow();
-    box.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(key, thread); } };
+    box.onkeydown = (e) => {
+      if (mentionKey(e, key)) return;
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(key, thread); }
+    };
     $('send').onclick = () => send(key, thread);
   }
   if (state.data?.threads.some((x) => x.thread === key) && (switching || !live)) markRead(t);
@@ -748,7 +778,9 @@ async function send(key, thread) {
   const body = box.value.trim();
   if (!body) return;
   $('send').disabled = true;
-  const res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: key, text: body }) });
+  closeMentions();
+  const mentions = mentionsIn(key, body);
+  const res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: key, text: body, mentions }) });
   const data = await res.json().catch(() => ({}));
   $('send').disabled = false;
   if (!res.ok) {
@@ -758,9 +790,111 @@ async function send(key, thread) {
     return;
   }
   box.value = '';
+  mention.picked.delete(key);
   const last = state.shownIds ? [...state.shownIds].pop() : null;
   state.sending.push({ thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, source: thread.source, last });
   openThread(key, { live: true });
+}
+
+// ---------------------------------------------------------------- mentions
+// Typing @ suggests people opspile already knows on the thread's platform (D1 accounts),
+// those in the thread first. Picking one writes @Name and remembers the account, and the
+// reply sends its id along, so the server turns @Name into a real Slack or Teams mention.
+const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
+const MENTION_AT = /(?:^|[\s(])@([\p{L}\p{N}._'-]*(?: [\p{L}\p{N}._'-]*){0,2})$/u;
+
+function mentionQuery(box, key) {
+  if (box.selectionStart !== box.selectionEnd) return null;
+  const m = MENTION_AT.exec(box.value.slice(0, box.selectionStart));
+  if (!m || m[1].length > 40 || m[1].startsWith(' ')) return null;
+  // Right after a picked mention: that one is done.
+  if ([...(mention.picked.get(key)?.keys() || [])].some((name) => m[1].startsWith(`${name} `) || m[1] === name)) return null;
+  return { q: m[1], from: box.selectionStart - m[1].length - 1 };
+}
+
+function suggest(key) {
+  const box = $('reply');
+  const hit = box && mentionQuery(box, key);
+  clearTimeout(mention.timer);
+  if (!hit) { closeMentions(); return; }
+  const seq = ++mention.seq;
+  mention.timer = setTimeout(async () => {
+    let people = [];
+    try {
+      ({ people } = await get(`/api/mentionable?thread=${encodeURIComponent(key)}&q=${encodeURIComponent(hit.q)}`));
+    } catch { /* no suggestions */ }
+    if (seq !== mention.seq || state.open !== key) return;
+    // A space after a name that matches nobody ends the mention.
+    if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
+    Object.assign(mention, { list: people, i: 0, from: hit.from });
+    renderMentions(key);
+  }, hit.q ? 120 : 0);
+}
+
+function renderMentions(key) {
+  const ul = $('mention-list');
+  const box = $('reply');
+  if (!ul || !box) return;
+  if (!mention.list.length) { closeMentions(); return; }
+  ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
+    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.here ? '<span class="hint">in thread</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
+  ul.hidden = false;
+  box.setAttribute('aria-expanded', 'true');
+  box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
+  ul.onmousedown = (e) => e.preventDefault();
+  ul.onclick = (e) => { const li = e.target.closest('li'); if (li) pickMention(key, Number(li.dataset.i)); };
+}
+
+function closeMentions() {
+  mention.list = [];
+  mention.seq += 1;
+  clearTimeout(mention.timer);
+  const ul = $('mention-list');
+  if (ul) { ul.hidden = true; ul.innerHTML = ''; }
+  $('reply')?.setAttribute('aria-expanded', 'false');
+  $('reply')?.removeAttribute('aria-activedescendant');
+}
+
+/** Keys while suggestions show: arrows move, Enter or Tab picks, Escape closes. */
+function mentionKey(e, key) {
+  if (!mention.list.length || e.isComposing) return false;
+  const n = mention.list.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    mention.i = (mention.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    renderMentions(key);
+  } else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+    pickMention(key, mention.i);
+  } else if (e.key === 'Escape') {
+    closeMentions();
+  } else {
+    return false;
+  }
+  e.preventDefault();
+  return true;
+}
+
+function pickMention(key, i) {
+  const box = $('reply');
+  const p = mention.list[i];
+  if (!box || !p) return;
+  const insert = `@${p.name} `;
+  box.value = box.value.slice(0, mention.from) + insert + box.value.slice(box.selectionStart);
+  const at = mention.from + insert.length;
+  box.focus();
+  box.setSelectionRange(at, at);
+  if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+  mention.picked.get(key).set(p.name, p);
+  mention.names.add(p.name);
+  closeMentions();
+  box.style.height = 'auto';
+  box.style.height = `${Math.min(180, box.scrollHeight)}px`;
+}
+
+/** Accounts picked for this reply whose @Name is still in the text. */
+function mentionsIn(key, body) {
+  return [...(mention.picked.get(key)?.values() || [])]
+    .filter((p) => new RegExp(`@${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(body))
+    .map((p) => ({ id: p.id, name: p.name }));
 }
 
 function toast(text) {

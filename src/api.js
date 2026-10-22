@@ -13,7 +13,7 @@
 import { accessEmail } from './access.js';
 import { cachedGraph } from './graph.js';
 import {
-  connections, disconnect, finishAuth, post, startAuth,
+  connections, disconnect, finishAuth, mentionable, post, startAuth,
 } from './post.js';
 import { parse } from './channels.js';
 import { json, text } from './http.js';
@@ -461,6 +461,9 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   if (url.pathname === '/api/post' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return post(env, me, body, (t) => inTeam(me, t));
+  }
+  if (url.pathname === '/api/mentionable') {
+    return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(me, team)) {
