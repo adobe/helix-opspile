@@ -14,14 +14,33 @@ import inboxHtml from '../ui/inbox.html';
 import { api } from './api.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
+import { ICONS } from './icons.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { consume } from './normalizer.js';
+import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
 import { teamsNotify } from './teams.js';
 
+const INBOX_PAGE = inboxPage(inboxHtml);
+
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
+}
+
+/** The favicon and touch icon, decoded once per isolate. */
+const iconBytes = new Map();
+function icon(pathname) {
+  const entry = ICONS[pathname];
+  if (!entry) {
+    return null;
+  }
+  if (!iconBytes.has(pathname)) {
+    iconBytes.set(pathname, Uint8Array.from(atob(entry.base64), (c) => c.charCodeAt(0)));
+  }
+  return new Response(iconBytes.get(pathname), {
+    headers: { 'content-type': entry.type, 'cache-control': 'public, max-age=86400' },
+  });
 }
 
 export default {
@@ -46,9 +65,15 @@ export default {
       }
     }
     if (pathname === '/inbox') {
-      return new Response(inboxHtml, {
+      return new Response(INBOX_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
+    }
+    if (request.method === 'GET' || request.method === 'HEAD') {
+      const iconResponse = icon(pathname);
+      if (iconResponse) {
+        return iconResponse;
+      }
     }
     const apiResponse = await api(request, env, url);
     if (apiResponse) {
