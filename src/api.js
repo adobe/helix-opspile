@@ -11,6 +11,9 @@
  */
 
 import { accessEmail } from './access.js';
+import {
+  discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
+} from './drafts.js';
 import { cachedGraph } from './graph.js';
 import {
   connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
@@ -266,6 +269,9 @@ export async function inbox(env, me, team) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
     myTeams[r.team].members.push(r.person);
   }
+  // Shared drafts, on any member of an entry (an entry has at most one).
+  const drafts = await draftsFor(env, [...threads.map((t) => t.thread),
+    ...threads.map((t) => t.logical_thread).filter(Boolean)]);
   // Profile cards of everyone in the avatar stacks, once per person.
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
@@ -297,7 +303,8 @@ export async function inbox(env, me, team) {
       const entry = { ...t, resolution: resolution(facts, t.label, me.id) };
       // Totals over the whole group, not just the members loaded here.
       const sized = g && g.n > 1 ? { ...entry, occurrences: g.n, messages: g.total } : entry;
-      return { ...sized, waiting_on: waitingOn(sized) };
+      const draft = draftSummary(draftOf(drafts, [t.thread, ...t.members.map((m) => m.thread)]));
+      return { ...sized, waiting_on: waitingOn(sized), draft };
     }),
   };
 }
@@ -378,6 +385,7 @@ export async function thread(env, me, key) {
     WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()).results || [] : [];
   const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [labelKey]) : []);
   const facts = await resolutionFacts(env, group.map((m) => m.thread));
+  const entryKeys = [key, ...group.map((m) => m.thread)];
   const anchorLabel = await env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first();
   const { results: tech } = await env.DB.prepare(`SELECT tech, p FROM channel_tech
     WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
@@ -407,6 +415,7 @@ export async function thread(env, me, key) {
     reviews,
     facts: found || [],
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
+    draft: draftOf(await draftsFor(env, entryKeys), entryKeys),
   };
 }
 
@@ -500,7 +509,24 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   }
   if (url.pathname === '/api/post' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return post(env, me, body, (t) => inTeam(me, t));
+    const res = await post(env, me, body, (t) => inTeam(me, t));
+    // A reply sent from the shared draft uses it up (unless a colleague changed it since).
+    if (res.ok && typeof body.draft === 'string') {
+      await discardDraft(env, me, { thread: body.thread, base: body.draft }, (t) => inTeam(me, t));
+    }
+    return res;
+  }
+  if (url.pathname === '/api/draft') {
+    if (request.method === 'GET') {
+      return getDraft(env, url.searchParams.get('thread'), (t) => inTeam(me, t) || isAdmin(me));
+    }
+    const body = await request.json().catch(() => ({}));
+    if (request.method === 'PUT') {
+      return saveDraft(env, me, body, (t) => inTeam(me, t));
+    }
+    if (request.method === 'DELETE') {
+      return discardDraft(env, me, body, (t) => inTeam(me, t));
+    }
   }
   if (url.pathname === '/api/react' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));

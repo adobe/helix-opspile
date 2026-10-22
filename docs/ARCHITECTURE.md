@@ -299,6 +299,29 @@ The models see reactions too: each message is followed by who reacted with what 
 Adobe staff), and a reaction relabels the thread, so a customer's ✅ or 👍 on the answer can
 make Clef call it resolved.
 
+### Drafts
+
+A reply can wait as a **draft**: **Save draft** appears above Send, next to Resolve, when the
+pointer rests on Send for a second (or Send is pressed for a second on touch), and ⌘S / Ctrl+S
+in the reply box does the same. An inbox entry carries **at most one draft**, and it is
+shared: everyone in the team that owns the channel sees it, and can change, send or discard it.
+Admins, who can open any thread, see its draft but change only their own teams' drafts.
+
+- Drafts live in D1 (`drafts`), keyed by the inbox entry (a re-threaded group's first thread).
+  They are user state, like watermarks: rebuilding the index from pile 2 keeps them. A draft
+  on a thread that is later folded into a group shows on the group, and moves to the group's
+  key when it is saved again.
+- A draft's `updated_at` is its version. A save names the version its text was written from,
+  and a draft that changed meanwhile is not overwritten: the colleague's draft is shown, with
+  an offer to overwrite it. A discard does the same.
+- Sending a reply written from the draft uses it up (unless it changed since). Saves and
+  discards are fanned out over the team's room, so every open inbox follows at once; a reply
+  box that still holds the draft unchanged follows the draft, one with your own changes keeps
+  them (and offers to load the draft instead). What you type and do not save stays with its
+  thread in the tab.
+- In the inbox, an entry with a draft shows **✎ Draft**, and the **Draft** card filters by
+  drafts saved last by you, by a colleague, or none. A draft does not change the status pile.
+
 ### Steering reactions
 
 Hovering a message shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟. Three of them steer the
