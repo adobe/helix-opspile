@@ -92,6 +92,11 @@ describe('oauth for mcp clients', () => {
     const client = await registered(e);
     const { html, res } = await approve(e, client);
     assert.match(html, /<div class="host">agent\.example<\/div>/);
+    // The approval's redirect to the client must be allowed by the page's CSP.
+    const page = await call(e, `/api/oauth/authorize?${form({
+      client_id: client, redirect_uri: 'https://agent.example/callback', response_type: 'code', code_challenge: CHALLENGE, code_challenge_method: 'S256',
+    })}`, {}, { who: ada(e) });
+    assert.match(page.headers.get('content-security-policy'), /form-action 'self' https:\/\/agent\.example;/);
     assert.match(html, /Some agent/);
     assert.equal(res.status, 302);
     const back = new URL(res.headers.get('location'));

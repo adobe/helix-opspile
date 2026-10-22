@@ -238,7 +238,8 @@ async function authorize(request, env, url, now, who) {
       headers: {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
-        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'none'",
+        // form-action also governs where the POST redirects: the client's callback.
+        'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self' ${new URL(redirect).origin}; frame-ancestors 'none'`,
         'x-frame-options': 'DENY',
       },
     });
