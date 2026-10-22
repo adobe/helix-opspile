@@ -474,18 +474,30 @@ function wireCards() {
   window.addEventListener('resize', hideCard);
 }
 
-// Slack names and Teams types to characters. Anything else is shown by name.
-const EMOJI = {
-  thumbsup: '👍', '+1': '👍', thumbsdown: '👎', '-1': '👎', like: '👍', heart: '❤️', laugh: '😆', surprised: '😮',
-  sad: '😢', angry: '😠', eyes: '👀', white_check_mark: '✅', heavy_check_mark: '✔️', x: '❌', tada: '🎉',
-  pray: '🙏', raised_hands: '🙌', clap: '👏', rocket: '🚀', fire: '🔥', joy: '😂', smile: '😄', slightly_smiling_face: '🙂',
-  wink: '😉', thinking_face: '🤔', 100: '💯', ok_hand: '👌', warning: '⚠️', rotating_light: '🚨', bug: '🐛',
-  wave: '👋', muscle: '💪', sparkles: '✨', star: '⭐', point_up: '☝️', point_right: '👉', see_no_evil: '🙈',
-  sweat_smile: '😅', grinning: '😀', confused: '😕', facepalm: '🤦', face_palm: '🤦', hourglass: '⌛', 'heavy_plus_sign': '➕',
-  rofl: '🤣', heart_eyes: '😍', partying_face: '🥳', saluting_face: '🫡', ack: '✅', done: '✅', yes: '✅', no: '❌',
-  thank_you: '🙏', thanks: '🙏', laughing: '😆', smile: '😄', smiley: '😃', rocket: '🚀', ring_buoy: '🛟',
-  heavy_check_mark: '✔️', 'blush': '😊', 'cry': '😢', 'sob': '😭', 'scream': '😱', 'zap': '⚡', open_mouth: '😮',
-};
+// Emoji names to characters: Slack's standard names, filled in from src/emoji.js where the page
+// is served (src/page.js), then Teams reaction types and names workspaces give their own
+// emoji. Anything else is shown by name.
+const SLACK_EMOJI = /* SLACK_EMOJI */ { names: {}, skin: [] };
+const EMOJI = Object.assign(Object.create(null), {
+  like: '👍', heart: '❤️', laugh: '😆', surprised: '😮', sad: '😢', angry: '😠', facepalm: '🤦', rofl: '🤣',
+  ack: '✅', done: '✅', yes: '✅', no: '❌', thank_you: '🙏', thanks: '🙏',
+  // Used by the reaction bar; also in Slack's table, here so dev and tests show them too.
+  white_check_mark: '✅', heavy_check_mark: '✔️', eyes: '👀', pray: '🙏', '+1': '👍', thumbsup: '👍',
+  grinning: '😀', rocket: '🚀', ring_buoy: '🛟', joy: '😂', open_mouth: '😮', tada: '🎉',
+}, SLACK_EMOJI.names);
+const SKIN_TONES = new Set(SLACK_EMOJI.skin);
+// `wave::skin-tone-3`: the tone modifier goes after the first code point, in place of a VS16.
+function emojiByName(name) {
+  const [base, tone] = String(name).split('::skin-tone-');
+  const c = EMOJI[base];
+  if (!c || !/^[2-6]$/.test(tone || '') || !SKIN_TONES.has(base)) return c;
+  const [first, ...rest] = [...c];
+  if (rest[0] === '\uFE0F') rest.shift();
+  return [first, String.fromCodePoint(0x1f3fb + Number(tone) - 2), ...rest].join('');
+}
+const emoji = (name) => emojiByName(name) || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
+// `:name:` in text, with an optional `::skin-tone-N`.
+const EMOJI_CODE = /:([a-z0-9_+-]+(?:::skin-tone-[2-6])?):/g;
 // Reactions by Slack name (the server turns them into Teams emoji). The quick ones show on
 // hovering a message, like in Slack; some of them steer the inbox (see SIGNAL_HINT).
 const QUICK = ['white_check_mark', 'eyes', 'pray', '+1', 'grinning', 'rocket', 'ring_buoy'];
@@ -497,7 +509,6 @@ const SIGNAL_HINT = {
   pray: 'thanks: nothing is pending any more',
   ring_buoy: 'help: the rest of the team should look',
 };
-const emoji = (name) => EMOJI[name] || EMOJI[String(name).replace(/::skin-tone-\d/, '')] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 
 // A safe markdown subset: escape first, then format. Images from Slack and Teams go
 // through the inbox's media proxy, which adds the platform's credentials.
@@ -521,7 +532,7 @@ function inline(s) {
     .replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
     .replace(mentionNames || /$^/, '$1<span class="mention">$2</span>')
     .replace(/(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu, '$1<span class="mention">$2</span>')
-    .replace(/:([a-z0-9_+-]+):/g, (m, n) => (EMOJI[n] ? EMOJI[n] : m));
+    .replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
 }
 function md(src) {
   return String(src || '').split(/```/).map((b, i) => {
@@ -742,7 +753,7 @@ function renderFilters() {
 
 // ---------------------------------------------------------------- thread list
 // `:name:` to the character, for titles (the body renderer does the same).
-const emojify = (text) => esc(text).replace(/:([a-z0-9_+-]+):/g, (m, n) => EMOJI[n] || m);
+const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
 
 const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
 const ourMove = (t) => t.waiting_on === 'us';

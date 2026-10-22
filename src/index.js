@@ -16,9 +16,12 @@ import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { consume } from './normalizer.js';
+import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
 import { teamsNotify } from './teams.js';
+
+const INBOX_PAGE = inboxPage(inboxHtml);
 
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
@@ -46,7 +49,7 @@ export default {
       }
     }
     if (pathname === '/inbox') {
-      return new Response(inboxHtml, {
+      return new Response(INBOX_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
