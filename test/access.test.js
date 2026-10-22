@@ -174,6 +174,31 @@ describe('inbox groups', () => {
   });
 });
 
+describe('system-only threads', () => {
+  it('hides join notices but keeps threads where a person or a bot posted', async () => {
+    const DB = d1({
+      teams: [{ slug: 'helix', name: 'Helix' }],
+      people: [{
+        id: 1, email: 'a@staff.example', name: 'A', staff: 1, teams: ['helix'],
+      }],
+    });
+    const base = {
+      source: 'slack', tenant: 'E1', channelId: 'C1', org: 'acme', team: 'helix', kind: 'channel', staff: false,
+    };
+    await indexMessage(DB, {
+      ...base, rootId: '1', id: '1', thread: 'join', at: '2026-10-21T10:00:00Z', title: '@Sam has joined the channel', path: 'p1/', counted: false,
+    });
+    await indexMessage(DB, {
+      ...base, rootId: '2', id: '2', thread: 'bot', at: '2026-10-21T10:01:00Z', title: 'Welcome!', path: 'p2/', counted: false, authorKey: 'slack:E1:B1',
+    });
+    await indexMessage(DB, {
+      ...base, rootId: '3', id: '3', thread: 'person', at: '2026-10-21T10:02:00Z', title: 'help', path: 'p3/', counted: true, authorKey: 'slack:E1:U1',
+    });
+    const { threads } = await inbox({ DB }, { id: 1 }, 'helix');
+    assert.deepEqual(threads.map((t) => t.thread).sort(), ['bot', 'person']);
+  });
+});
+
 describe('media proxy', () => {
   it('only fetches Slack files and Teams hosted contents', async () => {
     const { media } = await import('../src/api.js');

@@ -172,8 +172,10 @@ export async function inbox(env, me, team) {
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
       COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
     FROM threads WHERE team = ? AND kind != 'ignore'
-      -- Threads of nothing but system events (a member was added) are not shown.
-      AND NOT (kind = 'channel' AND last_at IS NULL AND COALESCE(title, '') = '')
+      -- Threads of nothing but system events ("has joined the channel", a member was added)
+      -- are not shown: no person posted, and no message has an author account (bots do).
+      AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
+        WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
     GROUP BY g ORDER BY latest DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
