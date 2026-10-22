@@ -150,14 +150,27 @@ export function fold(threads) {
 }
 
 export async function inbox(env, me, team) {
+  // The latest groups (a re-threaded group counts once), then for each group its first
+  // thread (title, link) and its five most recent members (activity, read state).
+  const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
+      COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
+    FROM threads WHERE team = ? AND kind != 'ignore'
+    GROUP BY g ORDER BY latest DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
+  const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
       root_at IS NOT NULL AS root_known, logical_thread,
-      (SELECT m.permalink FROM messages m WHERE m.thread = threads.thread AND m.deleted = 0
-        AND m.permalink IS NOT NULL ORDER BY (m.id = threads.root_id) DESC, m.at LIMIT 1)
+      (SELECT m.permalink FROM messages m WHERE m.thread = r.thread AND m.deleted = 0
+        AND m.permalink IS NOT NULL ORDER BY (m.id = r.root_id) DESC, m.at LIMIT 1)
         AS permalink
-    FROM threads WHERE team = ? AND kind != 'ignore'
-    ORDER BY COALESCE(last_at, any_at) DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
+    FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
+          ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
+        FROM threads t
+        WHERE t.team = ? AND t.kind != 'ignore'
+          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?))) r
+    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?))`)
+    .bind(team, groupKeys, groupKeys).all();
+  const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
     return { team, members: await members(env, team), threads: [] };
   }
@@ -220,7 +233,11 @@ export async function inbox(env, me, team) {
           posters: postersBy.get(t.thread) || [],
           mentioned: namedBy.get(t.thread) || [],
         };
-      })),
+      })).map((t) => {
+      const g = sizes.get(t.thread);
+      // Totals over the whole group, not just the members loaded here.
+      return g && g.n > 1 ? { ...t, occurrences: g.n, messages: g.total } : t;
+    }),
   };
 }
 
