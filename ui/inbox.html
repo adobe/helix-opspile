@@ -186,6 +186,28 @@
   .seen { text-align: right; color: var(--faint); font-size: 11px; margin-top: 6px; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
 
+  /* Profile cards: who someone is to us, on hover, focus or tap of a name or avatar. */
+  [data-p]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .msg .who b[data-p] { cursor: default; }
+  .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: 2px; }
+  .pcard { position: fixed; z-index: 20; width: 290px; padding: 12px 14px; font-size: 12.5px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.3); }
+  .pcard[hidden] { display: none; }
+  .pcard .top { display: flex; gap: 11px; align-items: center; }
+  .pcard .top > div { min-width: 0; }
+  .pcard .av { width: 44px; height: 44px; font-size: 15px; border-radius: 11px; }
+  .pcard .nm { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pcard .ttl { color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pcard .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px; }
+  .pcard .rel { font-size: 11px; font-weight: 650; padding: 1px 8px; border-radius: 9px; color: #fff; }
+  .pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: #7c3aed; }
+  .pcard .rel.customer { background: #c2410c; } .pcard .rel.bot { background: var(--faint); }
+  .pcard dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+  .pcard dt { color: var(--faint); }
+  .pcard dd { margin: 0; min-width: 0; display: flex; gap: 5px; align-items: center; overflow-wrap: anywhere; }
+  .pcard dd img { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+  .pcard .note { color: var(--mute); font-size: 11.5px; margin-top: 6px; }
+
   .rv .apply { display: flex; gap: 8px; margin-top: 8px; }
   .rv .apply .send { border-radius: 8px; padding: 3px 12px; background: var(--me); color: #fff; border: 0; }
   .rv .apply .send:disabled { opacity: .45; }
@@ -220,7 +242,7 @@ const state = {
   me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', scores: new Map(),
-  cache: new Map(), staged: {},
+  cache: new Map(), staged: {}, profiles: new Map(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -257,9 +279,170 @@ function hue(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.ch
 const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 // Initials underneath, the picture on top: while a picture loads (or when Gravatar has
 // none and answers 404), the initials show instead of a blank.
-function avatar(name, url, cls = '') {
+// With a profile key the avatar opens the person's card (`tab`: also by keyboard) instead of
+// a plain title tooltip.
+function avatar(name, url, cls = '', { key = null, tab = false } = {}) {
   const img = url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
-  return `<span class="av ${cls}" style="background:${hue(name)}" title="${esc(name)}">${esc(initials(name))}${img}</span>`;
+  const who = key
+    ? ` data-p="${esc(key)}" role="button" aria-label="${esc(name)}"${tab ? ' tabindex="0"' : ''}`
+    : ` title="${esc(name)}"`;
+  return `<span class="av ${cls}" style="background:${hue(name)}"${who}>${esc(initials(name))}${img}</span>`;
+}
+
+// ---------------------------------------------------------------- profile cards
+// Cards come with the inbox and thread payloads (`profiles`, keyed by platform account), so
+// hovering costs no request. People without one (no account in D1) get a card from what the
+// message says about them.
+function mergeProfiles(cards) {
+  for (const [k, v] of Object.entries(cards || {})) state.profiles.set(k, v);
+}
+function profileKey(key, { name, staff, kind, domain, avatar: url, platform: source } = {}) {
+  const k = key || `local:${kind || 'person'}:${staff ? 1 : 0}:${domain || ''}:${name}`;
+  if (!state.profiles.has(k)) {
+    state.profiles.set(k, {
+      name, avatar: url || null, platform: source || null, kind: kind || 'person', domain: domain || null,
+      relation: kind === 'bot' ? 'bot' : (staff ? 'adobe' : 'customer'), teams: [], local: true,
+    });
+  }
+  return k;
+}
+const RELATION_LABEL = { adobe: 'Adobe', partner: 'Partner', customer: 'Customer', bot: 'Bot' };
+const RELATION_HINT = {
+  adobe: 'Adobe staff',
+  partner: 'Works for a partner of Adobe (their mail domain is a known partner domain)',
+  customer: 'Not Adobe staff and not from a known partner domain',
+  bot: 'An app or integration posting automatically',
+};
+
+/** The thread a name or avatar belongs to: its row in the list, or the open thread. */
+function cardContext(el) {
+  const key = el.closest('.t')?.dataset.thread || state.open;
+  const t = state.data?.threads.find((x) => x.thread === key) || {};
+  const th = state.cache.get(key)?.data?.thread || {};
+  return { org: t.org || th.org, customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name };
+}
+
+function cardHtml(p, ctx) {
+  const role = [p.title, p.company].filter(Boolean).join(' · ');
+  const rel = p.relation || 'customer';
+  const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
+  const where = p.platform === 'slack' ? 'Slack account' : p.platform === 'teams' ? 'Teams account' : '';
+  const rows = [];
+  const ico = (d) => (d ? `<img src="${esc(favicon(d))}" alt="" loading="lazy" onerror="this.remove()">` : '');
+  if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
+  if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
+  if (ctx.org) {
+    rows.push(['Channel', `${ico(ctx.customerDomain)}${esc(ctx.org)}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
+  }
+  // A customer from another domain than the channel's customer may be a partner nobody listed.
+  const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
+  return `<div class="top">${avatar(p.name || '?', p.avatar)}<div>
+      <div class="nm">${esc(p.name || 'unknown')}</div>${role ? `<div class="ttl">${esc(role)}</div>` : ''}</div></div>
+    <div class="chips"><span class="rel ${esc(rel)}" title="${esc(RELATION_HINT[rel] || '')}">${esc(label)}</span>
+      ${where ? `<span class="tag">${where}</span>` : ''}</div>
+    ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
+    ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
+    ${p.local ? '<div class="note">No account details known yet.</div>' : ''}`;
+}
+
+const card = { el: null, target: null, showTimer: 0, hideTimer: 0, pointer: 'mouse' };
+function cardEl() {
+  if (card.el) return card.el;
+  const el = document.createElement('div');
+  el.id = 'pcard';
+  el.className = 'pcard';
+  el.setAttribute('role', 'tooltip');
+  el.hidden = true;
+  el.addEventListener('pointerenter', () => clearTimeout(card.hideTimer));
+  el.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') hideCardSoon(); });
+  document.body.append(el);
+  card.el = el;
+  return el;
+}
+function showCard(target) {
+  clearTimeout(card.showTimer);
+  clearTimeout(card.hideTimer);
+  const p = state.profiles.get(target.dataset.p);
+  if (!p || !target.isConnected) return;
+  const el = cardEl();
+  if (card.target && card.target !== target) card.target.removeAttribute('aria-describedby');
+  el.innerHTML = cardHtml(p, cardContext(target));
+  el.hidden = false;
+  card.target = target;
+  target.setAttribute('aria-describedby', 'pcard');
+  // Below the name or avatar, or above it when there is no room; always on screen.
+  const r = target.getBoundingClientRect();
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+  el.style.top = `${top}px`;
+  el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+}
+function hideCard() {
+  clearTimeout(card.showTimer);
+  clearTimeout(card.hideTimer);
+  if (card.el) card.el.hidden = true;
+  card.target?.removeAttribute('aria-describedby');
+  card.target = null;
+}
+function hideCardSoon() {
+  clearTimeout(card.hideTimer);
+  card.hideTimer = setTimeout(hideCard, 160);
+}
+/** After a re-render: a card whose name or avatar is gone goes too. */
+function cardGone() { if (card.target && !card.target.isConnected) hideCard(); }
+
+function wireCards() {
+  const hovering = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
+  document.addEventListener('pointerdown', (e) => { card.pointer = e.pointerType; }, true);
+  document.addEventListener('pointerover', (e) => {
+    if (!hovering(e)) return;
+    const t = e.target.closest('[data-p]');
+    if (t) {
+      clearTimeout(card.hideTimer);
+      if (card.target === t) return;
+      clearTimeout(card.showTimer);
+      // Quick when moving from one person to the next, a pause before the first.
+      card.showTimer = setTimeout(() => showCard(t), card.target ? 60 : 350);
+    }
+  });
+  document.addEventListener('pointerout', (e) => {
+    if (!hovering(e)) return;
+    const t = e.target.closest('[data-p]');
+    if (!t || (e.relatedTarget && t.contains(e.relatedTarget))) return;
+    clearTimeout(card.showTimer);
+    if (card.target) hideCardSoon();
+  });
+  // A tap shows the card (and does not open the thread underneath); a tap elsewhere hides it.
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-p]');
+    if (t && card.pointer === 'touch') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (card.target === t) hideCard(); else showCard(t);
+      return;
+    }
+    if (card.target && !e.target.closest('#pcard') && t !== card.target) hideCard();
+  }, true);
+  document.addEventListener('focusin', (e) => {
+    const t = e.target.closest?.('[data-p]');
+    if (t && t.matches(':focus-visible')) showCard(t);
+  });
+  document.addEventListener('focusout', (e) => {
+    if (card.target && e.target === card.target && !card.el.contains(e.relatedTarget)) hideCard();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && card.target) { hideCard(); return; }
+    const t = e.target.closest?.('[data-p]');
+    if (t && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      if (card.target === t) hideCard(); else showCard(t);
+    }
+  });
+  // Native scrolling moves the name away from a fixed card: let the card go.
+  document.addEventListener('scroll', (e) => { if (card.target && !card.el.contains(e.target)) hideCard(); }, true);
+  window.addEventListener('resize', hideCard);
 }
 
 // Slack names and Teams types to characters. Anything else is shown by name.
@@ -510,7 +693,9 @@ function moods(t) {
 
 function row(t) {
   const status = statusOf(t);
-  const faces = (t.participants || []).map((p) => avatar(`${p.name || '?'}${p.staff ? ' (Adobe)' : ''}`, p.avatar)).join('');
+  const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
+    key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
+  })).join('');
   const replies = Math.max(0, (t.messages || 1) - 1);
   const fresh = state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
   const n = t.occurrences || (t.members || []).length;
@@ -607,6 +792,7 @@ function renderThreads() {
     [...list.children].forEach((c) => { if (!nodes.includes(c)) { preload.unobserve(c); c.remove(); } });
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
   }
+  cardGone();
   state.order = shown.map((t) => t.thread);
   state.prevKeys = new Set(state.data.threads.map((t) => t.thread));
 }
@@ -651,8 +837,11 @@ function message(m, prev, fresh) {
   const adobe = Boolean(a.staff);
   const cont = prev && prev.author?.name === a.name && prev.author?.kind === a.kind && prev.thread === m.thread
     && Date.parse(m.at) - Date.parse(prev.at) < 5 * 60 * 1000 && dayLabel(prev.at) === dayLabel(m.at);
-  const who = `<b>${esc(a.name || 'unknown')}</b>${a.kind === 'bot' ? ' bot' : ''} · ${clock(m.at)}`;
-  const face = `<span class="face">${avatar(a.name || '?', m.avatar)}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
+  const key = profileKey(m.authorKey, {
+    name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
+  });
+  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' ? ' bot' : ''} · ${clock(m.at)}`;
+  const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
   const rx = (m.reactions || []).map((r) => `<span title="${esc(r.names.join(', ') || r.emoji)}">${esc(emoji(r.emoji))} ${r.count}</span>`).join('');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
@@ -700,6 +889,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     return;
   }
   state.cache.set(key, { data, at: hit ? hit.at : Date.now() });
+  mergeProfiles(data.profiles);
   // Shown from the preload: fetch the current state behind it.
   if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
   const { thread, members = [], messages, watermarks, label, model, reviews, facts } = data;
@@ -752,6 +942,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     </div>
     ${composer(thread)}`;
   state.shownIds = ids;
+  cardGone();
   const scroller = pane.querySelector('.scroller');
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
@@ -952,6 +1143,7 @@ async function loadWho() {
 
 async function loadInbox() {
   state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+  mergeProfiles(state.data.profiles);
   $('me').textContent = state.data.me?.readonly ? `${state.me.name} · viewing as ${state.data.me.name}` : (state.me.name || state.me.email);
   state.coPeople = coParticipants();
   state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
@@ -1121,6 +1313,7 @@ async function start() {
   if (initial.open) openThread(initial.open);
   connect();
 }
+wireCards();
 start();
 </script>
 </body>

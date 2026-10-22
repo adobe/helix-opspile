@@ -39,6 +39,7 @@ import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
+import { partnerOf, relationOf } from '../src/profiles.js';
 import { readState, waitingOn } from '../src/threads.js';
 import { createStore } from './dev-ui-fixtures.mjs';
 
@@ -122,6 +123,35 @@ function members(team) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** A person's identity key on a platform, like `messages.author_key`. */
+const keyOf = (p, source) => `${source}:T-FAKE:${p ? p.key : 'bot'}`;
+
+/** Profile cards for these identity keys, as src/profiles.js builds them from D1. */
+function profiles(keys) {
+  const out = {};
+  for (const k of new Set(keys.filter(Boolean))) {
+    const [source, , who] = k.split(':');
+    const p = [...store.people.values()].find((x) => x.key === who);
+    const domain = p ? p.email.split('@').pop() : null;
+    const partner = partnerOf(domain, store.partners);
+    out[k] = p ? {
+      name: p.name,
+      avatar: null,
+      platform: source,
+      kind: 'person',
+      title: p.title || null,
+      company: p.company || null,
+      domain,
+      relation: relationOf({}, { kind: 'person', staff: p.staff, email: p.email }, store.partners),
+      partner: partner ? partner.name : null,
+      teams: store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.name),
+    } : {
+      name: 'Alertmanager', avatar: null, platform: source, kind: 'bot', relation: 'bot', teams: [],
+    };
+  }
+  return out;
+}
+
 /** Thread participants and the customer's domain, the way src/api.js derives them. */
 function people(entry) {
   const seen = new Map();
@@ -132,8 +162,9 @@ function people(entry) {
   }
   const domains = [...seen.values()].filter((p) => p && !p.staff).map((p) => p.email.split('@').pop());
   return {
-    participants: [...seen].slice(0, 5)
-      .map(([name, p]) => ({ name, staff: Boolean(p?.staff), avatar: null })),
+    participants: [...seen].slice(0, 5).map(([name, p]) => ({
+      name, staff: Boolean(p?.staff), avatar: null, key: p ? keyOf(p, entry.ch.source) : null,
+    })),
     customerDomain: domains[0] || null,
   };
 }
@@ -160,26 +191,28 @@ function inbox(team) {
     }));
   const mentions = store.mentions.filter((m) => keys.has(m.thread) && teamIds.has(m.person));
   const byName = new Map([...store.people.values()].map((p) => [p.name, p]));
+  const threads = readState(rows, marks, mentions, ME)
+    .map((t) => ({
+      ...t,
+      label: store.labels.get(t.thread) || null,
+      ...people(store.threads.get(t.thread)),
+      members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
+      posters: [...new Set(store.threads.get(t.thread).messages
+        .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
+      mentioned: store.mentions.filter((m) => m.thread === t.thread)
+        .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
+    }))
+    .map((t) => ({ ...t, waiting_on: waitingOn(t) }));
   return {
     team,
     me: { id: ME, name: store.people.get(ME).name, readonly: false },
+    profiles: profiles(threads.flatMap((t) => t.participants.map((p) => p.key))),
     people: Object.fromEntries([...store.people.values()]
       .map((p) => [p.id, { name: p.name, staff: p.staff }])),
     teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(team),
-    threads: readState(rows, marks, mentions, ME)
-      .map((t) => ({
-        ...t,
-        label: store.labels.get(t.thread) || null,
-        ...people(store.threads.get(t.thread)),
-        members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
-        posters: [...new Set(store.threads.get(t.thread).messages
-          .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
-        mentioned: store.mentions.filter((m) => m.thread === t.thread)
-          .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
-      }))
-      .map((t) => ({ ...t, waiting_on: waitingOn(t) })),
+    threads,
   };
 }
 
@@ -198,6 +231,10 @@ function thread(key) {
       ...meta,
       body,
       avatar: null,
+      authorKey: meta.author.kind === 'system' ? null : keyOf(
+        [...store.people.values()].find((p) => p.name === meta.author.name),
+        entry.row.source,
+      ),
       reactions: /thank/i.test(body) ? [{ emoji: 'thumbsup', count: 1, names: ['Tom Okafor'] }] : [],
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
@@ -212,6 +249,7 @@ function thread(key) {
       thread: key, root_at: entry.row.root_at, last_at: entry.row.last_at, any_at: entry.row.any_at,
     }],
     messages,
+    profiles: profiles(messages.map((m) => m.authorKey)),
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,

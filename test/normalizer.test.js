@@ -39,7 +39,7 @@ const USERS = {
     id: 'U1', real_name: 'Ada', profile: { email: 'ada@staff.example' }, team_id: 'T1',
   },
   U2: {
-    id: 'U2', real_name: 'Cy', profile: { email: 'cy@customer.example' }, team_id: 'T9',
+    id: 'U2', real_name: 'Cy', profile: { email: 'cy@customer.example', title: 'CTO' }, team_id: 'T9',
   },
 };
 
@@ -113,6 +113,8 @@ describe('processKey', () => {
       kind: 'person', name: 'Cy', org: 'customer.example', staff: false,
     });
     assert.deepEqual(meta.raw, [key]);
+    const [who] = e.DB.rows("SELECT title FROM identities WHERE user_id = 'U2'");
+    assert.equal(who.title, 'CTO');
   });
 
   it('creates the knowledge bases of a channel\'s org and team when it is discovered', async () => {

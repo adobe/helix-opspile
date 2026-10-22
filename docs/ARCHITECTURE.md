@@ -282,6 +282,23 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
   derived from the person's **mail domain** instead.
 
+**Profile cards.** Hovering over (focusing, or tapping) a name or avatar in the inbox shows
+what opspile knows about the person: name, picture, platform account, job title and company
+(Slack profile title, Graph `jobTitle` and `companyName`, cached with the identity), mail
+domain, ops teams, the channel's org, and above all who they are to us:
+
+- **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`);
+- **Partner**: their mail domain, or a parent domain, is in the `partner_domains` table
+  (agencies and system integrators, maintained by hand, like the rules);
+- **Customer**: anyone else; the card notes when their domain is not the usual customer
+  domain of the channel, which is how an unlisted partner shows up;
+- **Bot**.
+
+A list of partner domains is explicit and never wrong, where guessing from "not staff and not
+the customer's domain" would call a customer's second domain a partner. The cards travel with
+the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
+request, and emails stay on the server.
+
 ## Platform facts that shape the design
 
 These were measured against the live APIs during exploration.
