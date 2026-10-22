@@ -40,6 +40,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
+import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
 import { createStore } from './dev-ui-fixtures.mjs';
 
@@ -104,6 +105,69 @@ const text = (res, body, status = 200) => {
 };
 
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
+
+// ---- reactions, as D1's `reactions` would hold them ---------------------------------------
+
+// `${thread}|${message id}` -> [{ emoji, person, at }]. Every thank-you starts with a
+// thumbs-up from a teammate; the oldest resolved-looking thread has a ✅ from one.
+const reactions = new Map();
+const PICKER_TEAMS = {
+  thumbsup: '👍', heart: '❤️', joy: '😂', open_mouth: '😮', eyes: '👀', pray: '🙏', tada: '🎉', white_check_mark: '✅',
+};
+const CHECKS = new Set(['white_check_mark', '✅']);
+const personNamed = (name) => [...store.people.values()].find((p) => p.name === name);
+{
+  const tom = personNamed('Tom Okafor');
+  for (const entry of store.threads.values()) {
+    for (const m of entry.messages) {
+      if (/thank/i.test(m.body) && tom) {
+        reactions.set(`${entry.key}|${m.id}`, [{ emoji: 'thumbsup', person: tom.id, at: m.at }]);
+      }
+    }
+  }
+  const done = [...store.threads.values()]
+    .find((e) => (store.labels.get(e.key)?.resolved_p ?? 0) >= 0.5 && e.row.root_at);
+  if (done && tom) {
+    reactions.set(`${done.key}|${done.row.root_id}`, [{ emoji: 'white_check_mark', person: tom.id, at: done.row.any_at }]);
+  }
+}
+
+function reactionsOn(key, id) {
+  const out = [];
+  for (const r of reactions.get(`${key}|${id}`) || []) {
+    let e = out.find((x) => x.emoji === r.emoji);
+    if (!e) {
+      e = {
+        emoji: r.emoji, count: 0, names: [], mine: false,
+      };
+      out.push(e);
+    }
+    e.count += 1;
+    e.names.push(store.people.get(r.person)?.name || '?');
+    e.mine = e.mine || r.person === ME;
+  }
+  return out;
+}
+
+/** As src/resolve.js derives it from D1: staff ✅ on the root, the latest customer message. */
+function resolutionOf(entry) {
+  const checks = (reactions.get(`${entry.key}|${entry.row.root_id}`) || [])
+    .filter((r) => CHECKS.has(r.emoji) && store.people.get(r.person)?.staff)
+    .map((r) => ({ at: r.at, person: r.person, name: store.people.get(r.person).name }));
+  const customerAt = entry.messages
+    .filter((m) => m.author.kind === 'person' && !m.author.staff && !m.deletedAt)
+    .map((m) => m.at).sort().pop() || null;
+  return resolution({ checks, customerAt }, store.labels.get(entry.key) || null, ME);
+}
+
+function setReaction(entry, id, emoji, remove) {
+  const k = `${entry.key}|${id}`;
+  const list = (reactions.get(k) || []).filter((r) => !(r.emoji === emoji && r.person === ME));
+  if (!remove) {
+    list.push({ emoji, person: ME, at: new Date().toISOString() });
+  }
+  reactions.set(k, list);
+}
 
 // ---- live events -----------------------------------------------------------------------
 
@@ -201,6 +265,12 @@ function inbox(team) {
         .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
       mentioned: store.mentions.filter((m) => m.thread === t.thread)
         .map((m) => ({ person: m.person, staff: Boolean(store.people.get(m.person)?.staff) })),
+      reactions: Object.values(store.threads.get(t.thread).messages
+        .flatMap((m) => reactionsOn(t.thread, m.id))
+        .reduce((acc, r) => ({
+          ...acc, [r.emoji]: { emoji: r.emoji, count: (acc[r.emoji]?.count || 0) + r.count },
+        }), {})),
+      resolution: resolutionOf(store.threads.get(t.thread)),
     }))
     .map((t) => ({ ...t, waiting_on: waitingOn(t) }));
   return {
@@ -226,7 +296,6 @@ function thread(key) {
     .filter(([path]) => path.startsWith(entry.row.path))
     .map(([, body]) => parse(body))
     .filter(Boolean)
-    // Fake reactions: a thumbs-up from a teammate on every thank-you.
     .map(({ meta, body }) => ({
       ...meta,
       body,
@@ -235,7 +304,7 @@ function thread(key) {
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,
       ),
-      reactions: /thank/i.test(body) ? [{ emoji: 'thumbsup', count: 1, names: ['Tom Okafor'] }] : [],
+      reactions: reactionsOn(key, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const watermarks = [...store.watermarks.values()]
@@ -255,6 +324,7 @@ function thread(key) {
     model: store.labels.get(key) || null,
     reviews: [],
     facts: store.facts.get(key) || [],
+    resolution: resolutionOf(entry),
   };
 }
 
@@ -301,7 +371,13 @@ async function api(req, res, url) {
     } = store.me;
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
-      id, name, email, teams, admin, connected: { slack: true, teams: true },
+      id,
+      name,
+      email,
+      teams,
+      admin,
+      connected: { slack: true, teams: true },
+      react: { slack: true, teams: true },
     });
   }
   if (url.pathname.startsWith('/api/review')) {
@@ -350,6 +426,43 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, 1200);
     return json(res, { ok: true, platform: entry.row.source, id: 'fake' });
+  }
+  if (url.pathname === '/api/react' && req.method === 'POST') {
+    const {
+      thread: key, id, emoji, remove,
+    } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!entry || !inTeam(entry.row.team) || !entry.messages.some((m) => m.id === id) || !emoji) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const native = entry.row.source === 'teams' ? PICKER_TEAMS[emoji] || emoji : emoji;
+    setReaction(entry, id, native, remove);
+    console.log(`react ${remove ? '-' : '+'}${native}`);
+    broadcast(entry.row.team, { type: 'thread', thread: key });
+    return json(res, { ok: true, emoji: native });
+  }
+  if (url.pathname === '/api/resolve' && req.method === 'POST') {
+    const { thread: key, undo } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    if (!entry.row.root_at) {
+      return json(res, { error: 'the first message of this thread is not known yet' }, 409);
+    }
+    const emoji = entry.row.source === 'teams' ? '✅' : 'white_check_mark';
+    const mine = (reactions.get(`${key}|${entry.row.root_id}`) || [])
+      .some((r) => r.person === ME && CHECKS.has(r.emoji));
+    if (undo && !mine) {
+      return json(res, { error: 'you have not resolved this thread; only whoever did can undo it' }, 409);
+    }
+    setReaction(entry, entry.row.root_id, emoji, true);
+    if (!undo) {
+      setReaction(entry, entry.row.root_id, emoji, false);
+    }
+    console.log(`resolve ${undo ? 'undo' : ''}`);
+    broadcast(entry.row.team, { type: 'thread', thread: key });
+    return json(res, { ok: true, resolved: !undo });
   }
   if (url.pathname === '/api/read' && req.method === 'POST') {
     const { thread: key, at } = await readJson(req);

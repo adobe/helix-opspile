@@ -272,15 +272,26 @@ export async function replaceReactions(db, { thread, message }, reactions) {
   }
 }
 
-/** Adds or removes one reaction (Slack reaction events). */
+/**
+ * Adds or removes one reaction (Slack reaction events, and reactions made in the inbox).
+ * A removal only takes away a reaction made before it, and a later add of the same
+ * reaction moves its time forward, so a remove-and-add arrives right in either order.
+ */
 export async function applyReaction(db, {
   thread, message, emoji, userKey, at, removed,
 }) {
-  if (removed) {
-    await db.prepare('DELETE FROM reactions WHERE message = ? AND emoji = ? AND user_key = ?')
-      .bind(message, emoji, userKey).run();
+  if (!emoji) {
     return;
   }
-  await db.prepare(`INSERT OR IGNORE INTO reactions (message, thread, emoji, user_key, at)
-    VALUES (?, ?, ?, ?, ?)`).bind(message, thread, emoji, userKey, at || null).run();
+  if (removed) {
+    await db.prepare(`DELETE FROM reactions WHERE message = ? AND emoji = ? AND user_key = ?
+      AND (? IS NULL OR at IS NULL OR at <= ?)`)
+      .bind(message, emoji, userKey, at || null, at || null).run();
+    return;
+  }
+  await db.prepare(`INSERT INTO reactions (message, thread, emoji, user_key, at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (message, emoji, user_key) DO UPDATE SET at = excluded.at
+    WHERE excluded.at > COALESCE(reactions.at, '')`)
+    .bind(message, thread, emoji, userKey, at || null).run();
 }

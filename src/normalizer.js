@@ -101,7 +101,11 @@ async function personOf(env, source, tenant, userId) {
   return identity.person || null;
 }
 
-async function processReaction(env, key, r) {
+/**
+ * Records one reaction (a Slack reaction event, or a reaction made in the inbox): the
+ * reaction itself, the reactor's watermark, and a live update for the team.
+ */
+export async function processReaction(env, key, r) {
   const msg = await findMessage(env.DB, r);
   if (!msg) {
     return { key, result: 'skip', reason: 'reaction to an unknown message' };
