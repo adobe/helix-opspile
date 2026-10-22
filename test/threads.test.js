@@ -89,6 +89,13 @@ describe('indexMessage', () => {
     assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.1', '2026-10-21T10:00:00Z']);
   });
 
+  it('follows a rule change: org, team and the pile-2 folder move together', async () => {
+    const D = db();
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z', { org: 'adobe', path: 'channels/adobe/helix/slack-C1/1.1/' }));
+    assert.deepEqual([thread(D).org, thread(D).path], ['adobe', 'channels/adobe/helix/slack-C1/1.1/']);
+  });
+
   it('drops a deleted message from the thread, and the deletion is final', async () => {
     const D = db();
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
