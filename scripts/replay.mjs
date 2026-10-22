@@ -55,9 +55,11 @@ const cf = (...a) => JSON.parse(execFileSync('cf', a, { encoding: 'utf8', maxBuf
 const items = (d) => (Array.isArray(d) ? d : (d.result || d.objects || d.items || []));
 
 function* listKeys(from = bucket, keyPrefix = prefix) {
-  let cursor;
-  do {
-    const page = cf(
+  // `cf r2 objects list` answers with a plain array and no cursor, so page with
+  // --start-after until a page comes back short.
+  let after = null;
+  for (;;) {
+    const page = items(cf(
       'r2',
       'objects',
       'list',
@@ -66,16 +68,16 @@ function* listKeys(from = bucket, keyPrefix = prefix) {
       '--per-page',
       '1000',
       ...(keyPrefix ? ['--prefix', keyPrefix] : []),
-      ...(cursor ? ['--cursor', cursor] : []),
-    );
-    for (const o of items(page)) {
+      ...(after ? ['--start-after', after] : []),
+    ));
+    for (const o of page) {
       yield o.key;
     }
-    cursor = page.cursor || (page.result_info && page.result_info.cursor) || null;
-    if (page.truncated === false || (page.result_info && page.result_info.is_truncated === false)) {
-      cursor = null;
+    if (page.length < 1000) {
+      return;
     }
-  } while (cursor);
+    after = page[page.length - 1].key;
+  }
 }
 
 const queue = items(cf('queues', 'list')).find((q) => q.queue_name === queueName);
