@@ -35,9 +35,6 @@
   .live.on { background: var(--green); }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
-  /* Rubber-banding at the ends of each column (Chrome does not do it for inner scrollers). */
-  #filters > *, #threads > *, #pane .scroller > * { transform: translateY(var(--ob, 0px)); }
-  .spring > * { transition: transform .45s cubic-bezier(.2, .9, .3, 1.2); }
 
   /* Filters: one card per facet, as in klickhaus. */
   #filters { padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 12px; }
@@ -56,6 +53,8 @@
   .fr .lab.dim { color: var(--faint); }
   .fr .n { font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--mute); text-align: right; }
   .fr .bar { height: 7px; border-radius: 4px; background: var(--faint); min-width: 2px; }
+  .fr .bar.stack { display: flex; overflow: hidden; background: none; gap: 1px; }
+  .fr .bar.stack i { display: block; height: 100%; min-width: 2px; }
   .c-red { background: var(--red) !important; } .c-yellow { background: var(--yellow) !important; }
   .c-green { background: var(--green) !important; } .c-none { background: var(--faint) !important; }
   .c-accent { background: var(--accent) !important; }
@@ -92,8 +91,10 @@
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; color: var(--mute); }
   .tag.hot { color: var(--red); border-color: var(--red); }
   .tag.us { color: var(--yellow); border-color: var(--yellow); }
-  .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--yellow); }
-  .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--yellow); }
+  .t .dot { --ring: var(--faint); }
+  .t .dot.c-red { --ring: var(--red); } .t .dot.c-yellow { --ring: var(--yellow); } .t .dot.c-green { --ring: var(--green); }
+  .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--ring); }
+  .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--ring); }
   .t .dot.ring:not([class*="c-"]) { background: transparent; }
   .t.enter { animation: push-in .35s ease-out; overflow: hidden; }
   @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: 64px; opacity: 1; } }
@@ -170,7 +171,10 @@
   .seen { text-align: right; color: var(--faint); font-size: 11px; margin-top: 6px; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
 
-  .rv { margin: 12px 22px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 13px; }
+  .rv .apply { display: flex; gap: 8px; margin-top: 8px; }
+  .rv .apply .send { border-radius: 8px; padding: 3px 12px; background: var(--me); color: #fff; border: 0; }
+  .rv .apply .send:disabled { opacity: .45; }
+  .rv { position: sticky; top: 0; z-index: 3; box-shadow: 0 6px 16px rgba(0,0,0,.18); margin: 12px 22px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 13px; }
   .rv .q { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 3px 0; }
   .rv .q b { width: 86px; font-weight: 600; }
   .rv button { padding: 1px 8px; font-size: 12px; }
@@ -199,7 +203,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const state = {
   me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
-  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart',
+  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', scores: new Map(),
+  cache: new Map(), staged: {},
 };
 
 // ---------------------------------------------------------------- helpers
@@ -334,12 +339,32 @@ const valuesOf = (f, t) => {
 const passes = (t, except) => FACETS.every((f) => f.id === except || !state.sel[f.id]?.size
   || valuesOf(f, t).some((v) => state.sel[f.id].has(v)));
 
+/**
+ * A facet row's bar. Its length is the count; except on the status card itself, it is
+ * split into the statuses of the threads behind it, as klickhaus splits status codes.
+ */
+function bar(f, v, n, max, m, color) {
+  const width = `${Math.max(2, Math.round((n / max) * 100))}%`;
+  if (f.id === 'status' || !m || !n) return `<span class="bar ${color}" style="width:${width}"></span>`;
+  const seg = ['red', 'yellow', 'green', 'none'].filter((k) => m[k])
+    .map((k) => `<i class="c-${k}" style="flex:${m[k]}" title="${m[k]} ${k === 'none' ? 'caught up' : k}"></i>`).join('');
+  return `<span class="bar stack" style="width:${width}">${seg}</span>`;
+}
+
 function renderFilters() {
   const all = state.data?.threads || [];
   $('filters').innerHTML = FACETS.map((f) => {
     const pool = all.filter((t) => passes(t, f.id));
     const counts = new Map();
-    for (const t of pool) for (const v of valuesOf(f, t)) counts.set(v, (counts.get(v) || 0) + 1);
+    const mix = new Map(); // value -> { red, yellow, green, none }
+    for (const t of pool) {
+      for (const v of valuesOf(f, t)) {
+        counts.set(v, (counts.get(v) || 0) + 1);
+        const m = mix.get(v) || { red: 0, yellow: 0, green: 0, none: 0 };
+        m[statusOf(t)] += 1;
+        mix.set(v, m);
+      }
+    }
     if (f.multi) counts.delete('(none)');
     for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
     let rows = [...counts];
@@ -356,7 +381,7 @@ function renderFilters() {
           ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : '<span></span>'}
           <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.label && f.label[v]) || v)}</span>
           <span class="n">${n}</span>
-          <span class="bar ${color}" style="width:${Math.round((n / max) * 100)}%"></span></div>`;
+          ${bar(f, v, n, max, mix.get(v), color)}</div>`;
       }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>'}</div>`;
   }).join('');
 }
@@ -365,15 +390,14 @@ function renderFilters() {
 // `:name:` to the character, for titles (the body renderer does the same).
 const emojify = (text) => esc(text).replace(/:([a-z0-9_+-]+):/g, (m, n) => EMOJI[n] || m);
 
-function tags(t) {
-  const u = urgencyOf(t);
-  return u === 'critical' || u === 'high' ? `<span class="tag hot">${u}</span>` : '';
-}
+const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
 const ourMove = (t) => t.kind !== 'alert' && t.label?.next_actor === 'us';
 
 /** The thread's mood: its kind first, then the reactions people left in it. */
 function moods(t) {
   const out = [];
+  const u = urgencyOf(t);
+  if (URGENCY_EMOJI[u]) out.push(`<span class="em" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>`);
   const k = kindOf(t);
   if (k) out.push(`<span class="em" title="${esc(k)}">${KIND_EMOJI[k] || '💬'}</span>`);
   const rx = [...(t.reactions || [])].sort((a, b) => b.count - a.count).slice(0, 5);
@@ -395,9 +419,8 @@ function row(t) {
     <div class="l2">
       <span class="cust">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="" loading="lazy">` : ''}${esc(t.org)}</span>
       <span class="faces">${faces}</span>
-      ${moods(t)}
       ${occurrences}${replies && !occurrences ? `<span class="replies">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
-      <span class="tags">${tags(t)}</span>
+      <span class="tags">${moods(t)}</span>
     </div></div>`;
 }
 
@@ -425,28 +448,41 @@ function smartScore(t) {
   return alert * (2 * recency + urgency * open * waiting * near * unseen);
 }
 
-function reviewRow(q) {
-  return `<div class="t ${state.open === q.thread ? 'sel' : ''}" data-thread="${esc(q.thread)}">
-    <div class="l1"><span class="dot c-none"></span><span class="title">${esc(q.title || '(no text)')}</span>
-      <span class="when">${Math.round((q.confidence ?? 1) * 100)}%</span></div>
-    <div class="l2"><span class="cust">${esc(q.team)} · ${esc(q.org)}</span>
-      <span class="tags"><span class="tag">${esc(q.kind)}</span><span class="tag">next: ${esc(q.next_actor)}</span></span></div></div>`;
-}
+const tpl = document.createElement('template');
+const toNode = (html) => { tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
+
+// Threads in view are fetched ahead, so opening one is instant.
+const preload = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) prefetch(e.target.dataset.thread);
+}, { root: $('threads'), rootMargin: '200px' });
+
 function renderThreads() {
   const box = $('threads');
-  if (state.review) {
-    const { queue, stats } = state.review;
-    const line = stats.length ? stats.map((x) => `${esc(x.question)} ${Math.round(x.accuracy * 100)}% of ${x.reviewed}`).join(' · ') : 'no reviews yet';
-    box.innerHTML = `<div class="count">Review queue · ${queue.length} labels · Clef agreement: ${line}</div>${queue.map(reviewRow).join('') || '<div class="empty">Every current label has been reviewed.</div>'}`;
-    state.order = queue.map((q) => q.thread);
-    return;
-  }
   if (!state.data) return;
   const shown = state.data.threads.filter((t) => passes(t));
   if (state.sort === 'recent') shown.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
-  else shown.sort((a, b) => smartScore(b) - smartScore(a));
+  // Smart order is computed when the inbox loads, not when you read a thread, so a click
+  // never moves the row you clicked.
+  else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+  if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
   const sorter = ['smart', 'recent'].map((k) => `<button data-sort="${k}" aria-pressed="${state.sort === k}">${k === 'smart' ? 'Smart' : 'Recent'}</button>`).join('');
-  box.innerHTML = `<div class="count"><span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span></div>${shown.map(row).join('') || '<div class="empty">Nothing matches these filters.</div>'}`;
+  box.querySelector('.count').innerHTML = `<span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span>`;
+  // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images).
+  const list = box.querySelector('.rows');
+  const existing = new Map([...list.children].filter((c) => c.dataset.thread).map((c) => [c.dataset.thread, c]));
+  const nodes = shown.map((t) => {
+    const html = row(t);
+    const old = existing.get(t.thread);
+    if (old && old.__html === html.replace(/ enter /, '  ')) return old;
+    const node = toNode(html);
+    node.__html = html.replace(/ enter /, '  ');
+    preload.observe(node);
+    return node;
+  });
+  if (!nodes.length) { list.innerHTML = '<div class="empty">Nothing matches these filters.</div>'; } else {
+    [...list.children].forEach((c) => { if (!nodes.includes(c)) { preload.unobserve(c); c.remove(); } });
+    nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+  }
   state.order = shown.map((t) => t.thread);
   state.prevKeys = new Set(state.data.threads.map((t) => t.thread));
 }
@@ -465,15 +501,23 @@ function modelValue(model, q) {
   if (q === 'resolved') return model.resolved_p == null ? null : (model.resolved_p >= 0.5 ? 'yes' : 'no');
   return model[q];
 }
+/**
+ * Label review (admin team, "Review labels" on): pinned to the top of the thread, so you
+ * can read on, pick the right answers, and apply them together.
+ */
 function reviewPanel(thread, model, reviews) {
   const current = reviews.filter((r) => r.labeled_through === model.labeled_through);
+  const staged = state.staged[thread.thread] || {};
   const rows = Object.keys(QUESTION_LABEL).map((q) => {
     const mv = modelValue(model, q);
-    const picked = (current.find((r) => r.question === q) || {}).value;
-    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${(state.answers?.[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}">${esc(v)}</button>`).join('')}</div>`;
+    const reviewed = (current.find((r) => r.question === q) || {}).value;
+    const picked = staged[q] ?? reviewed;
+    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${(state.answers?.[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}" title="${v === mv ? 'Clef' : ''}">${esc(v)}</button>`).join('')}</div>`;
   }).join('');
-  const hist = reviews.slice(0, 5).map((r) => `${esc(r.reviewer)}: ${esc(r.question)} ${r.agrees ? 'confirmed' : `${esc(r.model_value)} → ${esc(r.value)}`}${r.labeled_through !== model.labeled_through ? ' (earlier label)' : ''}`).join(' · ');
-  return `<div class="rv" data-thread="${esc(thread.thread)}">${rows}${hist ? `<div class="hist">${hist}</div>` : ''}</div>`;
+  const n = Object.keys(staged).length;
+  return `<div class="rv" data-thread="${esc(thread.thread)}">${rows}
+    <div class="apply"><button class="send" data-apply="1" ${n ? '' : 'disabled'}>Apply ${n || ''} ${n === 1 ? 'correction' : 'corrections'}</button>
+      <button data-confirm="1" title="Clef got everything right">All correct</button></div></div>`;
 }
 function message(m, prev, fresh) {
   const a = m.author || {};
@@ -507,7 +551,7 @@ function composer(thread) {
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 
-async function openThread(key, { live = false } = {}) {
+async function openThread(key, { live = false, cached = false } = {}) {
   const switching = state.open !== key;
   state.open = key;
   if (switching) toUrl();
@@ -517,14 +561,18 @@ async function openThread(key, { live = false } = {}) {
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   const draft = $('reply')?.value || '';
-  if (!live) pane.innerHTML = '<div class="empty">Loading…</div>';
+  if (!live && !state.cache.get(key)) pane.innerHTML = '<div class="empty">Loading…</div>';
   let data;
+  const hit = (!live || cached) && state.cache.get(key);
   try {
-    data = await get(`/api/thread?thread=${encodeURIComponent(key)}`);
+    data = hit ? hit.data : await get(`/api/thread?thread=${encodeURIComponent(key)}`);
   } catch (e) {
     pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     return;
   }
+  state.cache.set(key, { data, at: hit ? hit.at : Date.now() });
+  // Shown from the preload: fetch the current state behind it.
+  if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
   const { thread, members = [], messages, watermarks, label, model, reviews, facts } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
@@ -565,13 +613,12 @@ async function openThread(key, { live = false } = {}) {
         ${sites ? `· ${sites}` : ''} ${chips}</div>
       ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>
     <div class="scroller">
-      ${state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
+      ${state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
       <div class="feed">${thread.root_at ? '' : '<div class="sys">Earlier messages were posted before opspile started listening.</div>'}${feed}</div>
     </div>
     ${composer(thread)}`;
   state.shownIds = ids;
   const scroller = pane.querySelector('.scroller');
-  elastic(scroller);
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
     scroller.scrollTop = keepTop;
@@ -651,12 +698,19 @@ function reloadSoon(thread) {
     }
   }, 500);
 }
-async function loadInbox() { state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`); render(); }
-async function loadReview() {
-  const [{ queue, answers }, { stats }] = await Promise.all([get('/api/review/queue'), get('/api/review/stats')]);
-  state.answers = answers;
-  state.review = { queue, stats };
-  renderThreads();
+async function loadInbox() {
+  state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+  state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
+  render();
+}
+const inflight = new Set();
+async function prefetch(key) {
+  const hit = state.cache.get(key);
+  if (!key || inflight.has(key) || (hit && Date.now() - hit.at < 60000) || inflight.size >= 4) return;
+  inflight.add(key);
+  try {
+    state.cache.set(key, { data: await get(`/api/thread?thread=${encodeURIComponent(key)}`), at: Date.now() });
+  } catch { /* opening it will try again */ } finally { inflight.delete(key); }
 }
 function connect() {
   state.ws?.close();
@@ -693,31 +747,6 @@ function fromUrl() {
   }
   state.sort = q.get('sort') === 'recent' ? 'recent' : 'smart';
   return { open: q.get('t'), review: q.get('review') === '1' };
-}
-
-// ---------------------------------------------------------------- rubber-banding
-/** Pulls a column's content past its end while the wheel pushes on, then springs back. */
-function elastic(el) {
-  if (!el || el.dataset.elastic || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  el.dataset.elastic = '1';
-  let off = 0;
-  let timer;
-  const set = (v) => { off = v; el.style.setProperty('--ob', `${v}px`); };
-  const release = () => {
-    el.classList.add('spring');
-    set(0);
-    setTimeout(() => el.classList.remove('spring'), 460);
-  };
-  el.addEventListener('wheel', (e) => {
-    const top = el.scrollTop <= 0 && e.deltaY < 0;
-    const bottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1 && e.deltaY > 0;
-    if (!top && !bottom) { if (off) release(); return; }
-    el.classList.remove('spring');
-    const resistance = 1 - Math.min(1, Math.abs(off) / 140);
-    set(Math.max(-120, Math.min(120, off - e.deltaY * 0.35 * resistance)));
-    clearTimeout(timer);
-    timer = setTimeout(release, 90);
-  }, { passive: true });
 }
 
 // ---------------------------------------------------------------- wiring
@@ -765,13 +794,29 @@ async function start() {
     if (el) openThread(el.dataset.thread);
   };
   $('pane').onclick = async (e) => {
+    const panel = e.target.closest('.rv');
     const b = e.target.closest('.rv button');
-    if (!b) return;
-    const thread = b.closest('.rv').dataset.thread;
-    const res = await fetch('/api/review', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question: b.dataset.q, value: b.dataset.v }) });
-    if (!res.ok) { toast((await res.json()).error || res.status); return; }
-    await openThread(state.open, { live: true });
-    if (state.review) await loadReview();
+    if (!panel || !b) return;
+    const thread = panel.dataset.thread;
+    const staged = state.staged[thread] || (state.staged[thread] = {});
+    if (b.dataset.q) {
+      if (staged[b.dataset.q] === b.dataset.v) delete staged[b.dataset.q]; else staged[b.dataset.q] = b.dataset.v;
+      openThread(state.open, { live: true, cached: true });
+      return;
+    }
+    // "All correct" confirms Clef's answers; "Apply" sends the picks.
+    const model = state.cache.get(state.open)?.data?.model;
+    const answers = b.dataset.confirm && model
+      ? Object.fromEntries(Object.keys(QUESTION_LABEL).map((q) => [q, modelValue(model, q)]).filter(([, v]) => v != null))
+      : staged;
+    for (const [question, value] of Object.entries(answers)) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch('/api/review', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question, value }) });
+      if (!res.ok) { toast((await res.json()).error || res.status); return; }
+    }
+    delete state.staged[thread];
+    toast(`Saved ${Object.keys(answers).length} answer(s).`);
+    openThread(state.open, { live: true });
   };
   document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
@@ -783,24 +828,23 @@ async function start() {
     const { open, review } = fromUrl();
     $('team').value = state.team;
     if (team !== state.team) { state.prevKeys = null; await loadInbox(); connect(); }
-    if (review !== Boolean(state.review)) { if (review) await loadReview(); else state.review = null; }
+    state.review = review;
+    $('review').setAttribute('aria-pressed', String(review));
     render();
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
   });
   if (state.me.admin) {
     $('review').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
-    $('review').onclick = async () => {
-      const on = !state.review;
-      $('review').setAttribute('aria-pressed', String(on));
-      if (on) await loadReview(); else { state.review = null; renderThreads(); }
+    $('review').onclick = () => {
+      state.review = !state.review;
+      $('review').setAttribute('aria-pressed', String(state.review));
       toUrl();
+      if (state.open) openThread(state.open, { live: true });
     };
   }
-  elastic($('filters'));
-  elastic($('threads'));
   await loadInbox();
-  if (initial.review && state.me.admin) { $('review').setAttribute('aria-pressed', 'true'); await loadReview(); }
+  if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
   if (initial.open) openThread(initial.open);
   connect();
 }

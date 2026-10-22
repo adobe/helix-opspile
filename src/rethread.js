@@ -29,6 +29,10 @@ export const WINDOW_DAYS = 14;
 export const AUTO_MATCH = 0.97;
 /** Below this similarity, a candidate is not worth asking about. */
 export const MIN_CANDIDATE = 0.82;
+/** In conversations, follow-ups are worded differently: ask Clef about weaker matches. */
+export const MIN_CANDIDATE_CONVERSATION = 0.6;
+/** A second root by the same person this soon after their first continues it. */
+export const BURST_MS = 10 * 60 * 1000;
 /** Clef must be at least this sure that the new root continues a candidate. */
 export const MIN_CLEF = 0.7;
 const MAX_TEXT = 1500;
@@ -151,6 +155,25 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.root_at,
     ).first();
 
+  // A burst: the channel's previous root is by the same person, minutes earlier. People
+  // split one request over several messages instead of replying to themselves.
+  const rootAuthor = await env.DB.prepare('SELECT author_key FROM messages WHERE thread = ? AND id = ?')
+    .bind(key, thread.root_id).first();
+  const author = rootAuthor && rootAuthor.author_key;
+  const previous = author && await env.DB.prepare(`SELECT t.thread, m.author_key FROM threads t
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
+      AND t.root_at < ? AND t.root_at >= ? ORDER BY t.root_at DESC LIMIT 1`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      key,
+      thread.root_at,
+      new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
+    ).first();
+  const burst = previous && previous.author_key === author ? previous : null;
+
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
     topK: TOP_K,
@@ -164,11 +187,14 @@ export async function rethread(env, key, { force = false } = {}) {
   // Earlier roots in the window, most similar first.
   const earlier = (found.matches || [])
     .filter((m) => m.metadata && m.metadata.thread !== key && m.metadata.at < at
-      && m.metadata.at >= at - WINDOW_DAYS * 86400 && m.score >= MIN_CANDIDATE)
+      && m.metadata.at >= at - WINDOW_DAYS * 86400
+      && m.score >= (thread.kind === 'channel' ? MIN_CANDIDATE_CONVERSATION : MIN_CANDIDATE))
     .sort((a, b) => b.score - a.score);
 
   let match = null;
-  if (twin) {
+  if (burst) {
+    match = { thread: burst.thread, via: 'burst', p: 1 };
+  } else if (twin) {
     match = { thread: twin.thread, via: 'skeleton', p: 1 };
   } else if (earlier.length && earlier[0].score >= AUTO_MATCH) {
     match = { thread: earlier[0].metadata.thread, via: 'vector', p: earlier[0].score };
@@ -244,6 +270,25 @@ export async function rethread(env, key, { force = false } = {}) {
         .bind(group, new Date().toISOString(), t.thread).run();
       joined.push(t.thread);
     }
+  }
+  // The next root, if it is by the same person minutes later, continues this one.
+  const next = author && await env.DB.prepare(`SELECT t.thread, t.logical_thread, m.author_key
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
+      AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      key,
+      thread.root_at,
+      new Date(Date.parse(thread.root_at) + BURST_MS).toISOString(),
+    ).first();
+  const nextFree = next && (!next.logical_thread || joined.includes(next.logical_thread));
+  if (nextFree && next.author_key === author) {
+    await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
+        rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
+    joined.push(next.thread);
   }
   const { results: moved } = await env.DB.prepare(`SELECT * FROM threads
     WHERE logical_thread IN (SELECT value FROM json_each(?)) OR thread IN (SELECT value FROM json_each(?))`)
