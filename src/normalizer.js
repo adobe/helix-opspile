@@ -29,12 +29,39 @@ const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
 const MAX_MENTIONS = 20;
 
+/** A Slack bot's name (bots.info), cached in `identities` like a user. */
+async function botName(env, ref) {
+  const cached = await env.DB.prepare(`SELECT name FROM identities
+    WHERE source = 'slack' AND tenant = ? AND user_id = ?`).bind(ref.tenant, ref.botId).first();
+  if (cached && cached.name) {
+    return cached.name;
+  }
+  try {
+    const res = await fetch(`https://slack.com/api/bots.info?bot=${encodeURIComponent(ref.botId)}`, {
+      headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` },
+    });
+    const data = await res.json();
+    const name = data.ok && data.bot ? data.bot.name : null;
+    if (name) {
+      const icon = (data.bot.icons && (data.bot.icons.image_72 || data.bot.icons.image_48)) || '';
+      await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at, avatar)
+        VALUES ('slack', ?, ?, 'bot', ?, ?, ?) ON CONFLICT (source, tenant, user_id) DO UPDATE SET
+        name = excluded.name, avatar = excluded.avatar, fetched_at = excluded.fetched_at`)
+        .bind(ref.tenant, ref.botId, name, new Date().toISOString(), icon).run();
+    }
+    return name;
+  } catch {
+    return null;
+  }
+}
+
 /** `{ author, person }`: the frontmatter author and the D1 person id, if known. */
 async function resolveAuthor(env, ref) {
   if (!ref.userId) {
+    const name = ref.name || (ref.botId ? await botName(env, ref) : null);
     return {
       author: {
-        kind: ref.kind || 'bot', name: ref.name || null, org: null, staff: false,
+        kind: ref.kind || 'bot', name: name || ref.botId || null, org: null, staff: false,
       },
       person: null,
     };
@@ -198,8 +225,8 @@ export async function processKey(env, key, cache = {}) {
 
   await indexMessage(env.DB, {
     ...message,
-    authorKey: message.authorRef.userId
-      ? `${message.source}:${message.tenant}:${message.authorRef.userId}` : null,
+    authorKey: (message.authorRef.userId || message.authorRef.botId)
+      ? `${message.source}:${message.tenant}:${message.authorRef.userId || message.authorRef.botId}` : null,
     author: author.name,
     person,
     staff: author.staff,

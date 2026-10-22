@@ -36,11 +36,18 @@ const SNIPPET = 600;
 
 /**
  * The root's text with the parts that differ between repeats of the same event removed:
- * timestamps, long numbers, hex and UUID ids, query strings and user agents. Short
- * numbers (status codes, ports) stay, because they tell different failures apart.
+ * fields that only hold a link, short codes, timestamps, long numbers, hex and UUID ids,
+ * query strings and user agents. Short numbers (status codes, ports) stay, because they
+ * tell different failures apart.
  */
 export function skeleton(text) {
   return String(text || '')
+    // A field whose whole value is a link (the page an alert fired on) is context, not
+    // identity; short upper-case codes in a field (coupons, ids) are values, too.
+    .split('\n')
+    .filter((l) => !/^\*{1,2}[^*\n]+:\*{1,2}\s*<?https?:\/\/\S+>?\s*$/.test(l))
+    .join('\n')
+    .replace(/^(\*{1,2}[^*\n]+:\*{1,2})\s*[A-Z0-9]{4,16}\s*$/gm, '$1 <code>')
     .replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?\b/g, '<time>')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
     .replace(/\b[0-9a-f]{12,}\b/gi, '<id>')
@@ -248,6 +255,9 @@ export async function rethread(env, key, { force = false } = {}) {
       // eslint-disable-next-line no-await-in-loop
       await markRootFile(env, t, group);
     }
+  }
+  if (thread.kind === 'alert' && env.NORMALIZE) {
+    await env.NORMALIZE.send({ label: logical || key });
   }
   return {
     result: logical ? 'rethreaded' : 'new-topic', via: match ? match.via : null, p: match ? match.p : null,

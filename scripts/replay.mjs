@@ -18,6 +18,8 @@
  *
  *   node scripts/replay.mjs [--mode prod|stage] [--prefix slack/] [--clear] [--dry-run]
  *
+ * --relabel labels every thread again (titles, Clef, Clairic, tech stack), spread out.
+ *
  * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
  * minutes. Run it after a replay, once the vector index has caught up with the new roots.
  *
@@ -44,6 +46,7 @@ const dryRun = args.includes('--dry-run');
 const suffix = mode === 'prod' ? '' : `-${mode}`;
 const clear = args.includes('--clear');
 const rethreadAll = args.includes('--rethread');
+const relabelAll = args.includes('--relabel');
 const bucket = `helix-opspile-raw${suffix}`;
 const channelsBucket = `helix-opspile-channels${suffix}`;
 const queueName = `helix-opspile-normalize${suffix}`;
@@ -82,14 +85,24 @@ if (!queue) {
 
 const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
 
-if (rethreadAll) {
+if (rethreadAll || relabelAll) {
   const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
-  const res = cf('d1', 'query', db.uuid, '--sql', 'SELECT thread FROM threads WHERE root_at IS NOT NULL ORDER BY root_at');
+  const sql = rethreadAll
+    ? 'SELECT thread FROM threads WHERE root_at IS NOT NULL ORDER BY root_at'
+    : 'SELECT COALESCE(logical_thread, thread) AS thread FROM threads GROUP BY 1';
+  if (relabelAll && !dryRun) {
+    // Labels are skipped when nothing changed; forget what they were computed for.
+    cf('d1', 'query', db.uuid, '--sql', "UPDATE labels SET labeled_through = '', title = NULL");
+  }
+  const res = cf('d1', 'query', db.uuid, '--sql', sql);
   const keys = (res.result || res)[0].results.map((r) => r.thread);
   for (let i = 0; i < keys.length; i += 50) {
     const file = join(dir, 'rethread.json');
     writeFileSync(file, JSON.stringify(keys.slice(i, i + 50)
-      .map((thread) => ({ body: { rethread: thread, force: true }, content_type: 'json' }))));
+      .map((thread) => ({
+        body: rethreadAll ? { rethread: thread, force: true } : { label: thread },
+        content_type: 'json',
+      }))));
     if (!dryRun) {
       // Spread the batches out: Vectorize and Workers AI are rate limited.
       cf(
@@ -105,7 +118,7 @@ if (rethreadAll) {
       );
     }
   }
-  console.log(`${dryRun ? 'would re-thread' : 're-threading'} ${keys.length} thread(s)`);
+  console.log(`${dryRun ? 'would' : 'will'} ${rethreadAll ? 're-thread' : 'relabel'} ${keys.length} thread(s)`);
   rmSync(dir, { recursive: true, force: true });
   process.exit(0);
 }
