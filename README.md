@@ -28,7 +28,8 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
-| `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), behind Access with Managed OAuth. See "MCP server" below. |
+| `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), with its own OAuth (open client registration, consent behind Access). See "MCP server" below. |
+| `/.well-known/oauth-*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET/POST /api/oauth/authorize` | OAuth for MCP clients. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests and label jobs (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
 | cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3). Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
@@ -87,14 +88,15 @@ confirm before posting (a multi round-trip `elicitation/create`) when the client
 elicitation; otherwise the client's own tool approval is the check. `get_thread` does not mark
 anything read.
 
-Sign-in is Cloudflare Access with
-[Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/):
-add `/mcp` to the inbox's Access application and turn on **Managed OAuth** under its
-advanced settings. Access then answers MCP clients with the OAuth `401` and discovery
-documents, signs the person in with the same policy, and forwards each request with the
-usual `Cf-Access-Jwt-Assertion`, so the Worker needs no new secret. To let a hosted client
-sign in, list its redirect URIs under **Allowed redirect URIs**; local clients need
-**Allow localhost clients**. Connect a client to `<origin>/mcp`.
+Sign-in is OAuth 2.1, served by the Worker itself (`src/oauth.js`): discovery
+(`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`), open
+dynamic client registration (`/oauth/register`, any https redirect URI or localhost), and
+`/oauth/token` (PKCE S256, refresh tokens rotated). There is no list of allowed clients:
+the consent page `/api/oauth/authorize`, behind Access like the rest of `/api`, shows who
+asks and, in large type, the host the grant goes to, and the person decides. Codes and
+tokens are stored hashed in D1 (`oauth_*`, migration 0015); an access token lives an hour.
+`/mcp` itself is **not** behind Access; it takes these tokens (or an Access assertion, for
+`cloudflared access curl`). Connect a client to `<origin>/mcp`.
 
 ### Rules and replay
 

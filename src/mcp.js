@@ -11,7 +11,8 @@
  */
 
 import { accessEmail } from './access.js';
-import { viewer } from './api.js';
+import { personById, viewer } from './api.js';
+import { bearerPerson, challenge } from './oauth.js';
 import { TOOLS, toolList } from './mcp-tools.js';
 
 /**
@@ -20,9 +21,9 @@ import { TOOLS, toolList } from './mcp-tools.js';
  * `_meta`). Clients of the 2025 revisions still work: `initialize` is answered and their
  * requests are served the same way, without a session.
  *
- * Sign-in is Cloudflare Access with Managed OAuth: Access is the OAuth authorization server
- * for MCP clients, and forwards each request with the same signed `Cf-Access-Jwt-Assertion`
- * as a browser gets, so the person is found exactly as for the inbox (`viewer` in api.js).
+ * Sign-in is opspile's own OAuth (oauth.js): any client may register, and the person approves
+ * it on a consent page behind Access. Requests carry that bearer token; an Access assertion
+ * (cloudflared) works too.
  *
  * Vars: PUBLIC_ORIGIN, and optionally MCP_ORIGINS (comma-separated extra origins allowed to
  * call from a browser).
@@ -197,15 +198,19 @@ export async function mcp(request, env, { viewer: injected } = {}) {
     // No GET stream and no sessions to DELETE in this revision.
     return new Response(null, { status: 405, headers: { allow: 'POST' } });
   }
-  // No valid Access assertion: /mcp is not behind Access (with Managed OAuth), or the token
-  // is gone. Signed in but not a person in D1: no amount of signing in again helps.
-  if (!injected && !await accessEmail(request, env)) {
-    const origin = String(env.PUBLIC_ORIGIN || new URL(request.url).origin).replace(/\/+$/, '');
-    return rpc(401, { error: 'not signed in' }, {
-      'www-authenticate': `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
-    });
+  // Signed in with an opspile OAuth token (see oauth.js), or, for cloudflared and the like,
+  // with an Access assertion. Signed in but not a person in D1: signing in again won't help.
+  let me = injected || null;
+  if (!me) {
+    const person = await bearerPerson(request, env);
+    if (person) {
+      me = await personById(env, person);
+    } else if (await accessEmail(request, env)) {
+      me = await viewer(request, env);
+    } else {
+      return rpc(401, { error: 'not signed in' }, { 'www-authenticate': challenge(request, env) });
+    }
   }
-  const me = injected || await viewer(request, env);
   if (!me) {
     return rpc(403, { error: 'not a member of any ops team' });
   }
