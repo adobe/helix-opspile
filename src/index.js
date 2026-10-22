@@ -54,7 +54,8 @@ export default {
       return apiResponse;
     }
     if (pathname === '/') {
-      return text('opspile ingest (stub)\n');
+      // People open the bare address; the inbox is what they are after.
+      return new Response(null, { status: 302, headers: { location: '/inbox' } });
     }
     return text('not found\n', 404);
   },
