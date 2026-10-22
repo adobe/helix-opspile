@@ -105,7 +105,10 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     authorRef = { kind: 'system', name: 'Slack' };
   } else if (msg.bot_id && !msg.user) {
     authorRef = {
-      kind: 'bot', name: (msg.bot_profile && msg.bot_profile.name) || msg.username || msg.bot_id,
+      kind: 'bot',
+      name: (msg.bot_profile && msg.bot_profile.name) || msg.username || null,
+      botId: msg.bot_id,
+      tenant,
     };
   } else {
     authorRef = {

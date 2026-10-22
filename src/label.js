@@ -21,6 +21,33 @@ import { ruleFacts } from './facts.js';
 
 export const CLEF = '@cf/cloudflare/clef';
 export const CLAIRIC = '@cf/cloudflare/clairic';
+export const TITLER = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const MAX_TITLE = 90;
+
+/**
+ * Technologies worth knowing at a glance for a customer. Each is one Clef yes/no
+ * question; the channel keeps the highest probability any thread showed.
+ */
+export const TECH = {
+  eds: 'Adobe Edge Delivery Services (aem.live, aem.page, helix, Franklin)',
+  da: 'Document Authoring (da.live)',
+  ue: 'Universal Editor',
+  sharepoint: 'SharePoint or OneDrive as the content source',
+  gdrive: 'Google Drive or Google Docs as the content source',
+  aemcs: 'AEM as a Cloud Service (author or publish tier, Cloud Manager)',
+  assets: 'AEM Assets or Dynamic Media',
+  forms: 'AEM Forms',
+  commerce: 'Adobe Commerce (Magento) or Commerce drop-ins',
+  cloudflare: 'Cloudflare as CDN',
+  akamai: 'Akamai as CDN',
+  fastly: 'Fastly as CDN',
+  cloudfront: 'Amazon CloudFront as CDN',
+  github: 'GitHub for code',
+  bitbucket: 'Bitbucket, GitLab or Cloud Manager git for code',
+  target: 'Adobe Target or personalization',
+  analytics: 'Adobe Analytics, Web SDK or Experience Platform data collection',
+};
+export const TECH_MIN = 0.8;
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -66,6 +93,11 @@ export const QUESTIONS = {
     instructions: 'Has the issue or request in this thread been resolved or closed?',
   },
 };
+
+const TECH_QUESTIONS = Object.fromEntries(Object.entries(TECH).map(([id, what]) => [`tech.${id}`, {
+  type: 'noul',
+  instructions: `Does this thread show that the customer uses ${what}?`,
+}]));
 
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
@@ -124,6 +156,45 @@ export function clairicFacts(answers) {
   return facts;
 }
 
+/** A short title by a language model: the specific failure, or the topic. */
+export async function writeTitle(env, state, alert) {
+  const instructions = alert
+    ? 'Name the specific failure in this alert in at most 8 words: the error or failing request, and what fails. Reply with the title only, no quotes.'
+    : 'Write a title of at most 8 words that says what this support thread is about. Reply with the title only, no quotes.';
+  const res = await env.AI.run(TITLER, {
+    messages: [{ role: 'system', content: instructions }, { role: 'user', content: state.slice(0, 6000) }],
+    max_tokens: 40,
+  });
+  const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
+    .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
+  return text ? text.slice(0, MAX_TITLE) : null;
+}
+
+async function recordTech(env, thread, answers) {
+  for (const id of Object.keys(TECH)) {
+    const p = answers[`tech.${id}`]?.noul;
+    if (typeof p === 'number' && p >= TECH_MIN) {
+      // eslint-disable-next-line no-await-in-loop
+      await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (source, tenant, channel_id, tech) DO UPDATE SET
+          p = MAX(channel_tech.p, excluded.p),
+          thread = CASE WHEN excluded.p > channel_tech.p THEN excluded.thread ELSE channel_tech.thread END,
+          updated_at = excluded.updated_at`)
+        .bind(
+          thread.source,
+          thread.tenant,
+          thread.channel_id,
+          id,
+          p,
+          thread.thread,
+          new Date().toISOString(),
+        )
+        .run();
+    }
+  }
+}
+
 async function replaceFacts(db, thread, source, facts) {
   await db.prepare('DELETE FROM facts WHERE thread = ? AND source = ?').bind(thread, source).run();
   for (const f of facts) {
@@ -134,6 +205,31 @@ async function replaceFacts(db, thread, source, facts) {
 }
 
 /**
+ * An alert is a bot post: nobody is waiting, so there is nothing for Clef to decide. The
+ * group's first thread gets a title that names the specific failure, once.
+ */
+async function labelAlert(env, thread, now) {
+  const anchorKey = thread.logical_thread || thread.thread;
+  const anchor = anchorKey === thread.thread ? thread
+    : await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(anchorKey).first();
+  const done = await env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(anchorKey).first();
+  if (!anchor || (done && done.title)) {
+    return { result: 'unchanged' };
+  }
+  const messages = await threadMessages(env, anchor);
+  if (!messages.length) {
+    return { result: 'skip', reason: 'no messages' };
+  }
+  await replaceFacts(env.DB, anchorKey, 'rule', ruleFacts(messages.map((m) => m.body || '')));
+  const title = await writeTitle(env, stateOf(anchor, messages), true);
+  await env.DB.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model, labeled_at, title)
+    VALUES (?, 'alert', 1, ?, ?, ?, ?)
+    ON CONFLICT (thread) DO UPDATE SET title = excluded.title, labeled_at = excluded.labeled_at`)
+    .bind(anchorKey, anchor.any_at || now.toISOString(), TITLER, now.toISOString(), title).run();
+  return { result: 'titled', title: Boolean(title) };
+}
+
+/**
  * Labels one thread. Skips threads that have not changed since they were last labeled,
  * and alert threads (their kind is known and nobody is waiting).
  */
@@ -141,6 +237,9 @@ export async function labelThread(env, key, now = new Date()) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread) {
     return { result: 'missing' };
+  }
+  if (thread.kind === 'alert') {
+    return labelAlert(env, thread, now);
   }
   if (thread.kind !== 'channel') {
     return { result: 'skip', reason: thread.kind };
@@ -158,11 +257,12 @@ export async function labelThread(env, key, now = new Date()) {
   await replaceFacts(env.DB, key, 'rule', ruleFacts(messages.map((m) => m.body || '')));
 
   const state = stateOf(thread, messages);
-  const [clef, clairic] = await Promise.all([
-    env.AI.run(CLEF, { model: 'clef', state, questions: QUESTIONS }),
+  const [clef, clairic, title] = await Promise.all([
+    env.AI.run(CLEF, { model: 'clef', state, questions: { ...QUESTIONS, ...TECH_QUESTIONS } }),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
+    writeTitle(env, state, false).catch(() => null),
   ]);
   const a = clef.answers || {};
   const choice = (q) => {
@@ -174,13 +274,13 @@ export async function labelThread(env, key, now = new Date()) {
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
   await env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      urgency, resolved_p, labeled_through, model, labeled_at, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
       urgency = excluded.urgency, resolved_p = excluded.resolved_p,
       labeled_through = excluded.labeled_through, model = excluded.model,
-      labeled_at = excluded.labeled_at`)
+      labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
       key,
       nextActor,
@@ -192,11 +292,13 @@ export async function labelThread(env, key, now = new Date()) {
       thread.any_at,
       `${clef.model || 'clef'}+${clairic.model || 'clairic'}`,
       now.toISOString(),
+      title,
     )
     .run();
+  await recordTech(env, thread, a);
   const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
-    result: 'labeled', next_actor: nextActor, kind, facts: loose.length,
+    result: 'labeled', next_actor: nextActor, kind, facts: loose.length, title: Boolean(title),
   };
 }

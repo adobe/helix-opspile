@@ -373,7 +373,9 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(labelJobs, [{ delaySeconds: 120 }]);
     const r = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO));
     assert.deepEqual([r.result, r.next_actor, r.kind, r.facts], ['labeled', 'us', 'incident', 1]);
-    assert.deepEqual(Object.keys(calls[0].input.questions), Object.keys(QUESTIONS));
+    const asked = Object.keys(calls[0].input.questions);
+    assert.deepEqual(asked.slice(0, 4), Object.keys(QUESTIONS));
+    assert.ok(asked.includes('tech.eds'));
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
     assert.equal(calls[1].input.reference_date, '2026-10-21');
     const [label] = e.DB.rows('SELECT next_actor, kind, urgency, resolved_p FROM labels');
@@ -388,7 +390,7 @@ describe('backfill, mentions and labels', () => {
       ['cve', 'site', 'url'],
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3); // Clef, Clairic and the title, once
   });
 });
 

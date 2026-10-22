@@ -81,6 +81,7 @@ node scripts/replay.mjs --dry-run           # count what would be replayed
 node scripts/replay.mjs --prefix slack/     # replay part of pile 1
 node scripts/replay.mjs --clear             # after changing rules: empty pile 2, replay all
 node scripts/replay.mjs --rethread          # redo re-threading for every root (after a replay)
+node scripts/replay.mjs --relabel           # label every thread again (titles, Clef, tech stack)
 ```
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:

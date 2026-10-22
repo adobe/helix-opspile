@@ -171,6 +171,23 @@ async function fetchSlackUser(env, userId) {
   };
 }
 
+/**
+ * A staff member's Slack profile picture by email, so Adobe people look the same on both
+ * platforms. Null when Slack does not know them or has no custom picture.
+ */
+async function slackAvatarByEmail(env, email) {
+  if (!email || !env.SLACK_BOT_TOKEN || !isStaffDomain(env, email)) {
+    return null;
+  }
+  try {
+    const { user } = await slackApi(env, 'users.lookupByEmail', { email });
+    const p = (user && user.profile) || {};
+    return p.is_custom_image === false ? null : (p.image_72 || p.image_48 || null);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchTeamsUser(env, userId, fallbackName) {
   try {
     const u = await graphJson(
@@ -180,7 +197,11 @@ async function fetchTeamsUser(env, userId, fallbackName) {
     const upn = /#EXT#/i.test(u.userPrincipalName || '') ? null : u.userPrincipalName;
     const email = u.mail || upn || null;
     return {
-      kind: 'person', name: u.displayName || fallbackName, email, home: null, avatar: await gravatar(email),
+      kind: 'person',
+      name: u.displayName || fallbackName,
+      email,
+      home: null,
+      avatar: await slackAvatarByEmail(env, email) || await gravatar(email),
     };
   } catch (e) {
     // Users from other tenants cannot always be read; keep what the message says.

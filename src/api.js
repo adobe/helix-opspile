@@ -138,6 +138,12 @@ export function fold(threads) {
       mentionedMe: ms.some((m) => m.mentionedMe),
       mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
       readers: latest.readers,
+      reactions: Object.values(ms.flatMap((m) => m.reactions || []).reduce((acc, r) => {
+        acc[r.emoji] = { emoji: r.emoji, count: (acc[r.emoji]?.count || 0) + r.count };
+        return acc;
+      }, {})),
+      posters: [...new Set(ms.flatMap((m) => m.posters || []))],
+      mentioned: ms.flatMap((m) => m.mentioned || []),
       members: byRoot.map((m) => ({ thread: m.thread, last_at: m.last_at, any_at: m.any_at })),
     };
   }).sort((a, b) => String(b.last_at || b.any_at).localeCompare(String(a.last_at || a.any_at)));
@@ -171,9 +177,30 @@ export async function inbox(env, me, team) {
     WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
     .bind(team, keys).all();
   const { results: labels } = await env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
-      kind AS label_kind, kind_p, urgency, resolved_p, labeled_through FROM labels
+      kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
     WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
   const people = await participants(env, keys);
+  const { results: rx } = await env.DB.prepare(`SELECT thread, emoji, COUNT(*) AS n FROM reactions
+    WHERE thread IN (SELECT value FROM json_each(?)) GROUP BY thread, emoji`).bind(keys).all();
+  const { results: posted } = await env.DB.prepare(`SELECT DISTINCT thread, person FROM messages
+    WHERE thread IN (SELECT value FROM json_each(?)) AND person IS NOT NULL AND deleted = 0`)
+    .bind(keys).all();
+  const { results: named } = await env.DB.prepare(`SELECT DISTINCT n.thread, n.person, p.staff
+    FROM mentions n JOIN people p ON p.id = n.person
+    WHERE n.thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
+  const by = (rows, f) => {
+    const m = new Map();
+    for (const r of rows || []) {
+      if (!m.has(r.thread)) {
+        m.set(r.thread, []);
+      }
+      m.get(r.thread).push(f(r));
+    }
+    return m;
+  };
+  const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
+  const postersBy = by(posted, (r) => r.person);
+  const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
@@ -182,11 +209,18 @@ export async function inbox(env, me, team) {
     team,
     members: await members(env, team),
     threads: fold(readState(threads, marks || [], mentions || [], me.id)
-      .map((t) => ({
-        ...t,
-        label: labelBy.get(t.thread) || null,
-        ...(people.get(t.thread) || { participants: [], customerDomain: null }),
-      }))),
+      .map((t) => {
+        const label = labelBy.get(t.thread) || null;
+        return {
+          ...t,
+          title: (label && label.title) || t.title,
+          label,
+          ...(people.get(t.thread) || { participants: [], customerDomain: null }),
+          reactions: rxBy.get(t.thread) || [],
+          posters: postersBy.get(t.thread) || [],
+          mentioned: namedBy.get(t.thread) || [],
+        };
+      })),
   };
 }
 
@@ -258,11 +292,20 @@ export async function thread(env, me, key) {
     FROM label_reviews r JOIN people p ON p.id = r.reviewer
     WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()).results || [] : [];
   const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [labelKey]) : []);
+  const anchorLabel = await env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first();
+  const { results: tech } = await env.DB.prepare(`SELECT tech, p FROM channel_tech
+    WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
+    .bind(row.source, row.tenant, row.channel_id).all();
   const { results: facts } = await env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
     FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
     .bind(keys).all();
   return {
-    thread: { ...row, label_thread: labelKey },
+    thread: {
+      ...row,
+      title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
+      label_thread: labelKey,
+    },
+    tech: tech || [],
     members: group.map((m) => ({
       thread: m.thread,
       root_at: m.root_at,
