@@ -28,6 +28,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
+| `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), behind Access with Managed OAuth. See "MCP server" below. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests and label jobs (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
 | cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3). Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
@@ -51,7 +52,8 @@ Nothing below is committed; set it on the Worker.
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
-| `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox` and `/api` |
+| `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox`, `/api` and `/mcp` |
+| `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
@@ -71,6 +73,28 @@ deploy, and load teams, people and rules (data, never committed) with `cf d1 que
 policy allows the members of the ops teams; when you add someone to a team in D1, add their
 email to the policy too. The Worker trusts only a verified `Cf-Access-Jwt-Assertion` whose
 email is a person in D1, and shows them the threads of their own teams.
+
+### MCP server
+
+`/mcp` lets an agent outside the browser (Claude, an IDE, a CLI) work the inbox as the person
+signed in, with six tools: `whoami`, `list_threads`,
+`get_thread`, `reply`, `react_to_message` and `resolve_thread`. It speaks MCP `2026-07-28`
+over Streamable HTTP: stateless, `server/discover`, version and capabilities in each
+request's `_meta`, header checks (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), caching
+hints, and plain JSON responses (no SSE, no `subscriptions/listen`). Clients of the 2025
+revisions get `initialize` and the same tools, without a session. `reply` asks the user to
+confirm before posting (a multi round-trip `elicitation/create`) when the client supports
+elicitation; otherwise the client's own tool approval is the check. `get_thread` does not mark
+anything read.
+
+Sign-in is Cloudflare Access with
+[Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/):
+add `/mcp` to the inbox's Access application and turn on **Managed OAuth** under its
+advanced settings. Access then answers MCP clients with the OAuth `401` and discovery
+documents, signs the person in with the same policy, and forwards each request with the
+usual `Cf-Access-Jwt-Assertion`, so the Worker needs no new secret. To let a hosted client
+sign in, list its redirect URIs under **Allowed redirect URIs**; local clients need
+**Allow localhost clients**. Connect a client to `<origin>/mcp`.
 
 ### Rules and replay
 
