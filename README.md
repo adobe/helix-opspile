@@ -142,6 +142,31 @@ session cookie into `.dev-ui-session.json` (gitignored, never printed), and the 
 to the production API, read-only: writes are refused and the page's banner says so. Delete the
 file, or run `npm run ui:session -- --clear`, to go back to fake data.
 
+### Agents in the browser (WebMCP)
+
+The inbox registers [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tools, so an agent
+in the browser (Gemini in Chrome, an extension) can work the inbox through the same UI as the
+person signed in, instead of clicking through the DOM. Every tool changes what is on screen
+(filters, the open thread, the reply box) and every write goes through the same endpoints as
+a click, as that person. A read-only "view as" refuses writes.
+
+| Tool | What |
+| --- | --- |
+| `get_inbox_state` | Viewer, team, filters, open thread, and counts per filter value |
+| `filter_threads` | Set filters, sort and team |
+| `list_threads` | The threads shown, most relevant first |
+| `open_thread` | Open a thread (marks it read) and return its latest messages |
+| `draft_reply` | Put a reply in the reply box for the person to send |
+| `send_reply` | Post a reply as the person, after a confirmation dialog |
+| `react_to_message` | Add or take off a reaction |
+| `resolve_thread` | ✅ on the first message, or take it off again |
+
+Tool output that carries message text or titles is marked `untrustedContentHint`, and
+`send_reply` is marked `consequentialHint`. To try them, turn on
+`chrome://flags/#enable-webmcp-testing` and open the inbox (`npm run ui:dev` works) with the
+[Model Context Tool Inspector](https://chromewebstore.google.com/detail/model-context-tool-inspec/gbpdfapgefenggkahomfgkhfehlcenpd)
+extension.
+
 ### Develop and deploy
 
 **CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint, tests and a build
