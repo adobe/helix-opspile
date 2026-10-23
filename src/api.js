@@ -11,6 +11,7 @@
  */
 
 import { accessEmail } from './access.js';
+import { kbAdmin } from './kbadmin.js';
 import { agentStatus, seedAgent } from './agent/stub.js';
 import {
   discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
@@ -573,6 +574,12 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   }
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
+  }
+  if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
+    if (!isAdmin(me)) {
+      return json({ error: 'the knowledge-base editor is for the admin team' }, 403);
+    }
+    return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname.startsWith('/api/review')) {
     if (!isAdmin(me)) {

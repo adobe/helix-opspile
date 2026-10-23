@@ -14,7 +14,8 @@ import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
 import {
-  addLogEntry, checkConcept, renderIndex, RESERVED, splitFrontmatter, stampGenerated,
+  addLogEntry, asSystemPrompt, checkConcept, renderIndex, RESERVED, splitFrontmatter,
+  stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 
 /**
@@ -28,13 +29,17 @@ import {
 const DIR = '/kb';
 const BRANCH = 'main';
 const ATTEMPTS = 3;
-const AUTHOR = { name: 'opspile agent', email: 'agent@opspile.invalid' };
+export const AGENT_AUTHOR = { name: 'opspile agent', email: 'agent@opspile.invalid' };
 export const MAX_CHANGES = 20;
+const MAX_SYSTEM_PROMPT = 16 * 1024;
 
 const enc = new TextEncoder();
 
-/** Checks a change set before anything is cloned; returns an error message or null. */
-export function checkChanges(changes) {
+/**
+ * Checks a change set before anything is cloned; returns an error message or null. Only
+ * `staff` writes (the admin team, in the knowledge-base editor) may touch `systemprompt.md`.
+ */
+export function checkChanges(changes, { staff = false } = {}) {
   if (!Array.isArray(changes) || !changes.length) {
     return 'give at least one change';
   }
@@ -47,6 +52,16 @@ export function checkChanges(changes) {
       return `${c.path} appears twice`;
     }
     seen.add(c.path);
+    if (c.path === SYSTEM_PROMPT) {
+      if (!staff) {
+        return `${SYSTEM_PROMPT} is maintained by the admin team; you cannot change it`;
+      }
+      if (!c.delete && String(c.content ?? '').length > MAX_SYSTEM_PROMPT) {
+        return `${SYSTEM_PROMPT} is at most ${MAX_SYSTEM_PROMPT / 1024} KB: it goes into every request`;
+      }
+      // eslint-disable-next-line no-continue
+      continue;
+    }
     if (c.delete) {
       if (RESERVED.has(String(c.path).split('/').pop())) {
         return `${c.path} is maintained automatically`;
@@ -136,6 +151,9 @@ async function apply(fs, changes, { by, at }) {
     const abs = `${DIR}/${c.path}`;
     // eslint-disable-next-line no-await-in-loop
     const present = await exists(fs, abs);
+    if (c.create && present) {
+      return `${c.path} already exists; open it and edit it instead`;
+    }
     if (c.base !== undefined && c.base !== null) {
       const current = present
         // eslint-disable-next-line no-await-in-loop
@@ -154,8 +172,9 @@ async function apply(fs, changes, { by, at }) {
     } else {
       // eslint-disable-next-line no-await-in-loop
       await fs.mkdirp(dirOf(abs));
+      const content = c.path === SYSTEM_PROMPT ? asSystemPrompt(c.content) : String(c.content);
       // eslint-disable-next-line no-await-in-loop
-      await fs.promises.writeFile(abs, enc.encode(stampGenerated(String(c.content), by, at)));
+      await fs.promises.writeFile(abs, enc.encode(stampGenerated(content, by, at)));
     }
   }
   return null;
@@ -184,7 +203,7 @@ async function stageAll(fs) {
  * for tests, which run it without a remote.
  */
 export async function commitChanges(fs, changes, {
-  message, by, at, logEntry,
+  message, by, at, logEntry, author = AGENT_AUTHOR,
 }) {
   const conflict = await apply(fs, changes, { by, at });
   if (conflict) {
@@ -201,7 +220,9 @@ export async function commitChanges(fs, changes, {
     fs,
     dir: DIR,
     message,
-    author: { ...AUTHOR, timestamp: Math.floor(Date.parse(at) / 1000) },
+    author: {
+      name: author.name, email: author.email, timestamp: Math.floor(Date.parse(at) / 1000),
+    },
   });
   return { commit };
 }
@@ -228,14 +249,16 @@ const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward
 
 /**
  * Writes `changes` (`{ path, content }`, `{ path, delete: true }`, each with an optional
- * `base` blob hash) to the Artifacts repo `artifact`.
+ * `base` blob hash) to the Artifacts repo `artifact`. `by` is the OKF actor stamped into
+ * `generated`, `author` the commit author (default: the agent), and `staff` allows changes
+ * to `systemprompt.md`.
  *
  * @returns {Promise<{ commit?: string, conflict?: string, unchanged?: boolean, files?: string[] }>}
  */
 export async function writeKnowledge(env, artifact, changes, {
-  message, by, at = new Date().toISOString(), logEntry,
+  message, by, at = new Date().toISOString(), logEntry, author, staff = false,
 }) {
-  const invalid = checkChanges(changes);
+  const invalid = checkChanges(changes, { staff });
   if (invalid) {
     return { error: invalid };
   }
@@ -251,7 +274,7 @@ export async function writeKnowledge(env, artifact, changes, {
       const fs = await cloneOrInit(remote, headers, empty);
       // eslint-disable-next-line no-await-in-loop
       const result = await commitChanges(fs, changes, {
-        message, by, at, logEntry,
+        message, by, at, logEntry, author,
       });
       if (!result.commit) {
         return result;

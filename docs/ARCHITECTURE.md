@@ -162,6 +162,20 @@ and stamps `generated`, and a write that is not a well-formed concept is refused
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
+**Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
+concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
+to it, the team's first and then the customer's, to the end of its system prompt, read again
+before each model request; HTML comments in them are left out. Only the admin team writes
+them, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
+prompt injection cannot change what later agents are told.
+
+**Editor.** Members of the admin team have an editor at `/inbox/kb` (linked from the inbox
+header): every knowledge base, its files, its history, and an editor for `systemprompt.md`
+and the concepts. A save is one commit authored by the person, stamped `generated: { by:
+human:<email> }`, through the same write path as the agents' (OKF checks, indexes and log
+written by code). A save names the blob it was written from, so a colleague's or an agent's
+newer version is never overwritten unseen; `index.md` and `log.md` are read-only there.
+
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
 known: when the normalizer discovers a channel, it makes sure the repositories for the

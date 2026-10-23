@@ -17,6 +17,8 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
+| `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md`, see the history. |
+| `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, admin team only: knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
@@ -168,7 +170,10 @@ API uses the same `readState`, `parse` and `render` helpers. D1, R2, the team's 
 and Access are replaced by an in-memory store in
 [scripts/dev-ui-fixtures.mjs](scripts/dev-ui-fixtures.mjs), and you are signed in as Dana.
 New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off).
-No Cloudflare login or `.dev.vars` is needed.
+No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
+<http://localhost:8787/inbox/kb>, over a few made-up knowledge bases in memory
+([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production;
+there Dana counts as a member of the admin team.
 
 To point the preview at production instead, sign in to the inbox in Chrome with remote
 debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access
