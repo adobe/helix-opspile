@@ -97,7 +97,7 @@ function metadata(request, env) {
   const origin = originOf(request, env);
   return {
     issuer: origin,
-    authorization_endpoint: `${origin}/api/oauth/authorize`,
+    authorization_endpoint: `${origin}/oauth/authorize`,
     token_endpoint: `${origin}/oauth/token`,
     registration_endpoint: `${origin}/oauth/register`,
     revocation_endpoint: `${origin}/oauth/revoke`,
@@ -195,9 +195,71 @@ const back = (redirect, params) => {
  * GET/POST /api/oauth/authorize: behind Access, so the person is known. GET shows the
  * consent page; POST (same origin, with the page's nonce) issues the code.
  */
+// The authorize request is carried through the sign-in in the path, not the query: Access
+// returns to the path after a Slack (or Microsoft) login but drops the query string.
+const CARRY_TTL = 10 * 60 * 1000;
+const CONSENT = '/api/oauth/consent/';
+const hmac = async (env, data) => b64url(await crypto.subtle.sign(
+  'HMAC',
+  await crypto.subtle.importKey('raw', enc.encode(`oauth-carry|${env.TOKEN_KEY || ''}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']),
+  enc.encode(data),
+));
+async function carry(env, params, now) {
+  const data = b64url(enc.encode(JSON.stringify({ ...params, exp: now + CARRY_TTL })));
+  return `${data}.${await hmac(env, data)}`;
+}
+async function uncarry(env, carried, now) {
+  const [data, mac] = String(carried || '').split('.');
+  if (!data || !mac || mac !== await hmac(env, data)) {
+    return null;
+  }
+  try {
+    const bin = atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+    const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+    return p.exp > now ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /oauth/authorize: public, so the client's parameters arrive intact. Checks the client
+ * and redirect URI, then sends the browser to the consent page under /api (behind Access)
+ * with the parameters signed into the path.
+ */
+async function startAuthorize(request, env, url, now) {
+  const p = Object.fromEntries(url.searchParams);
+  const client = await clientOf(env, p.client_id);
+  const known = client && p.redirect_uri
+    && client.redirect_uris.some((r) => redirectMatches(r, p.redirect_uri));
+  if (!known) {
+    return new Response('Unknown client or redirect URI.\n', { status: 400 });
+  }
+  const keep = [
+    'client_id', 'redirect_uri', 'response_type', 'code_challenge', 'code_challenge_method',
+    'state', 'scope', 'resource',
+  ];
+  const params = Object.fromEntries(keep.filter((k) => p[k] != null).map((k) => [k, String(p[k])]));
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: `${originOf(request, env)}${CONSENT}${await carry(env, params, now)}`,
+      'cache-control': 'no-store',
+    },
+  });
+}
+
 async function authorize(request, env, url, now, who) {
   const form = request.method === 'POST' ? Object.fromEntries(await request.formData()) : null;
-  const p = form || Object.fromEntries(url.searchParams);
+  let p = form || Object.fromEntries(url.searchParams);
+  if (!form && url.pathname.startsWith(CONSENT)) {
+    p = await uncarry(env, url.pathname.slice(CONSENT.length), now);
+    if (!p) {
+      return new Response('This sign-in link has expired. Start connecting again from your app.\n', { status: 400 });
+    }
+  } else if (!form && !url.searchParams.has('client_id')) {
+    return new Response('The sign-in lost its parameters. Start connecting again from your app.\n', { status: 400 });
+  }
   const client = await clientOf(env, p.client_id);
   // Without a known client and redirect URI, nothing may be sent anywhere.
   const known = client && p.redirect_uri
@@ -380,6 +442,12 @@ export async function oauth(request, env, url, { now = Date.now(), who } = {}) {
   }
   if (pathname === '/oauth/revoke' && request.method === 'POST') {
     return cors(await revoke(request, env));
+  }
+  if (pathname === '/oauth/authorize' && request.method === 'GET') {
+    return startAuthorize(request, env, url, now);
+  }
+  if (pathname.startsWith(CONSENT) && request.method === 'GET') {
+    return authorize(request, env, url, now, who);
   }
   if (pathname === '/api/oauth/authorize' && ['GET', 'POST'].includes(request.method)) {
     return authorize(request, env, url, now, who);
