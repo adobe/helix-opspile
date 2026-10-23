@@ -43,6 +43,14 @@ describe('ui markdown', () => {
     assert.match(render('<https://x.example>'), /href="https:\/\/x\.example"/);
   });
 
+  it('reserves the space of images whose size is known, scaled to the maximum height', () => {
+    const html = render('![shot.png](https://files.example/a.png "1600x900") ![b](https://files.example/b.png "200x100") ![c](https://files.example/c.png)');
+    assert.match(html, /class="att sized" src="https:\/\/files\.example\/a\.png" width="640" height="360"/);
+    assert.match(html, /width="200" height="100"/);
+    assert.match(html, /class="att" src="https:\/\/files\.example\/c\.png"/);
+    assert.doesNotMatch(html, /title="\d+x\d+"/);
+  });
+
   it('repairs links stored with spaces in their address', () => {
     assert.equal(
       md('- [a b.pdf](https://files.example/Shared Documents/a b.pdf)'),

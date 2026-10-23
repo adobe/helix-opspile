@@ -126,6 +126,21 @@ describe('normalize (slack)', () => {
     }));
     assert.match(message.text, /- \[a\.txt\]\(https:\/\/files\.example\/a\)$/);
   });
+
+  it('gives Slack images their size, so the inbox can reserve the space', () => {
+    const { message } = normalize(SKEY, slack({
+      type: 'message',
+      subtype: 'file_share',
+      channel: 'C1',
+      user: 'U1',
+      ts: '1.4',
+      text: '',
+      files: [{
+        name: 'shot.png', mimetype: 'image/png', url_private: 'https://files.example/shot.png', original_w: 1200, original_h: 800,
+      }],
+    }));
+    assert.match(message.text, /!\[shot\.png\]\(https:\/\/files\.example\/shot\.png "1200x800"\)/);
+  });
 });
 
 describe('normalize (teams)', () => {
