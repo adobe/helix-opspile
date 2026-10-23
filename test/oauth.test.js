@@ -56,7 +56,14 @@ async function approve(e, client, uri = 'https://agent.example/callback') {
   const q = form({
     client_id: client, redirect_uri: uri, response_type: 'code', code_challenge: CHALLENGE, code_challenge_method: 'S256', state: 'xyz',
   });
-  const page = await call(e, `/api/oauth/authorize?${q}`, {}, { who: ada(e) });
+  // The public endpoint moves the request into the consent page's path: it survives a
+  // sign-in that drops the query string.
+  const start = await call(e, `/oauth/authorize?${q}`);
+  assert.equal(start.status, 302);
+  const consent = new URL(start.headers.get('location'));
+  assert.match(consent.pathname, /^\/api\/oauth\/consent\//);
+  assert.equal(consent.search, '');
+  const page = await call(e, consent.pathname, {}, { who: ada(e) });
   const html = await page.text();
   assert.equal(page.status, 200);
   const fields = Object.fromEntries([...html.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&amp;/g, '&')]));
@@ -84,6 +91,7 @@ describe('oauth for mcp clients', () => {
     assert.deepEqual([pr.resource, pr.authorization_servers], [`${ORIGIN}/mcp`, [ORIGIN]]);
     const as = await (await call(e, '/.well-known/oauth-authorization-server')).json();
     assert.equal(as.registration_endpoint, `${ORIGIN}/oauth/register`);
+    assert.equal(as.authorization_endpoint, `${ORIGIN}/oauth/authorize`);
     assert.deepEqual(as.code_challenge_methods_supported, ['S256']);
   });
 
@@ -179,6 +187,22 @@ describe('oauth for mcp clients', () => {
       method: 'POST', headers: { origin: 'https://evil.example' }, body: form({ ...fields, decision: 'approve' }),
     }, { who: ada(e) });
     assert.equal(cross.status, 400);
+  });
+
+  it('refuses a tampered or expired consent path, and a consent page that lost its query', async () => {
+    const e = env();
+    const client = await registered(e);
+    const q = form({
+      client_id: client, redirect_uri: 'https://agent.example/callback', response_type: 'code', code_challenge: CHALLENGE, code_challenge_method: 'S256',
+    });
+    const path = new URL((await call(e, `/oauth/authorize?${q}`)).headers.get('location')).pathname;
+    const [data, mac] = path.split('/').pop().split('.');
+    const forged = `/api/oauth/consent/${data.slice(0, -2)}AA.${mac}`;
+    assert.equal((await call(e, forged, {}, { who: ada(e) })).status, 400);
+    const later = await call(e, path, {}, { who: ada(e), now: NOW + 11 * 60 * 1000 });
+    assert.equal(later.status, 400);
+    assert.match(await (await call(e, '/api/oauth/authorize', {}, { who: ada(e) })).text(), /lost its parameters/);
+    assert.equal((await call(e, `/oauth/authorize?${form({ client_id: 'nope', redirect_uri: 'https://agent.example/callback' })}`)).status, 400);
   });
 
   it('answers /mcp without a token with the challenge pointing at our metadata', async () => {

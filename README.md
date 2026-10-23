@@ -33,7 +33,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
 | `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
 | `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), with its own OAuth (open client registration, consent behind Access). See "MCP server" below. |
-| `/.well-known/oauth-*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET/POST /api/oauth/authorize` | OAuth for MCP clients. |
+| `/.well-known/oauth-*`, `/oauth/authorize`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET /api/oauth/consent/…`, `POST /api/oauth/authorize` | OAuth for MCP clients. |
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. Only in their teams. See "Thread agents". |
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, or `kb:<team>:<org>`), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
@@ -110,7 +110,7 @@ Sign-in is OAuth 2.1, served by the Worker itself (`src/oauth.js`): discovery
 (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`), open
 dynamic client registration (`/oauth/register`, any https redirect URI or localhost), and
 `/oauth/token` (PKCE S256, refresh tokens rotated). There is no list of allowed clients:
-the consent page `/api/oauth/authorize`, behind Access like the rest of `/api`, shows who
+`/oauth/authorize` (public) signs the request into the path of the consent page `/api/oauth/consent/…`, behind Access like the rest of `/api` (Access keeps the path through a Slack or Microsoft login but drops the query); it shows who
 asks and, in large type, the host the grant goes to, and the person decides. Codes and
 tokens are stored hashed in D1 (`oauth_*`, migration 0015); an access token lives an hour.
 `/mcp` itself is **not** behind Access; it takes these tokens (or an Access assertion, for
