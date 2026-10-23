@@ -22,6 +22,7 @@ import { syncInstalledBots } from './bots.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
+import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { mcp } from './mcp.js';
 import { oauth } from './oauth.js';
@@ -128,6 +129,10 @@ export default {
       const iconResponse = icon(pathname);
       if (iconResponse) {
         return iconResponse;
+      }
+      const appResponse = pwa(request, pathname);
+      if (appResponse) {
+        return appResponse;
       }
     }
     const apiResponse = await api(request, env, url);

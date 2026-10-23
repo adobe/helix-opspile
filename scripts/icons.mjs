@@ -59,6 +59,38 @@ magick(src, '-resize', '48x48', t('48.png'));
 magick(t('16.png'), t('32.png'), t('48.png'), t('favicon.ico'));
 magick(src, '-resize', '180x180', '-strip', t('180.png'));
 execFileSync('pngquant', ['--force', '--quality', '80-95', '--output', t('180q.png'), t('180.png')]);
+// The installed app (web app manifest): 192 and 512 px, and a maskable 512 px whose picture
+// sits in the inner 80 % (the safe zone), its edges stretched to fill the rest.
+const edge = execFileSync('magick', [
+  src, '(', '+clone', '-gravity', 'north', '-crop', '100%x3%+0+0', ')',
+  '(', '-clone', '0', '-gravity', 'south', '-crop', '100%x3%+0+0', ')', '-delete', '0',
+  '+repage', '-append', '-resize', '1x1!', '-format', '#%[hex:p{0,0}]', 'info:',
+]).toString().trim();
+magick(src, '-resize', '192x192', '-strip', t('192.png'));
+magick(src, '-resize', '512x512', '-strip', t('512.png'));
+// The border is the picture's own edge, stretched outwards (no seam), then softened.
+magick(
+  // The source's outermost 2 % is a frame; without it the stretched edge has no seam.
+  src,
+  '-shave',
+  '2%',
+  '-resize',
+  '410x410',
+  '-set',
+  'option:distort:viewport',
+  '512x512-51-51',
+  '-virtual-pixel',
+  'Edge',
+  '-distort',
+  'SRT',
+  '0',
+  '+repage',
+  '-strip',
+  t('mask.png'),
+);
+for (const n of ['192', '512', 'mask']) {
+  execFileSync('pngquant', ['--force', '--quality', '80-95', '--output', t(`${n}q.png`), t(`${n}.png`)]);
+}
 
 const b64 = (file) => readFileSync(file).toString('base64').replace(/.{1,96}/g, "  '$&'\n").trimEnd();
 
@@ -84,10 +116,28 @@ const APPLE_TOUCH_ICON_PNG = [
 ${b64(t('180q.png')).replace(/'\n/g, "',\n")},
 ].join('');
 
+const ICON_192_PNG = [
+${b64(t('192q.png')).replace(/'\n/g, "',\n")},
+].join('');
+
+const ICON_512_PNG = [
+${b64(t('512q.png')).replace(/'\n/g, "',\n")},
+].join('');
+
+const ICON_MASKABLE_PNG = [
+${b64(t('maskq.png')).replace(/'\n/g, "',\n")},
+].join('');
+
+/** The colour around the maskable icon's picture, for the manifest's theme. */
+export const ICON_EDGE = '${edge}';
+
 /** pathname -> { type, base64 } */
 export const ICONS = {
   '/favicon.ico': { type: 'image/x-icon', base64: FAVICON_ICO },
   '/apple-touch-icon.png': { type: 'image/png', base64: APPLE_TOUCH_ICON_PNG },
+  '/icon-192.png': { type: 'image/png', base64: ICON_192_PNG },
+  '/icon-512.png': { type: 'image/png', base64: ICON_512_PNG },
+  '/icon-maskable.png': { type: 'image/png', base64: ICON_MASKABLE_PNG },
 };
 `);
 console.log(`wrote ${out}`);

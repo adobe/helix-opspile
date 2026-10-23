@@ -47,6 +47,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
 import { ICONS } from '../src/icons.js';
+import { pwa } from '../src/pwa.js';
 import { inboxPage as withEmoji } from '../src/page.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
@@ -996,6 +997,12 @@ const server = createServer(async (req, res) => {
     if (ICONS[url.pathname]) {
       const { type, base64 } = ICONS[url.pathname];
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
+      return;
+    }
+    // The manifest and the service worker, as the Worker serves them.
+    const app = pwa({ method: req.method }, url.pathname);
+    if (app) {
+      res.writeHead(app.status, Object.fromEntries(app.headers)).end(await app.text());
       return;
     }
     if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
