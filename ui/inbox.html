@@ -1849,10 +1849,6 @@ async function start() {
       connect();
     };
     $('review').hidden = false;
-    $('pages').hidden = false;
-    $('inbox').onclick = (e) => e.preventDefault();
-    // Fresh at the moment it is used (the open thread's customer may have loaded since).
-    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {
       state.review = !state.review;
@@ -1860,6 +1856,14 @@ async function start() {
       toUrl();
       if (state.open) openThread(state.open, { live: true });
     };
+  }
+  // The switch to the editor and the admin pages: the admin team, and team managers (who see
+  // their teams' members and knowledge bases there).
+  if (state.me.admin || state.me.manages?.length) {
+    $('pages').hidden = false;
+    $('inbox').onclick = (e) => e.preventDefault();
+    // Fresh at the moment it is used (the open thread's customer may have loaded since).
+    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }
   await loadInbox();
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
