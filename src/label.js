@@ -189,7 +189,7 @@ async function threadReactions(env, key) {
   const { results } = await env.DB.prepare(`SELECT r.message, r.emoji, r.at,
       COALESCE(p.name, i.name) AS name, COALESCE(p.staff, 0) AS staff, i.email
     FROM reactions r
-    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person
     WHERE r.thread = ? ORDER BY r.at`).bind(key).all();
   const by = new Map();
