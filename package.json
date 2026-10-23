@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
+    "@modelcontextprotocol/server": "2.3.1",
     "cf": "1.0.0-beta.20",
     "esbuild": "0.28.2",
     "eslint": "^9.39.5",
@@ -29,7 +30,9 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-codemode": "1.4.0",
     "@earendil-works/pi-durable": "1.4.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "agents": "0.30.0",
     "isomorphic-git": "1.44.3",
     "micromark": "4.0.3",

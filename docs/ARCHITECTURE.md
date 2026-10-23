@@ -228,8 +228,17 @@ has switched yet follows `AGENT_CHANNELS`, the deployment's default. Alert chann
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
 
-For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
-bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
+**MCP servers.** Next to the thread agents, the editor lists a knowledge base's **MCP
+servers**: those of its team (`kb-team-*`) or its customer (`kb-org-*`), which the agents of
+that team's or customer's threads may call from code mode (see [Thread agents](#thread-agents)).
+Whoever may edit the knowledge base adds, checks, edits, switches and deletes them. A server is a
+name, an `https://` URL, what it is for (the agents are told), request headers for its
+credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
+only tools agents may call. Adding or changing one connects to it and lists its tools.
+
+For admins and team managers, the pages' headers have the same switch between **Inbox**,
+**Agents** (this editor: the agents' knowledge bases, channels, MCP servers and instructions)
+and **Admin**, and context goes along between the inbox and the editor. From the inbox, the editor opens the knowledge base
 of the open thread's customer (or of the one customer filtered on) if it has one, else the
 team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
 origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
@@ -472,11 +481,30 @@ labelled as written by people outside its control.
 | `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. This is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+| `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 GitHub repositories are read from Artifacts mirrors: the cron imports each listed repository
 into a fresh Artifacts repo, promotes it once it is readable and deletes the mirror it
 replaces, at most every six hours. Reads need no GitHub token and hit no rate limit; private
 repositories cannot be imported yet.
+
+**Code mode and MCP servers.** The `codemode` tool is pi-durable's code mode: the script runs
+in a QuickJS sandbox on the agent's own thread (`createInlineCodemodeSandbox`; one object per
+thread, so a script that computes holds up only its own agent, for at most its interrupt
+budget), every call it makes is a nested tool call, and a script interrupted by an eviction
+resumes where it was without making its finished calls again. Each ops team and each customer
+can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
+per-channel switch; credentials are request headers sealed with `TOKEN_KEY`). An agent gets the enabled servers of its thread's team and
+customer: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
+offered to the model as a tool of its own, and each server is a code mode namespace that
+`describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
+prompt a few lines, and a script can call several and filter what they return. A server's
+`allow` list limits the tools agents get; a tool that declares itself read-only may run again
+after an eviction, any other is reported to the model as interrupted instead. The list of
+servers and tools (no credentials) is kept in the agent's storage, so a restarted agent has the
+same tools at once; before the agent is told anything it is checked against D1, and the servers
+are asked again when it changed or after an hour. MCP results come from systems outside
+opspile; the prompt says they are data, not instructions, like customer messages.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the

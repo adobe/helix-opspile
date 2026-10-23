@@ -14,12 +14,14 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { createRegistry, Harness } from '@earendil-works/pi-durable';
 import { Agent } from 'agents';
 import { PiHarness } from 'agents/harness/pi';
+import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
 import { entryOf } from '../drafts.js';
 import {
   agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
+import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
-import { opspileExtension } from './tools.js';
+import { opspileExtension, staffExtension } from './tools.js';
 
 /**
  * One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
@@ -30,10 +32,19 @@ import { opspileExtension } from './tools.js';
  *
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
  * without any (`idle`, a schedule), and about knowledge staff share (`seed`).
+ *
+ * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
+ * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
+ * The scripts run on this object's thread (`createInlineCodemodeSandbox`): one object per
+ * thread, so a script that computes holds up only its own agent, and only up to the
+ * interrupt budget.
  */
 
 export const IDLE_SECONDS = 24 * 60 * 60;
 const TARGET_TTL_MS = 5 * 60 * 1000;
+const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
+// QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
+const SCRIPT_INTERRUPT_BUDGET = 50_000;
 
 const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
   + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
@@ -49,16 +60,23 @@ export class ThreadAgent extends Agent {
   constructor(ctx, env) {
     super(ctx, env);
     this.registry = createRegistry();
+    this.mcp = new AgentMcp(env, ctx.storage);
     this.harness = new PiHarness({
-      harness: ({ storage, context, onWake }) => {
+      harness: async ({ storage, context, onWake }) => {
         const models = createModels();
         models.setProvider(agentProvider(env));
-        this.registry.install(opspileExtension({
+        const agent = {
           env,
           hasThread: !this.name.startsWith('kb:'),
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),
-        }));
+        };
+        // In this order, which is the system prompt's: opspile, code mode, the MCP servers,
+        // and the staff's instructions last. A reinstall replaces an extension in place.
+        this.registry.install(opspileExtension(agent));
+        this.installMcp(await this.mcp.current());
+        this.registry.install(staffExtension(agent));
+        this.mcpInstalled = true;
         return Harness.open(storage, {
           models,
           registry: this.registry,
@@ -72,6 +90,41 @@ export class ThreadAgent extends Agent {
       defaults: env.AGENT_MODEL ? { model: modelRef(env), thinkingLevel: 'medium' } : {},
     });
     this.lifecycle.use(this.harness);
+  }
+
+  /** Code mode and the MCP tools of `catalog`. */
+  installMcp(catalog) {
+    this.sandbox ??= createInlineCodemodeSandbox({
+      timeoutMs: SCRIPT_TIMEOUT_MS,
+      interruptBudget: SCRIPT_INTERRUPT_BUDGET,
+    });
+    this.registry.install(codemodeExtension(catalog, this.sandbox));
+    this.registry.install(mcpExtension(catalog, (...args) => this.mcp.call(...args)));
+  }
+
+  /**
+   * Before the agent is told something: are its MCP servers still the configured ones? A
+   * change is installed at once when Pi is open, else when it opens. A failure keeps the
+   * servers it had.
+   */
+  async syncMcp() {
+    try {
+      const { changed, catalog } = await this.mcp.refresh(await this.target());
+      if (changed && this.mcpInstalled) {
+        this.installMcp(catalog);
+      }
+      if (changed) {
+        console.log(JSON.stringify({
+          route: 'agent',
+          mcp: 'catalog',
+          servers: catalog.servers.length,
+          tools: catalog.servers.reduce((n, s) => n + s.tools.length, 0),
+          unavailable: catalog.servers.filter((s) => s.error).length,
+        }));
+      }
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', mcp: 'sync failed', error: e.message }));
+    }
   }
 
   /** What this agent works on: the inbox entry, its team and customer. Cached briefly. */
@@ -155,6 +208,7 @@ export class ThreadAgent extends Agent {
     const verdicts = await this.verdicts(fresh);
     const last = markOf(fresh[fresh.length - 1]);
     const input = deliveryText(entry, fresh, verdicts, { first: !mark });
+    await this.syncMcp();
     const receipt = await this.harness.submit(input, {
       operationId: `messages:${last}`,
       whenBusy: 'steer',
@@ -189,6 +243,7 @@ export class ThreadAgent extends Agent {
       return;
     }
     await this.ctx.storage.delete('idle');
+    await this.syncMcp();
     await this.harness.submit(IDLE_PROMPT, { operationId: `idle:${mark}`, whenBusy: 'followUp' });
   }
 
@@ -203,6 +258,7 @@ export class ThreadAgent extends Agent {
       + ` extending existing concepts where they fit, with ${by} as the source`
       + ` (author: human:${by}). Do not change the draft because of it unless it changes what`
       + ` the customer should be told.\n\n<staff-note>\n${text}\n</staff-note>`;
+    await this.syncMcp();
     const receipt = await this.harness.submit(note, {
       operationId: `seed:${(await sha256(`${by}\n${text}`)).slice(0, 32)}`,
       whenBusy: 'followUp',
@@ -212,12 +268,16 @@ export class ThreadAgent extends Agent {
 
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
+    const catalog = await this.mcp.current();
     return {
       name: this.name,
       model: this.env.AGENT_MODEL || null,
       problem: modelProblem(this.env),
       mark: (await this.ctx.storage.get('mark')) || null,
       pending: await this.harness.pending(),
+      mcp: catalog.servers.map((s) => ({
+        name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
+      })),
     };
   }
 }

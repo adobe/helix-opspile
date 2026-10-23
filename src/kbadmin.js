@@ -15,6 +15,7 @@ import { writeKnowledge } from './agent/kbwrite.js';
 import { SYSTEM_PROMPT } from './agent/okf.js';
 import { commitLog, listFiles, readText } from './agent/repos.js';
 import { json } from './http.js';
+import { mcpAdmin } from './mcpadmin.js';
 import { isAdmin, managesTeam } from './review.js';
 
 /**
@@ -223,6 +224,11 @@ export async function kbAdmin(request, env, url, me) {
   }
   if (url.pathname === '/api/kb/agent' && request.method === 'PUT') {
     return switchAgent(env, me, await request.json().catch(() => ({})));
+  }
+  // The agents' MCP servers of a knowledge base's team or customer (src/mcpadmin.js).
+  const servers = await mcpAdmin(request, env, url, me);
+  if (servers) {
+    return servers;
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

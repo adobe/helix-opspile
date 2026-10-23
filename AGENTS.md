@@ -39,7 +39,10 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   `PiHarness`), `tools.js` (its prompt and tools), `deliver.js` (what it is told, Clef's
   prompt-injection check), `model.js` (Bedrock through AI Gateway), `repos.js` (reading
   knowledge bases and GitHub mirrors), `kbwrite.js`, `okf.js` and `memfs.js` (OKF writes with
-  isomorphic-git in memory), `stub.js` (reaching agents without importing the SDK)
+  isomorphic-git in memory), `mcp.js` and `mcpclient.js` (the team's and customer's MCP
+  servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
+  SDK)
+- `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org
 - `src/timing.js` — the `Server-Timing` header on every `/api/*` answer (D1, R2, auth, total;
   durations and counts only); `src/filecache.js` — thread files kept per isolate by R2 version
 - `src/mcp.js` — `/mcp` MCP server (transport, protocol); `src/mcp-tools.js` — its tools
