@@ -160,13 +160,14 @@
   #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
   #filters .card:hover { transform: translateX(calc(var(--r) * 2 / 3)); }
   #filters .card.active:hover { transform: translateX(var(--r)); }
-  @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { #filters .card, #lift .t { transition: none; } }
   /* Room for the filter cards' overhang, so they never cover a status dot. */
   .t { padding-left: 18px; }
   #threads .count { padding-left: 18px; }
   #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
   #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
     background: var(--sel); box-shadow: var(--lift-shadow);
+    transition: width .15s ease-out, padding-right .15s ease-out;
     padding: calc(9px + var(--lv) - 1px) calc(14px + var(--lr) - 1px) 0 calc(18px + var(--ll) - 1px); }
   #lift .t .faces .av { border-color: var(--sel); }
   .t.enter { animation: push-in .35s ease-out; overflow: hidden; }
@@ -999,6 +1000,7 @@ function render() { renderFilters(); renderThreads(); }
 
 // The open thread's row, lifted out of its column: a copy of it over the real one, wider by
 // LIFT on each side and over the pane, in #lift, which spans the list below its header.
+// Next to the open thread's header (.ph) it stays within the list, flush with its edge.
 const LIFT = { left: 10, right: 16, v: 3, room: 48 };
 let liftOf = null;
 function syncLift(copy) {
@@ -1016,6 +1018,8 @@ function syncLift(copy) {
   const box = list.getBoundingClientRect();
   const head = list.querySelector('.count')?.offsetHeight || 0;
   const r = sel.getBoundingClientRect();
+  const ph = $('pane').querySelector('.ph')?.getBoundingClientRect();
+  const right = ph && r.top - LIFT.v < ph.bottom && r.bottom + LIFT.v > ph.top ? 0 : LIFT.right;
   Object.assign(lift.style, {
     left: `${box.left - main.left - LIFT.room}px`,
     top: `${box.top - main.top + head}px`,
@@ -1026,11 +1030,11 @@ function syncLift(copy) {
   Object.assign(style, {
     left: `${r.left - box.left + LIFT.room - LIFT.left}px`,
     top: `${r.top - box.top - head - LIFT.v}px`,
-    width: `${r.width + LIFT.left + LIFT.right}px`,
+    width: `${r.width + LIFT.left + right}px`,
     height: `${r.height + 2 * LIFT.v}px`,
   });
   style.setProperty('--ll', `${LIFT.left}px`);
-  style.setProperty('--lr', `${LIFT.right}px`);
+  style.setProperty('--lr', `${right}px`);
   style.setProperty('--lv', `${LIFT.v}px`);
 }
 {
@@ -1048,6 +1052,7 @@ function syncLift(copy) {
   $('threads').addEventListener('scroll', () => later(false), { passive: true });
   $('threads').addEventListener('animationend', () => later(false));
   new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
+  new MutationObserver(() => later(false)).observe($('pane'), { childList: true });
 }
 
 // ---------------------------------------------------------------- messages
