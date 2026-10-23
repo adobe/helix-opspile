@@ -71,6 +71,7 @@ export async function plan(env, rules) {
             tenant: c.tenant,
             channelId: c.channel_id,
             name: c.name || now[0].channel_name,
+            groupName: c.group_name || null,
           },
           from: now.map((f) => ({
             org: f.org, team: f.team, kind: f.kind, threads: f.threads,

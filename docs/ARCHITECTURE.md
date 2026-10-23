@@ -76,7 +76,17 @@ the agents show the name and the type.
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
 team, a Slack Connect team), manual assignments of channels to a team or an org, and each
-org's name, icon and type. Every rule change is tried first: the page lists the channels it
+org's name, icon and type. A team's page suggests channels for it among the ones the admin team
+holds (the rule of last resort files every channel no other rule claims there): the ones where
+the team's members post, react or are members (listed from Slack, or from the Teams team, into
+`channel_members`), and the ones Clef gives the team. The cron asks Clef about a batch of the admin
+team's channels every run, one question set per channel (`channel_labels`): which ops team should
+follow it (each described by its rules, some of its channels and its members, or none of them),
+and whether it is a conversation, an alert feed or not worth following. Clef is told the channel's
+name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
+and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
+looks again when the channel has new activity, the ops teams change, or the label is a week old.
+Every rule change is tried first: the page lists the channels it
 would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
