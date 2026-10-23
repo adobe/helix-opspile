@@ -58,19 +58,37 @@ are removed before an event is stored.
 channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
-Every channel belongs to one **org** (a customer or a vendor) and one **team** (the ops team
-that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+Every channel belongs to one **org** (a customer, a partner or a vendor) and one **team** (the
+ops team that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
 channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
 expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
 so are the overrides for vendor channels, alert channels and irregular names. Channels that
-no rule matches are filed under `_unassigned`.
+no rule matches are filed under `_unassigned`. A **manual assignment** of one channel is a
+rule too: its `channel_id`, priority 10.
+
+An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
+URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
+one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
+the agents show the name and the type.
+
+**Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
+their members (found by name or email among the people and platform accounts opspile knows;
+names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
+team, a Slack Connect team), manual assignments of channels to a team or an org, and each
+org's name, icon and type. Every rule change is tried first: the page lists the channels it
+would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the
+NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
+already at the new place, from a message that arrived meanwhile, is newer and kept), its
+thread rows take the new org, team and kind, and the new org and team get their knowledge
+bases. A large channel moves a few hundred files per job.
 
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
-tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2; after a rule
-change, pile 2 is emptied and replayed.
+tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2. A rule
+changed in D1 by hand needs pile 2 emptied and replayed; one changed in the admin UI re-files
+the channels it moves (below).
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
@@ -169,15 +187,27 @@ before each model request; HTML comments in them are left out. Only the admin te
 them, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
-**Editor.** Members of the admin team have an editor at `/inbox/kb` (linked from the inbox
-header): every knowledge base, its files, its history, and an editor for `systemprompt.md`
+**Editor.** Members of the admin team have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).
 A save names the blob it was written from, so a colleague's or an agent's newer version is
 never overwritten unseen: the editor offers to load theirs or save over it. `index.md` and
 `log.md` are read-only there. It asks only in the page (no native dialogs, which a debugger
-attached over CDP dismisses), and only when edits could not be saved or before a delete.
+attached over CDP dismisses), and only when edits could not be saved or before a delete; the
+one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
+saved, where only the browser's own prompt can ask.
+
+For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
+bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
+of the open thread's customer (or of the one customer filtered on) if it has one, else the
+team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
+origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
+thread and "view as". Opened directly, **Inbox** goes to the inbox of the team whose knowledge
+base is open. The editor's URL names the knowledge base and the file (or the history), and
+each one opened is a history entry, so the browser's Back and Forward step through them and
+back to the inbox. The editor itself is always the admin's own, also when they came from a
+"view as" inbox.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is

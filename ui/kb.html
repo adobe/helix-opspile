@@ -35,10 +35,18 @@
   button.danger { color: var(--red); }
   a { color: var(--link); }
   header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-  header h1 a { color: inherit; text-decoration: none; }
-  header .crumb { color: var(--mute); }
+  header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
   header .me { margin-left: auto; color: var(--mute); }
+  /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
+  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+    overflow: hidden; }
+  nav.pages[hidden] { display: none; }
+  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a + a { border-left: 1px solid var(--line); }
+  nav.pages a:hover { color: var(--ink); background: var(--hover); }
+  nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
+    box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
+  nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   main { flex: 1; display: grid; grid-template-columns: 260px 320px 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; border-right: 1px solid var(--line); }
   #bases { padding: 12px; background: var(--bg); }
@@ -89,8 +97,8 @@
 </head>
 <body>
 <header>
-  <h1><a href="/inbox">opspile</a></h1>
-  <span class="crumb">Knowledge bases</span>
+  <h1>opspile</h1>
+  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" title="Back to the inbox as you left it">Inbox</a><a id="kbs" href="/inbox/kb" aria-current="page">Knowledge bases</a><a href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors">Admin</a></nav>
   <span class="me" id="me"></span>
   <span title="changes are saved as you type; ⌘S saves right away"><kbd>⌘S</kbd></span>
 </header>
@@ -103,8 +111,9 @@
 /*
  * The knowledge-base editor, for the admin team: every knowledge base (pile 3), its files,
  * and an editor that saves as you type: a pause in typing commits the file as the signed-in
- * person. No native dialogs (alert, confirm, beforeunload): a debugger attached over CDP
- * dismisses them on its own, so the questions that remain are asked in the page.
+ * person. No native dialogs (alert, confirm): a debugger attached over CDP dismisses them on
+ * its own, so the questions that remain are asked in the page. The one exception is
+ * beforeunload, and only for edits that could not be saved: nothing else can ask then.
  * `systemprompt.md` holds the
  * instructions appended to the system prompt of every thread agent that uses the knowledge
  * base; agents cannot change it. index.md and log.md are written by code and shown read-only.
@@ -112,7 +121,7 @@
 const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
-  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
+  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file', back: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -175,12 +184,44 @@ async function leave() {
   return ask('Your last changes are not saved.', state.file.problem || 'They could not be committed.', 'Discard them');
 }
 
-function toUrl() {
+/**
+ * The inbox to return to, from `back=`: only a path on this origin, and only `/inbox` (with its
+ * query, which holds the team, filters, sort, unread, the open thread and "view as"), so the
+ * parameter cannot send anyone elsewhere.
+ */
+function inboxBack(value) {
+  if (!value) return null;
+  try {
+    const u = new URL(value, location.origin);
+    return u.origin === location.origin && u.pathname === '/inbox' ? `${u.pathname}${u.search}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The inbox as it was left; opened directly, the inbox of the team whose knowledge base is open. */
+function inboxUrl() {
+  if (state.back) return state.back;
+  const b = base();
+  return b && b.kind === 'team' ? `/inbox?team=${encodeURIComponent(b.slug)}` : '/inbox';
+}
+
+/**
+ * The URL names the knowledge base, the file (or the history) and the inbox to return to, so
+ * reloads and the browser's Back and Forward land where they were. Going to another knowledge
+ * base or file is a new history entry (`push`); settling the URL of the same view is not.
+ */
+function toUrl(mode = 'push') {
   const q = new URLSearchParams();
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
   if (state.view === 'history') q.set('view', 'history');
-  history.replaceState(null, '', `/inbox/kb${q.size ? `?${q}` : ''}`);
+  if (state.back) q.set('back', state.back);
+  const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
+  if (url !== `${location.pathname}${location.search}`) {
+    history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
+  }
+  $('inbox').href = inboxUrl();
 }
 
 // ---- knowledge bases --------------------------------------------------------------------
@@ -208,8 +249,8 @@ function renderBases() {
   }
 }
 
-async function openRepo(repo, { path, view } = {}) {
-  if (repo !== state.repo && !(await leave())) return;
+async function openRepo(repo, { path, view, nav = 'push' } = {}) {
+  if (repo !== state.repo && !(await leave())) return false;
   state.repo = repo;
   state.file = null;
   state.view = view || 'file';
@@ -219,15 +260,16 @@ async function openRepo(repo, { path, view } = {}) {
   const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(repo)}`);
   if (!ok) {
     $('files').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the files.')}</div>`;
-    return;
+    toUrl(nav);
+    return true;
   }
   state.files = body.files;
   state.hasSystemPrompt = body.hasSystemPrompt;
   state.truncated = body.truncated;
   renderFiles();
-  if (state.view === 'history') showHistory();
-  else openFile(path || SYSTEM_PROMPT, { force: true });
-  toUrl();
+  if (state.view === 'history') showHistory({ force: true, nav });
+  else openFile(path || SYSTEM_PROMPT, { force: true, nav });
+  return true;
 }
 
 // ---- files ------------------------------------------------------------------------------
@@ -259,8 +301,8 @@ function renderFiles() {
   $('history').onclick = () => showHistory();
 }
 
-async function openFile(path, { force = false } = {}) {
-  if (!force && !(await leave())) return;
+async function openFile(path, { force = false, nav = 'push' } = {}) {
+  if (!force && !(await leave())) return false;
   state.view = 'file';
   const b = base();
   const exists = state.files.some((f) => f.path === path);
@@ -279,7 +321,8 @@ async function openFile(path, { force = false } = {}) {
   }
   renderFiles();
   renderEditor();
-  toUrl();
+  toUrl(nav);
+  return true;
 }
 
 async function newFile() {
@@ -418,7 +461,7 @@ async function commit(f) {
       $('delete').onclick = remove;
     }
     await reloadFiles();
-    toUrl();
+    toUrl('replace');
   }
   showHash();
   setNote('ok', body.unchanged ? 'Saved (nothing changed).' : `Saved · ${String(body.commit).slice(0, 12)}`);
@@ -457,7 +500,7 @@ async function remove() {
   state.file = null;
   await reloadFiles();
   $('editor').innerHTML = `<div class="empty">Deleted ${esc(f.path)} in ${esc(String(body.commit).slice(0, 12))}.</div>`;
-  toUrl();
+  toUrl('replace');
 }
 
 async function reloadFiles() {
@@ -470,12 +513,12 @@ async function reloadFiles() {
   renderFiles();
 }
 
-async function showHistory() {
-  if (state.file && !(await leave())) return;
+async function showHistory({ force = false, nav = 'push' } = {}) {
+  if (!force && state.file && !(await leave())) return false;
   state.view = 'history';
   state.file = null;
   renderFiles();
-  toUrl();
+  toUrl(nav);
   $('editor').innerHTML = '<div class="empty">Loading…</div>';
   const { ok, body } = await call(`/api/kb/log?repo=${encodeURIComponent(state.repo)}`);
   if (!ok) { $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the history.')}</div>`; return; }
@@ -504,25 +547,88 @@ window.addEventListener('pagehide', () => {
     body: JSON.stringify({ repo: state.repo, path: f.path, content: $('text').value, base: f.hash }),
   });
 });
+// The one native question: leaving the page (the browser's Back, a reload, closing the tab)
+// would lose edits that the keepalive save above cannot save (a conflict, a concept that was
+// refused, a new file without a path) or that a save in flight may not include. The switch to
+// the inbox asks in the page instead.
+window.addEventListener('beforeunload', (e) => {
+  const f = state.file;
+  if (!edited() || !(f.conflict || f.problem || f.choosePath || state.saving)) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
+// "Inbox": saves what is pending and asks, in the page, about edits that cannot be saved, then
+// goes back to the inbox as it was left. A new tab (⌘-click, middle click) leaves nothing.
+$('inbox').addEventListener('click', async (e) => {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  if (!(await leave())) return;
+  state.file = null; // saved, or discarded on purpose: nothing for pagehide or beforeunload
+  location.assign(inboxUrl());
+});
+$('kbs').addEventListener('click', (e) => e.preventDefault());
+
+// Back and Forward within the editor: show what the URL names, after the same check as a click.
+window.addEventListener('popstate', async () => {
+  const q = new URLSearchParams(location.search);
+  const repo = q.get('repo');
+  const view = q.get('view') === 'history' ? 'history' : 'file';
+  const path = q.get('path') || SYSTEM_PROMPT;
+  let moved;
+  if (!repo || !state.bases.some((b) => b.repo === repo)) {
+    moved = await leave();
+    if (moved) {
+      Object.assign(state, { repo: null, file: null, view: 'file' });
+      renderBases();
+      $('files').innerHTML = '';
+      $('editor').innerHTML = '<div class="empty">Pick a knowledge base.</div>';
+      toUrl('replace');
+    }
+  } else if (repo !== state.repo) {
+    moved = await openRepo(repo, { path, view, nav: 'replace' });
+  } else if (view === 'history') {
+    moved = state.view === 'history' || await showHistory({ nav: 'replace' });
+  } else {
+    moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
+  }
+  // Stayed (edits that could not be saved, kept): the URL goes back to what is shown.
+  if (moved === false) toUrl('push');
+});
 
 (async () => {
+  const q = new URLSearchParams(location.search);
+  state.back = inboxBack(q.get('back'));
+  $('inbox').href = inboxUrl();
   const me = await call('/api/me');
   if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
   $('me').textContent = state.me.name || state.me.email || '';
   if (!state.me.admin) {
     $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team.</div>';
-    $('editor').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
+    $('editor').innerHTML = `<div class="empty"><a href="${esc(inboxUrl())}">Back to the inbox</a></div>`;
     return;
   }
+  $('pages').hidden = false;
   const { ok, body } = await call('/api/kb');
   if (!ok) { $('bases').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the knowledge bases.')}</div>`; return; }
   state.bases = body.bases;
   renderBases();
-  const q = new URLSearchParams(location.search);
-  const repo = q.get('repo');
-  if (repo && state.bases.some((b) => b.repo === repo)) {
-    openRepo(repo, { path: q.get('path') || undefined, view: q.get('view') || undefined });
+  // `repo` (with `path` or `view`) names one; from the inbox, `org` and `team` say what was on
+  // screen there, and the customer's knowledge base wins over the team's.
+  const exact = state.bases.find((b) => b.repo === q.get('repo'));
+  const pick = exact
+    || state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org'))
+    || state.bases.find((b) => b.kind === 'team' && b.slug === q.get('team'));
+  if (pick) {
+    await openRepo(pick.repo, {
+      path: exact ? q.get('path') || undefined : undefined,
+      view: exact && q.get('view') === 'history' ? 'history' : undefined,
+      nav: 'replace',
+    });
+    $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
+  } else {
+    toUrl('replace');
   }
 })();
 </script>
