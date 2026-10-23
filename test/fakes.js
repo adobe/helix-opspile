@@ -79,9 +79,22 @@ export function fakeBucket(initial = {}) {
     async put(key, body, options) {
       objects.set(key, { body, options });
     },
-    async list({ prefix = '' } = {}) {
+    async head(key) {
+      return objects.has(key) ? { key } : null;
+    },
+    async delete(key) {
+      objects.delete(key);
+    },
+    async list({ prefix = '', limit = 1000, cursor } = {}) {
       const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort();
-      return { objects: keys.map((key) => ({ key })) };
+      const from = cursor ? Number(cursor) : 0;
+      const page = keys.slice(from, from + limit);
+      const truncated = from + limit < keys.length;
+      return {
+        objects: page.map((key) => ({ key })),
+        truncated,
+        cursor: truncated ? String(from + limit) : undefined,
+      };
     },
   };
 }

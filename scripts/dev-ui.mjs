@@ -44,6 +44,7 @@ import { inboxPage as withEmoji } from '../src/page.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
+import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
 
@@ -58,6 +59,7 @@ const VALIDATE_MS = 60 * 1000;
 
 const store = createStore();
 const kb = await createKnowledgeBases();
+const adminApi = createAdmin(store);
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 const reloadClients = new Set();
@@ -447,12 +449,17 @@ async function api(req, res, url) {
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     return kbApi(req, res, url);
   }
+  if (url.pathname.startsWith('/api/admin/')) {
+    const body = req.method === 'GET' ? null : await readJson(req);
+    const r = await adminApi(req, url, body);
+    return json(res, await r.json(), r.status);
+  }
   if (url.pathname === '/api/me') {
     const {
       id, name, email, teams,
     } = store.me;
-    // Dana is not in the admin team, except on the knowledge-base editor, so it can be tried.
-    const admin = store.me.admin || /\/inbox\/kb\b/.test(req.headers.referer || '');
+    // Dana is not in the admin team, except on the admin pages, so they can be tried.
+    const admin = store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || '');
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
@@ -820,7 +827,7 @@ function reloadStream(req, res) {
 function watchUi() {
   let timer;
   watch(uiDir, (event, file) => {
-    if (file && file !== 'inbox.html' && file !== 'kb.html') {
+    if (file && !['inbox.html', 'kb.html', 'admin.html'].includes(file)) {
       return;
     }
     clearTimeout(timer);
@@ -867,8 +874,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { location: '/inbox' }).end();
       return;
     }
-    if (url.pathname === '/inbox/kb') {
-      const html = await readFile(join(uiDir, 'kb.html'), 'utf8');
+    if (url.pathname === '/inbox/kb' || url.pathname === '/inbox/admin') {
+      const html = await readFile(join(uiDir, url.pathname === '/inbox/kb' ? 'kb.html' : 'admin.html'), 'utf8');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`));
       return;

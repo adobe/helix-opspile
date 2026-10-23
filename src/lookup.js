@@ -82,7 +82,7 @@ async function fetchTeamsChannel(env, teamId, channelId) {
   };
 }
 
-function toChannel(row, source, channelId) {
+export function toChannel(row, source, channelId) {
   return {
     source,
     channelId,

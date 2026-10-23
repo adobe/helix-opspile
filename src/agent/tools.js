@@ -30,6 +30,7 @@ import {
 export const AGENT_EMAIL = 'agent@opspile.invalid';
 const MAX_INDEX = 8000;
 
+const ORG_TYPE = { customer: 'Customer', partner: 'Partner', vendor: 'Vendor' };
 const text = (t) => ({ output: [{ type: 'text', text: t }] });
 const fail = (t) => ({ output: [{ type: 'text', text: t }], isError: true });
 
@@ -103,7 +104,7 @@ export function opspileExtension(ctx) {
       const t = await ctx.target();
       const lines = [
         `Ops team: ${t.team || 'unknown'}`,
-        `Customer: ${t.org || 'unknown'}`,
+        `${ORG_TYPE[t.orgType] || 'Customer'}: ${t.orgName ? `${t.orgName} (${t.org})` : (t.org || 'unknown')}`,
       ];
       if (t.key) {
         lines.push(

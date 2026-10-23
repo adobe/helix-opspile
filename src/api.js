@@ -11,6 +11,7 @@
  */
 
 import { accessEmail } from './access.js';
+import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { agentStatus, seedAgent } from './agent/stub.js';
 import {
@@ -97,6 +98,24 @@ export async function personById(env, id) {
     .bind(id).first();
   return person ? personWithTeams(env, person) : null;
 }
+
+/**
+ * What the admin team says about orgs (display name, icon, type), by slug, for the threads
+ * the UI shows: `org_name`, `org_icon`, `org_type` on each.
+ */
+async function orgsOf(env, slugs) {
+  const list = [...new Set(slugs.filter(Boolean))];
+  if (!list.length) {
+    return new Map();
+  }
+  const { results } = await env.DB.prepare(`SELECT slug, name, type, icon FROM orgs
+    WHERE slug IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(list)).all();
+  return new Map((results || []).map((o) => [o.slug, o]));
+}
+const orgFields = (orgs, slug) => {
+  const o = orgs.get(slug);
+  return { org_name: (o && o.name) || null, org_icon: (o && o.icon) || null, org_type: (o && o.type) || 'customer' };
+};
 
 /** A person by email, with their teams, or null. */
 export async function personByEmail(env, email) {
@@ -227,6 +246,7 @@ export async function inbox(env, me, team) {
   if (!threads.length) {
     return { team, members: await members(env, team), threads: [] };
   }
+  const orgs = await orgsOf(env, threads.map((t) => t.org));
   const keys = JSON.stringify(threads.map((t) => t.thread));
   // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
   const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
@@ -304,6 +324,7 @@ export async function inbox(env, me, team) {
         const label = labelBy.get(t.thread) || null;
         return {
           ...t,
+          ...orgFields(orgs, t.org),
           title: (label && label.title) || t.title,
           label,
           ...(people.get(t.thread) || { participants: [], customerDomain: null }),
@@ -412,6 +433,7 @@ export async function thread(env, me, key) {
   return {
     thread: {
       ...row,
+      ...orgFields(await orgsOf(env, [row.org]), row.org),
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
       label_thread: labelKey,
     },
@@ -574,6 +596,12 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   }
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
+  }
+  if (url.pathname.startsWith('/api/admin/')) {
+    if (!isAdmin(me)) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     if (!isAdmin(me)) {

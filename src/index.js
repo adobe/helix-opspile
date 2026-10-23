@@ -11,6 +11,7 @@
  */
 
 import inboxHtml from '../ui/inbox.html';
+import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
 import { accessEmail } from './access.js';
 import { refreshMirrors } from './agent/repos.js';
@@ -101,6 +102,12 @@ export default {
     });
     if (oauthResponse) {
       return oauthResponse;
+    }
+    if (pathname === '/inbox/admin') {
+      // Teams and orgs (admin team; the API checks), under /inbox like the editor.
+      return new Response(adminHtml, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
     }
     if (pathname === '/inbox/kb') {
       // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same

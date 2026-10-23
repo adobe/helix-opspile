@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opspile · admin</title>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
+    --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
+    --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
+    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
+    --code: #0b0d10;
+    font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
+      -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--ink);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
+      --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
+      --sel: #dde9fb; --purple: #8250df; --code: #f3f4f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
+  button, input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 9px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--red); }
+  button.link { border: 0; background: none; color: var(--link); padding: 0 4px; }
+  a { color: var(--link); }
+  code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  header h1 a { color: inherit; text-decoration: none; }
+  header nav { display: flex; gap: 4px; }
+  header nav a { color: var(--mute); text-decoration: none; padding: 3px 10px; border-radius: 7px; }
+  header nav a[aria-current="page"] { color: var(--ink); background: var(--sel); }
+  header .me { margin-left: auto; color: var(--mute); }
+  main { flex: 1; display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+  main > section { overflow: auto; min-height: 0; }
+  #list { padding: 12px; border-right: 1px solid var(--line); background: var(--col); }
+  #detail { padding: 16px 22px 40px; background: var(--bg); }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .search { width: 100%; margin-bottom: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+  .row:hover { background: var(--hover); }
+  .row.on { background: var(--sel); }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .sub, .sub { color: var(--faint); font-size: 12px; }
+  .ico { width: 16px; height: 16px; border-radius: 3px; flex: none; }
+  .ico.none { background: var(--line); }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); white-space: nowrap; }
+  .tag.partner { color: var(--purple); border-color: var(--purple); }
+  .tag.vendor { color: var(--yellow); border-color: var(--yellow); }
+  .tag.manual { color: var(--accent); border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+  .title { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .title input.big { font-size: 20px; font-weight: 600; flex: 1; background: transparent; border-color: transparent; padding: 2px 6px; }
+  .title input.big:hover, .title input.big:focus { border-color: var(--line); background: var(--card); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--mute); padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  td.n { text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; }
+  td input { width: 100%; }
+  .form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .form input { min-width: 120px; }
+  .form input.grow { flex: 1; }
+  .hint { color: var(--mute); font-size: 13px; margin: 4px 0 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 3px 12px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .field { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; align-items: center; }
+  .field label { color: var(--mute); }
+  .status { min-height: 20px; font-size: 13px; color: var(--mute); margin-top: 8px; }
+  .status.ok { color: var(--green); } .status.err { color: var(--red); } .status.warn { color: var(--yellow); }
+  .picker { position: relative; }
+  .picks { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin-top: 4px; max-height: 280px; overflow: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+  .picks .row { border-radius: 0; }
+  .empty { color: var(--mute); padding: 20px 4px; }
+  dialog.confirm { max-width: min(620px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; }
+  dialog.confirm::backdrop { background: rgba(0,0,0,.35); }
+  dialog.confirm p { margin: 0 0 8px; }
+  dialog.confirm .detail { color: var(--mute); font-size: 13px; max-height: 45vh; overflow: auto; }
+  dialog.confirm .detail li { margin: 2px 0; }
+  dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/inbox">opspile</a></h1>
+  <nav>
+    <a href="/inbox/admin?tab=teams" data-tab="teams">Teams</a>
+    <a href="/inbox/admin?tab=orgs" data-tab="orgs">Customers, partners, vendors</a>
+    <a href="/inbox/kb">Knowledge bases</a>
+  </nav>
+  <span class="me" id="me"></span>
+</header>
+<main>
+  <section id="list"><div class="empty">Loading…</div></section>
+  <section id="detail"></section>
+</main>
+<script>
+/*
+ * The admin team's pages for ops teams (#17) and orgs (#18), over /api/admin (src/admin.js).
+ *
+ * Teams: create, rename and delete teams; add, rename and remove members; the rules that file
+ * channels under the team (a channel-name prefix like `aem-`, a Teams team name, a Slack
+ * Connect team id); and manual assignments of single channels. Orgs: display name, icon and
+ * type (customer, partner, vendor), and manual assignments. Every rule change is tried first:
+ * if it moves channels to another team or org, the page lists them and asks, in the page (no
+ * native dialogs, which a debugger attached over CDP dismisses). Text fields save when they
+ * change.
+ */
+const state = { me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '' };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
+const ico = (icon) => (icon ? `<img class="ico" src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.className='ico none';this.removeAttribute('src')">` : '<span class="ico none"></span>');
+const ago = (at) => {
+  if (!at) return '';
+  const d = (Date.now() - Date.parse(at)) / 86400000;
+  return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 60 ? `${Math.round(d)} days ago` : new Date(at).toLocaleDateString();
+};
+const FIELD_LABEL = {
+  name: 'Channel name', group_name: 'Teams team name', connected: 'Slack Connect team id', channel_id: 'Channel id',
+};
+const UNASSIGNED = '_unassigned';
+
+async function call(path, method = 'GET', body) {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body: data };
+}
+
+/** A modal question in the page: resolves true for the `yes` button. */
+function ask(question, detailHtml, yes, { danger = false } = {}) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'confirm';
+    dlg.setAttribute('aria-label', question);
+    dlg.innerHTML = `<form method="dialog"><p><b>${esc(question)}</b></p>${detailHtml ? `<div class="detail">${detailHtml}</div>` : ''}
+      <div class="apply"><button value="no">Cancel</button><button value="yes" class="${danger ? 'danger' : 'primary'}">${esc(yes)}</button></div></form>`;
+    dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
+    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('[value="no"]').focus();
+  });
+}
+
+function status(kind, text) {
+  // Kept for the page that a change re-renders, so its outcome stays on screen.
+  state.flash = { kind, text };
+  const el = $('status');
+  if (!el) return;
+  el.className = `status ${kind}`;
+  el.textContent = text;
+}
+
+const orgLabel = (slug) => {
+  const o = state.orgs.find((x) => x.slug === slug);
+  return o && o.name ? o.name : slug;
+};
+const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || slug));
+
+function movesHtml(moves) {
+  const where = (x) => `${esc(teamLabel(x.team))} / ${esc(orgLabel(x.org))}${x.kind !== 'channel' ? ` (${esc(x.kind)})` : ''}`;
+  return `<ul>${moves.slice(0, 60).map((m) => `<li><b>${esc(m.channel.name || m.channel.channelId)}</b>: ${m.from.map(where).join(', ')} → ${where(m.to)}
+    <span class="sub">(${m.from.reduce((n, f) => n + f.threads, 0)} threads)</span></li>`).join('')}</ul>
+    ${moves.length > 60 ? `<p>… and ${moves.length - 60} more.</p>` : ''}
+    <p>Their threads are re-filed in the background; agents and knowledge bases follow the new team and org.</p>`;
+}
+
+/**
+ * A rule change: tried first; when it moves channels, the page lists them and asks. Returns
+ * the applied answer, or null when cancelled or refused.
+ */
+async function ruleChange(method, path, body) {
+  status('', 'Checking what this changes…');
+  const tried = await call(path, method, { ...body, dryRun: true });
+  if (!tried.ok) { status('err', tried.body.error || `Failed (${tried.status}).`); return null; }
+  const { moves } = tried.body;
+  if (moves.length && !(await ask(`This moves ${moves.length} channel${moves.length === 1 ? '' : 's'}.`, movesHtml(moves), 'Move them'))) {
+    status('', 'Nothing changed.');
+    return null;
+  }
+  const done = await call(path, method, body);
+  if (!done.ok) { status('err', done.body.error || `Failed (${done.status}).`); return null; }
+  status('ok', moves.length ? `Saved. Re-filing ${moves.length} channel${moves.length === 1 ? '' : 's'}.` : 'Saved. No channel moves.');
+  return done.body;
+}
+
+// ---- navigation ---------------------------------------------------------------------------
+
+function toUrl() {
+  const q = new URLSearchParams({ tab: state.tab });
+  if (state.sel) q.set(state.tab === 'teams' ? 'team' : 'org', state.sel);
+  history.replaceState(null, '', `/inbox/admin?${q}`);
+  for (const a of document.querySelectorAll('nav [data-tab]')) {
+    a.toggleAttribute('aria-current', a.dataset.tab === state.tab);
+    if (a.dataset.tab === state.tab) a.setAttribute('aria-current', 'page');
+  }
+}
+
+async function load() {
+  const [teams, orgs] = await Promise.all([call('/api/admin/teams'), call('/api/admin/orgs')]);
+  if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
+  state.teams = teams.body.teams;
+  state.unassigned = teams.body.unassigned;
+  state.orgs = orgs.body.orgs || [];
+  state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
+  return true;
+}
+
+function renderList() {
+  const f = state.filter.toLowerCase();
+  if (state.tab === 'teams') {
+    const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
+      <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
+        <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
+        <span class="sub">${t.members} people · ${t.channels} ch</span></div>`).join('');
+    const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
+        <span class="name"><i>Unassigned</i></span><span class="sub">${state.unassigned.channels} ch</span></div>` : '';
+    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
+      <h2>Ops teams</h2>${rows || '<div class="empty">No teams.</div>'}${un}
+      <h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
+        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required style="width:110px"><button class="primary">Create</button></form>
+      <div class="status" id="listStatus"></div>`;
+    $('ntName').oninput = () => { if (!$('ntSlug').dataset.touched) $('ntSlug').value = $('ntName').value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); };
+    $('ntSlug').oninput = () => { $('ntSlug').dataset.touched = '1'; };
+    $('newTeam').onsubmit = async (e) => {
+      e.preventDefault();
+      const r = await call('/api/admin/teams', 'POST', { slug: $('ntSlug').value, name: $('ntName').value });
+      if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
+      await load();
+      select(r.body.team.slug);
+    };
+  } else {
+    const rows = state.orgs.filter((o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f)).slice(0, 400).map((o) => `
+      <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
+        ${ico(o.icon)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
+        ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
+        <span class="sub">${o.channels} ch</span></div>`).join('');
+    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter ${state.orgs.length} orgs" value="${esc(state.filter)}">
+      ${rows || '<div class="empty">Nothing matches.</div>'}
+      <h2>New org</h2><form class="form" id="newOrg"><input id="noName" placeholder="Display name" class="grow" required>
+        <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
+      <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
+      <div class="status" id="listStatus"></div>`;
+    $('newOrg').onsubmit = async (e) => {
+      e.preventDefault();
+      const r = await call('/api/admin/orgs', 'POST', { name: $('noName').value, type: $('noType').value });
+      if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
+      await load();
+      select(r.body.org.slug);
+    };
+  }
+  $('filter').oninput = (e) => {
+    state.filter = e.target.value;
+    const at = e.target.selectionStart;
+    renderList();
+    $('filter').focus();
+    $('filter').setSelectionRange(at, at);
+  };
+  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => select(el.dataset.sel);
+}
+
+function select(sel) {
+  state.sel = sel;
+  toUrl();
+  renderList();
+  if (state.tab === 'teams') showTeam(sel); else showOrg(sel);
+}
+
+function switchTab(tab) {
+  state.tab = tab;
+  state.sel = null;
+  state.filter = '';
+  toUrl();
+  renderList();
+  $('detail').innerHTML = `<div class="empty">Pick ${tab === 'teams' ? 'a team' : 'an org'}.</div>`;
+}
+
+// ---- channels (shared) ------------------------------------------------------------------
+
+/** The channels card: where each is filed, and a picker that assigns another one here. */
+function channelsCard(channels, target, value) {
+  const other = target === 'team' ? 'org' : 'team';
+  const rows = channels.map((c) => {
+    const manual = c.manual[target];
+    return `<tr><td>${esc(c.name || c.channelId)}<div class="sub">${esc(c.source === 'teams' ? `Teams${c.groupName ? ` · ${c.groupName}` : ''}` : 'Slack')} · <span class="mono">${esc(c.channelId)}</span></div></td>
+      <td>${esc(other === 'org' ? orgLabel(c.org) : teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
+      <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
+      <td>${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
+        <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : '<span class="sub">by rule</span>'}</td></tr>`;
+  }).join('');
+  return `<div class="card"><h2>Channels</h2>
+    ${rows ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>` : '<div class="empty">No channel is filed here.</div>'}
+    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by name or id" autocomplete="off"><div class="picks" id="picks" hidden></div></div>
+    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).</p></div>`;
+}
+
+function wireChannels(target, value, refresh) {
+  let timer;
+  const picks = $('picks');
+  $('pick').oninput = () => {
+    clearTimeout(timer);
+    const q = $('pick').value.trim();
+    if (!q) { picks.hidden = true; return; }
+    timer = setTimeout(async () => {
+      const r = await call(`/api/admin/channels?q=${encodeURIComponent(q)}`);
+      const list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target]);
+      const seen = new Set();
+      const uniq = list.filter((c) => !seen.has(c.channelId) && seen.add(c.channelId));
+      picks.innerHTML = uniq.map((c) => `<div class="row" data-ch="${esc(c.channelId)}" data-source="${esc(c.source)}">
+        <span class="name">${esc(c.name || c.channelId)}</span><span class="sub">${esc(teamLabel(c.team))} / ${esc(orgLabel(c.org))}</span></div>`).join('')
+        || '<div class="empty" style="padding:8px">No channel matches.</div>';
+      picks.hidden = false;
+      for (const el of picks.querySelectorAll('[data-ch]')) {
+        el.onclick = async () => {
+          picks.hidden = true;
+          $('pick').value = '';
+          if (await ruleChange('POST', '/api/admin/assign', { target, value, channelId: el.dataset.ch, source: el.dataset.source })) refresh();
+        };
+      }
+    }, 200);
+  };
+  $('pick').onblur = () => setTimeout(() => { picks.hidden = true; }, 200);
+  for (const b of $('detail').querySelectorAll('[data-unassign]')) {
+    b.onclick = async () => {
+      if (await ruleChange('DELETE', '/api/admin/assign', { target, channelId: b.dataset.unassign, source: b.dataset.source })) refresh();
+    };
+  }
+}
+
+// ---- teams --------------------------------------------------------------------------------
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The prefix a pattern stands for (`^aem-` → `aem-`), or null for any other expression. */
+function prefixOf(pattern) {
+  const m = /^\^((?:\\.|[^\\.*+?()[\]{}|$^])*)$/.exec(pattern || '');
+  return m ? m[1].replace(/\\(.)/g, '$1') : null;
+}
+function describe(r) {
+  const prefix = prefixOf(r.pattern);
+  return prefix !== null ? `starts with <code>${esc(prefix)}</code>` : `matches <code>${esc(r.pattern)}</code>`;
+}
+
+function ruleRow(r) {
+  return `<tr data-rule="${r.id}"><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
+    <td>${r.value === state.sel ? '' : `→ <code>${esc(r.value)}</code>`}${r.source ? ` <span class="tag">${esc(r.source)} only</span>` : ''}</td>
+    <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
+    <td><button class="link" data-edit="${r.id}">edit</button><button class="link" data-del="${r.id}" style="color:var(--red)">delete</button></td></tr>`;
+}
+
+function ruleForm(r = {}) {
+  const prefix = r.pattern ? prefixOf(r.pattern) : '';
+  const mode = prefix !== null ? 'prefix' : 'regex';
+  return `<form class="form" id="ruleForm" data-id="${r.id || ''}">
+    <select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    <select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select>
+    <input id="rPattern" class="grow mono" placeholder="aem-" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required>
+    <select id="rSource"><option value="">Slack and Teams</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option></select>
+    <input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" style="width:80px" title="Priority: the lowest matching rule wins">
+    <input id="rNote" placeholder="Note" value="${esc(r.note || '')}">
+    <button class="primary">${r.id ? 'Save rule' : 'Add rule'}</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}
+  </form>`;
+}
+
+async function showTeam(slug) {
+  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
+  if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
+  const { team, members, rules, channels } = r.body;
+  const own = rules.filter((x) => x.value === slug && x.field !== 'channel_id');
+  const templates = rules.filter((x) => x.value !== slug);
+  const real = slug !== UNASSIGNED;
+  $('detail').innerHTML = `
+    <div class="title">${real ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">` : '<h1 style="margin:0;font-size:20px">Unassigned channels</h1>'}
+      <span class="sub mono">${esc(team.slug)}</span>${real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
+    <div class="status" id="status"></div>
+    ${real ? `<div class="card"><h2>Members</h2>
+      ${members.length ? `<table><tr><th>Name</th><th>Email</th><th></th></tr>${members.map((m) => `<tr>
+        <td><input value="${esc(m.name || '')}" data-person="${m.id}" aria-label="Name of ${esc(m.email)}"></td><td class="mono">${esc(m.email)}</td>
+        <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>` : '<div class="empty">Nobody yet.</div>'}
+      <form class="form" id="addMember"><input id="mEmail" type="email" placeholder="email@adobe.com" class="grow" required><input id="mName" placeholder="Name (optional)"><button class="primary">Add member</button></form>
+      <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
+
+    <div class="card"><h2>Rules</h2>
+      ${own.length ? `<table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th><th></th></tr>${own.map(ruleRow).join('')}</table>` : '<div class="empty">No rule files channels under this team yet.</div>'}
+      <div id="ruleSlot">${ruleForm()}</div>
+      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
+      ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}
+    ${channelsCard(channels, 'team', slug)}`;
+  const refresh = async () => { const { flash } = state; await load(); renderList(); await showTeam(slug); if (flash) status(flash.kind, flash.text); };
+  wireChannels('team', slug, refresh);
+  if (!real) return;
+  $('tName').onchange = async () => {
+    const res = await call('/api/admin/teams', 'PUT', { slug, name: $('tName').value });
+    if (res.ok) { status('ok', 'Renamed.'); await load(); renderList(); } else status('err', res.body.error);
+  };
+  if ($('tDelete')) {
+    $('tDelete').onclick = async () => {
+      if (!(await ask(`Delete the team ${team.name}?`, '<p>Its members leave it; people stay. Only a team without rules or threads can be deleted.</p>', 'Delete', { danger: true }))) return;
+      const res = await call('/api/admin/teams', 'DELETE', { slug });
+      if (!res.ok) { status('err', res.body.error); return; }
+      await load();
+      switchTab('teams');
+    };
+  }
+  for (const input of $('detail').querySelectorAll('[data-person]')) {
+    input.onchange = async () => {
+      const res = await call('/api/admin/members', 'PUT', { person: Number(input.dataset.person), name: input.value });
+      status(res.ok ? 'ok' : 'err', res.ok ? 'Saved.' : res.body.error);
+    };
+  }
+  for (const b of $('detail').querySelectorAll('[data-remove]')) {
+    b.onclick = async () => {
+      const m = members.find((x) => String(x.id) === b.dataset.remove);
+      if (!(await ask(`Remove ${m.name || m.email} from ${team.name}?`, '', 'Remove', { danger: true }))) return;
+      const res = await call('/api/admin/members', 'DELETE', { team: slug, person: m.id });
+      if (res.ok) refresh(); else status('err', res.body.error);
+    };
+  }
+  $('addMember').onsubmit = async (e) => {
+    e.preventDefault();
+    const res = await call('/api/admin/members', 'POST', { team: slug, email: $('mEmail').value, name: $('mName').value });
+    if (res.ok) refresh(); else status('err', res.body.error);
+  };
+  const wireRuleForm = () => {
+    $('ruleForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const id = Number($('ruleForm').dataset.id) || null;
+      const raw = $('rPattern').value.trim();
+      const body = {
+        ...(id ? { id } : {}),
+        target: 'team',
+        field: $('rField').value,
+        pattern: $('rMode').value === 'prefix' ? `^${escapeRe(raw)}` : raw,
+        value: slug,
+        source: $('rSource').value || null,
+        priority: Number($('rPriority').value),
+        note: $('rNote').value,
+      };
+      if (await ruleChange(id ? 'PUT' : 'POST', '/api/admin/rules', body)) refresh();
+    };
+    if ($('rCancel')) $('rCancel').onclick = () => { $('ruleSlot').innerHTML = ruleForm(); wireRuleForm(); };
+  };
+  wireRuleForm();
+  for (const b of $('detail').querySelectorAll('[data-edit]')) {
+    b.onclick = () => {
+      $('ruleSlot').innerHTML = ruleForm(rules.find((x) => String(x.id) === b.dataset.edit));
+      wireRuleForm();
+      $('rPattern').focus();
+    };
+  }
+  for (const b of $('detail').querySelectorAll('[data-del]')) {
+    b.onclick = async () => {
+      if (await ruleChange('DELETE', '/api/admin/rules', { id: Number(b.dataset.del) })) refresh();
+    };
+  }
+}
+
+// ---- orgs ---------------------------------------------------------------------------------
+
+async function showOrg(slug) {
+  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
+  if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
+  const { org, rules, channels, types } = r.body;
+  $('detail').innerHTML = `
+    <div class="title">${ico(org.icon)}<input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
+      <span class="sub mono">${esc(org.slug)}</span>${org.updated_at ? '<button class="danger" id="oDelete" title="Forget the name, icon and type">Reset</button>' : ''}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="field">
+      <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
+      <label for="oIcon">Icon</label><span style="display:flex;gap:8px;align-items:center"><input id="oIcon" class="mono" style="flex:1" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
+    </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain. A domain shows its favicon; an https URL is used as the image.</p></div>
+    ${channelsCard(channels, 'org', slug)}
+    ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
+      ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
+  const refresh = async () => { const { flash } = state; await load(); renderList(); await showOrg(slug); if (flash) status(flash.kind, flash.text); };
+  const save = async (patch) => {
+    const now = { name: $('oName').value, icon: $('oIcon').value, type: $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer', ...patch };
+    const res = await call('/api/admin/orgs', 'PUT', { slug, ...now });
+    if (!res.ok) { status('err', res.body.error); return; }
+    status('ok', 'Saved.');
+    await load();
+    renderList();
+    const img = $('detail').querySelector('.title .ico');
+    if (img) img.outerHTML = ico(res.body.org.icon);
+    if (!$('oDelete')) $('detail').querySelector('.title').insertAdjacentHTML('beforeend', '<button class="danger" id="oDelete" title="Forget the name, icon and type">Reset</button>');
+    wireDelete();
+  };
+  $('oName').onchange = () => save();
+  $('oIcon').onchange = () => save();
+  for (const b of $('oType').querySelectorAll('[data-type]')) {
+    b.onclick = () => {
+      for (const x of $('oType').querySelectorAll('[data-type]')) x.setAttribute('aria-pressed', String(x === b));
+      save({ type: b.dataset.type });
+    };
+  }
+  const wireDelete = () => {
+    if (!$('oDelete')) return;
+    $('oDelete').onclick = async () => {
+      if (!(await ask(`Forget the name, icon and type of ${org.name || org.slug}?`, '<p>Its channels stay where they are; it is shown by its slug again.</p>', 'Reset', { danger: true }))) return;
+      const res = await call('/api/admin/orgs', 'DELETE', { slug });
+      if (res.ok) refresh(); else status('err', res.body.error);
+    };
+  };
+  wireDelete();
+  wireChannels('org', slug, refresh);
+}
+
+// ---- start ------------------------------------------------------------------------------
+
+(async () => {
+  const me = await call('/api/me');
+  if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
+  state.me = me.body;
+  $('me').textContent = state.me.name || state.me.email || '';
+  if (!state.me.admin) {
+    $('list').innerHTML = '<div class="empty">These pages are for the admin team.</div>';
+    $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
+    return;
+  }
+  if (!(await load())) return;
+  const q = new URLSearchParams(location.search);
+  state.tab = q.get('tab') === 'orgs' ? 'orgs' : 'teams';
+  for (const a of document.querySelectorAll('nav [data-tab]')) {
+    a.onclick = (e) => { e.preventDefault(); switchTab(a.dataset.tab); };
+  }
+  switchTab(state.tab);
+  const sel = q.get(state.tab === 'teams' ? 'team' : 'org');
+  if (sel) select(sel);
+})();
+</script>
+</body>
+</html>

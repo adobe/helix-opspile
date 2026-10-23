@@ -91,8 +91,12 @@ export class ThreadAgent extends Agent {
         FROM threads WHERE thread = ?`).bind(entry.key).first();
       const root = entry && await this.env.DB.prepare(`SELECT permalink FROM messages
         WHERE thread = ? AND permalink IS NOT NULL ORDER BY at LIMIT 1`).bind(entry.key).first();
+      const about = row && await this.env.DB.prepare('SELECT name, type FROM orgs WHERE slug = ?')
+        .bind(row.org).first().catch(() => null);
       value = {
         key: entry ? entry.key : this.name,
+        orgName: (about && about.name) || null,
+        orgType: (about && about.type) || 'customer',
         team: entry ? entry.team : null,
         org: row ? row.org : null,
         kind: row ? row.kind : null,
