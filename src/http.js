@@ -17,8 +17,9 @@ export function text(body, status = 200) {
   return new Response(body, { status, headers: { 'content-type': 'text/plain' } });
 }
 
+// Compact: the inbox and long threads are hundreds of kilobytes, a third of them indentation.
 export function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj, null, 2), {
+  return new Response(JSON.stringify(obj), {
     status,
     headers: { 'content-type': 'application/json' },
   });
