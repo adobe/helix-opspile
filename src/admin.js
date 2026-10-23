@@ -12,7 +12,7 @@
 
 import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
-import { loadRules } from './lookup.js';
+import { isStaffDomain, loadRules } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
 import { ADMIN_TEAM } from './review.js';
 import { slug as toSlug, UNASSIGNED } from './rules.js';
@@ -20,7 +20,7 @@ import { slug as toSlug, UNASSIGNED } from './rules.js';
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
  *
- * - teams: create, rename, delete; members: add by email, rename, remove;
+ * - teams: create, rename, delete; members: add (found by name or email), remove;
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
  *   of one channel (a `channel_id` rule with priority 10);
@@ -343,13 +343,16 @@ async function deleteTeam(env, body) {
 async function addMember(env, body) {
   const teamSlug = clean(body.team);
   const email = clean(body.email).toLowerCase();
-  const name = clean(body.name) || null;
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return bad('give the person\'s email address');
   }
   if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(teamSlug).first()) {
     return json({ error: 'no such team' }, 404);
   }
+  // The name comes from the person's platform account, if opspile has seen one.
+  const account = await env.DB.prepare(`SELECT name FROM identities WHERE LOWER(email) = ?
+    AND kind = 'person' AND name IS NOT NULL LIMIT 1`).bind(email).first();
+  const name = (account && account.name) || clean(body.name) || null;
   // Team members are staff; a person who posted before has a row already.
   await env.DB.prepare(`INSERT INTO people (email, name, staff) VALUES (?, ?, 1)
     ON CONFLICT (email) DO UPDATE SET staff = 1, name = COALESCE(people.name, excluded.name)`)
@@ -362,13 +365,44 @@ async function addMember(env, body) {
   return json({ ok: true, person });
 }
 
-async function updateMember(env, body) {
-  const name = clean(body.name);
-  if (!name) {
-    return bad('give a name');
+/**
+ * GET /api/admin/people?q=&team=: people to add to a team, for the autocomplete. Everyone
+ * opspile knows by name or email: people in D1, and platform accounts with an email that
+ * are not linked to one yet (somebody who posted but was never added). Staff first; the
+ * team's members are left out.
+ */
+async function people(env, q, teamSlug) {
+  const needle = `%${q.toLowerCase().replace(/[%_]/g, '')}%`;
+  if (needle.length < 4) {
+    return json({ people: [] });
   }
-  const { meta } = await env.DB.prepare('UPDATE people SET name = ? WHERE id = ?').bind(name, Number(body.person)).run();
-  return meta.changes ? json({ ok: true }) : json({ error: 'no such person' }, 404);
+  const known = await rows(env, `SELECT p.id, p.name, p.email, p.staff,
+      (SELECT GROUP_CONCAT(team, ',') FROM team_members m WHERE m.person = p.id) AS teams
+    FROM people p
+    WHERE p.email IS NOT NULL AND (LOWER(p.name) LIKE ?1 OR LOWER(p.email) LIKE ?1)
+      AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.person = p.id AND m.team = ?2)
+    LIMIT 40`, needle, teamSlug || '');
+  const accounts = await rows(env, `SELECT MAX(i.name) AS name, LOWER(i.email) AS email
+    FROM identities i
+    WHERE i.person IS NULL AND i.kind = 'person' AND i.email IS NOT NULL
+      AND (LOWER(i.name) LIKE ?1 OR LOWER(i.email) LIKE ?1)
+      AND NOT EXISTS (SELECT 1 FROM people p WHERE p.email = i.email)
+    GROUP BY LOWER(i.email) LIMIT 40`, needle);
+  const list = [
+    ...known.map((p) => ({
+      id: p.id,
+      name: p.name,
+      email: p.email,
+      staff: Boolean(p.staff) || isStaffDomain(env, p.email),
+      teams: p.teams ? p.teams.split(',') : [],
+    })),
+    ...accounts.map((a) => ({
+      id: null, name: a.name, email: a.email, staff: isStaffDomain(env, a.email), teams: [],
+    })),
+  ];
+  const label = (x) => String(x.name || x.email);
+  list.sort((a, b) => (b.staff - a.staff) || label(a).localeCompare(label(b)));
+  return json({ people: list.slice(0, 20) });
 }
 
 async function removeMember(env, me, body) {
@@ -486,7 +520,7 @@ export async function admin(request, env, url, me) {
     case 'DELETE teams': return deleteTeam(env, body);
     case 'GET team': return team(env, q('slug'));
     case 'POST members': return addMember(env, body);
-    case 'PUT members': return updateMember(env, body);
+    case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
     case 'DELETE members': return removeMember(env, me, body);
     case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
     case 'POST rules': return createRule(env, me, body);

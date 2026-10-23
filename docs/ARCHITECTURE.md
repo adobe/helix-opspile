@@ -73,7 +73,8 @@ one is a customer shown by its slug and the favicon of its usual mail domain. Th
 the agents show the name and the type.
 
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
-their members, the rules that file channels under a team (a name prefix like `aem-`, a Teams
+their members (found by name or email among the people and platform accounts opspile knows;
+names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
 team, a Slack Connect team), manual assignments of channels to a team or an org, and each
 org's name, icon and type. Every rule change is tried first: the page lists the channels it
 would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the

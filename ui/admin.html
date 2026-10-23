@@ -124,9 +124,9 @@
 /*
  * The admin team's pages for ops teams (#17) and orgs (#18), over /api/admin (src/admin.js).
  *
- * Teams: create, rename and delete teams; add, rename and remove members; the rules that file
- * channels under the team (a channel-name prefix like `aem-`, a Teams team name, a Slack
- * Connect team id); and manual assignments of single channels. Orgs: display name, icon and
+ * Teams: create, rename and delete teams; add members (found by name or email) and remove
+ * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
+ * Teams team name, a Slack Connect team id); and manual assignments of single channels. Orgs: display name, icon and
  * type (customer, partner, vendor), and manual assignments. Every rule change is tried first:
  * if it moves channels to another team or org, the page lists them and asks, in the page (no
  * native dialogs, which a debugger attached over CDP dismisses). Text fields save when they
@@ -360,6 +360,68 @@ function wireChannels(target, value, refresh) {
 
 // ---- teams --------------------------------------------------------------------------------
 
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/**
+ * Adding a member: one field that finds people by name or email (people opspile knows, and
+ * platform accounts that posted), staff first; an email nobody has yet can be added as is.
+ * Arrow keys and Enter pick, Escape closes.
+ */
+function wireMemberPicker(slug, refresh) {
+  const input = $('mFind');
+  const picks = $('mPicks');
+  let timer;
+  let list = [];
+  let at = 0;
+  const add = async (p) => {
+    picks.hidden = true;
+    input.value = '';
+    const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined });
+    if (res.ok) { status('ok', `Added ${res.body.person.name || res.body.person.email}.`); refresh(); } else status('err', res.body.error);
+  };
+  const render = () => {
+    picks.innerHTML = list.map((p, i) => `<div class="row${i === at ? ' on' : ''}" data-i="${i}">
+      <span class="name">${p.name ? esc(p.name) : `<i>${esc(p.email)}</i>`} ${p.name ? `<span class="sub mono">${esc(p.email)}</span>` : ''}</span>
+      ${p.new ? '<span class="tag">new person</span>' : ''}${p.staff ? '' : '<span class="tag vendor">not staff</span>'}
+      ${p.teams && p.teams.length ? `<span class="sub">${esc(p.teams.map(teamLabel).join(', '))}</span>` : ''}</div>`).join('')
+      || '<div class="empty" style="padding:8px">Nobody matches. Type a full email address to add someone new.</div>';
+    picks.hidden = false;
+    for (const el of picks.querySelectorAll('[data-i]')) {
+      el.onmousedown = (e) => { e.preventDefault(); add(list[Number(el.dataset.i)]); };
+    }
+  };
+  input.oninput = () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) { picks.hidden = true; list = []; return; }
+    timer = setTimeout(async () => {
+      const r = await call(`/api/admin/people?team=${encodeURIComponent(slug)}&q=${encodeURIComponent(q)}`);
+      if (input.value.trim() !== q) return;
+      list = r.body.people || [];
+      const email = q.toLowerCase();
+      if (EMAIL.test(email) && !list.some((p) => p.email === email)) {
+        list.push({ email, name: null, new: true, staff: true });
+      }
+      at = 0;
+      render();
+    }, 150);
+  };
+  input.onkeydown = (e) => {
+    if (picks.hidden || !list.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      add(list[at]);
+    } else if (e.key === 'Escape') {
+      picks.hidden = true;
+    }
+  };
+  input.onblur = () => setTimeout(() => { picks.hidden = true; }, 150);
+}
+
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** The prefix a pattern stands for (`^aem-` → `aem-`), or null for any other expression. */
 function prefixOf(pattern) {
@@ -406,9 +468,9 @@ async function showTeam(slug) {
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><h2>Members</h2>
       ${members.length ? `<table><tr><th>Name</th><th>Email</th><th></th></tr>${members.map((m) => `<tr>
-        <td><input value="${esc(m.name || '')}" data-person="${m.id}" aria-label="Name of ${esc(m.email)}"></td><td class="mono">${esc(m.email)}</td>
+        <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
         <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>` : '<div class="empty">Nobody yet.</div>'}
-      <form class="form" id="addMember"><input id="mEmail" type="email" placeholder="email@adobe.com" class="grow" required><input id="mName" placeholder="Name (optional)"><button class="primary">Add member</button></form>
+      <div class="form picker"><input id="mFind" class="grow" placeholder="Add a member: type a name or an email" autocomplete="off" aria-label="Add a member"><div class="picks" id="mPicks" hidden></div></div>
       <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
 
     <div class="card"><h2>Rules</h2>
@@ -433,12 +495,6 @@ async function showTeam(slug) {
       switchTab('teams');
     };
   }
-  for (const input of $('detail').querySelectorAll('[data-person]')) {
-    input.onchange = async () => {
-      const res = await call('/api/admin/members', 'PUT', { person: Number(input.dataset.person), name: input.value });
-      status(res.ok ? 'ok' : 'err', res.ok ? 'Saved.' : res.body.error);
-    };
-  }
   for (const b of $('detail').querySelectorAll('[data-remove]')) {
     b.onclick = async () => {
       const m = members.find((x) => String(x.id) === b.dataset.remove);
@@ -447,11 +503,7 @@ async function showTeam(slug) {
       if (res.ok) refresh(); else status('err', res.body.error);
     };
   }
-  $('addMember').onsubmit = async (e) => {
-    e.preventDefault();
-    const res = await call('/api/admin/members', 'POST', { team: slug, email: $('mEmail').value, name: $('mName').value });
-    if (res.ok) refresh(); else status('err', res.body.error);
-  };
+  wireMemberPicker(slug, refresh);
   const wireRuleForm = () => {
     $('ruleForm').onsubmit = async (e) => {
       e.preventDefault();

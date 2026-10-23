@@ -93,7 +93,7 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, { ...ADA, readonly: true }, 'POST', '/api/admin/teams', { slug: 'x', name: 'X' })).status, 403);
   });
 
-  it('creates, renames and deletes teams, and adds, renames and removes members', async () => {
+  it('creates, renames and deletes teams, and adds and removes members', async () => {
     const e = env();
     let r = await call(e, ADA, 'GET', '/api/admin/teams');
     assert.deepEqual(r.body.teams.map((t) => [t.slug, t.members, t.channels, t.threads]), [
@@ -106,17 +106,30 @@ describe('admin: teams and members', () => {
     assert.equal(r.status, 200);
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'search', name: 'Search' })).status, 200);
 
-    // A member by email: a new person, staff, linked to their platform accounts.
-    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
-      VALUES ('slack', 'E1', 'U9', 'person', 'Cy', 'cy@staff.example', '2026-10-22T00:00:00Z')`);
-    r = await call(e, ADA, 'POST', '/api/admin/members', { team: 'search', email: 'Cy@Staff.example', name: 'Cy' });
+    // Finding people to add: people in D1 and platform accounts not linked yet, staff first,
+    // without the team's members.
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at) VALUES
+      ('slack', 'E1', 'U9', 'person', 'Cy Platform', 'cy@staff.example', '2026-10-22T00:00:00Z'),
+      ('slack', 'E1', 'U8', 'person', 'Cyd Customer', 'cyd@customer.example', '2026-10-22T00:00:00Z')`);
+    e.STAFF_DOMAINS = 'staff.example';
+    r = await call(e, ADA, 'GET', '/api/admin/people?team=search&q=cy');
+    assert.deepEqual(r.body.people.map((p) => [p.name, p.id, p.staff]), [['Cy Platform', null, true], ['Cyd Customer', null, false]]);
+    r = await call(e, ADA, 'GET', '/api/admin/people?team=helix&q=staff.example');
+    assert.deepEqual(r.body.people.map((p) => p.email), ['cy@staff.example']);
+    assert.deepEqual((await call(e, ADA, 'GET', '/api/admin/people?q=c')).body.people, []);
+
+    // Added: a person, staff, named after their account, linked to it.
+    r = await call(e, ADA, 'POST', '/api/admin/members', { team: 'search', email: 'Cy@Staff.example' });
     assert.equal(r.status, 200);
     const cy = r.body.person;
-    assert.deepEqual([cy.email, cy.staff], ['cy@staff.example', 1]);
+    assert.deepEqual([cy.email, cy.name, cy.staff], ['cy@staff.example', 'Cy Platform', 1]);
     assert.deepEqual(e.DB.rows("SELECT person FROM identities WHERE user_id = 'U9'"), [{ person: cy.id }]);
-    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { person: cy.id, name: 'Cyril' })).status, 200);
     r = await call(e, ADA, 'GET', '/api/admin/team?slug=search');
-    assert.deepEqual(r.body.members.map((m) => m.name), ['Cyril']);
+    assert.deepEqual(r.body.members.map((m) => m.name), ['Cy Platform']);
+    r = await call(e, ADA, 'GET', '/api/admin/people?team=search&q=cy');
+    assert.deepEqual(r.body.people.map((p) => p.name), ['Cyd Customer']);
+    // Names are not edited here.
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { person: cy.id, name: 'Cyril' })).status, 404);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/members', { team: 'search', person: cy.id })).status, 200);
 
     // The admin team keeps a member; a team with threads or rules stays.
