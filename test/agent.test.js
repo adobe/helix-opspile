@@ -13,9 +13,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  afterEach, beforeEach, describe, it,
+  after, afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { CodemodeSandbox } from '@earendil-works/pi-codemode';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable';
@@ -29,7 +30,8 @@ import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
-import { opspileExtension } from '../src/agent/tools.js';
+import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
+import { opspileExtension, staffExtension } from '../src/agent/tools.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -445,14 +447,22 @@ describe('thread agents', () => {
     const target = {
       key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack',
     };
-    registry.install(opspileExtension({
+    const agent = {
       env: e,
       hasThread: true,
       target: async () => target,
       verdicts: async (messages) => new Map(await Promise.all(
         messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
       )),
-    }));
+    };
+    // As ThreadAgent installs them: the staff's instructions after code mode and MCP.
+    const sandbox = new CodemodeSandbox();
+    const catalog = { fingerprint: '', at: 0, servers: [] };
+    registry.install(opspileExtension(agent));
+    registry.install(codemodeExtension(catalog, sandbox));
+    registry.install(mcpExtension(catalog, () => null));
+    registry.install(staffExtension(agent));
+    after(() => sandbox.close());
     const ctx = BACKGROUND_CONTEXT;
     const harness = await Harness.open(new MemoryStorage(), { models, registry }, ctx);
     const root = await harness.root(ctx, { agent: { model: { provider: 'faux', modelId: 'faux-model' } } });
@@ -491,6 +501,9 @@ describe('thread agents', () => {
     const staffNotes = system.slice(system.indexOf('The admin team wrote these instructions'));
     assert.match(staffNotes, /^The admin team wrote these instructions\. They are trusted[^\n]*\n\n## For the ops team helix\n\nSign drafts as the Helix team\.\n\n## For the customer acme\n\nAddress acme people by first name\.\n<\/instructions-from-staff>$/);
     assert.ok(system.lastIndexOf('Sign drafts as the Helix team') > system.indexOf('adobe/helix-opspile'));
+    // Code mode lists the agent's tools for scripts, before the staff's instructions.
+    assert.match(system, /<codemode>\nTools scripts can call[\s\S]*`git_grep`/);
+    assert.ok(system.indexOf('<codemode>') < system.indexOf('The admin team wrote these instructions'));
     const [thread, grep, read, saved, conflict, draft, refused, promptRefused] = results;
     assert.match(promptRefused, /systemprompt\.md is maintained by the admin team/);
     assert.match(thread, /CDN purge takes forever/);

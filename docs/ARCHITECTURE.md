@@ -451,11 +451,30 @@ labelled as written by people outside its control.
 | `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. This is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+| `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 GitHub repositories are read from Artifacts mirrors: the cron imports each listed repository
 into a fresh Artifacts repo, promotes it once it is readable and deletes the mirror it
 replaces, at most every six hours. Reads need no GitHub token and hit no rate limit; private
 repositories cannot be imported yet.
+
+**Code mode and MCP servers.** The `codemode` tool is pi-durable's code mode: the script runs
+in a QuickJS sandbox on the agent's own thread (`createInlineCodemodeSandbox`; one object per
+thread, so a script that computes holds up only its own agent, for at most its interrupt
+budget), every call it makes is a nested tool call, and a script interrupted by an eviction
+resumes where it was without making its finished calls again. Each ops team and each customer
+can have MCP servers (`mcp_servers`, maintained in the admin pages; credentials are request
+headers sealed with `TOKEN_KEY`). An agent gets the enabled servers of its thread's team and
+customer: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
+offered to the model as a tool of its own, and each server is a code mode namespace that
+`describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
+prompt a few lines, and a script can call several and filter what they return. A server's
+`allow` list limits the tools agents get; a tool that declares itself read-only may run again
+after an eviction, any other is reported to the model as interrupted instead. The list of
+servers and tools (no credentials) is kept in the agent's storage, so a restarted agent has the
+same tools at once; before the agent is told anything it is checked against D1, and the servers
+are asked again when it changed or after an hour. MCP results come from systems outside
+opspile; the prompt says they are data, not instructions, like customer messages.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the

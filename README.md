@@ -18,7 +18,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
 | `GET /inbox/admin` | Teams, members, rules and manual assignments; customers, partners and vendors (name, icon, type, manual assignments). One static page, for the admin team; team managers see their teams' members there (add, remove, promote, demote). |
-| `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign`, `channels?q=`, `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. |
+| `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign`, `channels?q=`, `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies), and `mcp?scope=team|org&slug=` (the agents' MCP servers; team managers for their teams; `POST mcp/check { id }` connects and lists its tools). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. |
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team, and team managers for their teams' knowledge bases: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
@@ -52,7 +52,7 @@ Nothing below is committed; set it on the Worker.
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
 | `GRAPH_CLIENT_STATE` | secret | Random value our Graph subscriptions carry as `clientState`; notifications without it are dropped |
 | `SLACK_CLIENT_SECRET` | secret | Client secret of the opspile Slack app (people connecting their Slack account) |
-| `TOKEN_KEY` | secret | 32 random bytes (base64url): encrypts people's OAuth tokens and signs OAuth state |
+| `TOKEN_KEY` | secret | 32 random bytes (base64url): encrypts people's OAuth tokens and the agents' MCP server credentials, and signs OAuth state |
 | `ACCESS_ACCOUNT_ID`, `ACCESS_APP_ID`, `ACCESS_POLICY_ID` | var | Optional: the Cloudflare account, Access application and allow policy of `/inbox` and `/api`. With them, the policy's email list follows the ops teams (staff members only), after every membership change and on the cron |
 | `ACCESS_API_TOKEN` | secret | API token with *Access: Apps and Policies Write*, for that sync. Required when `ACCESS_APP_ID` is set |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
@@ -133,7 +133,16 @@ bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 GitHub repositories the agents may read are rows in `agent_repos`, data like the rules:
 `INSERT INTO agent_repos (scope, slug, url, note) VALUES ('org', 'acme', 'https://github.com/acme/site', 'their site')`
 (`scope` is `all`, `team` or `org`). The cron mirrors them into Artifacts within 20 minutes.
-`GET /diag/agent?name=<thread key>` shows what an agent is doing.
+`GET /diag/agent?name=<thread key>` shows what an agent is doing (and its MCP servers).
+
+**MCP servers.** Each ops team and each customer can have MCP servers for its agents, added in
+the admin pages (the team's card: its managers and the admin team; the customer's card: the
+admin team): a name, the server's `https://` Streamable HTTP URL, what it is for, request
+headers for its credentials (sealed with `TOKEN_KEY`, never shown again), and optionally the
+only tools agents may call. Adding a server connects to it and lists its tools. An agent gets
+the servers of its thread's team and customer, and calls them only from code mode scripts
+(`await tools.mcp__<name>__<tool>(args)`); see ARCHITECTURE, "Thread agents". Servers that need
+an interactive OAuth sign-in are not supported yet; use one that takes a token in a header.
 
 ### Rules and replay
 
