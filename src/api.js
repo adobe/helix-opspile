@@ -29,7 +29,7 @@ import { parse } from './channels.js';
 import { profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
-  ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
+  ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 
@@ -82,10 +82,16 @@ async function participants(env, keys) {
 }
 
 async function personWithTeams(env, person) {
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name, m.role FROM team_members m
     JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
   const teams = results || [];
-  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
+  return {
+    ...person,
+    teams,
+    admin: teams.some((t) => t.slug === 'admin'),
+    // Teams whose members and knowledge base this person manages (see migration 0018).
+    manages: teams.filter((t) => t.role === 'manager').map((t) => t.slug),
+  };
 }
 
 /**
@@ -614,15 +620,17 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
   }
+  // The admin pages and the editor: the admin team, and team managers for their teams (the
+  // routes check which).
   if (url.pathname.startsWith('/api/admin/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'for the admin team and team managers' }, 403);
     }
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'the knowledge-base editor is for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'the knowledge-base editor is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }

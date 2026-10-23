@@ -87,7 +87,7 @@ describe('viewer and inbox', () => {
     const DB = fresh();
     const me = await viewer(req(await sign(claims())), { ...env, DB }, { fetchImpl, now: NOW });
     assert.deepEqual(me, {
-      id: 1, name: 'A', email: 'a@staff.example', teams: [{ slug: 'helix', name: 'Helix' }], admin: false,
+      id: 1, name: 'A', email: 'a@staff.example', teams: [{ slug: 'helix', name: 'Helix', role: 'member' }], admin: false, manages: [],
     });
     const nobody = await viewer(req(await sign(claims({ email: 'x@else.example' }))), { ...env, DB }, { fetchImpl, now: NOW });
     assert.equal(nobody, null);

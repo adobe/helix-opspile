@@ -30,6 +30,15 @@ export const ANSWERS = {
 
 export const isAdmin = (me) => Boolean(me && me.teams.some((t) => t.slug === ADMIN_TEAM));
 
+/** The teams `me` manages as a team manager (the admin team manages every team besides). */
+export const managedTeams = (me) => (me ? me.teams.filter((t) => t.role === 'manager').map((t) => t.slug) : []);
+
+/** Whether `me` may manage `team`'s members and knowledge base: the admin team, or a manager. */
+export const managesTeam = (me, team) => isAdmin(me) || managedTeams(me).includes(team);
+
+/** Whether `me` may use the admin pages at all: the admin team, or any team's manager. */
+export const isManager = (me) => isAdmin(me) || managedTeams(me).length > 0;
+
 /** The model's answer to one question, as a reviewable value and its probability. */
 export function modelAnswer(label, question) {
   if (!label) {
