@@ -127,11 +127,24 @@ const repair = (src) => src.replace(
   (_, url) => `](${url.trim().replace(/\s/g, '%20')})`,
 );
 
+// Images are shown at most this tall (the bubble limits the width).
+export const IMAGE_MAX_HEIGHT = 360;
+
 function image(tag, proxy) {
   const src = (/ src="([^"]*)"/.exec(tag) || [])[1] || '';
   const url = proxy(src.replace(/&amp;/g, '&'));
+  // A `WxH` title is the image's size: the space is reserved before it loads, so the
+  // thread does not jump when it arrives.
+  const size = / title="(\d{1,5})x(\d{1,5})"/.exec(tag);
+  let dims = '';
+  if (size) {
+    const [w, h] = [Number(size[1]), Number(size[2])];
+    const scale = Math.min(1, IMAGE_MAX_HEIGHT / h);
+    dims = ` width="${Math.max(1, Math.round(w * scale))}" height="${Math.max(1, Math.round(h * scale))}"`;
+  }
   return tag
-    .replace(/ src="[^"]*"/, ` class="att" src="${encode(url)}"`)
+    .replace(/ title="\d{1,5}x\d{1,5}"/, '')
+    .replace(/ src="[^"]*"/, ` class="att${size ? ' sized' : ''}" src="${encode(url)}"${dims}`)
     .replace(/ ?\/>$/, ' loading="lazy" tabindex="0">');
 }
 

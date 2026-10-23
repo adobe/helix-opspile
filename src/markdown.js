@@ -45,7 +45,14 @@ export function mdUrl(url) {
 }
 
 /** A markdown link: brackets in the label are escaped, the URL is a safe destination. */
-export const mdLink = (label, url, image = false) => `${image ? '!' : ''}[${String(label).replace(/[[\]\\]/g, '\\$&')}](${mdUrl(url)})`;
+/** Width × height as an image title, so the inbox can reserve the space before it loads. */
+export const sizeTitle = (w, h) => {
+  const W = Math.round(Number(w));
+  const H = Math.round(Number(h));
+  return W > 0 && H > 0 && W < 100000 && H < 100000 ? `${W}x${H}` : null;
+};
+
+export const mdLink = (label, url, image = false, size = null) => `${image ? '!' : ''}[${String(label).replace(/[[\]\\]/g, '\\$&')}](${mdUrl(url)}${image && size ? ` "${size}"` : ''})`;
 
 /**
  * Slack mrkdwn to markdown.
@@ -120,7 +127,9 @@ export function htmlToMarkdown(html) {
     })
     .replace(/<img\s[^>]*>/gi, (tag) => {
       const attr = (name) => (new RegExp(`\\s${name}="([^"]*)"`, 'i').exec(tag) || [])[1] || '';
-      return mdLink(attr('alt') || 'image', attr('src'), true);
+      // Teams gives an image's size as attributes (and in its style).
+      const px = (name) => attr(name) || (new RegExp(`${name}:\\s*(\\d+)px`, 'i').exec(attr('style')) || [])[1];
+      return mdLink(attr('alt') || 'image', attr('src'), true, sizeTitle(px('width'), px('height')));
     })
     .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')
     .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')

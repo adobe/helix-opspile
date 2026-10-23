@@ -23,7 +23,7 @@
  * in the platform's format (`text` + `format`), converted later once mentions are known.
  */
 
-import { mdLink } from './markdown.js';
+import { mdLink, sizeTitle } from './markdown.js';
 
 /** Slack subtypes that are ordinary messages from a person or a bot. */
 const SLACK_CONTENT = new Set([
@@ -50,7 +50,12 @@ function slackFiles(files) {
   const ok = (files || []).filter((f) => f && (f.permalink || f.name));
   // Images are shown inline (through the inbox's media proxy); other files are links.
   const images = ok.filter((f) => /^image\//.test(f.mimetype || '') && f.url_private)
-    .map((f) => mdLink(f.title || f.name || 'image', f.url_private, true));
+    .map((f) => mdLink(
+      f.title || f.name || 'image',
+      f.url_private,
+      true,
+      sizeTitle(f.original_w, f.original_h),
+    ));
   const links = ok.filter((f) => !(/^image\//.test(f.mimetype || '') && f.url_private))
     .map((f) => `- ${mdLink(f.title || f.name || 'file', f.permalink)}`);
   return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');

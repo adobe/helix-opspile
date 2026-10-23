@@ -105,3 +105,12 @@ describe('Slack markup in code', () => {
     assert.match(md, /```\nhttp:\/\/x\.example\/a\n```/);
   });
 });
+
+describe('image sizes', () => {
+  it('keeps the size Teams gives an image, as its title', () => {
+    const md = htmlToMarkdown('<p><img src="https://graph.example/hc/1/$value" alt="image" width="250" height="140" style="width:250px; height:140px"></p>');
+    assert.match(md, /!\[image\]\(https:\/\/graph\.example\/hc\/1\/\$value "250x140"\)/);
+    assert.match(htmlToMarkdown('<img src="https://graph.example/x" style="width:300px;height:200px">'), /"300x200"\)/);
+    assert.doesNotMatch(htmlToMarkdown('<img src="https://graph.example/x">'), /"\d+x\d+"/);
+  });
+});
