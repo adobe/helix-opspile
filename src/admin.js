@@ -13,7 +13,6 @@
 import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
 import { isStaffDomain, loadRules } from './lookup.js';
-import { mcpAdmin } from './mcpadmin.js';
 import { enqueueMoves, plan } from './refile.js';
 import {
   ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
@@ -29,8 +28,7 @@ import { syncAccessQuietly } from './accesssync.js';
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
  *   of one channel (a `channel_id` rule with priority 10);
- * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
- * - the thread agents' MCP servers of a team or an org (src/mcpadmin.js).
+ * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments.
  *
  * Team managers (migration 0018) use the same API for the teams they manage, and only for
  * their members: they see those teams, add and remove people, and promote or demote them.
@@ -589,12 +587,6 @@ export async function admin(request, env, url, me) {
   const body = m === 'GET' ? {} : await request.json().catch(() => ({}));
   const q = (k) => clean(url.searchParams.get(k));
   const route = `${m} ${p.slice('/api/admin/'.length)}`;
-  // The agents' MCP servers: team managers for their teams, the admin team for every team
-  // and org (src/mcpadmin.js checks).
-  const servers = await mcpAdmin(request, env, url, me, body);
-  if (servers) {
-    return servers;
-  }
   // Team managers: their teams' members, nothing else.
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members'];

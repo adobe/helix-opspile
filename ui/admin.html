@@ -132,25 +132,6 @@
   dialog.confirm .detail { color: var(--mute); font-size: 13px; max-height: 45vh; overflow: auto; }
   dialog.confirm .detail li { margin: 2px 0; }
   dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-  /* MCP servers of the agents: one row per server, its tools below it. */
-  .mcp td { vertical-align: top; }
-  .mcp td input[type="checkbox"] { width: auto; margin: 0 2px 0 0; vertical-align: -2px; }
-  .mcp td.act { white-space: nowrap; text-align: right; width: 1%; }
-  .mcp td.st { width: 130px; } .mcp td.cr { width: 190px; }
-  .mcp .tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .mcp .tools .tag { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .mcp .tools .tag.off { opacity: .45; text-decoration: line-through; }
-  .tag.ok { color: var(--green); border-color: var(--green); }
-  .tag.err { color: var(--red); border-color: var(--red); }
-  .tag.ro { color: var(--mute); }
-  .mcp .err { color: var(--red); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
-  .mcpForm { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; align-items: center; margin-top: 12px;
-    padding-top: 12px; border-top: 1px solid var(--line); }
-  .mcpForm label { color: var(--mute); }
-  .mcpForm .hdr { display: flex; gap: 6px; }
-  .mcpForm .hdr input:first-child { width: 170px; flex: none; }
-  .mcpForm .hdr input:last-child { flex: 1; }
-  .mcpForm .actions { grid-column: 2; display: flex; gap: 8px; align-items: center; }
 </style>
 </head>
 <body>
@@ -181,8 +162,6 @@
  *
  * Team managers (and every member of a self-managed team) see the teams they manage, add and
  * remove members and promote or demote them; the rest is for the admin team.
- *
- * Both: the MCP servers the thread agents of the team's (the customer's) threads may use.
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
@@ -783,7 +762,6 @@ async function showTeam(slug) {
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
       <div class="form picker"><input id="mFind" class="grow" placeholder="Add a member: type a name or an email" autocomplete="off" aria-label="Add a member"><div class="picks" id="mPicks" hidden></div></div>
       <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
-    ${mcpCard('team')}
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
@@ -795,7 +773,6 @@ async function showTeam(slug) {
   if (!real) return;
   renderMembers();
   wireMemberPicker();
-  showMcp('team', slug);
   $('tSelf').onchange = async () => {
     const on = $('tSelf').checked;
     const res = await call('/api/admin/teams', 'PUT', { slug, selfManaged: on });
@@ -851,12 +828,10 @@ async function showOrg(slug) {
       <label for="oIcon">Icon</label><span style="display:flex;gap:8px;align-items:center"><input id="oIcon" class="mono" style="flex:1" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain. A domain shows its favicon; an https URL is used as the image.</p></div>
     ${channelsCard('org')}
-    ${mcpCard('org')}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
   renderChannels();
   wireChannelPicker();
-  showMcp('org', slug);
   const pressed = () => $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer';
   /** Shows an org's fields as saved, without touching the field being typed in. */
   const show = (o) => {
@@ -900,150 +875,6 @@ async function showOrg(slug) {
     $('oIcon').value = '';
     show(state.view.org);
   };
-}
-
-// ---- MCP servers of the agents (shared by teams and orgs) -----------------------------------
-//
-// Per team (its managers and the admin team) and per org (the admin team): servers the thread
-// agents reach through code mode, as `tools.mcp__<name>__<tool>`. Credentials are request
-// headers; the page sends them once and only ever sees their names again.
-
-const MCP_OWNER = { team: 'this team\'s threads', org: 'this customer\'s threads' };
-
-function mcpCard(scope) {
-  return `<div class="card mcp"><h2>MCP servers for agents</h2><div id="mcpTable"><div class="empty">Loading…</div></div>
-    <form class="mcpForm" id="mcpForm" autocomplete="off"></form>
-    <p class="hint">Agents in ${MCP_OWNER[scope]} call these servers' tools from code mode scripts, as <code>tools.mcp__&lt;name&gt;__&lt;tool&gt;</code>; only what a script outputs reaches the model.
-      Header values (an API key, a bearer token) are stored encrypted and never shown again.${scope === 'org' ? ' A customer\'s server is only for that customer\'s threads.' : ''}</p>
-    <div class="status" id="mcpStatus"></div></div>`;
-}
-
-function mcpStatus(kind, text) {
-  const el = $('mcpStatus');
-  el.className = `status ${kind}`;
-  el.textContent = text;
-}
-
-function mcpForm(server) {
-  const s = server || {};
-  const headers = s.headerNames && s.headerNames.length
-    ? `<span></span><span class="sub">${s.headerNames.map((h) => `<span class="tag">${esc(h)} ••••</span>`).join(' ')} set; fill in a header to replace ${s.headerNames.length === 1 ? 'it' : 'them'}.</span>` : '';
-  return `<input type="hidden" id="mcpId" value="${s.id || ''}">
-    <label for="mcpName">Name</label><input id="mcpName" class="mono" placeholder="docs" value="${esc(s.name || '')}" required pattern="[a-z][a-z0-9_\\-]*" style="max-width:220px">
-    <label for="mcpUrl">URL</label><input id="mcpUrl" class="mono" placeholder="https://mcp.example.com/mcp" value="${esc(s.url || '')}" required>
-    <label for="mcpDesc">What it is for</label><input id="mcpDesc" placeholder="Told to the agents, e.g. Product documentation search" value="${esc(s.description || '')}">
-    <label for="mcpHdrName">Header</label><span class="hdr"><input id="mcpHdrName" class="mono" placeholder="Authorization"><input id="mcpHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
-    ${headers}
-    <label for="mcpAllow">Only these tools</label><input id="mcpAllow" class="mono" placeholder="all tools; or comma-separated names" value="${esc(s.allow || '')}">
-    <span class="actions"><button class="primary">${s.id ? 'Save and check' : 'Add and check'}</button>${s.id ? '<button type="button" id="mcpCancel">Cancel</button>' : ''}
-      ${s.id && s.headerNames && s.headerNames.length ? '<button type="button" class="link" id="mcpClear" style="color:var(--red)">remove the headers</button>' : ''}</span>`;
-}
-
-function mcpToolTags(s) {
-  const allowed = new Set(String(s.allow || '').split(/[\s,]+/).filter(Boolean));
-  return s.tools.map((t) => {
-    const off = allowed.size && !allowed.has(t.name);
-    return `<span class="tag${off ? ' off' : ''}${t.readOnly ? ' ro' : ''}" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}${off ? ' (not for agents)' : ''}">${esc(t.name)}</span>`;
-  }).join('');
-}
-
-function renderMcp() {
-  const { servers } = state.view.mcp;
-  $('mcpTable').innerHTML = servers.length ? `<table><tr><th>Server</th><th>Status</th><th>Credentials</th><th></th></tr>${servers.map((s) => {
-    const allowed = String(s.allow || '').split(/[\s,]+/).filter(Boolean);
-    const usable = allowed.length ? s.tools.filter((t) => allowed.includes(t.name)).length : s.tools.length;
-    let status = '<span class="tag">not checked</span>';
-    if (!s.enabled) status = '<span class="tag">off</span>';
-    else if (s.checkError) status = '<span class="tag err">unreachable</span>';
-    else if (s.checkedAt) status = `<span class="tag ok">${usable} tool${usable === 1 ? '' : 's'}</span>`;
-    return `<tr data-mcp="${s.id}"><td><b class="mono">${esc(s.name)}</b> <span class="sub">mcp__${esc(s.name.replace(/[^a-z0-9_]/g, '_'))}</span>
-        ${s.description ? `<div>${esc(s.description)}</div>` : ''}<div class="sub mono">${esc(s.url)}</div>
-        ${s.checkError && s.enabled ? `<div class="err">${esc(s.checkError)}</div>` : ''}
-        ${s.tools.length ? `<div class="tools">${mcpToolTags(s)}</div>` : ''}</td>
-      <td class="st">${status}<div class="sub">${s.checkedAt ? `checked ${esc(ago(s.checkedAt))}` : ''}</div></td>
-      <td class="cr">${s.headerNames.length ? s.headerNames.map((h) => `<span class="tag">${esc(h)} ••••</span>`).join(' ') : '<span class="sub">none</span>'}</td>
-      <td class="act"><label class="sub" title="Agents use it"><input type="checkbox" data-mcp-on="${s.id}"${s.enabled ? ' checked' : ''}> on</label>
-        <button class="link" data-mcp-check="${s.id}">check</button><button class="link" data-mcp-edit="${s.id}">edit</button><button class="link" data-mcp-del="${s.id}" style="color:var(--red)">delete</button></td></tr>`;
-  }).join('')}</table>` : '<div class="empty">No MCP server yet. Agents here use the knowledge bases and GitHub only.</div>';
-  const find = (id) => servers.find((x) => String(x.id) === String(id));
-  const replace = (server) => {
-    state.view.mcp.servers = servers.map((x) => (x.id === server.id ? server : x));
-    renderMcp();
-  };
-  for (const b of $('mcpTable').querySelectorAll('[data-mcp-check]')) {
-    b.onclick = async () => {
-      mcpStatus('', 'Connecting…');
-      const r = await call('/api/admin/mcp/check', 'POST', { id: Number(b.dataset.mcpCheck) });
-      if (!r.ok) { mcpStatus('err', r.body.error); return; }
-      replace(r.body.server);
-      mcpStatus(r.body.server.checkError ? 'err' : 'ok', r.body.server.checkError ? `Could not reach ${r.body.server.name}.` : `${r.body.server.name}: ${r.body.server.tools.length} tools.`);
-    };
-  }
-  for (const b of $('mcpTable').querySelectorAll('[data-mcp-on]')) {
-    b.onchange = async () => {
-      mcpStatus('', b.checked ? 'Turning on and checking…' : 'Turning off…');
-      const r = await call('/api/admin/mcp', 'PUT', { id: Number(b.dataset.mcpOn), enabled: b.checked });
-      if (!r.ok) { b.checked = !b.checked; mcpStatus('err', r.body.error); return; }
-      replace(r.body.server);
-      mcpStatus('ok', r.body.server.enabled ? `Agents use ${r.body.server.name} again.` : `Agents do not use ${r.body.server.name} any more.`);
-    };
-  }
-  for (const b of $('mcpTable').querySelectorAll('[data-mcp-edit]')) {
-    b.onclick = () => { wireMcpForm(find(b.dataset.mcpEdit)); $('mcpUrl').focus(); };
-  }
-  for (const b of $('mcpTable').querySelectorAll('[data-mcp-del]')) {
-    b.onclick = async () => {
-      const s = find(b.dataset.mcpDel);
-      if (!(await ask(`Delete the MCP server ${s.name}?`, '<p>Agents stop using it with their next message. Its credentials are deleted too.</p>', 'Delete', { danger: true }))) return;
-      const r = await call('/api/admin/mcp', 'DELETE', { id: s.id });
-      if (!r.ok) { mcpStatus('err', r.body.error); return; }
-      state.view.mcp.servers = servers.filter((x) => x.id !== s.id);
-      mcpStatus('ok', `Deleted ${s.name}.`);
-      renderMcp();
-      wireMcpForm();
-    };
-  }
-}
-
-function wireMcpForm(server) {
-  const { scope, slug } = state.view.mcp;
-  $('mcpForm').innerHTML = mcpForm(server);
-  if ($('mcpCancel')) $('mcpCancel').onclick = () => wireMcpForm();
-  const save = async (patch = {}) => {
-    const id = Number($('mcpId').value) || null;
-    const hName = $('mcpHdrName').value.trim();
-    const hValue = $('mcpHdrValue').value.trim();
-    const body = {
-      ...(id ? { id } : { scope, slug }),
-      name: $('mcpName').value.trim(),
-      url: $('mcpUrl').value.trim(),
-      description: $('mcpDesc').value.trim(),
-      allow: $('mcpAllow').value.trim(),
-      ...(hName || hValue ? { headers: [{ name: hName, value: hValue }] } : {}),
-      ...patch,
-    };
-    mcpStatus('', id ? 'Saving and checking…' : 'Adding and checking…');
-    const r = await call('/api/admin/mcp', id ? 'PUT' : 'POST', body);
-    if (!r.ok) { mcpStatus('err', r.body.error); return; }
-    const s = r.body.server;
-    state.view.mcp.servers = id ? state.view.mcp.servers.map((x) => (x.id === id ? s : x))
-      : [...state.view.mcp.servers, s].sort((a, b) => a.name.localeCompare(b.name));
-    renderMcp();
-    wireMcpForm();
-    if (s.checkError) mcpStatus('warn', `Saved, but ${s.name} could not be reached: ${s.checkError}`);
-    else mcpStatus('ok', `Saved. ${s.name} has ${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}${r.body.server.allow ? ', some of them for agents' : ''}.`);
-  };
-  $('mcpForm').onsubmit = (e) => { e.preventDefault(); save(); };
-  if ($('mcpClear')) $('mcpClear').onclick = () => save({ headers: {} });
-}
-
-async function showMcp(scope, slug) {
-  const r = await call(`/api/admin/mcp?scope=${scope}&slug=${encodeURIComponent(slug)}`);
-  if (!state.view || state.view.value !== slug || !$('mcpTable')) return;
-  if (!r.ok) { $('mcpTable').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
-  state.view.mcp = { scope, slug, servers: r.body.servers };
-  renderMcp();
-  wireMcpForm();
 }
 
 // ---- start ------------------------------------------------------------------------------

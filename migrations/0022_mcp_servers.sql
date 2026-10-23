@@ -1,6 +1,6 @@
 -- MCP servers the thread agents may use, through code mode: per ops team (`scope` 'team') and
--- per customer, partner or vendor (`scope` 'org'), `slug` naming which. Maintained in the admin
--- pages: the admin team for every team and org, team managers for their teams. An agent gets
+-- per customer, partner or vendor (`scope` 'org'), `slug` naming which. Maintained in the
+-- knowledge-base editor by whoever edits the team's or the customer's knowledge base. An agent gets
 -- the enabled servers of its thread's team and org.
 CREATE TABLE mcp_servers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

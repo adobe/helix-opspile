@@ -11,6 +11,7 @@
  */
 
 import { admin } from '../src/admin.js';
+import { kbAdmin } from '../src/kbadmin.js';
 import { consume } from '../src/normalizer.js';
 import { d1 } from '../test/d1.js';
 import { fakeBucket } from '../test/fakes.js';
@@ -21,46 +22,48 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * in-memory D1 with the production migrations (test/d1.js), seeded from the fake inbox's
  * teams, people and threads. Re-filing jobs run at once on a fake pile 2. Made-up data only.
  *
- * The agents' MCP servers: a few made-up ones answer in memory at `https://*.mcp.example`
- * (test/mcp-server.js), so adding and checking a server works in the preview; any other URL
- * fails the check, as an unreachable server would.
+ * The agents' MCP servers (the editor's "MCP servers"): a few made-up ones answer in memory at
+ * `https://*.mcp.example` and `https://status.acme.example` (test/mcp-server.js), so adding and
+ * checking a server works in the preview; any other `.example` URL fails the check, as an
+ * unreachable server would.
  */
 
 const PREVIEW_TOKEN = 'preview-token';
+const tools = (list, property) => list.map(([name, description, readOnly]) => ({
+  name,
+  description,
+  readOnly,
+  inputSchema: { type: 'object', properties: { [property]: { type: 'string' } } },
+  run: () => 'ok',
+}));
 const MCP = fakeMcpServers([
   {
     url: 'https://docs.mcp.example/mcp',
     name: 'docs',
     token: PREVIEW_TOKEN,
-    tools: [
+    tools: tools([
       ['search_docs', 'Search the product documentation', true],
       ['read_page', 'Read one documentation page as markdown', true],
       ['list_releases', 'Release notes of the last 90 days', true],
-    ].map(([name, description, readOnly]) => ({
-      name, description, readOnly, inputSchema: { type: 'object', properties: { query: { type: 'string' } } }, run: () => 'ok',
-    })),
+    ], 'query'),
   },
   {
     url: 'https://cdn.mcp.example/mcp',
     name: 'cdn',
     token: PREVIEW_TOKEN,
-    tools: [
+    tools: tools([
       ['purge_status', 'Status of recent purges for a host', true],
       ['cache_headers', 'The cache headers a URL is served with', true],
       ['purge', 'Purge a path from the CDN', false],
-    ].map(([name, description, readOnly]) => ({
-      name, description, readOnly, inputSchema: { type: 'object', properties: { host: { type: 'string' } } }, run: () => 'ok',
-    })),
+    ], 'host'),
   },
   {
     url: 'https://status.acme.example/mcp',
     name: 'acme-status',
-    tools: [
+    tools: tools([
       ['site_status', 'Uptime and error rate of an ACME site', true],
       ['open_incidents', 'Incidents ACME has open on their side', true],
-    ].map(([name, description, readOnly]) => ({
-      name, description, readOnly, inputSchema: { type: 'object', properties: { site: { type: 'string' } } }, run: () => 'ok',
-    })),
+    ], 'site'),
   },
 ]);
 const realFetch = globalThis.fetch;
@@ -75,44 +78,32 @@ globalThis.fetch = (input, init) => {
   return realFetch(input, init);
 };
 
-/** The preview's MCP servers, added through the API as the page would. */
-async function seedMcp(handle) {
-  const post = (body) => handle({ method: 'POST' }, new URL('http://localhost/api/admin/mcp'), body);
-  await post({
-    scope: 'team',
-    slug: 'platform',
-    name: 'docs',
-    url: 'https://docs.mcp.example/mcp',
-    description: 'Product documentation search',
-    headers: [{ name: 'Authorization', value: `Bearer ${PREVIEW_TOKEN}` }],
-  });
-  await post({
-    scope: 'team',
-    slug: 'platform',
+const auth = [{ name: 'Authorization', value: `Bearer ${PREVIEW_TOKEN}` }];
+const SEED_MCP = [
+  {
+    repo: 'kb-team-platform', name: 'docs', url: 'https://docs.mcp.example/mcp', description: 'Product documentation search', headers: auth,
+  },
+  {
+    repo: 'kb-team-platform',
     name: 'cdn',
     url: 'https://cdn.mcp.example/mcp',
     description: 'Purge status and cache headers of the CDN',
-    headers: [{ name: 'Authorization', value: `Bearer ${PREVIEW_TOKEN}` }],
+    headers: auth,
     allow: 'purge_status, cache_headers',
-  });
-  await post({
-    scope: 'team',
-    slug: 'platform',
+  },
+  {
+    repo: 'kb-team-platform',
     name: 'tickets',
     url: 'https://tickets.internal.example/mcp',
     description: 'The ticket tracker',
     headers: [{ name: 'X-Api-Key', value: 'preview' }],
-  });
-  await post({
-    scope: 'org',
-    slug: 'acme',
-    name: 'acme-status',
-    url: 'https://status.acme.example/mcp',
-    description: 'ACME\'s own status service: uptime and their open incidents',
-  });
-}
+  },
+  {
+    repo: 'kb-org-acme', name: 'acme-status', url: 'https://status.acme.example/mcp', description: 'ACME\'s own status service: uptime and their open incidents',
+  },
+];
 
-export function createAdmin(store, { manager = false } = {}) {
+export function createAdmin(store, { manager = false, bases = [] } = {}) {
   const DB = d1({
     teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
     people: [...store.people.values()].map((p) => ({
@@ -174,11 +165,20 @@ export function createAdmin(store, { manager = false } = {}) {
     ('acme', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('initech', 'Initech', 'vendor', NULL, '2026-10-20T09:00:00Z')`);
 
+  // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
+  // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
+  for (const b of bases) {
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
+      VALUES (?, ?, ?, 'dev', ?)`).run(b.repo, b.kind, b.slug, b.created_at);
+  }
   const queued = [];
   const env = {
     DB,
     CHANNELS,
     NORMALIZE: { send: async (body) => queued.push(body) },
+    AGENTS: {},
+    AGENT_MODEL: 'dev',
+    AGENT_CHANNELS: 'C0ACMEAEM',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
   };
@@ -192,18 +192,27 @@ export function createAdmin(store, { manager = false } = {}) {
     }
     : { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
 
-  let seeded;
-  return async function handle(req, url, body) {
-    // As the admin team, whoever looks.
-    seeded ??= seedMcp((r, u, b) => admin(new Request(u, {
-      method: r.method, body: JSON.stringify(b), headers: { 'content-type': 'application/json' },
-    }), env, u, { ...store.me, admin: true, teams: [{ slug: 'admin' }] }));
+  const toRequest = (req, url, body) => new Request(url, {
+    method: req.method,
+    ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
+  });
+  // The preview's MCP servers, added once as the admin team would.
+  const admins = { ...store.me, admin: true, teams: [{ slug: 'admin', name: 'Admin' }] };
+  const mcpUrl = new URL('http://localhost/api/kb/mcp');
+  const seeded = SEED_MCP.reduce((done, body) => done.then(() => kbAdmin(
+    toRequest({ method: 'POST' }, mcpUrl, body),
+    env,
+    mcpUrl,
+    admins,
+  )), Promise.resolve());
+  /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
+  const kb = async (req, url, body) => {
     await seeded;
-    const request = new Request(url, {
-      method: req.method,
-      ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
-    });
-    const res = await admin(request, env, url, me);
+    return kbAdmin(toRequest(req, url, body), env, url, me);
+  };
+
+  return Object.assign(async (req, url, body) => {
+    const res = await admin(toRequest(req, url, body), env, url, me);
     // Re-filing runs right away here.
     while (queued.length) {
       const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));
@@ -211,5 +220,5 @@ export function createAdmin(store, { manager = false } = {}) {
       await consume({ messages }, env);
     }
     return res;
-  };
+  }, { kb });
 }

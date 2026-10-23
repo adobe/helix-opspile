@@ -74,7 +74,7 @@ const VALIDATE_MS = 60 * 1000;
 
 const store = createStore(Date.now(), { big: process.argv.includes('--big') });
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store, { manager: MANAGER });
+const adminApi = createAdmin(store, { manager: MANAGER, bases: kb.list() });
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 const reloadClients = new Set();
@@ -424,10 +424,19 @@ async function proxyApi(req, res, url, b) {
 async function kbApi(req, res, url) {
   // A manager edits their teams' knowledge bases only, as in src/kbadmin.js.
   const allowed = (repo) => !MANAGER || repo === 'kb-team-edge';
-  if (url.pathname === '/api/kb') {
-    return json(res, { systemPrompt: 'systemprompt.md', bases: kb.list().filter((b) => allowed(b.repo)) });
-  }
   const body = req.method === 'GET' ? {} : await readJson(req);
+  // The list (with its agent counts), the channels and their agents, and the agents' MCP
+  // servers: src/kbadmin.js itself.
+  if (['/api/kb', '/api/kb/channels', '/api/kb/agent'].includes(url.pathname)
+    || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')) {
+    const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);
+    const out = await r.json();
+    if (url.pathname === '/api/kb') {
+      const names = new Map(kb.list().map((b) => [b.repo, b.name]));
+      out.bases = out.bases.map((b) => ({ ...b, name: names.get(b.repo) || b.name }));
+    }
+    return json(res, out, r.status);
+  }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
   if (!kb.has(repo) || !allowed(repo)) {
     return json(res, { error: 'no such knowledge base' }, 404);

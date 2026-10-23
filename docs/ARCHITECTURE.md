@@ -208,6 +208,24 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
+**Thread agents per channel.** The editor shows, for each knowledge base, the channels it
+learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
+each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
+an agent in any of their channels. The admin team, and the managers of the team that owns a
+channel (the team of its latest thread), turn its agent on or off there, after a question in
+the page. The switch is a row in `agent_channels` with who set it and when; a channel nobody
+has switched yet follows `AGENT_CHANNELS`, the deployment's default. Alert channels have no
+agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
+their drafts and what they filed stay.
+
+**MCP servers.** Next to the thread agents, the editor lists a knowledge base's **MCP
+servers**: those of its team (`kb-team-*`) or its customer (`kb-org-*`), which the agents of
+that team's or customer's threads may call from code mode (see [Thread agents](#thread-agents)).
+Whoever may edit the knowledge base adds, checks, edits, switches and deletes them. A server is a
+name, an `https://` URL, what it is for (the agents are told), request headers for its
+credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
+only tools agents may call. Adding or changing one connects to it and lists its tools.
+
 For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
 bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
 of the open thread's customer (or of the one customer filtered on) if it has one, else the
@@ -425,7 +443,8 @@ inbox, on any message of the thread:
 ## Thread agents
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
-for now only in the channels listed in `AGENT_CHANNELS`. Each is a Durable Object
+in the channels where agents are on: the admin team and team managers switch them per channel
+in the knowledge-base editor, and `AGENT_CHANNELS` is the default for the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
@@ -463,8 +482,8 @@ in a QuickJS sandbox on the agent's own thread (`createInlineCodemodeSandbox`; o
 thread, so a script that computes holds up only its own agent, for at most its interrupt
 budget), every call it makes is a nested tool call, and a script interrupted by an eviction
 resumes where it was without making its finished calls again. Each ops team and each customer
-can have MCP servers (`mcp_servers`, maintained in the admin pages; credentials are request
-headers sealed with `TOKEN_KEY`). An agent gets the enabled servers of its thread's team and
+can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
+per-channel switch; credentials are request headers sealed with `TOKEN_KEY`). An agent gets the enabled servers of its thread's team and
 customer: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
 offered to the model as a tool of its own, and each server is a code mode namespace that
 `describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the

@@ -97,6 +97,7 @@
   .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .bar .path { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; min-width: 160px; }
   .bar input.path { padding: 3px 7px; }
+  .bar .title { flex: 1; font-weight: 600; }
   .bar .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
   .note { padding: 8px 12px; color: var(--mute); border-bottom: 1px solid var(--line); font-size: 13px; }
   .note.warn { color: var(--yellow); }
@@ -119,6 +120,45 @@
   dialog.confirm .detail { color: var(--mute); font-size: 13px; }
   dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .note button { margin-left: 6px; padding: 1px 8px; font-size: 13px; }
+  .row .tag.agent { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+  /* Thread agents per channel: one switch per channel. */
+  .channels { padding: 4px 12px 12px; overflow: auto; }
+  .ch { display: flex; gap: 12px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+  .ch .who { flex: 1; min-width: 0; }
+  .ch .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch .nm .src { font-weight: 400; font-size: 11px; padding: 0 6px; margin-left: 6px; border-radius: 9px;
+    border: 1px solid var(--line); color: var(--mute); }
+  .ch .sub { color: var(--mute); font-size: 12px; }
+  .ch .sub.by { color: var(--faint); }
+  .ch .state { font-size: 12px; color: var(--mute); min-width: 24px; text-align: right; }
+  .ch .state.on { color: var(--green); font-weight: 600; }
+  .switch { position: relative; flex: none; width: 36px; height: 20px; padding: 0; border: 0; border-radius: 10px;
+    background: var(--line); }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+  .switch[aria-checked="true"] { background: var(--green); }
+  .switch[aria-checked="true"]::after { left: 18px; }
+  .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* MCP servers of the agents: one row per server, as the channels above, its form below. */
+  .ch .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .ch .tags .src { padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute);
+    font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ch .tags .src.off { opacity: .45; text-decoration: line-through; }
+  .ch .acts { display: flex; gap: 6px; }
+  .ch .acts button { padding: 1px 8px; font-size: 12px; }
+  .ch .nm .src.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+  .ch .nm .src.err, .ch .sub.err { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+  .ch .sub.err { overflow-wrap: anywhere; }
+  .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .mcpform { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; align-items: center; margin: 14px 2px 0; }
+  .mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--mute); }
+  .mcpform label { color: var(--mute); font-size: 13px; }
+  .mcpform .pair { display: flex; gap: 6px; }
+  .mcpform .pair input:first-child { width: 160px; flex: none; }
+  .mcpform .pair input:last-child { flex: 1; min-width: 0; }
+  .mcpform .hint { grid-column: 2; color: var(--faint); font-size: 12px; margin-top: -4px; }
+  .mcpform .apply { grid-column: 2; display: flex; gap: 8px; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
 </style>
 </head>
@@ -157,6 +197,7 @@ const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file', back: null,
+  channels: null, configured: true, mcp: null,
 };
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
@@ -266,7 +307,7 @@ function toUrl(mode = 'push') {
   const q = new URLSearchParams();
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
-  if (state.view === 'history') q.set('view', 'history');
+  if (['history', 'agents', 'mcp'].includes(state.view)) q.set('view', state.view);
   if (state.back) q.set('back', state.back);
   const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
@@ -284,7 +325,7 @@ function renderBases() {
     const list = shown.filter((b) => b.kind === kind);
     if (!list.length) return '';
     return `<h2>${title}</h2>${list.map((b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}">
-      <span>${esc(b.name)}</span><span class="sub">${esc(b.repo)}</span></div>`).join('')}`;
+      <span>${esc(b.name)}</span>${b.agents ? `<span class="tag agent" title="Thread agents are on in ${b.agents} channel${b.agents === 1 ? '' : 's'}">agent${b.agents > 1 ? ` · ${b.agents}` : ''}</span>` : ''}<span class="sub">${esc(b.repo)}</span></div>`).join('')}`;
   };
   $('bases').innerHTML = `<input id="filter" placeholder="Filter" value="${esc(state.filter)}" aria-label="Filter knowledge bases">`
     + (group('team', 'Ops teams') + group('org', 'Customers and vendors') || '<div class="empty">No knowledge bases.</div>');
@@ -308,7 +349,14 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   renderBases();
   $('files').innerHTML = '<div class="empty">Loading…</div>';
   $('editor').innerHTML = '<div class="empty">Pick a file.</div>';
-  const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(repo)}`);
+  state.channels = null;
+  state.mcp = null;
+  const [{ ok, body }] = await Promise.all([
+    call(`/api/kb/files?repo=${encodeURIComponent(repo)}`),
+    loadChannels(repo),
+    loadMcp(repo),
+  ]);
+  if (state.repo !== repo) return true;
   if (!ok) {
     $('files').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the files.')}</div>`;
     toUrl(nav);
@@ -319,6 +367,8 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.truncated = body.truncated;
   renderFiles();
   if (state.view === 'history') showHistory({ force: true, nav });
+  else if (state.view === 'agents') showAgents({ force: true, nav });
+  else if (state.view === 'mcp') showMcp({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
   return true;
 }
@@ -341,6 +391,10 @@ function renderFiles() {
   $('files').innerHTML = `<h2>${esc(b.name)}</h2>
     <div class="row${state.file?.path === SYSTEM_PROMPT ? ' on' : ''}" data-path="${SYSTEM_PROMPT}">
       <span>${SYSTEM_PROMPT}</span><span class="tag${state.hasSystemPrompt ? '' : ' missing'}">${state.hasSystemPrompt ? 'agent instructions' : 'not written yet'}</span></div>
+    <div class="row${state.view === 'agents' ? ' on' : ''}" id="agents" title="Which of its channels have thread agents">
+      <span>Thread agents</span>${agentsTag()}</div>
+    <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="MCP servers its agents can call from code mode">
+      <span>MCP servers</span>${mcpTag()}</div>
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
@@ -350,6 +404,291 @@ function renderFiles() {
   }
   $('new').onclick = newFile;
   $('history').onclick = () => showHistory();
+  $('agents').onclick = () => showAgents();
+  $('mcp').onclick = () => showMcp();
+}
+
+// ---- thread agents ----------------------------------------------------------------------
+
+/** The channels this knowledge base learns from, with their agents; null when unknown. */
+async function loadChannels(repo) {
+  const { ok, body } = await call(`/api/kb/channels?repo=${encodeURIComponent(repo)}`);
+  if (state.repo !== repo) return;
+  state.channels = ok ? body.channels : null;
+  state.configured = ok ? body.configured : true;
+}
+
+const agentCount = () => (state.channels || []).filter((c) => c.agent.enabled).length;
+
+/** "on in 2 of 5 channels", or "off", next to "Thread agents". */
+function agentsTag() {
+  if (!state.channels) return '<span class="tag missing">unknown</span>';
+  const on = agentCount();
+  const of = state.channels.filter((c) => c.kind === 'channel').length;
+  return on ? `<span class="tag agent">on in ${on} of ${of} channel${of === 1 ? '' : 's'}</span>` : '<span class="tag missing">off</span>';
+}
+
+const SOURCES = { slack: 'Slack', teams: 'Teams' };
+const channelName = (c) => (c.source === 'slack' ? `#${c.name || c.channelId}`
+  : [c.groupName, c.name].filter(Boolean).join(' › ') || c.channelId);
+
+function ago(at) {
+  if (!at) return '';
+  const d = (Date.now() - new Date(at).getTime()) / 86400000;
+  if (d < 1) return 'today';
+  if (d < 2) return 'yesterday';
+  if (d < 30) return `${Math.floor(d)} days ago`;
+  return new Date(at).toLocaleDateString();
+}
+
+async function showAgents({ force = false, nav = 'push' } = {}) {
+  if (!force && state.file && !(await leave())) return false;
+  state.view = 'agents';
+  state.file = null;
+  renderFiles();
+  toUrl(nav);
+  renderAgents();
+  return true;
+}
+
+function renderAgents(note) {
+  const b = base();
+  const list = state.channels;
+  const whose = b.kind === 'team' ? `the channels of ${b.name}` : `the channels of ${b.name}, in every ops team`;
+  const explain = `A thread agent follows every thread of a channel where it is on: it reads each new message, keeps a draft
+    reply for the team (it never posts) and files what it learns in the team's and the customer's knowledge bases.
+    The admin team and the managers of the team that owns a channel turn it on or off.`;
+  const rows = (list || []).map((c) => {
+    const a = c.agent;
+    const alert = c.kind !== 'channel';
+    const by = a.set && a.by ? `Turned ${a.enabled ? 'on' : 'off'} by ${esc(a.by)}, ${esc(ago(a.at))}`
+      : a.enabled ? 'On by default (AGENT_CHANNELS)' : '';
+    const why = alert ? 'Alert channels have no thread agents.'
+      : c.may ? `Turn the agent ${a.enabled ? 'off' : 'on'}` : `Only the admin team and the managers of ${c.teamName} turn it on or off.`;
+    return `<div class="ch">
+      <div class="who">
+        <div class="nm">${esc(channelName(c))}<span class="src">${esc(SOURCES[c.source] || c.source)}</span>${alert ? '<span class="src">alerts</span>' : ''}</div>
+        <div class="sub">${esc([b.kind === 'org' ? c.teamName : c.org, `${c.threads} thread${c.threads === 1 ? '' : 's'}`, c.latest && `last ${ago(c.latest)}`].filter(Boolean).join(' · '))}</div>
+        ${by ? `<div class="sub by">${by}</div>` : ''}
+      </div>
+      <span class="state${a.enabled ? ' on' : ''}">${a.enabled ? 'On' : 'Off'}</span>
+      <button class="switch" role="switch" aria-checked="${a.enabled}" aria-label="Thread agent in ${esc(channelName(c))}" title="${esc(why)}"
+        data-channel="${esc(c.channelId)}"${c.may ? '' : ' disabled'}></button>
+    </div>`;
+  }).join('');
+  $('editor').innerHTML = `<div class="bar"><span class="title">Thread agents in ${esc(whose)}</span></div>
+    <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
+    : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
+    <div class="channels">${list ? rows || '<div class="empty">No channels yet.</div>' : '<div class="empty">Could not list the channels.</div>'}</div>`;
+  for (const el of $('editor').querySelectorAll('[data-channel]')) {
+    el.onclick = () => switchAgent(state.channels.find((c) => c.channelId === el.dataset.channel));
+  }
+}
+
+async function switchAgent(c) {
+  const on = !c.agent.enabled;
+  const name = channelName(c);
+  const yes = await ask(
+    on ? `Turn on the thread agent in ${name}?` : `Turn off the thread agent in ${name}?`,
+    on ? 'From now on, every thread of the channel that gets a new message has an agent: it reads the whole thread, keeps a draft reply for the team (it never posts) and files what it learns in the knowledge bases.'
+      : 'Agents of its threads stop at their next message, and skip their wrap-up. Their drafts, and what they filed, stay.',
+    on ? 'Turn on' : 'Turn off',
+  );
+  if (!yes) return;
+  const repo = state.repo;
+  const { status, ok, body } = await call('/api/kb/agent', {
+    method: 'PUT',
+    body: JSON.stringify({ channel: c.channelId, enabled: on }),
+  });
+  if (state.repo !== repo || state.view !== 'agents') return;
+  if (!ok) { renderAgents({ kind: 'err', text: body.error || `Switching failed (${status}).` }); return; }
+  c.agent = body.agent;
+  const b = base();
+  if (b) b.agents = agentCount();
+  // The other knowledge bases of the channel (its team's, its customer's) count it too.
+  call('/api/kb').then((r) => {
+    if (!r.ok) return;
+    for (const x of r.body.bases) {
+      const mine = state.bases.find((y) => y.repo === x.repo);
+      if (mine) mine.agents = x.agents;
+    }
+    renderBases();
+  });
+  renderBases();
+  renderFiles();
+  renderAgents({ kind: 'ok', text: `The thread agent in ${name} is ${on ? 'on' : 'off'}.` });
+}
+
+// ---- MCP servers ------------------------------------------------------------------------
+//
+// The MCP servers the thread agents of this team (kb-team-*) or customer (kb-org-*) may use,
+// over /api/kb/mcp (src/mcpadmin.js). Agents call their tools from code mode scripts, as
+// `tools.mcp__<name>__<tool>`. Credentials are request headers: sent once, then only their
+// names come back.
+
+/** This knowledge base's MCP servers; null when unknown. */
+async function loadMcp(repo) {
+  const { ok, body } = await call(`/api/kb/mcp?repo=${encodeURIComponent(repo)}`);
+  if (state.repo !== repo) return;
+  state.mcp = ok ? body.servers : null;
+}
+
+const mcpUsable = (s) => {
+  const allowed = String(s.allow || '').split(/[\s,]+/).filter(Boolean);
+  return allowed.length ? s.tools.filter((t) => allowed.includes(t.name)).length : s.tools.length;
+};
+
+/** "2 servers", or "none", next to "MCP servers". */
+function mcpTag() {
+  if (!state.mcp) return '<span class="tag missing">unknown</span>';
+  const on = state.mcp.filter((s) => s.enabled).length;
+  return on ? `<span class="tag agent">${on} server${on === 1 ? '' : 's'}</span>` : '<span class="tag missing">none</span>';
+}
+
+async function showMcp({ force = false, nav = 'push' } = {}) {
+  if (!force && state.file && !(await leave())) return false;
+  state.view = 'mcp';
+  state.file = null;
+  state.editing = null;
+  renderFiles();
+  toUrl(nav);
+  renderMcp();
+  return true;
+}
+
+function mcpRow(s) {
+  const allowed = new Set(String(s.allow || '').split(/[\s,]+/).filter(Boolean));
+  const usable = mcpUsable(s);
+  let status = '<span class="src">not checked</span>';
+  if (s.checkError) status = '<span class="src err">unreachable</span>';
+  else if (s.checkedAt) status = `<span class="src ok">${usable} tool${usable === 1 ? '' : 's'}</span>`;
+  const tools = s.tools.map((t) => {
+    const off = allowed.size && !allowed.has(t.name);
+    return `<span class="src${off ? ' off' : ''}" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}${off ? ' (not for agents)' : ''}">${esc(t.name)}</span>`;
+  }).join('');
+  const creds = s.headerNames.length ? s.headerNames.map((h) => `${h} ••••`).join(', ') : 'no credentials';
+  return `<div class="ch">
+    <div class="who">
+      <div class="nm">${esc(s.name)}<span class="src mono">mcp__${esc(s.name.replace(/[^a-z0-9_]/g, '_'))}</span>${status}</div>
+      <div class="sub">${esc([s.description, s.url].filter(Boolean).join(' · '))}</div>
+      ${s.checkError ? `<div class="sub err">${esc(s.checkError)}</div>` : ''}
+      ${tools ? `<div class="tags">${tools}</div>` : ''}
+      <div class="sub by">${esc([creds, s.checkedAt && `checked ${ago(s.checkedAt)}`, s.updatedBy && `changed by ${s.updatedBy}`].filter(Boolean).join(' · '))}</div>
+    </div>
+    <span class="acts"><button data-check="${s.id}">Check</button><button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>
+    <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
+    <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents'}" data-server="${s.id}"></button>
+  </div>`;
+}
+
+function mcpForm(s = {}) {
+  const set = s.headerNames && s.headerNames.length;
+  return `<form class="mcpform" id="mcpForm" autocomplete="off">
+    <h3>${s.id ? `Edit ${esc(s.name)}` : 'Add a server'}</h3>
+    <label for="mName">Name</label><input id="mName" class="mono" placeholder="docs" value="${esc(s.name || '')}" required pattern="[a-z][a-z0-9_\\-]*" style="max-width:240px">
+    <label for="mUrl">URL</label><input id="mUrl" class="mono" placeholder="https://mcp.example.com/mcp" value="${esc(s.url || '')}" required>
+    <label for="mDesc">What it is for</label><input id="mDesc" placeholder="Told to the agents, e.g. Product documentation search" value="${esc(s.description || '')}">
+    <label for="mHdrName">Header</label><span class="pair"><input id="mHdrName" class="mono" placeholder="Authorization"><input id="mHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
+    <span class="hint">${set ? `${esc(s.headerNames.join(', '))} set; fill in a header to replace ${s.headerNames.length === 1 ? 'it' : 'them'}.` : 'An API key or a bearer token. Stored encrypted, never shown again.'}</span>
+    <label for="mAllow">Only these tools</label><input id="mAllow" class="mono" placeholder="all tools; or comma-separated names" value="${esc(s.allow || '')}">
+    <span class="apply"><button class="primary">${s.id ? 'Save and check' : 'Add and check'}</button>${s.id ? '<button type="button" id="mCancel">Cancel</button>' : ''}
+      ${set ? '<button type="button" class="danger" id="mClear">Remove the headers</button>' : ''}</span>
+  </form>`;
+}
+
+function renderMcp(note) {
+  const b = base();
+  const list = state.mcp;
+  const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
+  const explain = `The thread agents of these threads can call these servers' tools from code mode scripts, as
+    tools.mcp__<name>__<tool>; only what a script outputs reaches the model. Adding or changing a server connects to it and
+    lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them.`;
+  const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
+  $('editor').innerHTML = `<div class="bar"><span class="title">MCP servers for ${esc(whose)}</span></div>
+    <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
+    : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
+    <div class="channels">${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
+    : '<div class="empty">Could not list the MCP servers.</div>'}
+    ${list ? mcpForm(editing || {}) : ''}</div>`;
+  if (!list) return;
+  const find = (id) => list.find((x) => String(x.id) === String(id));
+  const put = (server) => {
+    state.mcp = state.mcp.some((x) => x.id === server.id) ? state.mcp.map((x) => (x.id === server.id ? server : x))
+      : [...state.mcp, server].sort((x, y) => x.name.localeCompare(y.name));
+    renderFiles();
+  };
+  const reached = (s) => (s.checkError ? { kind: 'warn', text: `${s.name} could not be reached: ${s.checkError}` }
+    : { kind: 'ok', text: `${s.name}: ${mcpUsable(s)} tool${mcpUsable(s) === 1 ? '' : 's'} for the agents.` });
+  for (const el of $('editor').querySelectorAll('[data-check]')) {
+    el.onclick = async () => {
+      renderMcp({ kind: '', text: `Connecting to ${find(el.dataset.check).name}…` });
+      const { ok, body } = await call('/api/kb/mcp/check', { method: 'POST', body: JSON.stringify({ id: Number(el.dataset.check) }) });
+      if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
+      put(body.server);
+      renderMcp(reached(body.server));
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-edit]')) {
+    el.onclick = () => { state.editing = Number(el.dataset.edit); renderMcp(); $('mUrl').focus(); };
+  }
+  for (const el of $('editor').querySelectorAll('[data-del]')) {
+    el.onclick = async () => {
+      const s = find(el.dataset.del);
+      if (!(await ask(`Delete the MCP server ${s.name}?`, 'Agents stop using it with their next message. Its credentials are deleted too.', 'Delete'))) return;
+      const { ok, body } = await call('/api/kb/mcp', { method: 'DELETE', body: JSON.stringify({ id: s.id }) });
+      if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
+      state.mcp = state.mcp.filter((x) => x.id !== s.id);
+      if (state.editing === s.id) state.editing = null;
+      renderFiles();
+      renderMcp({ kind: 'ok', text: `Deleted ${s.name}.` });
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-server]')) {
+    el.onclick = async () => {
+      const s = find(el.dataset.server);
+      const on = !s.enabled;
+      const yes = await ask(
+        on ? `Turn on ${s.name} for the agents?` : `Turn off ${s.name} for the agents?`,
+        on ? 'Agents of these threads can call its tools again, from their next message.' : 'Agents stop using it with their next message. Its settings and credentials stay.',
+        on ? 'Turn on' : 'Turn off',
+      );
+      if (!yes) return;
+      const { ok, body } = await call('/api/kb/mcp', { method: 'PUT', body: JSON.stringify({ id: s.id, enabled: on }) });
+      if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
+      put(body.server);
+      renderMcp(on ? reached(body.server) : { kind: 'ok', text: `Agents do not use ${s.name} any more.` });
+    };
+  }
+  const save = async (patch = {}) => {
+    const id = editing ? editing.id : null;
+    const name = $('mHdrName').value.trim();
+    const value = $('mHdrValue').value.trim();
+    const payload = {
+      ...(id ? { id } : { repo: state.repo }),
+      name: $('mName').value.trim(),
+      url: $('mUrl').value.trim(),
+      description: $('mDesc').value.trim(),
+      allow: $('mAllow').value.trim(),
+      ...(name || value ? { headers: [{ name, value }] } : {}),
+      ...patch,
+    };
+    $('note').className = 'note';
+    $('note').textContent = id ? 'Saving and checking…' : 'Adding and checking…';
+    const repo = state.repo;
+    const { ok, body } = await call('/api/kb/mcp', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    if (state.repo !== repo || state.view !== 'mcp') return;
+    if (!ok) {
+      $('note').className = 'note err';
+      $('note').textContent = body.error || 'Saving failed.';
+      return;
+    }
+    state.editing = null;
+    put(body.server);
+    renderMcp(reached(body.server));
+  };
+  $('mcpForm').onsubmit = (e) => { e.preventDefault(); save(); };
+  if ($('mCancel')) $('mCancel').onclick = () => { state.editing = null; renderMcp(); };
+  if ($('mClear')) $('mClear').onclick = () => save({ headers: {} });
 }
 
 async function openFile(path, { force = false, nav = 'push' } = {}) {
@@ -624,7 +963,7 @@ $('kbs').addEventListener('click', (e) => e.preventDefault());
 window.addEventListener('popstate', async () => {
   const q = new URLSearchParams(location.search);
   const repo = q.get('repo');
-  const view = q.get('view') === 'history' ? 'history' : 'file';
+  const view = ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : 'file';
   const path = q.get('path') || SYSTEM_PROMPT;
   let moved;
   if (!repo || !state.bases.some((b) => b.repo === repo)) {
@@ -640,6 +979,10 @@ window.addEventListener('popstate', async () => {
     moved = await openRepo(repo, { path, view, nav: 'replace' });
   } else if (view === 'history') {
     moved = state.view === 'history' || await showHistory({ nav: 'replace' });
+  } else if (view === 'agents') {
+    moved = state.view === 'agents' || await showAgents({ nav: 'replace' });
+  } else if (view === 'mcp') {
+    moved = state.view === 'mcp' || await showMcp({ nav: 'replace' });
   } else {
     moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
   }
@@ -675,7 +1018,7 @@ window.addEventListener('popstate', async () => {
   if (pick) {
     await openRepo(pick.repo, {
       path: exact ? q.get('path') || undefined : undefined,
-      view: exact && q.get('view') === 'history' ? 'history' : undefined,
+      view: exact && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined,
       nav: 'replace',
     });
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });

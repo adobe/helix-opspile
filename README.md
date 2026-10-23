@@ -18,9 +18,10 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
 | `GET /inbox/admin` | Teams, members, rules and manual assignments; customers, partners and vendors (name, icon, type, manual assignments). One static page, for the admin team; team managers see their teams' members there (add, remove, promote, demote). |
-| `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign`, `channels?q=`, `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies), and `mcp?scope=team|org&slug=` (the agents' MCP servers; team managers for their teams; `POST mcp/check { id }` connects and lists its tools). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. |
+| `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign`, `channels?q=`, `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. |
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team, and team managers for their teams' knowledge bases: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
+| `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, headers?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. Header values are never returned, only their names; adding or changing a server connects to it and lists its tools. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
@@ -63,7 +64,7 @@ Nothing below is committed; set it on the Worker.
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox`, `/api` and `/mcp` |
 | `AGENT_MODEL` | var | Optional: the Bedrock inference profile of the thread agents' model, e.g. `us.anthropic.claude-opus-5-5`. Agents are off without it. |
-| `AGENT_CHANNELS` | var | Comma-separated channel ids (Slack or Teams) where thread agents run |
+| `AGENT_CHANNELS` | var | Optional: comma-separated channel ids (Slack or Teams) where thread agents run until someone turns them off in the knowledge-base editor (`/inbox/kb`, which also turns them on elsewhere) |
 | `AGENT_GATEWAY` | var | The AI Gateway (id) agents call Bedrock through |
 | `AGENT_REGION` | var | Optional: Bedrock region, default `us-east-2` |
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
@@ -118,7 +119,7 @@ tokens are stored hashed in D1 (`oauth_*`, migration 0015); an access token live
 
 ### Thread agents
 
-An agent per thread in the channels listed in `AGENT_CHANNELS` follows the thread, keeps its
+An agent per thread in the channels where agents are on follows the thread, keeps its
 shared draft current (a person sends it), and fills the customer's and the team's knowledge
 bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 
@@ -127,8 +128,10 @@ bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 2. Create an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
    that may invoke the model's inference profile in `AGENT_REGION`, and set it as the Worker
    secret `BEDROCK_API_KEY` (`npx wrangler secret put BEDROCK_API_KEY --name helix-opspile-prod`).
-3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and `AGENT_CHANNELS` (and for CI, add them as
-   repository secrets), apply the migrations and deploy.
+3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and, optionally, `AGENT_CHANNELS` (and for CI, add
+   them as repository secrets), apply the migrations and deploy.
+4. Turn agents on or off per channel in the knowledge-base editor (`/inbox/kb`, **Thread
+   agents**): the admin team for every channel, team managers for their teams' channels.
 
 GitHub repositories the agents may read are rows in `agent_repos`, data like the rules:
 `INSERT INTO agent_repos (scope, slug, url, note) VALUES ('org', 'acme', 'https://github.com/acme/site', 'their site')`
@@ -136,13 +139,14 @@ GitHub repositories the agents may read are rows in `agent_repos`, data like the
 `GET /diag/agent?name=<thread key>` shows what an agent is doing (and its MCP servers).
 
 **MCP servers.** Each ops team and each customer can have MCP servers for its agents, added in
-the admin pages (the team's card: its managers and the admin team; the customer's card: the
-admin team): a name, the server's `https://` Streamable HTTP URL, what it is for, request
-headers for its credentials (sealed with `TOKEN_KEY`, never shown again), and optionally the
-only tools agents may call. Adding a server connects to it and lists its tools. An agent gets
-the servers of its thread's team and customer, and calls them only from code mode scripts
-(`await tools.mcp__<name>__<tool>(args)`); see ARCHITECTURE, "Thread agents". Servers that need
-an interactive OAuth sign-in are not supported yet; use one that takes a token in a header.
+the knowledge-base editor (`/inbox/kb`, **MCP servers** of the team's or the customer's
+knowledge base; whoever may edit it): a name, the server's `https://` Streamable HTTP URL, what
+it is for, request headers for its credentials (sealed with `TOKEN_KEY`, never shown again),
+and optionally the only tools agents may call. Adding a server connects to it and lists its
+tools. An agent gets the servers of its thread's team and customer, and calls them only from
+code mode scripts (`await tools.mcp__<name>__<tool>(args)`); see ARCHITECTURE, "Thread agents".
+Servers that need an interactive OAuth sign-in are not supported yet; use one that takes a
+token in a header.
 
 ### Rules and replay
 

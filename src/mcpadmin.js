@@ -13,16 +13,17 @@
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import { json } from './http.js';
 import { seal } from './post.js';
+import { repoName } from './kb.js';
 import { isAdmin, managesTeam } from './review.js';
 
 /**
- * The admin pages' API for the MCP servers of the thread agents (migration 0021), behind
- * `/api/admin/mcp`: per ops team (the admin team, and that team's managers) and per customer,
- * partner or vendor (the admin team).
+ * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0022),
+ * behind `/api/kb/mcp`. Next to the per-channel switch of the agents: a knowledge base's
+ * servers are those of its team (`kb-team-*`) or its customer (`kb-org-*`), and the same
+ * people manage them who edit it (the admin team; team managers for their teams).
  *
- * - `GET ?scope=team|org&slug=`: the servers, with the names of their request headers but
- *   never the values;
- * - `POST { scope, slug, name, url, description?, headers?, allow?, enabled? }` adds one,
+ * - `GET ?repo=`: the servers, with the names of their request headers but never the values;
+ * - `POST { repo, name, url, description?, headers?, allow?, enabled? }` adds one,
  *   `PUT { id, … }` changes it (`headers` absent: kept; an object: replaces them all),
  *   `DELETE { id }` removes it;
  * - `POST /check { id }` connects and lists its tools, as an agent would. Adding or changing a
@@ -32,14 +33,13 @@ import { isAdmin, managesTeam } from './review.js';
  */
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
-const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const HEADER = /^[A-Za-z0-9-]{1,64}$/;
 const RESERVED = new Set(['host', 'content-length', 'content-type', 'accept', 'mcp-session-id',
   'mcp-protocol-version', 'connection', 'cookie']);
 const MAX_HEADERS = 10;
 const MAX_VALUE = 4096;
 const MAX_TEXT = 500;
-const SCOPES = ['team', 'org'];
+const NO_BASE = 'no such knowledge base';
 
 const clean = (v, n = MAX_TEXT) => String(v ?? '').trim().slice(0, n);
 const bad = (error) => json({ error }, 400);
@@ -55,6 +55,7 @@ const parse = (s, fallback) => {
 function shown(row) {
   return {
     id: row.id,
+    repo: repoName(row.scope, row.slug),
     scope: row.scope,
     slug: row.slug,
     name: row.name,
@@ -71,8 +72,15 @@ function shown(row) {
   };
 }
 
-/** Whether `me` may manage the servers of `scope`/`slug`. */
-const mayManage = (me, scope, slug) => (scope === 'org' ? isAdmin(me) : managesTeam(me, slug));
+/** Whether `me` may manage the servers of `scope`/`slug`: whoever edits its knowledge base. */
+const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && managesTeam(me, slug));
+
+/** The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null. */
+async function ownerOf(env, me, repo) {
+  const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
+    .bind(String(repo)).first();
+  return base && mayManage(me, base.kind, base.slug) ? { scope: base.kind, slug: base.slug } : null;
+}
 
 /** `{ name: value }` from the request: an object, or `[{ name, value }]`. */
 function headersFrom(input) {
@@ -175,30 +183,22 @@ async function check(env, id) {
   return { server: res.server || null, instructions: res.instructions || null };
 }
 
-async function list(env, me, scope, slug) {
-  if (!SCOPES.includes(scope) || !SLUG.test(slug)) {
-    return bad('give a scope (team or org) and a slug');
-  }
-  if (!mayManage(me, scope, slug)) {
-    return json({ error: scope === 'org' ? 'for the admin team' : 'you do not manage this team' }, 403);
+async function list(env, me, repo) {
+  const owner = await ownerOf(env, me, repo);
+  if (!owner) {
+    return json({ error: NO_BASE }, 404);
   }
   const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
-    ORDER BY name`).bind(scope, slug).all();
-  return json({ servers: (results || []).map(shown) });
+    ORDER BY name`).bind(owner.scope, owner.slug).all();
+  return json({ repo, servers: (results || []).map(shown) });
 }
 
 async function create(env, me, body) {
-  const scope = clean(body.scope);
-  const slug = clean(body.slug);
-  if (!SCOPES.includes(scope) || !SLUG.test(slug)) {
-    return bad('give a scope (team or org) and a slug');
+  const owner = await ownerOf(env, me, body.repo);
+  if (!owner) {
+    return json({ error: NO_BASE }, 404);
   }
-  if (!mayManage(me, scope, slug)) {
-    return json({ error: scope === 'org' ? 'for the admin team' : 'you do not manage this team' }, 403);
-  }
-  if (scope === 'team' && !await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
-    return json({ error: 'no such team' }, 404);
-  }
+  const { scope, slug } = owner;
   const { fields, error } = await fieldsFrom(env, { headers: {}, ...body }, {});
   if (error) {
     return bad(error);
@@ -224,7 +224,7 @@ async function create(env, me, body) {
   ).first();
   const checked = await check(env, row.id);
   console.log(JSON.stringify({
-    route: 'admin', mcp: 'added', id: row.id, scope, by: me.id,
+    route: 'kb', mcp: 'added', id: row.id, scope, by: me.id,
   }));
   return json({ ok: true, ...checked, server: shown(await byId(env, row.id)) });
 }
@@ -235,7 +235,7 @@ async function update(env, me, body) {
     return json({ error: 'no such server' }, 404);
   }
   if (!mayManage(me, current.scope, current.slug)) {
-    return json({ error: 'you do not manage this team' }, 403);
+    return json({ error: 'no such server' }, 404);
   }
   const { fields, error } = await fieldsFrom(env, body, current);
   if (error) {
@@ -275,7 +275,7 @@ async function remove(env, me, body) {
     return json({ error: 'no such server' }, 404);
   }
   if (!mayManage(me, current.scope, current.slug)) {
-    return json({ error: 'you do not manage this team' }, 403);
+    return json({ error: 'no such server' }, 404);
   }
   await env.DB.prepare('DELETE FROM mcp_servers WHERE id = ?').bind(current.id).run();
   return json({ ok: true, deleted: current.id });
@@ -287,22 +287,24 @@ async function recheck(env, me, body) {
     return json({ error: 'no such server' }, 404);
   }
   if (!mayManage(me, current.scope, current.slug)) {
-    return json({ error: 'you do not manage this team' }, 403);
+    return json({ error: 'no such server' }, 404);
   }
   const checked = await check(env, current.id);
   return json({ ok: true, ...checked, server: shown(await byId(env, current.id)) });
 }
 
-/** Routes `/api/admin/mcp*`; null for other paths. */
-export async function mcpAdmin(request, env, url, me, body) {
-  const route = `${request.method} ${url.pathname}`;
-  switch (route) {
-    case 'GET /api/admin/mcp': return list(env, me, clean(url.searchParams.get('scope')), clean(url.searchParams.get('slug')));
-    case 'POST /api/admin/mcp': return create(env, me, body);
-    case 'PUT /api/admin/mcp': return update(env, me, body);
-    case 'DELETE /api/admin/mcp': return remove(env, me, body);
-    case 'POST /api/admin/mcp/check': return recheck(env, me, body);
-    default: return url.pathname === '/api/admin/mcp' || url.pathname.startsWith('/api/admin/mcp/')
-      ? json({ error: 'not found' }, 404) : null;
+/** Routes `/api/kb/mcp*`; null for other paths. */
+export async function mcpAdmin(request, env, url, me) {
+  if (url.pathname !== '/api/kb/mcp' && !url.pathname.startsWith('/api/kb/mcp/')) {
+    return null;
+  }
+  const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
+  switch (`${request.method} ${url.pathname}`) {
+    case 'GET /api/kb/mcp': return list(env, me, url.searchParams.get('repo'));
+    case 'POST /api/kb/mcp': return create(env, me, body);
+    case 'PUT /api/kb/mcp': return update(env, me, body);
+    case 'DELETE /api/kb/mcp': return remove(env, me, body);
+    case 'POST /api/kb/mcp/check': return recheck(env, me, body);
+    default: return json({ error: 'not found' }, 404);
   }
 }

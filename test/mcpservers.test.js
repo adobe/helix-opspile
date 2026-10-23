@@ -80,6 +80,11 @@ function env() {
     people: [ADA, BO, CY],
     teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix ops' }, { slug: 'edge', name: 'Edge ops' }],
   });
+  // The knowledge bases the editor knows; their team or customer owns the MCP servers.
+  for (const [kind, slug] of [['team', 'helix'], ['team', 'edge'], ['org', 'acme'], ['org', 'other']]) {
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
+      VALUES (?, ?, ?, 'test', '2026-10-22T00:00:00Z')`).run(`kb-${kind}-${slug}`, kind, slug);
+  }
   return { DB, TOKEN_KEY: KEY };
 }
 
@@ -102,16 +107,15 @@ after(() => {
   globalThis.fetch = realFetch;
 });
 
-describe('MCP servers in the admin pages', () => {
+describe('MCP servers in the knowledge-base editor', () => {
   const admin = asMe(ADA);
   const manager = asMe(BO, { helix: 'manager' });
   const member = asMe(CY);
 
   it('adds a team server, checks it, and never shows the credentials', async () => {
     const e = env();
-    const added = await call(e, manager, 'POST', '/api/admin/mcp', {
-      scope: 'team',
-      slug: 'helix',
+    const added = await call(e, manager, 'POST', '/api/kb/mcp', {
+      repo: 'kb-team-helix',
       name: 'docs',
       url: 'https://docs.mcp.example/mcp',
       description: 'Product documentation',
@@ -126,20 +130,20 @@ describe('MCP servers in the admin pages', () => {
     assert.ok(!JSON.stringify(added.body).includes(TOKEN));
     assert.ok(!JSON.stringify(e.DB.rows('SELECT * FROM mcp_servers')).includes(TOKEN), 'sealed in D1');
 
-    const listed = await call(e, manager, 'GET', '/api/admin/mcp?scope=team&slug=helix');
+    const listed = await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix');
     assert.equal(listed.body.servers.length, 1);
     assert.ok(!JSON.stringify(listed.body).includes(TOKEN));
 
     // Changing the description keeps the headers; replacing them with none fails the check.
     const { id } = added.body.server;
-    const kept = await call(e, manager, 'PUT', '/api/admin/mcp', { id, description: 'Docs' });
+    const kept = await call(e, manager, 'PUT', '/api/kb/mcp', { id, description: 'Docs' });
     assert.deepEqual(kept.body.server.headerNames, ['Authorization']);
-    const cleared = await call(e, manager, 'PUT', '/api/admin/mcp', { id, headers: {} });
+    const cleared = await call(e, manager, 'PUT', '/api/kb/mcp', { id, headers: {} });
     assert.deepEqual(cleared.body.server.headerNames, []);
     assert.match(cleared.body.server.checkError, /./);
     assert.deepEqual(cleared.body.server.tools, []);
 
-    const gone = await call(e, manager, 'DELETE', '/api/admin/mcp', { id });
+    const gone = await call(e, manager, 'DELETE', '/api/kb/mcp', { id });
     assert.equal(gone.status, 200);
     assert.equal(e.DB.rows('SELECT * FROM mcp_servers').length, 0);
   });
@@ -147,25 +151,27 @@ describe('MCP servers in the admin pages', () => {
   it('keeps customers to the admin team and teams to their managers', async () => {
     const e = env();
     const org = {
-      scope: 'org', slug: 'acme', name: 'status', url: 'https://status.mcp.example/mcp',
+      repo: 'kb-org-acme', name: 'status', url: 'https://status.mcp.example/mcp',
     };
-    assert.equal((await call(e, manager, 'POST', '/api/admin/mcp', org)).status, 403);
-    assert.equal((await call(e, member, 'POST', '/api/admin/mcp', { ...org, scope: 'team', slug: 'helix' })).status, 403);
-    assert.equal((await call(e, manager, 'POST', '/api/admin/mcp', { ...org, scope: 'team', slug: 'edge' })).status, 403);
-    const made = await call(e, admin, 'POST', '/api/admin/mcp', org);
+    // As in the editor: a knowledge base someone may not edit does not exist for them.
+    assert.equal((await call(e, manager, 'POST', '/api/kb/mcp', org)).status, 404);
+    assert.equal((await call(e, member, 'POST', '/api/kb/mcp', { ...org, repo: 'kb-team-helix' })).status, 403);
+    assert.equal((await call(e, manager, 'POST', '/api/kb/mcp', { ...org, repo: 'kb-team-edge' })).status, 404);
+    const made = await call(e, admin, 'POST', '/api/kb/mcp', org);
     assert.equal(made.status, 200);
-    assert.equal((await call(e, manager, 'GET', '/api/admin/mcp?scope=org&slug=acme')).status, 403);
-    assert.equal((await call(e, manager, 'DELETE', '/api/admin/mcp', { id: made.body.server.id })).status, 403);
-    assert.equal((await call(e, admin, 'POST', '/api/admin/mcp/check', { id: made.body.server.id })).body.server.tools.length, 1);
+    assert.equal(made.body.server.repo, 'kb-org-acme');
+    assert.equal((await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-org-acme')).status, 404);
+    assert.equal((await call(e, manager, 'DELETE', '/api/kb/mcp', { id: made.body.server.id })).status, 404);
+    assert.equal((await call(e, admin, 'POST', '/api/kb/mcp/check', { id: made.body.server.id })).body.server.tools.length, 1);
   });
 
   it('refuses what an agent could not use', async () => {
     const e = env();
     const base = {
-      scope: 'team', slug: 'helix', name: 'docs', url: 'https://docs.mcp.example/mcp',
+      repo: 'kb-team-helix', name: 'docs', url: 'https://docs.mcp.example/mcp',
     };
     const refused = async (patch, pattern) => {
-      const r = await call(e, admin, 'POST', '/api/admin/mcp', { ...base, ...patch });
+      const r = await call(e, admin, 'POST', '/api/kb/mcp', { ...base, ...patch });
       assert.equal(r.status, 400, JSON.stringify(patch));
       assert.match(r.body.error, pattern);
     };
@@ -174,9 +180,9 @@ describe('MCP servers in the admin pages', () => {
     await refused({ name: 'Docs Server' }, /lowercase/);
     await refused({ headers: { 'Mcp-Session-Id': 'x' } }, /client itself/);
     await refused({ headers: { Authorization: 'a\nb' } }, /one line/);
-    assert.equal((await call(e, admin, 'POST', '/api/admin/mcp', { ...base, slug: 'nope' })).status, 404);
-    assert.equal((await call(e, admin, 'POST', '/api/admin/mcp', base)).status, 200);
-    assert.equal((await call(e, admin, 'POST', '/api/admin/mcp', base)).status, 409);
+    assert.equal((await call(e, admin, 'POST', '/api/kb/mcp', { ...base, repo: 'kb-team-nope' })).status, 404);
+    assert.equal((await call(e, admin, 'POST', '/api/kb/mcp', base)).status, 200);
+    assert.equal((await call(e, admin, 'POST', '/api/kb/mcp', base)).status, 409);
   });
 });
 
@@ -192,20 +198,19 @@ function memoryStorage() {
 async function configured() {
   const e = env();
   const admin = asMe(ADA);
-  await call(e, admin, 'POST', '/api/admin/mcp', {
-    scope: 'team',
-    slug: 'helix',
+  await call(e, admin, 'POST', '/api/kb/mcp', {
+    repo: 'kb-team-helix',
     name: 'docs',
     url: 'https://docs.mcp.example/mcp',
     description: 'Product documentation',
     headers: { Authorization: `Bearer ${TOKEN}` },
     allow: 'search_docs',
   });
-  await call(e, admin, 'POST', '/api/admin/mcp', {
-    scope: 'org', slug: 'acme', name: 'docs', url: 'https://status.mcp.example/mcp', description: 'Their status page',
+  await call(e, admin, 'POST', '/api/kb/mcp', {
+    repo: 'kb-org-acme', name: 'docs', url: 'https://status.mcp.example/mcp', description: 'Their status page',
   });
-  await call(e, admin, 'POST', '/api/admin/mcp', {
-    scope: 'org', slug: 'other', name: 'secret', url: 'https://status.mcp.example/mcp',
+  await call(e, admin, 'POST', '/api/kb/mcp', {
+    repo: 'kb-org-other', name: 'secret', url: 'https://status.mcp.example/mcp',
   });
   return e;
 }

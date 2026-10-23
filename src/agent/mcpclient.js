@@ -15,10 +15,10 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/valida
 import { unseal } from '../post.js';
 
 /**
- * The MCP servers configured for a team or an org (`mcp_servers`, migration 0021), and talking
+ * The MCP servers configured for a team or an org (`mcp_servers`, migration 0022), and talking
  * to them: Streamable HTTP with the official client, request headers (credentials) from D1,
- * sealed with TOKEN_KEY. Used by the thread agents (src/agent/mcp.js) and by the admin pages'
- * check (src/mcpadmin.js).
+ * sealed with TOKEN_KEY. Used by the thread agents (src/agent/mcp.js) and by the knowledge-base
+ * editor's check (src/mcpadmin.js).
  *
  * No standing connection: the client's GET stream for server-sent notifications is answered
  * with 405 (no stream) right here, so a Durable Object with a client is not kept awake by it.
