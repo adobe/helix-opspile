@@ -17,8 +17,8 @@
  *
  *   node scripts/ui-markdown.mjs
  *
- * Run it after changing src/ui-markdown.js or upgrading micromark; a test checks that the
- * bundle is current.
+ * The file is not committed: cloudflare.config.ts runs this on every cf deploy and cf dev,
+ * and npm runs it before lint, test and ui:dev (`npm run build` by hand).
  */
 
 import { writeFile } from 'node:fs/promises';

@@ -11,7 +11,12 @@
     "lint": "eslint .",
     "test": "node --test",
     "ui:dev": "node --watch scripts/dev-ui.mjs",
-    "ui:session": "node scripts/dev-ui-session.mjs"
+    "ui:session": "node scripts/dev-ui-session.mjs",
+    "build": "node scripts/ui-markdown.mjs",
+    "prelint": "npm run build --silent",
+    "pretest": "npm run build --silent",
+    "preui:dev": "npm run build --silent",
+    "preui:session": "npm run build --silent"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",

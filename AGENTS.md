@@ -37,5 +37,6 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/page.js` — serves `ui/inbox.html` with Slack's emoji names from `src/emoji.js`, which
   `scripts/emoji.mjs` generates (do not edit it by hand), and with the page's markdown renderer
   `src/ui-markdown.js` (micromark), which `scripts/ui-markdown.mjs` bundles into
-  `src/ui-markdown.bundle.js` (do not edit it by hand; regenerate it after changing the renderer)
+  `src/ui-markdown.bundle.js` (generated, not committed: `npm run build`; `cf deploy`, `cf dev`,
+  `npm test`, `npm run lint` and `npm run ui:dev` build it)
 - `cloudflare.config.ts` — `cf` deploy config; `--mode prod` and `--mode stage`
