@@ -35,8 +35,16 @@
   header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
   header .me { margin-left: auto; color: var(--mute); }
   #review[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
-  #kb { color: inherit; text-decoration: none; background: var(--card); border: 1px solid var(--line);
-    border-radius: 7px; padding: 3px 9px; }
+  /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
+  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+    overflow: hidden; }
+  nav.pages[hidden] { display: none; }
+  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a + a { border-left: 1px solid var(--line); }
+  nav.pages a:hover { color: var(--ink); background: var(--hover); }
+  nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
+    box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
+  nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
   .live.on { background: var(--green); }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
@@ -306,10 +314,10 @@
 <body>
 <header>
   <h1>opspile</h1>
+  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team): the open thread's customer, else this team">Knowledge bases</a></nav>
   <select id="team" aria-label="Team"></select>
   <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
   <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
-  <a id="kb" hidden href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team)">Knowledge bases</a>
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
   <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
@@ -1582,6 +1590,7 @@ async function loadInbox() {
   state.coPeople = coParticipants();
   state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
   render();
+  syncPages();
 }
 const inflight = new Set();
 async function prefetch(key) {
@@ -1625,6 +1634,28 @@ function toUrl(push = true) {
   if (state.as) q.set('as', String(state.as));
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](null, '', url);
+  syncPages();
+}
+/**
+ * The switch to the knowledge-base editor (admin team) opens the knowledge base that fits what
+ * is on screen: the open thread's customer's (or the one customer filtered on), else the team's;
+ * the editor picks whichever of them exists. `back` is this inbox as it is now, so the editor's
+ * "Inbox" returns to it: team, filters, sort, unread, the open thread and "view as".
+ */
+function kbHref() {
+  const q = new URLSearchParams();
+  const open = state.open && (state.data?.threads.find((t) => t.thread === state.open)
+    || state.cache.get(state.open)?.data?.thread);
+  const customers = state.sel.customer;
+  const org = open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
+  if (org) q.set('org', org);
+  if (state.team) q.set('team', state.team);
+  q.set('back', `${location.pathname}${location.search}`);
+  return `/inbox/kb?${q}`;
+}
+function syncPages() {
+  $('inbox').href = `${location.pathname}${location.search}`;
+  $('kb').href = kbHref();
 }
 function fromUrl() {
   const q = new URLSearchParams(location.search);
@@ -1666,6 +1697,9 @@ async function start() {
   if (q.get('connected')) toast(`Connected your ${q.get('connected') === 'slack' ? 'Slack' : 'Microsoft'} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
   const initial = fromUrl();
+  // The thread the URL opens is open from the start: settling the URL keeps it, and opening it
+  // adds no history entry (Back from here leaves the inbox, to where it came from).
+  state.open = initial.open || null;
   await loadWho();
   toUrl(false);
   $('team').onchange = () => switchTeam($('team').value);
@@ -1753,6 +1787,7 @@ async function start() {
     $('review').setAttribute('aria-pressed', String(review));
     render();
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    syncPages();
   });
   if (state.me.admin) {
     const sel = $('as');
@@ -1773,7 +1808,10 @@ async function start() {
       connect();
     };
     $('review').hidden = false;
-    $('kb').hidden = false;
+    $('pages').hidden = false;
+    $('inbox').onclick = (e) => e.preventDefault();
+    // Fresh at the moment it is used (the open thread's customer may have loaded since).
+    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {
       state.review = !state.review;

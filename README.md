@@ -173,7 +173,9 @@ New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` tu
 No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 <http://localhost:8787/inbox/kb>, over a few made-up knowledge bases in memory
 ([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production;
-there Dana counts as a member of the admin team.
+there Dana counts as a member of the admin team. `npm run ui:dev -- --admin` makes her one in
+the inbox too, with what admins see there: the switch to the editor, "View as" (read-only) and
+label review.
 
 To point the preview at production instead, sign in to the inbox in Chrome with remote
 debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access

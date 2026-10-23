@@ -169,15 +169,27 @@ before each model request; HTML comments in them are left out. Only the admin te
 them, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
-**Editor.** Members of the admin team have an editor at `/inbox/kb` (linked from the inbox
-header): every knowledge base, its files, its history, and an editor for `systemprompt.md`
+**Editor.** Members of the admin team have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).
 A save names the blob it was written from, so a colleague's or an agent's newer version is
 never overwritten unseen: the editor offers to load theirs or save over it. `index.md` and
 `log.md` are read-only there. It asks only in the page (no native dialogs, which a debugger
-attached over CDP dismisses), and only when edits could not be saved or before a delete.
+attached over CDP dismisses), and only when edits could not be saved or before a delete; the
+one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
+saved, where only the browser's own prompt can ask.
+
+For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
+bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
+of the open thread's customer (or of the one customer filtered on) if it has one, else the
+team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
+origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
+thread and "view as". Opened directly, **Inbox** goes to the inbox of the team whose knowledge
+base is open. The editor's URL names the knowledge base and the file (or the history), and
+each one opened is a history entry, so the browser's Back and Forward step through them and
+back to the inbox. The editor itself is always the admin's own, also when they came from a
+"view as" inbox.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
