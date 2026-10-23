@@ -118,6 +118,11 @@ function vars(deployed: boolean) {
   );
 }
 
+// WORKER_DOMAINS: comma-separated custom domains for the deployed Worker (its zone must be in
+// the account). The workers.dev address stays on beside them.
+const domains = () => String(process.env.WORKER_DOMAINS || '').split(',')
+  .map((d) => d.trim()).filter(Boolean);
+
 export default defineConfig(({ mode }) => {
   const deployed = Boolean(mode && NAMES[mode]);
   const name = deployed ? NAMES[mode as string] : 'helix-opspile';
@@ -127,6 +132,8 @@ export default defineConfig(({ mode }) => {
       compatibilityDate: '2026-10-01',
       entrypoint: 'src/index.js',
       previewUrls: false,
+      workersDev: true,
+      ...(deployed && domains().length ? { domains: domains() } : {}),
       // Workers Logs; logs carry event metadata only, never message content.
       observability: { enabled: true },
       // Pi (thread agents) and isomorphic-git use Node's Buffer and friends.
