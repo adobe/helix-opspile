@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>opspile · knowledge bases</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -140,6 +140,41 @@
   .switch[aria-checked="true"]::after { left: 18px; }
   .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
+  .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
+
+  /*
+   * Narrower screens. Under 1100px the two lists get narrower. Under 700px (phones, a folded
+   * iPhone Duo) one column at a time, as `main[data-pane]` says: the knowledge bases, one
+   * knowledge base's files, or the editor, each with a button back to the one before.
+   */
+  .up { display: none; }
+  .up svg { width: 14px; height: 14px; }
+  #files > .up + h2 { margin-top: 0; }
+  /* A text field under 16px makes iOS zoom in on it when it is focused. */
+  @media (hover: none) and (pointer: coarse) {
+    input, select, textarea { font-size: 16px; }
+  }
+  @media (max-width: 1099px) {
+    main { grid-template-columns: minmax(170px, 22%) minmax(200px, 27%) minmax(0, 1fr); }
+  }
+  @media (max-width: 699px) {
+    header { gap: 8px; padding: 0 8px 0 12px; }
+    header h1 { font-size: 0; gap: 0; margin: 0; }
+    nav.pages { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+    nav.pages a { padding: 0 8px; white-space: nowrap; }
+    #user { padding: 0 4px; gap: 6px; }
+    #user .nm { display: none; }
+    .menu { right: 8px; }
+    main { grid-template-columns: 100%; }
+    main > section { border-right: 0; }
+    main:not([data-pane="bases"]) #bases, main:not([data-pane="files"]) #files,
+    main:not([data-pane="editor"]) #editor { display: none; }
+    .up { display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px 2px 2px; border: 0; background: none;
+      color: var(--link); }
+    #files > .up { margin: 0 0 6px; }
+    .bar .path { min-width: 0; overflow-wrap: anywhere; }
+    .foot input { min-width: 0; }
+  }
 </style>
 </head>
 <body>
@@ -157,7 +192,7 @@
     <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
   </div>
 </header>
-<main>
+<main data-pane="bases">
   <section id="bases"><div class="empty">Loading…</div></section>
   <section id="files"></section>
   <section id="editor"><div class="empty">Pick a knowledge base.</div></section>
@@ -321,8 +356,14 @@ function renderBases() {
   }
 }
 
+/** Phones show one column at a time: `bases`, `files` or `editor`. */
+const showPane = (pane) => { document.querySelector('main').dataset.pane = pane; };
+const UP = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
+const up = (pane, label) => `<button class="up" data-up="${pane}">${UP}${label}</button>`;
+
 async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   if (repo !== state.repo && !(await leave())) return false;
+  showPane('files');
   state.repo = repo;
   state.file = null;
   state.view = view || 'file';
@@ -365,7 +406,7 @@ function renderFiles() {
     rows.push(`<div class="row${state.file?.path === f.path ? ' on' : ''}" data-path="${esc(f.path)}" style="padding-left:${dir ? 20 : 8}px">
       <span>${esc(name)}</span>${GENERATED.has(name) ? '<span class="tag">generated</span>' : ''}</div>`);
   }
-  $('files').innerHTML = `<h2>${esc(b.name)}</h2>
+  $('files').innerHTML = `${up('bases', 'Knowledge bases')}<h2>${esc(b.name)}</h2>
     <div class="row${state.file?.path === SYSTEM_PROMPT ? ' on' : ''}" data-path="${SYSTEM_PROMPT}">
       <span>${SYSTEM_PROMPT}</span><span class="tag${state.hasSystemPrompt ? '' : ' missing'}">${state.hasSystemPrompt ? 'agent instructions' : 'not written yet'}</span></div>
     <div class="row${state.view === 'agents' ? ' on' : ''}" id="agents" title="Which of its channels have thread agents">
@@ -417,6 +458,7 @@ function ago(at) {
 
 async function showAgents({ force = false, nav = 'push' } = {}) {
   if (!force && state.file && !(await leave())) return false;
+  if (!force) showPane('editor');
   state.view = 'agents';
   state.file = null;
   renderFiles();
@@ -450,7 +492,7 @@ function renderAgents(note) {
         data-channel="${esc(c.channelId)}"${c.may ? '' : ' disabled'}></button>
     </div>`;
   }).join('');
-  $('editor').innerHTML = `<div class="bar"><span class="title">Thread agents in ${esc(whose)}</span></div>
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Thread agents in ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
     : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
     <div class="channels">${list ? rows || '<div class="empty">No channels yet.</div>' : '<div class="empty">Could not list the channels.</div>'}</div>`;
@@ -495,6 +537,7 @@ async function switchAgent(c) {
 
 async function openFile(path, { force = false, nav = 'push' } = {}) {
   if (!force && !(await leave())) return false;
+  if (!force) showPane('editor');
   state.view = 'file';
   const b = base();
   const exists = state.files.some((f) => f.path === path);
@@ -519,6 +562,7 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
 
 async function newFile() {
   if (!(await leave())) return;
+  showPane('editor');
   state.view = 'file';
   state.file = {
     path: '', hash: null, isNew: true, choosePath: true, baseline: conceptTemplate('new-concept.md'),
@@ -543,7 +587,7 @@ function renderEditor(note) {
       ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it. Saved as you type.${f.isNew ? ' It does not exist yet: start typing to create it.' : ''}`
       : `An OKF concept: YAML frontmatter with a <code>type</code>, then Markdown. Saved as you type; index.md and log.md follow.${f.choosePath ? ' Give it a path first.' : ''}`;
   $('editor').innerHTML = `
-    <div class="bar">
+    <div class="bar">${up('files', 'Files')}
       ${f.choosePath
     ? '<input class="path" id="path" placeholder="path/of/the-concept.md" aria-label="Path">'
     : `<span class="path">${esc(f.path)}</span>`}
@@ -707,6 +751,7 @@ async function reloadFiles() {
 
 async function showHistory({ force = false, nav = 'push' } = {}) {
   if (!force && state.file && !(await leave())) return false;
+  if (!force) showPane('editor');
   state.view = 'history';
   state.file = null;
   renderFiles();
@@ -714,7 +759,7 @@ async function showHistory({ force = false, nav = 'push' } = {}) {
   $('editor').innerHTML = '<div class="empty">Loading…</div>';
   const { ok, body } = await call(`/api/kb/log?repo=${encodeURIComponent(state.repo)}`);
   if (!ok) { $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the history.')}</div>`; return; }
-  $('editor').innerHTML = `<div class="bar"><span class="path">History of ${esc(state.repo)}</span></div>
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="path">History of ${esc(state.repo)}</span></div>
     <div class="log">${body.commits.map((c) => `<div class="c"><div class="h">${esc(c.hash)} · ${esc(new Date(c.at).toLocaleString())} · ${esc(c.author)}</div>
       <div class="m">${esc(c.message)}</div></div>`).join('') || '<div class="empty">No commits yet.</div>'}</div>`;
 }
@@ -760,6 +805,11 @@ $('inbox').addEventListener('click', async (e) => {
   location.assign(inboxUrl());
 });
 $('kbs').addEventListener('click', (e) => e.preventDefault());
+// Phones: back to the column before (what is open stays open).
+document.querySelector('main').addEventListener('click', (e) => {
+  const to = e.target.closest('[data-up]');
+  if (to) showPane(to.dataset.up);
+});
 
 // Back and Forward within the editor: show what the URL names, after the same check as a click.
 window.addEventListener('popstate', async () => {
@@ -772,6 +822,7 @@ window.addEventListener('popstate', async () => {
     moved = await leave();
     if (moved) {
       Object.assign(state, { repo: null, file: null, view: 'file' });
+      showPane('bases');
       renderBases();
       $('files').innerHTML = '';
       $('editor').innerHTML = '<div class="empty">Pick a knowledge base.</div>';
@@ -821,6 +872,8 @@ window.addEventListener('popstate', async () => {
       view: exact && ['history', 'agents'].includes(q.get('view')) ? q.get('view') : undefined,
       nav: 'replace',
     });
+    // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
+    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>opspile · admin</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -145,6 +145,49 @@
   dialog.confirm .detail { color: var(--mute); font-size: 13px; max-height: 45vh; overflow: auto; }
   dialog.confirm .detail li { margin: 2px 0; }
   dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
+  #membersTable, #rulesTable, #channelsTable { overflow-x: auto; }
+
+  /*
+   * Narrower screens. Under 1100px the list gets narrower. Under 700px (phones, a folded iPhone
+   * Duo) the list and what is picked in it take turns (`body.picked` while something is), the
+   * picked team or org has a back button, the sections move to a second row of the toolbar,
+   * and tables scroll sideways in their card.
+   */
+  .title .back { display: none; }
+  /* A text field under 16px makes iOS zoom in on it when it is focused. */
+  @media (hover: none) and (pointer: coarse) {
+    input, select, textarea { font-size: 16px; }
+  }
+  @media (max-width: 1099px) {
+    main { grid-template-columns: minmax(240px, 34%) minmax(0, 1fr); }
+    #detail { padding: 14px 16px 32px; }
+  }
+  @media (max-width: 699px) {
+    header { flex-wrap: wrap; height: auto; min-height: 50px; gap: 6px 8px; padding: 6px 8px 6px 12px; }
+    header h1 { font-size: 0; gap: 0; margin: 0; }
+    header nav.tabs { order: 1; flex-basis: 100%; overflow-x: auto; scrollbar-width: none; }
+    header nav.tabs a { white-space: nowrap; }
+    nav.pages { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+    nav.pages a { padding: 0 8px; white-space: nowrap; }
+    #user { padding: 0 4px; gap: 6px; }
+    #user .nm { display: none; }
+    .menu { right: 8px; }
+    main { grid-template-columns: 100%; }
+    body.picked #list, body:not(.picked) #detail { display: none; }
+    #list { border-right: 0; }
+    #detail { padding: 10px 12px 32px; }
+    .title { flex-wrap: wrap; gap: 6px 8px; }
+    .title .back { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0;
+      background: none; color: var(--link); }
+    .title .back svg { width: 18px; height: 18px; }
+    .title input.big { flex: 1 1 60%; min-width: 0; font-size: 18px; }
+    .card { padding: 10px 12px; }
+    .card > table { display: block; overflow-x: auto; }
+    .field { grid-template-columns: 1fr; gap: 4px; }
+    .field label { margin-top: 6px; }
+    .seg { flex-wrap: wrap; }
+  }
 </style>
 </head>
 <body>
@@ -289,6 +332,8 @@ function toUrl() {
   const q = new URLSearchParams({ tab: state.tab });
   if (state.sel) q.set(state.tab === 'teams' ? 'team' : 'org', state.sel);
   history.replaceState(null, '', `/inbox/admin?${q}`);
+  // Phones show the list or what is picked in it (see the styles).
+  document.body.classList.toggle('picked', Boolean(state.sel));
   for (const a of document.querySelectorAll('nav [data-tab]')) {
     a.toggleAttribute('aria-current', a.dataset.tab === state.tab);
     if (a.dataset.tab === state.tab) a.setAttribute('aria-current', 'page');
@@ -379,6 +424,15 @@ function select(sel) {
   renderList();
   if (state.tab === 'teams') showTeam(sel); else showOrg(sel);
 }
+
+/** Back to the list (phones), its filter as it was. */
+function unselect() {
+  state.sel = null;
+  toUrl();
+  renderList();
+  $('detail').innerHTML = `<div class="empty">Pick ${state.tab === 'teams' ? 'a team' : 'an org'}.</div>`;
+}
+const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab === 'teams' ? 'teams' : 'orgs'}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
 
 function switchTab(tab) {
   state.tab = tab;
@@ -947,7 +1001,7 @@ async function showTeam(slug) {
       : `<h1 style="margin:0;font-size:20px;flex:1">${esc(team.name)}</h1>`;
   }
   $('detail').innerHTML = `
-    <div class="title">${title}
+    <div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
       ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}&back=${encodeURIComponent(`${location.pathname}${location.search}`)}">Knowledge base</a>` : ''}
       ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
@@ -1021,7 +1075,7 @@ async function showOrg(slug) {
     target: 'org', value: slug, org, rules, channels,
   };
   $('detail').innerHTML = `
-    <div class="title"><span id="oIco">${ico(org.icon)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
+    <div class="title">${backButton()}<span id="oIco">${ico(org.icon)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
@@ -1097,6 +1151,7 @@ async function showOrg(slug) {
   for (const a of document.querySelectorAll('nav [data-tab]')) {
     a.onclick = (e) => { e.preventDefault(); switchTab(a.dataset.tab); };
   }
+  $('detail').addEventListener('click', (e) => { if (e.target.closest('[data-back]')) unselect(); });
   switchTab(state.tab);
   const sel = q.get(state.tab === 'teams' ? 'team' : 'org');
   if (sel) select(sel);
