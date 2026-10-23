@@ -446,14 +446,16 @@ export function createStore(now = Date.now()) {
     mentions,
 
     /** Adds a live message to a thread, as the normalizer would. Returns the thread key. */
-    post(key, who, body, at = new Date().toISOString()) {
+    post(key, who, body, at = new Date().toISOString(), id = newId(threads.get(key).ch.source, Date.parse(at))) {
       const entry = threads.get(key);
-      const id = newId(entry.ch.source, Date.parse(at));
       put(entry, {
         id, at, author: author(who), body,
       });
       return key;
     },
+
+    /** A platform message id for a new message, as Slack or Teams would assign it. */
+    newId: (key, at = Date.now()) => newId(threads.get(key).ch.source, at),
 
     /** Moves a watermark forward only, like TeamRoom.read. */
     read(person, key, at) {

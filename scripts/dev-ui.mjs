@@ -625,12 +625,19 @@ async function api(req, res, url) {
     if (!entry || !inTeam(entry.row.team) || !String(reply || '').trim()) {
       return json(res, { error: 'not found' }, 404);
     }
-    // As the real reply would: it arrives a moment later, like a platform event.
+    // As the real reply would: it arrives a moment later, like a platform event, with the
+    // platform's id, and on Slack with emoji as :shortcodes: and _italics_ as Slack writes them.
+    const at = new Date();
+    const id = store.newId(key, at.getTime());
+    const arrived = entry.row.source === 'slack'
+      ? String(reply).trim().replace(/🤖/g, ':robot_face:').replace(/🥁/g, ':drum_with_drumsticks:')
+        .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1_$2_')
+      : String(reply).trim();
     setTimeout(() => {
-      store.post(key, 'dana', String(reply).trim());
+      store.post(key, 'dana', arrived, at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, 1200);
-    return json(res, { ok: true, platform: entry.row.source, id: 'fake' });
+    return json(res, { ok: true, platform: entry.row.source, id });
   }
   if (url.pathname === '/api/react' && req.method === 'POST') {
     const {
