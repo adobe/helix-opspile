@@ -128,6 +128,43 @@
   .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--ring); }
   .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--ring); }
   .t .dot.ring:not([class*="c-"]) { background: transparent; }
+
+  /*
+   * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
+   * The filter cards stick out of the page's left edge and hang over the thread list by a
+   * third of their corner radius, two thirds while one of their filters is on, all of it
+   * under the pointer. They need room to do so (and to cast their shadow): the filter
+   * column reaches into the thread list by --fg, and lets the pointer through where it has
+   * no card. The open thread's row is lifted out of its column, over the pane, by a copy
+   * of it in #lift (see syncLift), since the list's scroller would clip it.
+   */
+  :root { --r: 14px; --fg: 48px;
+    --card-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.7);
+    --lift-shadow: 0 0 0 1px rgba(0,0,0,.4), 8px 6px 24px 2px rgba(0,0,0,.8); }
+  @media (prefers-color-scheme: light) {
+    :root { --card-shadow: 0 1px 3px rgba(20,30,50,.10), 0 8px 22px rgba(20,30,50,.16);
+      --lift-shadow: 0 2px 4px rgba(20,30,50,.12), 8px 6px 22px 2px rgba(20,30,50,.24); }
+  }
+  main { position: relative; background: var(--bg); }
+  #filters { position: relative; z-index: 3; background: transparent; pointer-events: none;
+    margin-right: calc(-1 * var(--fg)); padding: 12px calc(var(--fg) - var(--r) / 3) 12px 0;
+    overflow-x: hidden; scrollbar-width: none; }
+  #filters::-webkit-scrollbar { display: none; }
+  #filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + 18px);
+    border-left: 0; border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
+    transition: transform .18s ease-out; }
+  #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
+  #filters .card:hover { transform: translateX(calc(var(--r) * 2 / 3)); }
+  #filters .card.active:hover { transform: translateX(var(--r)); }
+  @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+  /* Room for the filter cards' overhang, so they never cover a status dot. */
+  .t { padding-left: 18px; }
+  #threads .count { padding-left: 18px; }
+  #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
+  #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
+    background: var(--sel); box-shadow: var(--lift-shadow);
+    padding: calc(9px + var(--lv) - 1px) calc(14px + var(--lr) - 1px) 0 calc(18px + var(--ll) - 1px); }
+  #lift .t .faces .av { border-color: var(--sel); }
   .t.enter { animation: push-in .35s ease-out; overflow: hidden; }
   @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: 64px; opacity: 1; } }
   .msg.enter, .sys.enter { animation: rise .35s ease-out; }
@@ -332,6 +369,7 @@
   <section id="filters" aria-label="Filters"></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
   <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
+  <div id="lift" inert aria-hidden="true" hidden></div>
 </main>
 <script>/* MARKDOWN */</script>
 <script type="module">
@@ -803,7 +841,7 @@ function renderFilters() {
     if (f.limit) rows = rows.slice(0, f.limit);
     const max = Math.max(1, ...rows.map((r) => r[1]));
     const on = state.sel[f.id] || new Set();
-    return `<div class="card" data-f="${f.id}"><h3>${esc(f.title)}${on.size ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+    return `<div class="card${on.size ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on.size ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
       ${rows.map(([v, n]) => {
         const color = f.color ? f.color(v) : 'c-accent';
         const ic = f.icon && f.icon(v, all);
@@ -953,6 +991,59 @@ function renderThreads() {
   state.prevKeys = new Set(state.data.threads.map((t) => t.thread));
 }
 function render() { renderFilters(); renderThreads(); }
+
+// The open thread's row, lifted out of its column: a copy of it over the real one, wider by
+// LIFT on each side and over the pane, in #lift, which spans the list below its header.
+const LIFT = { left: 10, right: 16, v: 3, room: 48 };
+let liftOf = null;
+function syncLift(copy) {
+  const list = $('threads');
+  const lift = $('lift');
+  const sel = list.querySelector('.t.sel');
+  lift.hidden = !sel;
+  if (!sel) { liftOf = null; return; }
+  if (copy || liftOf !== sel) {
+    liftOf = sel;
+    lift.innerHTML = sel.outerHTML;
+    lift.firstElementChild.classList.remove('enter');
+  }
+  const main = lift.parentElement.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  const head = list.querySelector('.count')?.offsetHeight || 0;
+  const r = sel.getBoundingClientRect();
+  Object.assign(lift.style, {
+    left: `${box.left - main.left - LIFT.room}px`,
+    top: `${box.top - main.top + head}px`,
+    width: `${box.width + 2 * LIFT.room}px`,
+    height: `${Math.max(0, box.height - head)}px`,
+  });
+  const { style } = lift.firstElementChild;
+  Object.assign(style, {
+    left: `${r.left - box.left + LIFT.room - LIFT.left}px`,
+    top: `${r.top - box.top - head - LIFT.v}px`,
+    width: `${r.width + LIFT.left + LIFT.right}px`,
+    height: `${r.height + 2 * LIFT.v}px`,
+  });
+  style.setProperty('--ll', `${LIFT.left}px`);
+  style.setProperty('--lr', `${LIFT.right}px`);
+  style.setProperty('--lv', `${LIFT.v}px`);
+}
+{
+  let frame = 0;
+  let copy = false;
+  const later = (again) => {
+    copy ||= again;
+    if (!frame) {
+      frame = requestAnimationFrame(() => { frame = 0; syncLift(copy); copy = false; });
+    }
+  };
+  new MutationObserver(() => later(true)).observe($('threads'), {
+    childList: true, subtree: true, attributes: true, characterData: true,
+  });
+  $('threads').addEventListener('scroll', () => later(false), { passive: true });
+  $('threads').addEventListener('animationend', () => later(false));
+  new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
+}
 
 // ---------------------------------------------------------------- messages
 const TECH_LABEL = {
