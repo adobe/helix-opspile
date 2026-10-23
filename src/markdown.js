@@ -30,6 +30,24 @@ export function decodeEntities(s) {
 }
 
 /**
+ * A URL as a markdown link destination. CommonMark ends a destination at a space or an
+ * unbalanced parenthesis, and htmlToMarkdown would strip `<…>`: those are percent-encoded.
+ */
+export function mdUrl(url) {
+  const s = String(url || '');
+  let depth = 0;
+  const balanced = [...s].every((c) => {
+    depth += { '(': 1, ')': -1 }[c] || 0;
+    return depth >= 0;
+  }) && depth === 0;
+  return s.replace(balanced ? /[\s<>]/g : /[\s<>()]/g, (c) => ({ '(': '%28', ')': '%29' }[c]
+    || encodeURIComponent(c)));
+}
+
+/** A markdown link: brackets in the label are escaped, the URL is a safe destination. */
+export const mdLink = (label, url, image = false) => `${image ? '!' : ''}[${String(label).replace(/[[\]\\]/g, '\\$&')}](${mdUrl(url)})`;
+
+/**
  * Slack mrkdwn to markdown.
  *
  * @param {string} text
@@ -57,7 +75,7 @@ export function slackToMarkdown(text, userName = () => undefined) {
           .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]+))?>/g, (_, label) => (label || '@group'))
           .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, '@$1')
           .replace(/<!date\^\d+\^[^|>]*\|([^>]+)>/g, '$1')
-          .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_, url, label) => `[${label}](${url})`)
+          .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_, url, label) => mdLink(label, url))
           .replace(/<((?:https?|mailto):[^>]+)>/g, '<$1>')
           .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1**$2**')
           .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, '$1*$2*')
@@ -88,11 +106,11 @@ export function htmlToMarkdown(html) {
     .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
       const text = label.replace(/<[^>]+>/g, '').trim();
       // Never `<href>`: the tag stripping below would remove it as if it were a tag.
-      return `[${!text || text === href ? href : text}](${href})`;
+      return mdLink(!text || text === href ? href : text, href);
     })
     .replace(/<img\s[^>]*>/gi, (tag) => {
       const attr = (name) => (new RegExp(`\\s${name}="([^"]*)"`, 'i').exec(tag) || [])[1] || '';
-      return `![${attr('alt') || 'image'}](${attr('src')})`;
+      return mdLink(attr('alt') || 'image', attr('src'), true);
     })
     .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')
     .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')

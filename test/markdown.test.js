@@ -12,7 +12,24 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { htmlToMarkdown, slackToMarkdown } from '../src/markdown.js';
+import {
+  htmlToMarkdown, mdLink, mdUrl, slackToMarkdown,
+} from '../src/markdown.js';
+
+describe('mdLink', () => {
+  it('encodes what would end a link destination', () => {
+    assert.equal(mdUrl('https://example.com/a b/c\td'), 'https://example.com/a%20b/c%09d');
+    assert.equal(mdUrl('https://example.com/<x>'), 'https://example.com/%3Cx%3E');
+    assert.equal(mdUrl('https://example.com/wiki/A_(b)'), 'https://example.com/wiki/A_(b)');
+    assert.equal(mdUrl('https://example.com/a)b'), 'https://example.com/a%29b');
+    assert.equal(mdUrl(undefined), '');
+  });
+
+  it('escapes brackets in the label', () => {
+    assert.equal(mdLink('a [b] c', 'https://example.com/x y'), '[a \\[b\\] c](https://example.com/x%20y)');
+    assert.equal(mdLink('pic', 'https://example.com/p.png', true), '![pic](https://example.com/p.png)');
+  });
+});
 
 describe('slackToMarkdown', () => {
   it('converts emphasis, strike-through and quotes', () => {
@@ -59,6 +76,13 @@ describe('htmlToMarkdown', () => {
     assert.equal(
       htmlToMarkdown(`<p>see <a href="${url}" title="${url}">${url}</a>.</p>`),
       `see [${url}](${url}).`,
+    );
+  });
+
+  it('keeps links with spaces in their address links', () => {
+    assert.equal(
+      htmlToMarkdown('<a href="https://example.com/Shared Documents/a b.pdf">a b.pdf</a>'),
+      '[a b.pdf](https://example.com/Shared%20Documents/a%20b.pdf)',
     );
   });
 

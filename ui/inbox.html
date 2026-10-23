@@ -184,6 +184,14 @@
   .bubble code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(0,0,0,.25); padding: 1px 4px; border-radius: 4px; }
   .bubble pre { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); color: var(--ink);
     border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; overflow: auto; margin: 6px 0; white-space: pre-wrap; }
+  .bubble pre code { font: inherit; background: none; padding: 0; border-radius: 0; }
+  .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { font-size: 1em; font-weight: 700; margin: 8px 0 2px; }
+  .bubble > :first-child { margin-top: 0; }
+  .bubble > :last-child { margin-bottom: 0; }
+  .bubble hr { border: 0; border-top: 1px solid currentColor; opacity: .3; margin: 8px 0; }
+  .bubble table { border-collapse: collapse; margin: 6px 0; display: block; overflow-x: auto; }
+  .bubble th, .bubble td { border: 1px solid var(--line); padding: 3px 8px; }
+  .bubble li > input[type=checkbox] { margin: 0 4px 0 -2px; vertical-align: -1px; }
   .bubble blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid currentColor; opacity: .85; }
   .bubble ul, .bubble ol { margin: 4px 0; padding-left: 20px; }
   .bubble img.att { display: block; max-width: 100%; max-height: 360px; border-radius: 10px; margin: 6px 0; cursor: zoom-in; }
@@ -305,6 +313,7 @@
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
   <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
 </main>
+<script>/* MARKDOWN */</script>
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -551,42 +560,16 @@ const SIGNAL_HINT = {
   ring_buoy: 'help: the rest of the team should look',
 };
 
-// A safe markdown subset: escape first, then format. Images from Slack and Teams go
-// through the inbox's media proxy, which adds the platform's credentials.
+// Markdown: micromark, with chat's line breaks, mentions and emoji (src/ui-markdown.js, put
+// into the page as `Markdown`). Images from Slack and Teams go through the inbox's media
+// proxy, which adds the platform's credentials.
 // Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention.
 let mentionNames = null;
 function setMentionNames(names) {
-  const list = [...new Set(names.filter((n) => n && n.length <= 60))].sort((a, b) => b.length - a.length);
-  const reEsc = (n) => esc(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  mentionNames = list.length ? new RegExp(`(^|\\s)(@(?:${list.map(reEsc).join('|')}))(?![\\p{L}\\p{N}_])`, 'gu') : null;
+  mentionNames = Markdown.mentionPattern(names);
 }
 const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
-function inline(s) {
-  return s
-    .replace(/!\[([^\]\n]*)\]\((https:\/\/[^)\s]+)\)/g, (_, alt, u) => `<img class="att" src="${esc(proxied(u.replace(/&amp;/g, '&')))}" alt="${alt}" loading="lazy" tabindex="0">`)
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(>])\*([^*\n]+)\*(?=[\s).,!?:;<]|$)/g, '$1<em>$2</em>')
-    .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
-    .replace(mentionNames || /$^/, '$1<span class="mention">$2</span>')
-    .replace(/(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu, '$1<span class="mention">$2</span>')
-    .replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
-}
-function md(src) {
-  return String(src || '').split(/```/).map((b, i) => {
-    if (i % 2) return `<pre>${esc(b.replace(/^\n|\n$/g, ''))}</pre>`;
-    return esc(b).split(/\n{2,}/).map((para) => {
-      const lines = para.split('\n');
-      if (lines.every((l) => /^&gt; ?/.test(l))) return `<blockquote>${inline(lines.map((l) => l.replace(/^&gt; ?/, '')).join('<br>'))}</blockquote>`;
-      if (lines.every((l) => /^[-*] /.test(l))) return `<ul>${lines.map((l) => `<li>${inline(l.slice(2))}</li>`).join('')}</ul>`;
-      if (lines.every((l) => /^\d+\. /.test(l))) return `<ol>${lines.map((l) => `<li>${inline(l.replace(/^\d+\. /, ''))}</li>`).join('')}</ol>`;
-      return para.trim() ? `<p>${inline(lines.join('<br>'))}</p>` : '';
-    }).join('');
-  }).join('');
-}
+const md = (src) => Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied });
 
 // ---------------------------------------------------------------- facets
 // Status: red = nobody at Adobe has seen it, or you were mentioned; yellow = a teammate was

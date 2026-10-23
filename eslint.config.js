@@ -42,4 +42,11 @@ export default [
       }],
     },
   },
+  {
+    // Build scripts and tests may use dev dependencies (esbuild for scripts/ui-markdown.mjs).
+    files: ['test/**/*.js', 'scripts/**/*.mjs'],
+    rules: {
+      'import/no-extraneous-dependencies': ['error', { devDependencies: true }],
+    },
+  },
 ];
