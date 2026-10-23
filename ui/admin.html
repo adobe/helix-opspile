@@ -395,7 +395,7 @@ function renderList() {
       select(r.body.team.slug);
     };
   } else {
-    const rows = state.orgs.filter((o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f)).slice(0, 400).map((o) => `
+    const rows = state.orgs.filter((o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f)).map((o) => `
       <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
         ${ico(o.icon)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
