@@ -129,3 +129,81 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
     }
   });
 });
+
+describe('thread agents in the knowledge-base editor', () => {
+  it('show each channel\'s thread agent, and let its team\'s managers switch it', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix ops' }, { slug: 'edge', name: 'Edge ops' }, { slug: 'admin', name: 'Admin' }] });
+    DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+        ('kb-org-acme', 'org', 'acme', 'r', '2026-10-22T00:00:00Z'),
+        ('kb-team-helix', 'team', 'helix', 'r', '2026-10-22T00:00:00Z'),
+        ('kb-team-edge', 'team', 'edge', 'r', '2026-10-22T00:00:00Z');
+      INSERT INTO channels (source, tenant, channel_id, name, fetched_at) VALUES
+        ('slack', 'E1', 'C1', 'aem-acme', '2026-10-22T00:00:00Z');
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name,
+          path, last_at, any_at, updated_at) VALUES
+        ('slack:E1:C1:1', 'slack', 'E1', 'C1', '1', 'acme', 'helix', 'channel', 'aem-acme', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z'),
+        ('slack:E1:C1:2', 'slack', 'E1', 'C1', '2', 'acme', 'helix', 'channel', 'aem-acme', 'p', '2026-10-22T00:00:00Z', '2026-10-22T00:00:00Z', '2026-10-22T00:00:00Z'),
+        ('slack:E1:C2:1', 'slack', 'E1', 'C2', '1', 'acme', 'edge', 'channel', 'acme-edge', 'p', '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z'),
+        ('slack:E1:C3:1', 'slack', 'E1', 'C3', '1', 'acme', 'helix', 'alert', 'acme-alerts', 'p', '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z'),
+        ('slack:E1:C4:1', 'slack', 'E1', 'C4', '1', 'acme', 'helix', 'ignore', 'acme-random', 'p', '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z', '2026-10-19T00:00:00Z')`);
+    const env = {
+      DB, AGENTS: {}, AGENT_MODEL: 'm', AGENT_CHANNELS: 'C2',
+    };
+    const MANAGER = { ...MEMBER, teams: [{ slug: 'helix', role: 'manager' }] };
+    const quietly = async (fn) => {
+      const { log } = console;
+      console.log = () => {};
+      try {
+        return await fn();
+      } finally {
+        console.log = log;
+      }
+    };
+
+    // The customer's knowledge base, for the admin team: its channels in every team.
+    let res = await (await call(env, ADMIN, 'GET', '/api/kb/channels?repo=kb-org-acme')).json();
+    assert.equal(res.configured, true);
+    const summary = (c) => [
+      c.channelId, c.name, c.teamName, c.kind, c.threads, c.agent.enabled, c.may,
+    ];
+    assert.deepEqual(res.channels.map(summary), [
+      ['C1', 'aem-acme', 'Helix ops', 'channel', 2, false, true],
+      ['C2', 'acme-edge', 'Edge ops', 'channel', 1, true, true],
+      ['C3', 'acme-alerts', 'Helix ops', 'alert', 1, false, false],
+    ]);
+    assert.equal(res.channels[1].agent.set, false);
+    let bases = await (await call(env, ADMIN, 'GET', '/api/kb')).json();
+    assert.deepEqual(bases.bases.map((b) => [b.repo, b.agents]), [['kb-team-edge', 1], ['kb-team-helix', 0], ['kb-org-acme', 1]]);
+
+    // A manager of helix sees helix's channels, and switches its agents.
+    assert.equal((await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-org-acme')).status, 404);
+    res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-team-helix')).json();
+    assert.deepEqual(res.channels.map((c) => [c.channelId, c.may]), [['C1', true], ['C3', false]]);
+    res = await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: true }));
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).agent, {
+      enabled: true, set: true, by: 'Bo', at: DB.rows('SELECT changed_at FROM agent_channels')[0].changed_at,
+    });
+    bases = await (await call(env, ADMIN, 'GET', '/api/kb')).json();
+    assert.deepEqual(bases.bases.map((b) => [b.repo, b.agents]), [['kb-team-edge', 1], ['kb-team-helix', 1], ['kb-org-acme', 2]]);
+    res = await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: false }));
+    assert.equal((await res.json()).agent.enabled, false);
+    res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-team-helix')).json();
+    assert.deepEqual(res.channels[0].agent.enabled, false);
+    assert.equal(res.channels[0].agent.by, 'Bo');
+
+    // Not another team's channel, not an alert or ignored channel, not someone else's view.
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C2', enabled: false })).status, 404);
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C3', enabled: true })).status, 400);
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C4', enabled: true })).status, 404);
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: 'yes' })).status, 400);
+    assert.equal((await call(env, MEMBER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: true })).status, 403);
+    assert.equal((await call(env, { ...MANAGER, readonly: true }, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: true })).status, 403);
+
+    // The admin team switches any channel, the default one off too.
+    res = await quietly(() => call(env, ADMIN, 'PUT', '/api/kb/agent', { channel: 'C2', enabled: false }));
+    assert.equal(res.status, 200);
+    res = await (await call(env, ADMIN, 'GET', '/api/kb/channels?repo=kb-team-edge')).json();
+    assert.deepEqual(res.channels.map((c) => [c.channelId, c.agent.enabled, c.agent.set]), [['C2', false, true]]);
+  });
+});

@@ -63,7 +63,7 @@ Nothing below is committed; set it on the Worker.
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox`, `/api` and `/mcp` |
 | `AGENT_MODEL` | var | Optional: the Bedrock inference profile of the thread agents' model, e.g. `us.anthropic.claude-opus-5-5`. Agents are off without it. |
-| `AGENT_CHANNELS` | var | Comma-separated channel ids (Slack or Teams) where thread agents run |
+| `AGENT_CHANNELS` | var | Optional: comma-separated channel ids (Slack or Teams) where thread agents run until someone turns them off in the knowledge-base editor (`/inbox/kb`, which also turns them on elsewhere) |
 | `AGENT_GATEWAY` | var | The AI Gateway (id) agents call Bedrock through |
 | `AGENT_REGION` | var | Optional: Bedrock region, default `us-east-2` |
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
@@ -118,7 +118,7 @@ tokens are stored hashed in D1 (`oauth_*`, migration 0015); an access token live
 
 ### Thread agents
 
-An agent per thread in the channels listed in `AGENT_CHANNELS` follows the thread, keeps its
+An agent per thread in the channels where agents are on follows the thread, keeps its
 shared draft current (a person sends it), and fills the customer's and the team's knowledge
 bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 
@@ -127,8 +127,10 @@ bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 2. Create an [Amazon Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)
    that may invoke the model's inference profile in `AGENT_REGION`, and set it as the Worker
    secret `BEDROCK_API_KEY` (`npx wrangler secret put BEDROCK_API_KEY --name helix-opspile-prod`).
-3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and `AGENT_CHANNELS` (and for CI, add them as
-   repository secrets), apply the migrations and deploy.
+3. Export `AGENT_MODEL`, `AGENT_GATEWAY` and, optionally, `AGENT_CHANNELS` (and for CI, add
+   them as repository secrets), apply the migrations and deploy.
+4. Turn agents on or off per channel in the knowledge-base editor (`/inbox/kb`, **Thread
+   agents**): the admin team for every channel, team managers for their teams' channels.
 
 GitHub repositories the agents may read are rows in `agent_repos`, data like the rules:
 `INSERT INTO agent_repos (scope, slug, url, note) VALUES ('org', 'acme', 'https://github.com/acme/site', 'their site')`
