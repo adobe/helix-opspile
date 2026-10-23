@@ -53,6 +53,16 @@ export const mdLink = (label, url, image = false) => `${image ? '!' : ''}[${Stri
  * @param {string} text
  * @param {(id: string) => string|undefined} userName resolves `<@U…>` mentions
  */
+/**
+ * Slack's markup inside code: Slack links URLs and mentions in `text` even within backticks,
+ * but shows what the person typed, so code keeps the label (or the bare URL, or @name).
+ */
+function unlinkCode(code, userName) {
+  return code
+    .replace(/<((?:https?|mailto):[^|>\s]+)(?:\|([^>]*))?>/g, (_, url, label) => label || url)
+    .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`);
+}
+
 export function slackToMarkdown(text, userName = () => undefined) {
   if (!text) {
     return '';
@@ -61,13 +71,13 @@ export function slackToMarkdown(text, userName = () => undefined) {
   return blocks.map((part, i) => {
     if (i % 2 === 1) {
       const code = part.slice(3, -3).replace(/^\n|\n$/g, '');
-      return `\n\`\`\`\n${decodeEntities(code)}\n\`\`\`\n`;
+      return `\n\`\`\`\n${decodeEntities(unlinkCode(code, userName))}\n\`\`\`\n`;
     }
     return part
       .split(/(`[^`\n]+`)/)
       .map((seg, j) => {
         if (j % 2 === 1) {
-          return decodeEntities(seg);
+          return decodeEntities(unlinkCode(seg, userName));
         }
         return seg
           .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`)

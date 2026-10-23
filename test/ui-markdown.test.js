@@ -34,6 +34,15 @@ describe('ui markdown', () => {
     assert.equal(md('Attachments:\n\n- [a b.pdf](https://files.example/a%20b.pdf)'), list);
   });
 
+  it('shows the label of Slack link markup inside code, not the markup', () => {
+    const html = render('see (`<https://www.site.example|www.site.example>`) and `a.html`\n\n```\n<https://x.example/p>\n```');
+    assert.match(html, /<code>www\.site\.example<\/code>/);
+    assert.match(html, /<code>https:\/\/x\.example\/p\n<\/code>/);
+    assert.doesNotMatch(html, /&lt;https/);
+    // Outside code, `<…>` stays what markdown makes of it.
+    assert.match(render('<https://x.example>'), /href="https:\/\/x\.example"/);
+  });
+
   it('repairs links stored with spaces in their address', () => {
     assert.equal(
       md('- [a b.pdf](https://files.example/Shared Documents/a b.pdf)'),
