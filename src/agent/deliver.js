@@ -18,7 +18,7 @@ export { agentEnabled } from './enabled.js';
 /**
  * What a thread agent is told: the messages of its inbox entry that it has not seen, each
  * from a customer checked by Clef for prompt injection first. Agents run only in the
- * channels listed in `AGENT_CHANNELS`.
+ * channels where they are on (src/agent/enabled.js).
  */
 
 export const INJECTION_P = 0.5;

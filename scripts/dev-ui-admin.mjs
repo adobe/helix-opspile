@@ -11,6 +11,7 @@
  */
 
 import { admin } from '../src/admin.js';
+import { kbAdmin } from '../src/kbadmin.js';
 import { consume } from '../src/normalizer.js';
 import { d1 } from '../test/d1.js';
 import { fakeBucket } from '../test/fakes.js';
@@ -161,7 +162,7 @@ function seedAdminChannels(DB) {
   });
 }
 
-export function createAdmin(store, { manager = false } = {}) {
+export function createAdmin(store, { manager = false, bases = [] } = {}) {
   const DB = d1({
     teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
     people: [...store.people.values()].map((p) => ({
@@ -227,9 +228,20 @@ export function createAdmin(store, { manager = false } = {}) {
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z')`);
 
+  // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
+  // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
+  for (const b of bases) {
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
+      VALUES (?, ?, ?, 'dev', ?)`).run(b.repo, b.kind, b.slug, b.created_at);
+  }
   const queued = [];
   const env = {
-    DB, CHANNELS, NORMALIZE: { send: async (body) => queued.push(body) },
+    DB,
+    CHANNELS,
+    NORMALIZE: { send: async (body) => queued.push(body) },
+    AGENTS: {},
+    AGENT_MODEL: 'dev',
+    AGENT_CHANNELS: 'C0ACMEAEM',
   };
   // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
   if (manager) {
@@ -241,12 +253,15 @@ export function createAdmin(store, { manager = false } = {}) {
     }
     : { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
 
-  return async function handle(req, url, body) {
-    const request = new Request(url, {
-      method: req.method,
-      ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
-    });
-    const res = await admin(request, env, url, me);
+  const toRequest = (req, url, body) => new Request(url, {
+    method: req.method,
+    ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}),
+  });
+  /** `/api/kb`, `/api/kb/channels` and `/api/kb/agent`, by the real src/kbadmin.js. */
+  const kb = (req, url, body) => kbAdmin(toRequest(req, url, body), env, url, me);
+
+  return Object.assign(async (req, url, body) => {
+    const res = await admin(toRequest(req, url, body), env, url, me);
     // Re-filing runs right away here.
     while (queued.length) {
       const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));
@@ -254,5 +269,5 @@ export function createAdmin(store, { manager = false } = {}) {
       await consume({ messages }, env);
     }
     return res;
-  };
+  }, { kb });
 }

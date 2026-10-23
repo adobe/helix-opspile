@@ -28,6 +28,7 @@ import {
 import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
+import { setAgent } from '../src/agent/enabled.js';
 import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
 import { opspileExtension } from '../src/agent/tools.js';
 import { processKey } from '../src/normalizer.js';
@@ -208,11 +209,24 @@ describe('thread agents', () => {
     globalThis.fetch = realFetch;
   });
 
-  it('run only where agents are bound and the channel is listed', () => {
-    assert.equal(agentEnabled({ AGENT_CHANNELS: 'C1' }, 'C1'), false);
-    assert.equal(agentEnabled({ AGENTS: {}, AGENT_CHANNELS: ' C2 , C1' }, 'C1'), true);
-    assert.equal(agentEnabled({ AGENTS: {}, AGENT_CHANNELS: 'C2' }, 'C1'), false);
-    assert.equal(agentEnabled({ AGENTS: {} }, 'C1'), false);
+  it('run only where agents are bound and the channel\'s agent is on', async () => {
+    assert.equal(await agentEnabled({ AGENT_CHANNELS: 'C1' }, 'C1'), false);
+    assert.equal(await agentEnabled({ AGENTS: {}, AGENT_CHANNELS: ' C2 , C1' }, 'C1'), true);
+    assert.equal(await agentEnabled({ AGENTS: {}, AGENT_CHANNELS: 'C2' }, 'C1'), false);
+    assert.equal(await agentEnabled({ AGENTS: {} }, 'C1'), false);
+    // Switched in the editor: that wins over AGENT_CHANNELS, both ways.
+    const DB = d1();
+    const e = { AGENTS: {}, AGENT_CHANNELS: 'C1', DB };
+    assert.equal(await agentEnabled(e, 'C1'), true);
+    await setAgent(e, 'C1', false, 'Ada');
+    await setAgent(e, 'C2', true, 'Ada');
+    assert.equal(await agentEnabled(e, 'C1'), false);
+    assert.equal(await agentEnabled(e, 'C2'), true);
+    await setAgent(e, 'C1', true, 'Bo');
+    assert.equal(await agentEnabled(e, 'C1'), true);
+    assert.deepEqual(DB.rows('SELECT channel_id, enabled, changed_by FROM agent_channels ORDER BY channel_id'), [
+      { channel_id: 'C1', enabled: 1, changed_by: 'Bo' }, { channel_id: 'C2', enabled: 1, changed_by: 'Ada' },
+    ]);
   });
 
   it('check every message not written by staff with Clef, and withhold flagged ones', async () => {

@@ -218,6 +218,16 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
+**Thread agents per channel.** The editor shows, for each knowledge base, the channels it
+learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
+each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
+an agent in any of their channels. The admin team, and the managers of the team that owns a
+channel (the team of its latest thread), turn its agent on or off there, after a question in
+the page. The switch is a row in `agent_channels` with who set it and when; a channel nobody
+has switched yet follows `AGENT_CHANNELS`, the deployment's default. Alert channels have no
+agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
+their drafts and what they filed stay.
+
 For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
 bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
 of the open thread's customer (or of the one customer filtered on) if it has one, else the
@@ -435,7 +445,8 @@ inbox, on any message of the thread:
 ## Thread agents
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
-for now only in the channels listed in `AGENT_CHANNELS`. Each is a Durable Object
+in the channels where agents are on: the admin team and team managers switch them per channel
+in the knowledge-base editor, and `AGENT_CHANNELS` is the default for the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.

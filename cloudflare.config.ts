@@ -43,8 +43,9 @@ const VARS = [
   'SLACK_CLIENT_ID',
 ] as const;
 
-// Thread agents, optional: they run only when AGENT_MODEL is set, and only in AGENT_CHANNELS
-// (comma-separated channel ids). AGENT_GATEWAY names the AI Gateway in front of Amazon Bedrock,
+// Thread agents, optional: they run only when AGENT_MODEL is set, and only in channels where
+// they are on (switched in the knowledge-base editor; AGENT_CHANNELS, comma-separated channel
+// ids, is the default for channels nobody switched). AGENT_GATEWAY names the AI Gateway in front of Amazon Bedrock,
 // in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
 // region (default us-east-2).
 // The sign-in allow list (Cloudflare Access policy of the inbox) follows the ops teams when

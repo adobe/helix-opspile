@@ -33,7 +33,8 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   orgs at `/inbox/admin` (team managers: their teams' members); `src/refile.js` moves channels a rule change re-files;
   `src/suggest.js` suggests the admin team's channels to the teams (members' activity, Clef per channel, cron)
 - `src/kbadmin.js` and `ui/kb.html` — the admin team's knowledge-base editor at `/inbox/kb`
-  (including each knowledge base's `systemprompt.md` for the agents)
+  (including each knowledge base's `systemprompt.md` for the agents, and the per-channel switch
+  of the thread agents, `src/agent/enabled.js`)
 - `src/agent/` — thread agents: `agent.js` (the `ThreadAgent` Durable Object, Pi via
   `PiHarness`), `tools.js` (its prompt and tools), `deliver.js` (what it is told, Clef's
   prompt-injection check), `model.js` (Bedrock through AI Gateway), `repos.js` (reading
