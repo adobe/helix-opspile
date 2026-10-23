@@ -130,9 +130,11 @@
  * type (customer, partner, vendor), and manual assignments. Every rule change is tried first:
  * if it moves channels to another team or org, the page lists them and asks, in the page (no
  * native dialogs, which a debugger attached over CDP dismisses). Text fields save when they
- * change.
+ * change. A change updates the open page in place (see "view state"); nothing reloads.
  */
-const state = { me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '' };
+const state = {
+  me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
+};
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
@@ -174,8 +176,6 @@ function ask(question, detailHtml, yes, { danger = false } = {}) {
 }
 
 function status(kind, text) {
-  // Kept for the page that a change re-renders, so its outcome stays on screen.
-  state.flash = { kind, text };
   const el = $('status');
   if (!el) return;
   el.className = `status ${kind}`;
@@ -257,7 +257,10 @@ function renderList() {
       e.preventDefault();
       const r = await call('/api/admin/teams', 'POST', { slug: $('ntSlug').value, name: $('ntName').value });
       if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
-      await load();
+      state.teams.push({
+        ...r.body.team, members: 0, rules: 0, channels: 0, threads: 0,
+      });
+      state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
   } else {
@@ -276,7 +279,8 @@ function renderList() {
       e.preventDefault();
       const r = await call('/api/admin/orgs', 'POST', { name: $('noName').value, type: $('noType').value });
       if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
-      await load();
+      state.orgs.push({ ...r.body.org, channels: 0, threads: 0 });
+      state.orgs.sort((x, y) => (x.name || x.slug).localeCompare(y.name || y.slug));
       select(r.body.org.slug);
     };
   }
@@ -306,10 +310,87 @@ function switchTab(tab) {
   $('detail').innerHTML = `<div class="empty">Pick ${tab === 'teams' ? 'a team' : 'an org'}.</div>`;
 }
 
+// ---- view state ---------------------------------------------------------------------------
+//
+// The open team or org is kept in `state.view` (what the API said, then every change the
+// page made). A change updates it and redraws only the part it touches (a table, the list
+// on the left), so scroll position and focus stay where they are.
+
+/** Adds `n` channels and `threads` threads to a team's or an org's counts in the list. */
+function count(kind, slug, n, threads) {
+  if (kind === 'team' && slug === UNASSIGNED) {
+    if (state.unassigned) {
+      state.unassigned.channels += n;
+      state.unassigned.threads += threads;
+    }
+    return;
+  }
+  const list = kind === 'team' ? state.teams : state.orgs;
+  const row = list.find((x) => x.slug === slug);
+  if (row) {
+    row.channels = Math.max(0, (row.channels || 0) + n);
+    row.threads = Math.max(0, (row.threads || 0) + threads);
+  }
+}
+
+/**
+ * What a rule change moved, applied to the open view and to the counts on the left: a
+ * channel that left this team (org) goes from the table, one that came is added.
+ */
+function applyMoves(moves) {
+  const v = state.view;
+  for (const m of moves) {
+    const threads = m.from.reduce((n, f) => n + f.threads, 0);
+    for (const kind of ['team', 'org']) {
+      for (const f of m.from) {
+        if (f[kind] !== m.to[kind]) {
+          count(kind, f[kind], -1, -f.threads);
+          count(kind, m.to[kind], 1, f.threads);
+        }
+      }
+    }
+    if (v) {
+      const before = v.channels.filter((c) => c.channelId === m.channel.channelId);
+      v.channels = v.channels.filter((c) => c.channelId !== m.channel.channelId);
+      if (m.to[v.target] === v.value) {
+        const was = before[0] || {};
+        v.channels.unshift({
+          source: m.channel.source,
+          tenant: m.channel.tenant,
+          channelId: m.channel.channelId,
+          name: m.channel.name,
+          groupName: was.groupName || null,
+          team: m.to.team,
+          org: m.to.org,
+          kind: m.to.kind,
+          threads,
+          latest: before.map((c) => c.latest).filter(Boolean).sort().pop() || null,
+          manual: was.manual || { team: null, org: null },
+        });
+      }
+    }
+  }
+}
+
+/** Marks a channel of the open view as assigned by hand (`rule`), or not (null). */
+function setManual(channelId, rule) {
+  const v = state.view;
+  for (const c of v.channels.filter((x) => x.channelId === channelId)) {
+    c.manual = { ...c.manual, [v.target]: rule ? { id: rule.id, value: rule.value } : null };
+  }
+}
+
 // ---- channels (shared) ------------------------------------------------------------------
 
-/** The channels card: where each is filed, and a picker that assigns another one here. */
-function channelsCard(channels, target, value) {
+/** The channels card: a table (redrawn on its own) and a picker that assigns one here. */
+function channelsCard(target) {
+  return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
+    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by name or id" autocomplete="off"><div class="picks" id="picks" hidden></div></div>
+    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).</p></div>`;
+}
+
+function renderChannels() {
+  const { target, channels } = state.view;
   const other = target === 'team' ? 'org' : 'team';
   const rows = channels.map((c) => {
     const manual = c.manual[target];
@@ -319,13 +400,23 @@ function channelsCard(channels, target, value) {
       <td>${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : '<span class="sub">by rule</span>'}</td></tr>`;
   }).join('');
-  return `<div class="card"><h2>Channels</h2>
-    ${rows ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>` : '<div class="empty">No channel is filed here.</div>'}
-    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by name or id" autocomplete="off"><div class="picks" id="picks" hidden></div></div>
-    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).</p></div>`;
+  $('channelsTable').innerHTML = rows
+    ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>`
+    : '<div class="empty">No channel is filed here.</div>';
+  for (const b of $('channelsTable').querySelectorAll('[data-unassign]')) {
+    b.onclick = async () => {
+      const res = await ruleChange('DELETE', '/api/admin/assign', { target, channelId: b.dataset.unassign, source: b.dataset.source });
+      if (!res) return;
+      setManual(b.dataset.unassign, null);
+      applyMoves(res.moves);
+      renderChannels();
+      renderList();
+    };
+  }
 }
 
-function wireChannels(target, value, refresh) {
+function wireChannelPicker() {
+  const { target, value } = state.view;
   let timer;
   const picks = $('picks');
   $('pick').oninput = () => {
@@ -342,32 +433,59 @@ function wireChannels(target, value, refresh) {
         || '<div class="empty" style="padding:8px">No channel matches.</div>';
       picks.hidden = false;
       for (const el of picks.querySelectorAll('[data-ch]')) {
-        el.onclick = async () => {
+        el.onmousedown = async (e) => {
+          e.preventDefault();
           picks.hidden = true;
           $('pick').value = '';
-          if (await ruleChange('POST', '/api/admin/assign', { target, value, channelId: el.dataset.ch, source: el.dataset.source })) refresh();
+          const res = await ruleChange('POST', '/api/admin/assign', { target, value, channelId: el.dataset.ch, source: el.dataset.source });
+          if (!res) return;
+          applyMoves(res.moves);
+          // Already here by rule: no move, but now by hand. A channel the API did not move
+          // (no threads yet) shows up once something is filed.
+          setManual(el.dataset.ch, res.rule);
+          renderChannels();
+          renderList();
         };
       }
     }, 200);
   };
   $('pick').onblur = () => setTimeout(() => { picks.hidden = true; }, 200);
-  for (const b of $('detail').querySelectorAll('[data-unassign]')) {
-    b.onclick = async () => {
-      if (await ruleChange('DELETE', '/api/admin/assign', { target, channelId: b.dataset.unassign, source: b.dataset.source })) refresh();
-    };
-  }
 }
 
 // ---- teams --------------------------------------------------------------------------------
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+function renderMembers() {
+  const { members, team } = state.view;
+  $('membersTable').innerHTML = members.length
+    ? `<table><tr><th>Name</th><th>Email</th><th></th></tr>${members.map((m) => `<tr>
+      <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
+      <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>`
+    : '<div class="empty">Nobody yet.</div>';
+  for (const b of $('membersTable').querySelectorAll('[data-remove]')) {
+    b.onclick = async () => {
+      const m = members.find((x) => String(x.id) === b.dataset.remove);
+      if (!(await ask(`Remove ${m.name || m.email} from ${team.name}?`, '', 'Remove', { danger: true }))) return;
+      const res = await call('/api/admin/members', 'DELETE', { team: team.slug, person: m.id });
+      if (!res.ok) { status('err', res.body.error); return; }
+      state.view.members = state.view.members.filter((x) => x.id !== m.id);
+      const row = state.teams.find((t) => t.slug === team.slug);
+      if (row) row.members -= 1;
+      status('ok', `Removed ${m.name || m.email}.`);
+      renderMembers();
+      renderList();
+    };
+  }
+}
+
 /**
  * Adding a member: one field that finds people by name or email (people opspile knows, and
  * platform accounts that posted), staff first; an email nobody has yet can be added as is.
- * Arrow keys and Enter pick, Escape closes.
+ * Arrow keys and Enter pick, Escape closes. The field keeps the focus for the next one.
  */
-function wireMemberPicker(slug, refresh) {
+function wireMemberPicker() {
+  const slug = state.view.team.slug;
   const input = $('mFind');
   const picks = $('mPicks');
   let timer;
@@ -377,7 +495,18 @@ function wireMemberPicker(slug, refresh) {
     picks.hidden = true;
     input.value = '';
     const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined });
-    if (res.ok) { status('ok', `Added ${res.body.person.name || res.body.person.email}.`); refresh(); } else status('err', res.body.error);
+    if (!res.ok) { status('err', res.body.error); return; }
+    const { person } = res.body;
+    if (!state.view.members.some((m) => m.id === person.id)) {
+      state.view.members.push(person);
+      state.view.members.sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
+      const row = state.teams.find((t) => t.slug === slug);
+      if (row) row.members += 1;
+    }
+    status('ok', `Added ${person.name || person.email}.`);
+    renderMembers();
+    renderList();
+    input.focus();
   };
   const render = () => {
     picks.innerHTML = list.map((p, i) => `<div class="row${i === at ? ' on' : ''}" data-i="${i}">
@@ -435,7 +564,7 @@ function describe(r) {
 
 function ruleRow(r) {
   return `<tr data-rule="${r.id}"><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
-    <td>${r.value === state.sel ? '' : `→ <code>${esc(r.value)}</code>`}${r.source ? ` <span class="tag">${esc(r.source)} only</span>` : ''}</td>
+    <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
     <td><button class="link" data-edit="${r.id}">edit</button><button class="link" data-del="${r.id}" style="color:var(--red)">delete</button></td></tr>`;
 }
@@ -454,86 +583,118 @@ function ruleForm(r = {}) {
   </form>`;
 }
 
+/** The team's own rules (not manual assignments, which the channels card shows). */
+const ownRules = () => state.view.rules.filter((x) => x.value === state.view.team.slug && x.field !== 'channel_id');
+
+function renderRules() {
+  const own = ownRules();
+  $('rulesTable').innerHTML = own.length
+    ? `<table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th><th></th></tr>${own.map(ruleRow).join('')}</table>`
+    : '<div class="empty">No rule files channels under this team yet.</div>';
+  for (const b of $('rulesTable').querySelectorAll('[data-edit]')) {
+    b.onclick = () => {
+      $('ruleSlot').innerHTML = ruleForm(state.view.rules.find((x) => String(x.id) === b.dataset.edit));
+      wireRuleForm();
+      $('rPattern').focus();
+    };
+  }
+  for (const b of $('rulesTable').querySelectorAll('[data-del]')) {
+    b.onclick = async () => {
+      const res = await ruleChange('DELETE', '/api/admin/rules', { id: Number(b.dataset.del) });
+      if (!res) return;
+      state.view.rules = state.view.rules.filter((x) => x.id !== res.deleted);
+      const row = state.teams.find((t) => t.slug === state.view.team.slug);
+      if (row) row.rules -= 1;
+      applyMoves(res.moves);
+      renderRules();
+      renderChannels();
+      renderList();
+    };
+  }
+}
+
+function wireRuleForm() {
+  const slug = state.view.team.slug;
+  const reset = () => { $('ruleSlot').innerHTML = ruleForm(); wireRuleForm(); };
+  $('ruleForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const id = Number($('ruleForm').dataset.id) || null;
+    const raw = $('rPattern').value.trim();
+    const body = {
+      ...(id ? { id } : {}),
+      target: 'team',
+      field: $('rField').value,
+      pattern: $('rMode').value === 'prefix' ? `^${escapeRe(raw)}` : raw,
+      value: slug,
+      source: $('rSource').value || null,
+      priority: Number($('rPriority').value),
+      note: $('rNote').value,
+    };
+    const res = await ruleChange(id ? 'PUT' : 'POST', '/api/admin/rules', body);
+    if (!res) return;
+    if (id) {
+      state.view.rules = state.view.rules.map((x) => (x.id === id ? res.rule : x));
+    } else {
+      state.view.rules.push(res.rule);
+      const row = state.teams.find((t) => t.slug === slug);
+      if (row) row.rules += 1;
+    }
+    applyMoves(res.moves);
+    reset();
+    renderRules();
+    renderChannels();
+    renderList();
+  };
+  if ($('rCancel')) $('rCancel').onclick = reset;
+}
+
 async function showTeam(slug) {
   $('detail').innerHTML = '<div class="empty">Loading…</div>';
   const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const { team, members, rules, channels } = r.body;
-  const own = rules.filter((x) => x.value === slug && x.field !== 'channel_id');
+  state.view = {
+    target: 'team', value: slug, team, members, rules, channels,
+  };
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
   $('detail').innerHTML = `
     <div class="title">${real ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">` : '<h1 style="margin:0;font-size:20px">Unassigned channels</h1>'}
       <span class="sub mono">${esc(team.slug)}</span>${real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
     <div class="status" id="status"></div>
-    ${real ? `<div class="card"><h2>Members</h2>
-      ${members.length ? `<table><tr><th>Name</th><th>Email</th><th></th></tr>${members.map((m) => `<tr>
-        <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
-        <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>` : '<div class="empty">Nobody yet.</div>'}
+    ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
       <div class="form picker"><input id="mFind" class="grow" placeholder="Add a member: type a name or an email" autocomplete="off" aria-label="Add a member"><div class="picks" id="mPicks" hidden></div></div>
       <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
 
-    <div class="card"><h2>Rules</h2>
-      ${own.length ? `<table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th><th></th></tr>${own.map(ruleRow).join('')}</table>` : '<div class="empty">No rule files channels under this team yet.</div>'}
+    <div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}
-    ${channelsCard(channels, 'team', slug)}`;
-  const refresh = async () => { const { flash } = state; await load(); renderList(); await showTeam(slug); if (flash) status(flash.kind, flash.text); };
-  wireChannels('team', slug, refresh);
+    ${channelsCard('team')}`;
+  renderChannels();
+  wireChannelPicker();
   if (!real) return;
+  renderMembers();
+  wireMemberPicker();
+  renderRules();
+  wireRuleForm();
   $('tName').onchange = async () => {
-    const res = await call('/api/admin/teams', 'PUT', { slug, name: $('tName').value });
-    if (res.ok) { status('ok', 'Renamed.'); await load(); renderList(); } else status('err', res.body.error);
+    const name = $('tName').value.trim();
+    const res = await call('/api/admin/teams', 'PUT', { slug, name });
+    if (!res.ok) { status('err', res.body.error); return; }
+    state.view.team.name = name;
+    const row = state.teams.find((t) => t.slug === slug);
+    if (row) row.name = name;
+    status('ok', 'Renamed.');
+    renderList();
   };
   if ($('tDelete')) {
     $('tDelete').onclick = async () => {
-      if (!(await ask(`Delete the team ${team.name}?`, '<p>Its members leave it; people stay. Only a team without rules or threads can be deleted.</p>', 'Delete', { danger: true }))) return;
+      if (!(await ask(`Delete the team ${state.view.team.name}?`, '<p>Its members leave it; people stay. Only a team without rules or threads can be deleted.</p>', 'Delete', { danger: true }))) return;
       const res = await call('/api/admin/teams', 'DELETE', { slug });
       if (!res.ok) { status('err', res.body.error); return; }
-      await load();
+      state.teams = state.teams.filter((t) => t.slug !== slug);
       switchTab('teams');
-    };
-  }
-  for (const b of $('detail').querySelectorAll('[data-remove]')) {
-    b.onclick = async () => {
-      const m = members.find((x) => String(x.id) === b.dataset.remove);
-      if (!(await ask(`Remove ${m.name || m.email} from ${team.name}?`, '', 'Remove', { danger: true }))) return;
-      const res = await call('/api/admin/members', 'DELETE', { team: slug, person: m.id });
-      if (res.ok) refresh(); else status('err', res.body.error);
-    };
-  }
-  wireMemberPicker(slug, refresh);
-  const wireRuleForm = () => {
-    $('ruleForm').onsubmit = async (e) => {
-      e.preventDefault();
-      const id = Number($('ruleForm').dataset.id) || null;
-      const raw = $('rPattern').value.trim();
-      const body = {
-        ...(id ? { id } : {}),
-        target: 'team',
-        field: $('rField').value,
-        pattern: $('rMode').value === 'prefix' ? `^${escapeRe(raw)}` : raw,
-        value: slug,
-        source: $('rSource').value || null,
-        priority: Number($('rPriority').value),
-        note: $('rNote').value,
-      };
-      if (await ruleChange(id ? 'PUT' : 'POST', '/api/admin/rules', body)) refresh();
-    };
-    if ($('rCancel')) $('rCancel').onclick = () => { $('ruleSlot').innerHTML = ruleForm(); wireRuleForm(); };
-  };
-  wireRuleForm();
-  for (const b of $('detail').querySelectorAll('[data-edit]')) {
-    b.onclick = () => {
-      $('ruleSlot').innerHTML = ruleForm(rules.find((x) => String(x.id) === b.dataset.edit));
-      wireRuleForm();
-      $('rPattern').focus();
-    };
-  }
-  for (const b of $('detail').querySelectorAll('[data-del]')) {
-    b.onclick = async () => {
-      if (await ruleChange('DELETE', '/api/admin/rules', { id: Number(b.dataset.del) })) refresh();
     };
   }
 }
@@ -545,29 +706,43 @@ async function showOrg(slug) {
   const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const { org, rules, channels, types } = r.body;
+  state.view = {
+    target: 'org', value: slug, org, rules, channels,
+  };
   $('detail').innerHTML = `
-    <div class="title">${ico(org.icon)}<input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
-      <span class="sub mono">${esc(org.slug)}</span>${org.updated_at ? '<button class="danger" id="oDelete" title="Forget the name, icon and type">Reset</button>' : ''}</div>
+    <div class="title"><span id="oIco">${ico(org.icon)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
+      <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
       <label for="oIcon">Icon</label><span style="display:flex;gap:8px;align-items:center"><input id="oIcon" class="mono" style="flex:1" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain. A domain shows its favicon; an https URL is used as the image.</p></div>
-    ${channelsCard(channels, 'org', slug)}
+    ${channelsCard('org')}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
-  const refresh = async () => { const { flash } = state; await load(); renderList(); await showOrg(slug); if (flash) status(flash.kind, flash.text); };
+  renderChannels();
+  wireChannelPicker();
+  const pressed = () => $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer';
+  /** Shows an org's fields as saved, without touching the field being typed in. */
+  const show = (o) => {
+    if (document.activeElement !== $('oName')) $('oName').value = o.name || '';
+    if (document.activeElement !== $('oIcon')) $('oIcon').value = o.icon || '';
+    for (const x of $('oType').querySelectorAll('[data-type]')) x.setAttribute('aria-pressed', String(x.dataset.type === o.type));
+    $('oIco').innerHTML = ico(o.icon);
+    $('oDelete').hidden = !o.updated_at;
+    const row = state.orgs.find((x) => x.slug === slug);
+    if (row) Object.assign(row, { name: o.name, icon: o.icon, type: o.type });
+    renderList();
+  };
   const save = async (patch) => {
-    const now = { name: $('oName').value, icon: $('oIcon').value, type: $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer', ...patch };
+    const now = {
+      name: $('oName').value, icon: $('oIcon').value, type: pressed(), ...patch,
+    };
     const res = await call('/api/admin/orgs', 'PUT', { slug, ...now });
     if (!res.ok) { status('err', res.body.error); return; }
+    state.view.org = res.body.org;
     status('ok', 'Saved.');
-    await load();
-    renderList();
-    const img = $('detail').querySelector('.title .ico');
-    if (img) img.outerHTML = ico(res.body.org.icon);
-    if (!$('oDelete')) $('detail').querySelector('.title').insertAdjacentHTML('beforeend', '<button class="danger" id="oDelete" title="Forget the name, icon and type">Reset</button>');
-    wireDelete();
+    show(res.body.org);
   };
   $('oName').onchange = () => save();
   $('oIcon').onchange = () => save();
@@ -577,16 +752,19 @@ async function showOrg(slug) {
       save({ type: b.dataset.type });
     };
   }
-  const wireDelete = () => {
-    if (!$('oDelete')) return;
-    $('oDelete').onclick = async () => {
-      if (!(await ask(`Forget the name, icon and type of ${org.name || org.slug}?`, '<p>Its channels stay where they are; it is shown by its slug again.</p>', 'Reset', { danger: true }))) return;
-      const res = await call('/api/admin/orgs', 'DELETE', { slug });
-      if (res.ok) refresh(); else status('err', res.body.error);
+  $('oDelete').onclick = async () => {
+    const o = state.view.org;
+    if (!(await ask(`Forget the name, icon and type of ${o.name || o.slug}?`, '<p>Its channels stay where they are; it is shown by its slug again.</p>', 'Reset', { danger: true }))) return;
+    const res = await call('/api/admin/orgs', 'DELETE', { slug });
+    if (!res.ok) { status('err', res.body.error); return; }
+    state.view.org = {
+      slug, name: null, icon: null, type: 'customer', updated_at: null,
     };
+    status('ok', 'Reset.');
+    $('oName').value = '';
+    $('oIcon').value = '';
+    show(state.view.org);
   };
-  wireDelete();
-  wireChannels('org', slug, refresh);
 }
 
 // ---- start ------------------------------------------------------------------------------
