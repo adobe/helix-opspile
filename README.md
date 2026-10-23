@@ -53,6 +53,8 @@ Nothing below is committed; set it on the Worker.
 | `GRAPH_CLIENT_STATE` | secret | Random value our Graph subscriptions carry as `clientState`; notifications without it are dropped |
 | `SLACK_CLIENT_SECRET` | secret | Client secret of the opspile Slack app (people connecting their Slack account) |
 | `TOKEN_KEY` | secret | 32 random bytes (base64url): encrypts people's OAuth tokens and signs OAuth state |
+| `ACCESS_ACCOUNT_ID`, `ACCESS_APP_ID`, `ACCESS_POLICY_ID` | var | Optional: the Cloudflare account, Access application and allow policy of `/inbox` and `/api`. With them, the policy's email list follows the ops teams (staff members only), after every membership change and on the cron |
+| `ACCESS_API_TOKEN` | secret | API token with *Access: Apps and Policies Write*, for that sync. Required when `ACCESS_APP_ID` is set |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |

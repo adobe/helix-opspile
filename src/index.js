@@ -14,6 +14,7 @@ import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
 import { accessEmail } from './access.js';
+import { syncAccessQuietly } from './accesssync.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
@@ -154,6 +155,8 @@ export default {
     ctx.waitUntil(ensureTeamKnowledgeBases(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'teams', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'teams', error: e.message }))));
+    // The sign-in allow list follows the teams, in case a change in D1 bypassed the admin pages.
+    ctx.waitUntil(syncAccessQuietly(env, 'cron'));
     ctx.waitUntil(refreshMirrors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mirrors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mirrors: 'error', error: e.message }))));

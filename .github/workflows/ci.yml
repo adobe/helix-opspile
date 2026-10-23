@@ -46,6 +46,10 @@ jobs:
       # Thread agents (optional; off while AGENT_MODEL is empty).
       AGENT_MODEL: ${{ secrets.AGENT_MODEL }}
       AGENT_CHANNELS: ${{ secrets.AGENT_CHANNELS }}
+      # Sign-in allow list follows the teams (optional).
+      ACCESS_ACCOUNT_ID: ${{ secrets.ACCESS_ACCOUNT_ID }}
+      ACCESS_APP_ID: ${{ secrets.ACCESS_APP_ID }}
+      ACCESS_POLICY_ID: ${{ secrets.ACCESS_POLICY_ID }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
