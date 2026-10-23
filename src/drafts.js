@@ -12,10 +12,12 @@
 
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
+import { teamsOf } from './shares.js';
 
 /**
- * Shared drafts: an inbox entry carries at most one unsent reply, which everyone in the team
- * that owns the channel sees and can change, send or discard. A draft is keyed by the entry
+ * Shared drafts: an inbox entry carries at most one unsent reply, which everyone in the teams
+ * that follow the channel (the one it is filed under, and those it is shared with) sees and
+ * can change, send or discard. A draft is keyed by the entry
  * (a re-threaded group's first thread), and its `updated_at` is its version: a save or a
  * discard names the version it starts from, so nobody overwrites a colleague's newer draft
  * without seeing it first.
@@ -25,10 +27,13 @@ const MAX_TEXT = 8000;
 const MAX_MENTIONS = 20;
 const PREVIEW = 140;
 
-/** The entry a thread key belongs to: its key, team, and every member thread. */
+/**
+ * The entry a thread key belongs to: its key, the team it is filed under, every team whose
+ * inbox has it (a shared channel's too), and every member thread.
+ */
 export async function entryOf(env, key) {
-  const row = key && await env.DB.prepare('SELECT thread, team, logical_thread FROM threads WHERE thread = ?')
-    .bind(String(key)).first();
+  const row = key && await env.DB.prepare(`SELECT thread, team, logical_thread, source, channel_id
+    FROM threads WHERE thread = ?`).bind(String(key)).first();
   if (!row) {
     return null;
   }
@@ -38,6 +43,7 @@ export async function entryOf(env, key) {
   return {
     key: k,
     team: row.team,
+    teams: await teamsOf(env, row),
     keys: [...new Set([k, row.thread, ...(results || []).map((r) => r.thread)])],
   };
 }
@@ -110,7 +116,7 @@ function nextVersion(previous) {
  */
 export async function getDraft(env, key, canSee) {
   const e = await entryOf(env, key);
-  if (!e || !canSee(e.team)) {
+  if (!e || !canSee(e.teams)) {
     return json({ error: 'not found' }, 404);
   }
   return json({ draft: draftOf(await draftsFor(env, e.keys), e.keys) });
@@ -131,7 +137,7 @@ export async function saveDraft(env, me, request, inTeam) {
     return json({ error: 'write something to save (up to 8000 characters)' }, 400);
   }
   const e = await entryOf(env, key);
-  if (!e || !inTeam(e.team)) {
+  if (!e || !inTeam(e.teams)) {
     return json({ error: 'not found' }, 404);
   }
   const current = draftOf(await draftsFor(env, e.keys), e.keys);
@@ -163,7 +169,7 @@ export async function saveDraft(env, me, request, inTeam) {
   // At most one draft per entry.
   await env.DB.prepare(`DELETE FROM drafts WHERE thread IN (SELECT value FROM json_each(?))
     AND thread != ?`).bind(JSON.stringify(e.keys), e.key).run();
-  await notifyRoom(env, e.team, { type: 'draft', thread: e.key });
+  await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   const draft = draftOf(await draftsFor(env, [e.key]), [e.key]);
   return json({ ok: true, draft });
 }
@@ -175,7 +181,7 @@ export async function saveDraft(env, me, request, inTeam) {
 export async function discardDraft(env, me, request, inTeam) {
   const { thread: key, base = null } = request || {};
   const e = await entryOf(env, key);
-  if (!e || !inTeam(e.team)) {
+  if (!e || !inTeam(e.teams)) {
     return json({ error: 'not found' }, 404);
   }
   const current = draftOf(await draftsFor(env, e.keys), e.keys);
@@ -189,7 +195,7 @@ export async function discardDraft(env, me, request, inTeam) {
     WHERE thread IN (SELECT value FROM json_each(?)) AND (? IS NULL OR updated_at = ?)`)
     .bind(JSON.stringify(e.keys), base, base).run();
   if (changes) {
-    await notifyRoom(env, e.team, { type: 'draft', thread: e.key });
+    await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   }
   return json({ ok: true, discarded: Boolean(changes), draft: current });
 }

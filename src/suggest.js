@@ -491,6 +491,10 @@ export async function suggestionsFor(env, team) {
     LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
     LEFT JOIN channel_labels l ON l.source = t.source AND l.tenant = t.tenant AND l.channel_id = t.channel_id
     WHERE t.team = ? GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
+  // A channel shared with the team already is in its inbox (migration 0024): not suggested,
+  // though it still counts in the corpus below.
+  const shared = new Set((await rows(env, 'SELECT source, channel_id FROM channel_teams WHERE team = ?', team))
+    .map((r) => `${r.source}:${r.channel_id}`));
   const activity = new Map();
   const touch = (r, how, n = 1) => {
     const p = people.get(r.person);
@@ -555,7 +559,8 @@ export async function suggestionsFor(env, team) {
       ...c, team: c.l_team, teams: c.l_teams, kind: c.l_kind,
     });
     const p = clef ? clef.teams[team] ?? (clef.team === team ? clef.p : 0) : null;
-    if (active.length || (p !== null && p >= SUGGEST_P)) {
+    if (!shared.has(`${c.source}:${c.channel_id}`)
+      && (active.length || (p !== null && p >= SUGGEST_P))) {
       const o = orgs.get(c.org);
       out.push({
         source: c.source,

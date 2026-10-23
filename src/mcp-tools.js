@@ -16,6 +16,7 @@ import {
   connections, mentionable, post, reactable,
 } from './post.js';
 import { PICKER, react, resolve } from './react.js';
+import { memberOf } from './shares.js';
 
 /**
  * The tools of the MCP server (src/mcp.js). Each one runs as the signed-in person, through
@@ -39,7 +40,7 @@ const clip = (s, n) => {
   const v = String(s ?? '').trim();
   return v.length > n ? `${v.slice(0, n - 1)}…` : v;
 };
-const inTeamOf = (me) => (team) => me.teams.some((t) => t.slug === team);
+const inTeamOf = memberOf;
 const urgencyOf = (t) => (t.label && t.label.urgency != null
   ? URGENCY[Math.max(0, Math.min(3, Math.round(t.label.urgency)))] : 'low');
 const kindOf = (t) => (t.kind === 'alert' ? 'alert'
@@ -133,8 +134,11 @@ async function listThreads(env, me, args) {
   if (bad) {
     return bad;
   }
+  // A channel shared by two of the person's teams is in both inboxes: each thread once.
+  const seen = new Set();
   const all = (await Promise.all(teams.map(async (team) => (await inbox(env, me, team)).threads)))
-    .flat().sort((a, b) => latest(b).localeCompare(latest(a)));
+    .flat().filter((t) => !seen.has(t.thread) && seen.add(t.thread))
+    .sort((a, b) => latest(b).localeCompare(latest(a)));
   const matches = all.filter((t) => {
     const s = summary(t, me);
     return (!f.waiting_on.length || f.waiting_on.includes(s.waiting_on))
@@ -166,7 +170,7 @@ async function listThreads(env, me, args) {
 async function getThread(env, me, args) {
   const key = String(args.thread || '');
   const data = key && await loadThread(env, me, key);
-  if (!data || !inTeamOf(me)(data.thread.team)) {
+  if (!data || !inTeamOf(me)(data.thread.teams)) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
   }
   const limit = Math.max(1, Math.min(MAX_MESSAGES, Math.floor(Number(args.limit) || 20)));
@@ -291,7 +295,7 @@ async function reply(env, me, args, ctx) {
     return { error: 'The reply is empty. Provide `text`.' };
   }
   const t = key && await loadThread(env, me, key);
-  if (!t || !inTeamOf(me)(t.thread.team)) {
+  if (!t || !inTeamOf(me)(t.thread.teams)) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
   }
   // Names to mention, as written after @ in the text, to the platform accounts.

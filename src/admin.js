@@ -12,12 +12,15 @@
 
 import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
-import { isStaffDomain, loadRules } from './lookup.js';
+import { isStaffDomain, loadRules, toChannel } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
 import {
   ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
 } from './review.js';
-import { slug as toSlug, UNASSIGNED } from './rules.js';
+import { classify, slug as toSlug, UNASSIGNED } from './rules.js';
+import {
+  isHolding, share, sharesByChannel, unshare,
+} from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
@@ -29,7 +32,10 @@ import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
  *   of one channel (a `channel_id` rule with priority 10);
- * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments.
+ * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
+ * - shared channels (migration 0024): a channel is filed under one team, its first, and can be
+ *   shared with more. Adding a team to a channel moves it only when the admin team (or nobody)
+ *   holds it; a channel another team holds is shared with the new one instead.
  *
  * Team managers (migration 0018) use the same API for the teams they manage, and only for
  * their members: they see those teams, add and remove people, and promote or demote them.
@@ -109,6 +115,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
     ORDER BY latest DESC`);
   const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
     .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
+  const shares = await sharesByChannel(env);
   const needle = q.toLowerCase().trim();
   const words = needle.split(/\s+/).filter(Boolean);
   const manual = (target, channelId) => rules.find((r) => r.target === target && isManual(r)
@@ -116,7 +123,10 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
   const out = [];
   for (const c of filed) {
     const match = words.length ? channelMatch(c, words) : [];
-    if (match && (!inTeam || c.team === inTeam) && (!inOrg || c.org === inOrg)) {
+    // The other teams that follow it; a channel shared with a team is on that team's page too.
+    const sharedWith = (shares.get(`${c.source}:${c.channel_id}`) || []).filter((t) => t !== c.team);
+    if (match && (!inTeam || c.team === inTeam || sharedWith.includes(inTeam))
+      && (!inOrg || c.org === inOrg)) {
       const mt = manual('team', c.channel_id);
       const mo = manual('org', c.channel_id);
       out.push({
@@ -127,6 +137,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
         groupName: c.group_name,
         shared: Boolean(c.shared),
         team: c.team,
+        sharedWith,
         org: c.org,
         orgName: c.org_name || null,
         kind: c.kind,
@@ -288,9 +299,75 @@ async function deleteRule(env, me, body) {
 }
 
 /**
- * POST /api/admin/assign `{ target: team|org, source, channelId, value }`: files one channel
- * under a team or an org, whatever the other rules say (a `channel_id` rule with priority
- * 10). DELETE takes the assignment away again.
+ * The team a channel is filed under by `rules`: what its next message gets. A channel that
+ * is not in `channels` (yet) is where its threads are, or nowhere.
+ */
+async function homeOf(env, rules, source, channelId) {
+  const c = await env.DB.prepare(`SELECT * FROM channels WHERE channel_id = ?
+    AND (? IS NULL OR source = ?) LIMIT 1`).bind(channelId, source, source).first();
+  if (c) {
+    return { source: c.source, team: classify(rules, toChannel(c, c.source, c.channel_id)).team };
+  }
+  const t = await env.DB.prepare(`SELECT source, team FROM threads WHERE channel_id = ?
+    AND (? IS NULL OR source = ?) ORDER BY any_at DESC LIMIT 1`).bind(channelId, source, source).first();
+  return t || { source, team: UNASSIGNED };
+}
+
+/**
+ * Adds a team to a channel another team holds: shares it, so the channel stays filed under
+ * its team and is in the new team's inbox too. Nothing moves.
+ */
+async function shareChannel(env, me, { source, channelId, team: slug }, from, dryRun) {
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return bad(`there is no team ${slug}; create it first`);
+  }
+  const shared = {
+    source, channelId, team: slug, from,
+  };
+  if (dryRun) {
+    return json({ dryRun: true, moves: [], shared });
+  }
+  const added = await share(env, {
+    source, channelId, team: slug, by: me.email || String(me.id),
+  });
+  console.log(JSON.stringify({
+    route: 'admin', share: 'added', by: me.id, team: slug, added,
+  }));
+  return json({
+    ok: true, moves: [], jobs: 0, shared: { ...shared, added },
+  });
+}
+
+/**
+ * DELETE /api/admin/share `{ source, channelId, team }`: the team stops following a channel
+ * that is shared with it. The channel stays filed where it is.
+ */
+async function unshareChannel(env, me, body) {
+  const channelId = clean(body.channelId);
+  const slug = clean(body.team);
+  const source = clean(body.source);
+  if (!channelId || !slug || !source) {
+    return bad('give a source, a channelId and a team');
+  }
+  const removed = await unshare(env, { source, channelId, team: slug });
+  if (!removed) {
+    return json({ error: 'this channel is not shared with this team' }, 404);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', share: 'removed', by: me.id, team: slug,
+  }));
+  return json({ ok: true, unshared: { source, channelId, team: slug } });
+}
+
+/**
+ * POST /api/admin/assign `{ target: team|org, source, channelId, value, move? }`: files one
+ * channel under a team or an org, whatever the other rules say (a `channel_id` rule with
+ * priority 10). DELETE takes the assignment away again.
+ *
+ * A channel has one org, but can be in several teams' inboxes: adding a team moves the
+ * channel only when the admin team (or nobody) holds it, so it moves for its first team. A
+ * channel another team holds is shared with the new team instead, and stays where it is.
+ * Handing it to the admin team, or `move`, moves it all the same.
  */
 async function assign(env, me, body, remove) {
   const target = clean(body.target);
@@ -299,6 +376,18 @@ async function assign(env, me, body, remove) {
     return bad('give a target (team or org) and a channelId');
   }
   const current = await loadRules(env);
+  const source = body.source ? clean(body.source) : null;
+  const value = toSlug(clean(body.value));
+  let home = null;
+  if (target === 'team' && !remove) {
+    home = await homeOf(env, current, source, channelId);
+    // Handing a channel to the admin team is always a move: it holds what no team has.
+    if (!body.move && !isHolding(home.team) && !isHolding(value) && home.team !== value) {
+      return shareChannel(env, me, {
+        source: source || home.source, channelId, team: value,
+      }, home.team, body.dryRun);
+    }
+  }
   const existing = current.find((r) => r.target === target && isManual(r)
     && r.pattern === manualPattern(channelId));
   if (remove) {
@@ -313,13 +402,18 @@ async function assign(env, me, body, remove) {
     pattern: manualPattern(channelId),
     value: body.value,
     priority: MANUAL_PRIORITY,
-    source: body.source || null,
+    source,
     note: MANUAL_NOTE,
     dryRun: body.dryRun,
   };
-  return existing
+  const res = await (existing
     ? updateRule(env, me, { ...payload, id: existing.id })
-    : createRule(env, me, payload);
+    : createRule(env, me, payload));
+  // The team the channel is filed under now does not need it shared with it as well.
+  if (target === 'team' && res.ok && !body.dryRun && (source || home.source)) {
+    await unshare(env, { source: source || home.source, channelId, team: value });
+  }
+  return res;
 }
 
 // ---- teams and members ------------------------------------------------------------------
@@ -330,7 +424,8 @@ async function listTeams(env, me) {
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug AND m.role = 'manager') AS managers,
       (SELECT COUNT(*) FROM rules r WHERE r.target = 'team' AND r.value = t.slug) AS rules,
       (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug) AS channels,
-      (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads
+      (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
+      (SELECT COUNT(*) FROM channel_teams s WHERE s.team = t.slug) AS shared
     FROM teams t ORDER BY t.name`);
   const everything = isAdmin(me);
   const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
@@ -418,6 +513,8 @@ async function deleteTeam(env, body) {
       error: `the team still has ${used.rules} rule(s) and ${used.threads} thread(s); move its channels to another team first`,
     }, 409);
   }
+  // The channels shared with it stay filed where they are (migration 0024 cascades too).
+  await env.DB.prepare('DELETE FROM channel_teams WHERE team = ?').bind(slug).run();
   const { meta } = await env.DB.prepare('DELETE FROM teams WHERE slug = ?').bind(slug).run();
   return meta.changes ? json({ ok: true }) : json({ error: 'no such team' }, 404);
 }
@@ -665,6 +762,7 @@ export async function admin(request, env, url, me) {
     case 'DELETE rules': return deleteRule(env, me, body);
     case 'POST assign': return assign(env, me, body, false);
     case 'DELETE assign': return assign(env, me, body, true);
+    case 'DELETE share': return unshareChannel(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),

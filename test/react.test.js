@@ -30,7 +30,7 @@ const ME = {
 };
 const SLACK = 'slack:E1:C1:1.1';
 const TEAMS = 'teams:T:G:19:c:5';
-const inTeam = (t) => t === 'helix';
+const inTeam = (t) => [].concat(t).includes('helix');
 
 function env() {
   const DB = d1({

@@ -1641,7 +1641,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   try {
     // A thread being fetched ahead is waited for, not fetched a second time.
     const ahead = !hit && !live && inflight.get(key);
-    data = hit ? hit.data : ((ahead && await ahead) || await get(`/api/thread?thread=${encodeURIComponent(key)}`));
+    data = hit ? hit.data : ((ahead && await ahead) || await get(threadUrl(key)));
   } catch (e) {
     pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     return;
@@ -2141,6 +2141,8 @@ function openPicker(button) {
 }
 
 // ---------------------------------------------------------------- read state, live
+/** A thread as seen from the open team's inbox (a shared channel is in several). */
+const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team ? `&team=${encodeURIComponent(state.team)}` : ''}`;
 const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
 function markRead(t) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
@@ -2150,7 +2152,7 @@ function markRead(t) {
     if (!at) continue;
     const msg = { type: 'read', thread: m.thread, at };
     if (state.ws?.readyState === 1) state.ws.send(JSON.stringify(msg));
-    else fetch('/api/read', { method: 'POST', body: JSON.stringify(msg), credentials: 'same-origin' });
+    else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: state.team }), credentials: 'same-origin' });
   }
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
   if (state.unread && t.unread) state.keep.add(t.thread);
@@ -2284,7 +2286,7 @@ function pump() {
   while (inflight.size < PREFETCH_AT_ONCE && queued.length) {
     const key = queued.shift();
     if (inflight.has(key) || fresh(key)) continue;
-    inflight.set(key, get(`/api/thread?thread=${encodeURIComponent(key)}`)
+    inflight.set(key, get(threadUrl(key))
       .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); return data; })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
@@ -2404,6 +2406,8 @@ function move(step) {
 
 async function switchTeam(slug) {
   state.team = slug; state.open = null; state.prevKeys = null;
+  // A thread of a shared channel shows the read state of the team it is looked at from.
+  state.cache.clear();
   syncReading();
   renderUser();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';

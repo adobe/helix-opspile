@@ -77,7 +77,7 @@ export async function seedAgent(env, me, body, inTeam) {
   let name;
   if (body.thread) {
     const t = await threadTarget(env, body.thread);
-    if (!t || !inTeam(t.entry.team)) {
+    if (!t || !inTeam(t.entry.teams)) {
       return json({ error: 'not found' }, 404);
     }
     if (!t.enabled) {
@@ -103,7 +103,7 @@ export async function seedAgent(env, me, body, inTeam) {
 /** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */
 export async function agentStatus(env, key, canSee) {
   const t = await threadTarget(env, key);
-  if (!t || !canSee(t.entry.team)) {
+  if (!t || !canSee(t.entry.teams)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled || !env.AGENTS) {
