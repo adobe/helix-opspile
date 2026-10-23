@@ -184,8 +184,9 @@
    * under the pointer. They need room to do so (and to cast their shadow): the filter
    * column reaches into the thread list by --fg, and lets the pointer through where it has
    * no card. The open thread's row is lifted out of its column, over the pane, by a copy
-   * of it in #lift (see syncLift), since the list's scroller would clip it. It passes under
-   * the open thread's header (.ph), and the list shows no scrollbar for it to cover.
+   * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
+   * the list's heading and the open thread's header, and the list shows no scrollbar for it
+   * to cover.
    */
   :root { --r: 14px; --fg: 48px;
     --card-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.7);
@@ -205,14 +206,13 @@
   #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
   #filters .card:hover { transform: translateX(calc(var(--r) * 2 / 3)); }
   #filters .card.active:hover { transform: translateX(var(--r)); }
-  @media (prefers-reduced-motion: reduce) { #filters .card, #lift .t { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
   /* Room for the filter cards' overhang, so they never cover a status dot. */
   .t { padding-left: 18px; }
   #threads .count { padding-left: 18px; }
   #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
   #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
     background: var(--sel); box-shadow: var(--lift-shadow);
-    transition: width .15s ease-out, padding-right .15s ease-out;
     padding: calc(9px + var(--lv) - 1px) calc(14px + var(--lr) - 1px) 0 calc(18px + var(--ll) - 1px); }
   #lift .t .faces .av { border-color: var(--sel); }
   .t.enter { animation: push-in .35s ease-out; overflow: hidden; }
@@ -257,8 +257,7 @@
   /* Messages: bubbles, customers left, Adobe right. */
   #pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane); }
   #pane .scroller { flex: 1; overflow: auto; overscroll-behavior: contain; }
-  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--pane); flex: none;
-    position: relative; z-index: 3; }
+  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--pane); flex: none; }
   .ph h2 { margin: 0 0 3px; font-size: 17px; display: flex; gap: 10px; align-items: baseline; }
   .ph .sub { color: var(--mute); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ph .sub img { width: 14px; height: 14px; border-radius: 3px; }
@@ -1057,9 +1056,11 @@ function renderThreads() {
 function render() { renderFilters(); renderThreads(); }
 
 // The open thread's row, lifted out of its column: a copy of it over the real one, wider by
-// LIFT on each side and over the pane, in #lift, which spans the list below its header.
-// Next to the open thread's header (.ph) it stays within the list, flush with its edge.
-const LIFT = { left: 10, right: 16, v: 3, room: 48 };
+// LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
+// list's heading while its row is below it, and slides under it with its row: above the
+// heading's lower edge #lift fades out, over its top LIFT.v and shadow (LIFT.shade) at rest,
+// over less and less of it as the row goes under, to a hard edge once it has.
+const LIFT = { left: 10, right: 16, v: 3, room: 48, shade: 16 };
 let liftOf = null;
 function syncLift(copy) {
   const list = $('threads');
@@ -1076,23 +1077,26 @@ function syncLift(copy) {
   const box = list.getBoundingClientRect();
   const head = list.querySelector('.count')?.offsetHeight || 0;
   const r = sel.getBoundingClientRect();
-  const ph = $('pane').querySelector('.ph')?.getBoundingClientRect();
-  const right = ph && r.top - LIFT.v < ph.bottom && r.bottom + LIFT.v > ph.top ? 0 : LIFT.right;
+  const over = LIFT.v + LIFT.shade;
+  const f = over - Math.min(Math.max(box.top + head - r.top, 0), over);
+  const mask = `linear-gradient(transparent ${head - f}px, #000 ${head - (LIFT.v * f) / over}px)`;
   Object.assign(lift.style, {
     left: `${box.left - main.left - LIFT.room}px`,
-    top: `${box.top - main.top + head}px`,
+    top: `${box.top - main.top}px`,
     width: `${box.width + 2 * LIFT.room}px`,
-    height: `${Math.max(0, box.height - head)}px`,
+    height: `${box.height}px`,
+    maskImage: mask,
+    webkitMaskImage: mask,
   });
   const { style } = lift.firstElementChild;
   Object.assign(style, {
     left: `${r.left - box.left + LIFT.room - LIFT.left}px`,
-    top: `${r.top - box.top - head - LIFT.v}px`,
-    width: `${r.width + LIFT.left + right}px`,
+    top: `${r.top - box.top - LIFT.v}px`,
+    width: `${r.width + LIFT.left + LIFT.right}px`,
     height: `${r.height + 2 * LIFT.v}px`,
   });
   style.setProperty('--ll', `${LIFT.left}px`);
-  style.setProperty('--lr', `${right}px`);
+  style.setProperty('--lr', `${LIFT.right}px`);
   style.setProperty('--lv', `${LIFT.v}px`);
 }
 {
@@ -1110,7 +1114,6 @@ function syncLift(copy) {
   $('threads').addEventListener('scroll', () => later(false), { passive: true });
   $('threads').addEventListener('animationend', () => later(false));
   new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
-  new MutationObserver(() => later(false)).observe($('pane'), { childList: true });
 }
 
 // ---------------------------------------------------------------- messages
