@@ -18,6 +18,7 @@
  *   PORT=9000 npm run ui:dev
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
+ *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
  *
  * What is shared with the Worker: `ui/inbox.html`, served from disk on every request (the
  * Worker imports the same file), and the pure helpers `readState`, `waitingOn`, `titleOf`
@@ -56,6 +57,8 @@ const SIMULATE = !process.argv.includes('--no-sim');
 // Dana in the admin team: the inbox shows the switch to the knowledge-base editor, "View as"
 // (read-only) and label review.
 const ADMIN = process.argv.includes('--admin');
+// Dana manages Edge ops and is in no admin team: what team managers see.
+const MANAGER = process.argv.includes('--manager');
 const SIM_EVERY_MS = 25 * 1000;
 const INBOX_LIMIT = 200;
 const SESSION_FILE = join(root, '.dev-ui-session.json');
@@ -63,7 +66,7 @@ const VALIDATE_MS = 60 * 1000;
 
 const store = createStore();
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store);
+const adminApi = createAdmin(store, { manager: MANAGER });
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 const reloadClients = new Set();
@@ -398,12 +401,14 @@ async function proxyApi(req, res, url, b) {
 
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
+  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js.
+  const allowed = (repo) => !MANAGER || repo === 'kb-team-edge';
   if (url.pathname === '/api/kb') {
-    return json(res, { systemPrompt: 'systemprompt.md', bases: kb.list() });
+    return json(res, { systemPrompt: 'systemprompt.md', bases: kb.list().filter((b) => allowed(b.repo)) });
   }
   const body = req.method === 'GET' ? {} : await readJson(req);
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
-  if (!kb.has(repo)) {
+  if (!kb.has(repo) || !allowed(repo)) {
     return json(res, { error: 'no such knowledge base' }, 404);
   }
   if (url.pathname === '/api/kb/files') {
@@ -494,14 +499,15 @@ async function api(req, res, url) {
     } = store.me;
     // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
     // be tried.
-    const admin = ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || '');
+    const admin = !MANAGER && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
-      teams,
+      teams: MANAGER ? teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
+      manages: MANAGER ? ['edge'] : [],
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
     });
