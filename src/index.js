@@ -29,6 +29,7 @@ import { consume } from './normalizer.js';
 import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
+import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
@@ -147,7 +148,8 @@ export default {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
- * agents' GitHub mirrors fresh, and learn the bots installed in each Teams team.
+ * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, and classify a
+ * batch of the admin team's channels for the channel suggestions.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -164,6 +166,9 @@ export default {
     ctx.waitUntil(syncInstalledBots(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
+    ctx.waitUntil(classifyChannels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
   },
 };
 

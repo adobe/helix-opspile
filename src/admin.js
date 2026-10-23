@@ -19,6 +19,7 @@ import {
 } from './review.js';
 import { slug as toSlug, UNASSIGNED } from './rules.js';
 import { syncAccessQuietly } from './accesssync.js';
+import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -36,6 +37,9 @@ import { syncAccessQuietly } from './accesssync.js';
  *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
+ *
+ * A team's page also suggests channels the admin team holds that the team might want: where
+ * its members are active, or where Clef says they belong (src/suggest.js).
  */
 
 export const MANUAL_PRIORITY = 10;
@@ -61,21 +65,58 @@ async function rows(env, sql, ...args) {
 
 // ---- channels ---------------------------------------------------------------------------
 
-/** Every channel opspile has seen, with where its threads are filed and its manual rules. */
+const CHANNEL_FIELDS = [['name', 'name'], ['groupName', 'group_name'], ['orgName', 'org_name'], ['org', 'org'], ['channelId', 'channel_id']];
+
+/**
+ * Which fields of a channel the words of a search are found in, or null when one of the words
+ * is in none of them. A channel matches when every word is in one of its fields: its name, its
+ * Teams team name, its org (slug or display name) or its id.
+ */
+export function channelMatch(c, words) {
+  const fields = new Set();
+  for (const w of words) {
+    const hit = CHANNEL_FIELDS.filter(([, col]) => String(c[col] || '').toLowerCase().includes(w));
+    if (!hit.length) {
+      return null;
+    }
+    hit.forEach(([field]) => fields.add(field));
+  }
+  return [...fields];
+}
+
+/** How well a channel matches a search, for ordering: its name or Teams team first. */
+function matchScore(c, needle) {
+  const names = [c.name, c.group_name].map((v) => String(v || '').toLowerCase());
+  if (names.some((v) => v.startsWith(needle))) {
+    return 2;
+  }
+  return names.some((v) => v.includes(needle)) ? 1 : 0;
+}
+
+/**
+ * Every channel opspile has seen, with where its threads are filed, its manual rules and
+ * Clef's suggestion. With `q`, only the channels every word of it matches (`channelMatch`),
+ * the ones whose name or Teams team matches first.
+ */
 async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}) {
-  const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name,
-      t.team, t.org, t.kind, COUNT(t.thread) AS threads, MAX(COALESCE(t.last_at, t.any_at)) AS latest
+  const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
+      t.team, t.org, o.name AS org_name, t.kind, COUNT(t.thread) AS threads,
+      MAX(COALESCE(t.last_at, t.any_at)) AS latest
     FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
       AND t.channel_id = c.channel_id
+    LEFT JOIN orgs o ON o.slug = t.org
     GROUP BY c.source, c.tenant, c.channel_id, t.team, t.org, t.kind
     ORDER BY latest DESC`);
-  const needle = q.toLowerCase();
+  const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
+    .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
+  const needle = q.toLowerCase().trim();
+  const words = needle.split(/\s+/).filter(Boolean);
   const manual = (target, channelId) => rules.find((r) => r.target === target && isManual(r)
     && r.pattern === manualPattern(channelId)) || null;
   const out = [];
   for (const c of filed) {
-    const hit = !needle || `${c.name || ''} ${c.group_name || ''} ${c.channel_id}`.toLowerCase().includes(needle);
-    if (hit && (!inTeam || c.team === inTeam) && (!inOrg || c.org === inOrg)) {
+    const match = words.length ? channelMatch(c, words) : [];
+    if (match && (!inTeam || c.team === inTeam) && (!inOrg || c.org === inOrg)) {
       const mt = manual('team', c.channel_id);
       const mo = manual('org', c.channel_id);
       out.push({
@@ -84,8 +125,10 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
         channelId: c.channel_id,
         name: c.name,
         groupName: c.group_name,
+        shared: Boolean(c.shared),
         team: c.team,
         org: c.org,
+        orgName: c.org_name || null,
         kind: c.kind,
         threads: c.threads,
         latest: c.latest,
@@ -93,8 +136,13 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
           team: mt && { id: mt.id, value: mt.value },
           org: mo && { id: mo.id, value: mo.value },
         },
+        clef: clefOf(labels.get(`${c.source}:${c.tenant}:${c.channel_id}`)),
+        ...(words.length ? { match, score: matchScore(c, needle) } : {}),
       });
     }
+  }
+  if (words.length) {
+    out.sort((a, b) => b.score - a.score);
   }
   return out;
 }
@@ -292,7 +340,7 @@ async function listTeams(env, me) {
   return json({ teams, unassigned, admin: everything });
 }
 
-async function team(env, slug) {
+async function team(env, slug, me) {
   const t = await env.DB.prepare('SELECT slug, name, self_managed FROM teams WHERE slug = ?').bind(slug).first();
   if (!t && slug !== UNASSIGNED) {
     return json({ error: 'no such team' }, 404);
@@ -305,6 +353,9 @@ async function team(env, slug) {
     rules: rules.filter((r) => r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
     channels: await channelList(env, rules, { team: slug }),
+    // The admin team decides which channels a team gets: what it might want of the admin
+    // team's channels.
+    ...(isAdmin(me) && t && slug !== ADMIN_TEAM ? await suggestionsFor(env, slug) : {}),
   });
 }
 
@@ -603,7 +654,7 @@ export async function admin(request, env, url, me) {
     case 'POST teams': return createTeam(env, body);
     case 'PUT teams': return updateTeam(env, body);
     case 'DELETE teams': return withAccessSync(env, 'team deleted', deleteTeam(env, body));
-    case 'GET team': return team(env, q('slug'));
+    case 'GET team': return team(env, q('slug'), me);
     case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
@@ -615,6 +666,9 @@ export async function admin(request, env, url, me) {
     case 'POST assign': return assign(env, me, body, false);
     case 'DELETE assign': return assign(env, me, body, true);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
+    case 'POST classify': return json(await classifyChannels(env, {
+      limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
+    }));
     case 'GET orgs': return listOrgs(env);
     case 'POST orgs': return saveOrg(env, body, true);
     case 'PUT orgs': return saveOrg(env, body, false);

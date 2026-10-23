@@ -54,6 +54,14 @@ export function d1({ rules = [], people = [], teams = [] } = {}) {
   return {
     sqlite: db,
     prepare: (sql) => stmt(sql),
+    async batch(statements) {
+      const out = [];
+      for (const s of statements) {
+        // eslint-disable-next-line no-await-in-loop
+        out.push(await s.run());
+      }
+      return out;
+    },
     rows: (sql, ...args) => db.prepare(sql).all(...args).map((r) => ({ ...r })),
   };
 }

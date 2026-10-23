@@ -33,7 +33,7 @@ export const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const fresh = (row, now) => row && Date.parse(row.fetched_at) > now - MAX_AGE_MS;
 
-async function slackApi(env, method, params) {
+export async function slackApi(env, method, params) {
   const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, {
     headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` },
   });
@@ -64,14 +64,15 @@ async function fetchSlackChannel(env, channelId) {
     group_name: null,
     shared: c.is_ext_shared || c.is_shared ? 1 : 0,
     connected: JSON.stringify(connected),
+    topic: (c.purpose && c.purpose.value) || (c.topic && c.topic.value) || null,
   };
 }
 
 async function fetchTeamsChannel(env, teamId, channelId) {
   const t = encodeURIComponent(teamId);
   const [team, channel] = await Promise.all([
-    graphJson(env, `/teams/${t}?$select=displayName`),
-    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,membershipType`),
+    graphJson(env, `/teams/${t}?$select=displayName,description`),
+    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,description,membershipType`),
   ]);
   return {
     name: channel.displayName,
@@ -79,6 +80,7 @@ async function fetchTeamsChannel(env, teamId, channelId) {
     group_name: team.displayName,
     shared: channel.membershipType === 'shared' ? 1 : 0,
     connected: '[]',
+    topic: channel.description || team.description || null,
   };
 }
 
@@ -112,12 +114,12 @@ export async function getChannel(env, {
       ? await fetchSlackChannel(env, channelId)
       : await fetchTeamsChannel(env, groupId || (row && row.group_id), channelId);
     await env.DB.prepare(`INSERT INTO channels
-      (source, tenant, channel_id, name, group_id, group_name, shared, connected, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
         group_id = excluded.group_id, group_name = excluded.group_name,
         shared = excluded.shared, connected = excluded.connected,
-        fetched_at = excluded.fetched_at`)
+        topic = excluded.topic, fetched_at = excluded.fetched_at`)
       .bind(
         source,
         tenant,
@@ -127,6 +129,7 @@ export async function getChannel(env, {
         f.group_name,
         f.shared,
         f.connected,
+        f.topic ? String(f.topic).slice(0, 500) : null,
         new Date(now).toISOString(),
       )
       .run();

@@ -123,7 +123,18 @@
   .picker { position: relative; }
   .picks { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin-top: 4px; max-height: 280px; overflow: auto;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+  .picks.up { top: auto; bottom: 100%; margin: 0 0 4px; box-shadow: 0 -8px 24px rgba(0,0,0,.25); }
   .picks .row { border-radius: 0; }
+  .picks .pickrow { align-items: flex-start; padding: 7px 10px; }
+  .picks .pickrow .name { white-space: normal; display: flex; flex-direction: column; gap: 1px; }
+  .picks .pickrow .ch { font-weight: 600; }
+  .picks .pickrow .where { flex: none; text-align: right; font-size: 13px; padding-top: 1px; }
+  mark { background: color-mix(in srgb, var(--yellow) 35%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+  .sep { color: var(--faint); }
+  tr.section td { font-size: 12px; font-weight: 600; color: var(--mute); padding-top: 16px; }
+  .tag.clef { color: var(--mute); }
+  .tag.clef.yes { color: var(--green); border-color: var(--green); }
+  .person { display: inline-block; margin: 1px 8px 1px 0; white-space: nowrap; }
   .empty { color: var(--mute); padding: 20px 4px; }
   dialog.confirm { max-width: min(620px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);
     border-radius: 12px; padding: 16px 18px; }
@@ -245,7 +256,7 @@ const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.f
 
 function movesHtml(moves) {
   const where = (x) => `${esc(teamLabel(x.team))} / ${esc(orgLabel(x.org))}${x.kind !== 'channel' ? ` (${esc(x.kind)})` : ''}`;
-  return `<ul>${moves.slice(0, 60).map((m) => `<li><b>${esc(m.channel.name || m.channel.channelId)}</b>: ${m.from.map(where).join(', ')} → ${where(m.to)}
+  return `<ul>${moves.slice(0, 60).map((m) => `<li><b>${channelName(m.channel)}</b>: ${m.from.map(where).join(', ')} → ${where(m.to)}
     <span class="sub">(${m.from.reduce((n, f) => n + f.threads, 0)} threads)</span></li>`).join('')}</ul>
     ${moves.length > 60 ? `<p>… and ${moves.length - 60} more.</p>` : ''}
     <p>Their threads are re-filed in the background; agents and knowledge bases follow the new team and org.</p>`;
@@ -425,7 +436,7 @@ function applyMoves(moves) {
           tenant: m.channel.tenant,
           channelId: m.channel.channelId,
           name: m.channel.name,
-          groupName: was.groupName || null,
+          groupName: was.groupName || m.channel.groupName || null,
           team: m.to.team,
           org: m.to.org,
           kind: m.to.kind,
@@ -448,26 +459,110 @@ function setManual(channelId, rule) {
 
 // ---- channels (shared) ------------------------------------------------------------------
 
+/** `text`, escaped, with every occurrence of one of `words` (lower case) marked. */
+function hl(text, words = []) {
+  const t = String(text ?? '');
+  const lower = t.toLowerCase();
+  const marks = new Array(t.length).fill(false);
+  for (const w of words) {
+    for (let i = w ? lower.indexOf(w) : -1; i >= 0; i = lower.indexOf(w, i + 1)) marks.fill(true, i, i + w.length);
+  }
+  let out = '';
+  let open = false;
+  for (let i = 0; i < t.length; i += 1) {
+    if (marks[i] !== open) { out += marks[i] ? '<mark>' : '</mark>'; open = marks[i]; }
+    out += esc(t[i]);
+  }
+  return open ? `${out}</mark>` : out;
+}
+
+/**
+ * A channel's name as people know it: on Teams the team first (`acme-support › Main`), since a
+ * Teams team has many channels called Main or General; on Slack `#name`.
+ */
+function channelName(c, words) {
+  if (c.source === 'teams') {
+    return `${c.groupName ? `${hl(c.groupName, words)} <span class="sep">›</span> ` : ''}${hl(c.name || c.channelId, words)}`;
+  }
+  return `#${hl(c.name || c.channelId, words)}`;
+}
+const platform = (c) => (c.source === 'teams' ? 'Teams' : `Slack${c.shared ? ' Connect' : ''}`);
+const pct = (p) => `${Math.round((p || 0) * 100)}%`;
+/** Clef's pick for a channel, as a tag. */
+function clefTag(clef, here) {
+  if (!clef) return '';
+  const kind = clef.kind && clef.kind !== 'channel' ? ` · ${esc(clef.kind)}` : '';
+  const title = `Clef: ${clef.team === 'none' ? 'no ops team' : teamLabel(clef.team)} (${pct(clef.p)}), ${clef.kind || '?'} (${pct(clef.kindP)})`;
+  if (here !== undefined) {
+    return `<span class="tag clef${here >= 0.5 ? ' yes' : ''}" title="${esc(title)}">Clef ${pct(here)}${kind}</span>`;
+  }
+  return `<span class="tag clef" title="${esc(title)}">Clef: ${esc(clef.team === 'none' ? 'none' : teamLabel(clef.team))} ${pct(clef.p)}${kind}</span>`;
+}
+
+/**
+ * Places a picker's list below its field, or above it when there is not enough room below
+ * (the field is at the bottom of the page), and no taller than the room there is.
+ */
+function placePicks(input, picks) {
+  const r = input.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - 16;
+  const above = r.top - document.querySelector('header').getBoundingClientRect().bottom - 16;
+  const up = below < 240 && above > below;
+  picks.classList.toggle('up', up);
+  picks.style.maxHeight = `${Math.max(120, Math.min(360, up ? above : below))}px`;
+}
+
 /** The channels card: a table (redrawn on its own) and a picker that assigns one here. */
 function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by name or id" autocomplete="off"><div class="picks" id="picks" hidden></div></div>
+    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by channel, Teams team, customer or id" autocomplete="off" aria-label="Assign a channel"><div class="picks" id="picks" hidden></div></div>
     <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).</p></div>`;
+}
+
+/**
+ * Assigns a channel (as the API listed it) to the open team or org by hand, or to another
+ * `value`, and updates the page.
+ */
+async function assignHere(c, value = state.view.value) {
+  const { target } = state.view;
+  const { channelId, source } = c;
+  const res = await ruleChange('POST', '/api/admin/assign', { target, value, channelId, source });
+  if (!res) return null;
+  applyMoves(res.moves);
+  // A channel that came here: what the move does not say about it.
+  for (const row of state.view.channels.filter((x) => x.channelId === channelId)) {
+    row.groupName = row.groupName || c.groupName || null;
+    row.shared = row.shared ?? c.shared;
+    row.latest = row.latest || c.latest || null;
+    row.orgName = row.orgName || c.orgName || null;
+  }
+  // Already here by rule: no move, but now by hand. A channel the API did not move
+  // (no threads yet) shows up once something is filed.
+  if (value === state.view.value) setManual(channelId, res.rule);
+  if (state.view.suggestions) state.view.suggestions = state.view.suggestions.filter((x) => x.channelId !== channelId);
+  renderChannels();
+  if ($('suggestTable')) renderSuggestions();
+  renderList();
+  return res;
 }
 
 function renderChannels() {
   const { target, channels } = state.view;
   const other = target === 'team' ? 'org' : 'team';
+  // On the admin team's page, Clef's pick for each channel, to hand it to that team.
+  const triage = target === 'team' && state.view.value === 'admin' && channels.some((c) => c.clef);
   const rows = channels.map((c) => {
     const manual = c.manual[target];
-    return `<tr><td>${esc(c.name || c.channelId)}<div class="sub">${esc(c.source === 'teams' ? `Teams${c.groupName ? ` · ${c.groupName}` : ''}` : 'Slack')} · <span class="mono">${esc(c.channelId)}</span></div></td>
+    const pick = triage && c.clef && c.clef.team !== 'none' && c.clef.team !== 'admin' && state.teams.some((t) => t.slug === c.clef.team) ? c.clef.team : null;
+    return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
       <td>${esc(other === 'org' ? orgLabel(c.org) : teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
+      ${triage ? `<td>${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}">give to ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td>${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
-    ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>`
+    ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Clef suggests</th>' : ''}<th></th></tr>${rows}</table>`
     : '<div class="empty">No channel is filed here.</div>';
   for (const b of $('channelsTable').querySelectorAll('[data-unassign]')) {
     b.onclick = async () => {
@@ -479,43 +574,139 @@ function renderChannels() {
       renderList();
     };
   }
+  for (const b of $('channelsTable').querySelectorAll('[data-give]')) {
+    b.onclick = () => assignHere(channels.find((c) => c.channelId === b.dataset.give), b.dataset.team);
+  }
 }
 
+/**
+ * The picker that assigns a channel here: finds channels by channel name, Teams team name,
+ * customer (slug or display name) or id; every word has to match. Each row says where the
+ * channel is, its customer, where it is filed and how busy it is, with the matches marked.
+ * Arrow keys and Enter pick, Escape closes.
+ */
 function wireChannelPicker() {
   const { target, value } = state.view;
   let timer;
+  let list = [];
+  let at = 0;
+  let words = [];
+  const input = $('pick');
   const picks = $('picks');
-  $('pick').oninput = () => {
+  const pickIt = async (c) => {
+    picks.hidden = true;
+    input.value = '';
+    list = [];
+    await assignHere(c);
+  };
+  const render = () => {
+    picks.innerHTML = list.map((c, i) => {
+      const match = c.match || [];
+      const org = c.org && !c.org.startsWith('_') ? (c.orgName || c.org) : '';
+      // The org's slug only when the search found it there and not in the display name.
+      const slug = c.orgName && match.includes('org') && !match.includes('orgName') ? ` <span class="mono">${hl(c.org, words)}</span>` : '';
+      const id = match.length === 1 && match[0] === 'channelId' ? ` · id <span class="mono">${hl(c.channelId, words)}</span>` : '';
+      const here = c[target] === value;
+      return `<div class="row pickrow${i === at ? ' on' : ''}" data-i="${i}">
+        <span class="name"><span class="ch">${channelName(c, words)}</span>
+          <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
+          · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
+        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}`}</span></div>`;
+    }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
+    picks.hidden = false;
+    placePicks(input, picks);
+    for (const el of picks.querySelectorAll('[data-i]')) {
+      el.onmousedown = (e) => { e.preventDefault(); pickIt(list[Number(el.dataset.i)]); };
+    }
+    const on = picks.querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  };
+  input.oninput = () => {
     clearTimeout(timer);
-    const q = $('pick').value.trim();
-    if (!q) { picks.hidden = true; return; }
+    const q = input.value.trim();
+    if (!q) { picks.hidden = true; list = []; return; }
     timer = setTimeout(async () => {
       const r = await call(`/api/admin/channels?q=${encodeURIComponent(q)}`);
-      const list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target]);
+      if (input.value.trim() !== q) return;
+      words = q.toLowerCase().split(/\s+/).filter(Boolean);
       const seen = new Set();
-      const uniq = list.filter((c) => !seen.has(c.channelId) && seen.add(c.channelId));
-      picks.innerHTML = uniq.map((c) => `<div class="row" data-ch="${esc(c.channelId)}" data-source="${esc(c.source)}">
-        <span class="name">${esc(c.name || c.channelId)}</span><span class="sub">${esc(teamLabel(c.team))} / ${esc(orgLabel(c.org))}</span></div>`).join('')
-        || '<div class="empty" style="padding:8px">No channel matches.</div>';
-      picks.hidden = false;
-      for (const el of picks.querySelectorAll('[data-ch]')) {
-        el.onmousedown = async (e) => {
-          e.preventDefault();
-          picks.hidden = true;
-          $('pick').value = '';
-          const res = await ruleChange('POST', '/api/admin/assign', { target, value, channelId: el.dataset.ch, source: el.dataset.source });
-          if (!res) return;
-          applyMoves(res.moves);
-          // Already here by rule: no move, but now by hand. A channel the API did not move
-          // (no threads yet) shows up once something is filed.
-          setManual(el.dataset.ch, res.rule);
-          renderChannels();
-          renderList();
-        };
-      }
+      list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target])
+        .filter((c) => !seen.has(c.channelId) && seen.add(c.channelId));
+      at = 0;
+      render();
     }, 200);
   };
-  $('pick').onblur = () => setTimeout(() => { picks.hidden = true; }, 200);
+  input.onkeydown = (e) => {
+    if (picks.hidden || !list.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      pickIt(list[at]);
+    } else if (e.key === 'Escape') {
+      picks.hidden = true;
+    }
+  };
+  input.onblur = () => setTimeout(() => { picks.hidden = true; }, 200);
+}
+
+// ---- suggested channels -------------------------------------------------------------------
+
+const CLEF_SHOWN = 10;
+
+/** One suggested channel: where it is, who of the team is active in it, what Clef says. */
+function suggestionRow(c) {
+  const org = c.org && !c.org.startsWith('_') ? (c.orgName || c.org) : '';
+  const who = c.people.map((p) => {
+    const did = [p.posted ? `${p.posted} post${p.posted === 1 ? '' : 's'}` : '', p.reacted ? `${p.reacted} reaction${p.reacted === 1 ? '' : 's'}` : '', p.member ? 'member' : '']
+      .filter(Boolean).join(', ');
+    return `<span class="person" title="${esc(did)}">${esc(p.name)}<span class="sub"> · ${esc(did)}</span></span>`;
+  }).join('');
+  return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))}${org ? ` · customer <b>${esc(org)}</b>` : ''}${c.topic ? ` · <span title="${esc(c.topic)}">${esc(c.topic.length > 80 ? `${c.topic.slice(0, 80)}…` : c.topic)}</span>` : ''}</div></td>
+    <td>${who || '<span class="sub">nobody yet</span>'}</td>
+    <td>${c.clef ? clefTag(c.clef, c.clef.here) : '<span class="sub">not yet</span>'}</td>
+    <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
+    <td><button data-add="${esc(c.channelId)}" data-source="${esc(c.source)}">Add</button></td></tr>`;
+}
+
+function renderSuggestions() {
+  const { suggestions = [], coverage, showAllClef } = state.view;
+  const active = suggestions.filter((c) => c.people.length);
+  const clefOnly = suggestions.filter((c) => !c.people.length);
+  const shown = showAllClef ? clefOnly : clefOnly.slice(0, CLEF_SHOWN);
+  const head = '<tr><th>Channel</th><th>Active here from this team</th><th>Clef</th><th>Threads</th><th>Latest</th><th></th></tr>';
+  const none = '<tr><td colspan="6" class="sub">No member of this team posts, reacts or is a member in a channel the admin team holds.</td></tr>';
+  const table = suggestions.length ? `<table>${head}${active.length ? active.map(suggestionRow).join('') : none}
+    ${clefOnly.length ? `<tr class="section"><td colspan="6">Clef also suggests, though nobody from this team is active there</td></tr>${shown.map(suggestionRow).join('')}` : ''}</table>
+    ${clefOnly.length > shown.length ? `<button class="link" id="sMore">Show ${clefOnly.length - shown.length} more</button>` : ''}`
+    : '<div class="empty">No channel of the admin team has members of this team in it, and Clef suggests none.</div>';
+  $('suggestTable').innerHTML = `${table}
+    ${coverage ? `<p class="hint">Of the admin team's ${coverage.channels} channels, Clef has classified ${coverage.classified} and the members of ${coverage.membersListed} are listed; the cron does a batch every 20 minutes.
+      ${coverage.classified < coverage.channels ? '<button class="link" id="sClassify">Classify a batch now</button>' : ''}</p>` : ''}`;
+  for (const b of $('suggestTable').querySelectorAll('[data-add]')) {
+    b.onclick = async () => {
+      b.disabled = true;
+      const c = state.view.suggestions.find((x) => x.channelId === b.dataset.add);
+      if (!(await assignHere(c))) b.disabled = false;
+    };
+  }
+  if ($('sMore')) $('sMore').onclick = () => { state.view.showAllClef = true; renderSuggestions(); };
+  if ($('sClassify')) {
+    $('sClassify').onclick = async () => {
+      $('sClassify').disabled = true;
+      status('', 'Clef is classifying a batch of channels…');
+      const r = await call('/api/admin/classify', 'POST', { limit: 10 });
+      if (!r.ok) { status('err', r.body.error || `Failed (${r.status}).`); $('sClassify').disabled = false; return; }
+      status('ok', `Classified ${r.body.classified} channel${r.body.classified === 1 ? '' : 's'}; ${r.body.pending} to go.`);
+      const t = await call(`/api/admin/team?slug=${encodeURIComponent(state.view.value)}`);
+      if (t.ok && state.view.value === t.body.team.slug) {
+        Object.assign(state.view, { suggestions: t.body.suggestions, coverage: t.body.coverage });
+        renderSuggestions();
+      }
+    };
+  }
 }
 
 // ---- teams --------------------------------------------------------------------------------
@@ -600,6 +791,7 @@ function wireMemberPicker() {
       ${p.teams && p.teams.length ? `<span class="sub">${esc(p.teams.map(teamLabel).join(', '))}</span>` : ''}</div>`).join('')
       || '<div class="empty" style="padding:8px">Nobody matches. Type a full email address to add someone new.</div>';
     picks.hidden = false;
+    placePicks(input, picks);
     for (const el of picks.querySelectorAll('[data-i]')) {
       el.onmousedown = (e) => { e.preventDefault(); add(list[Number(el.dataset.i)]); };
     }
@@ -737,9 +929,11 @@ async function showTeam(slug) {
   $('detail').innerHTML = '<div class="empty">Loading…</div>';
   const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
-  const { team, members, rules, channels } = r.body;
+  const {
+    team, members, rules, channels, suggestions, coverage,
+  } = r.body;
   state.view = {
-    target: 'team', value: slug, team, members, rules, channels,
+    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage,
   };
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
@@ -767,8 +961,12 @@ async function showTeam(slug) {
       <div id="ruleSlot">${ruleForm()}</div>
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
-    ${admin ? channelsCard('team') : '<div class="card"><h2>Channels</h2><div id="channelsTable"></div><p class="hint">The admin team decides which channels a team gets.</p></div>'}`;
+    ${admin ? channelsCard('team') : '<div class="card"><h2>Channels</h2><div id="channelsTable"></div><p class="hint">The admin team decides which channels a team gets.</p></div>'}
+    ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
+      <p class="hint" style="margin:0 0 8px">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
+      <div id="suggestTable"></div></div>` : ''}`;
   renderChannels();
+  if (suggestions) renderSuggestions();
   if (admin) wireChannelPicker();
   if (!real) return;
   renderMembers();
