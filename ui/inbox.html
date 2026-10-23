@@ -1043,6 +1043,7 @@ const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80
 async function openThread(key, { live = false, cached = false } = {}) {
   const switching = state.open !== key;
   state.open = key;
+  if (switching) prefetchAround(key);
   if (switching) toUrl();
   renderThreads();
   const pane = $('pane');
@@ -1587,14 +1588,36 @@ async function loadInbox() {
   state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
   render();
 }
+// Threads are fetched ahead, so opening one is instant: a queue, not a drop. A row that
+// scrolls into view, the rows next to the open one and a row under the pointer all queue
+// their thread; urgent ones (pointer, neighbours) go to the front. Six at a time.
 const inflight = new Set();
-async function prefetch(key) {
-  const hit = state.cache.get(key);
-  if (!key || inflight.has(key) || (hit && Date.now() - hit.at < 60000) || inflight.size >= 4) return;
-  inflight.add(key);
-  try {
-    state.cache.set(key, { data: await get(`/api/thread?thread=${encodeURIComponent(key)}`), at: Date.now() });
-  } catch { /* opening it will try again */ } finally { inflight.delete(key); }
+const queued = [];
+const PREFETCH_AT_ONCE = 6;
+const fresh = (key) => { const hit = state.cache.get(key); return hit && Date.now() - hit.at < 60000; };
+function prefetch(key, { urgent = false } = {}) {
+  if (!key || inflight.has(key) || fresh(key)) return;
+  const at = queued.indexOf(key);
+  if (at >= 0) { if (!urgent) return; queued.splice(at, 1); }
+  if (urgent) queued.unshift(key); else queued.push(key);
+  pump();
+}
+function pump() {
+  while (inflight.size < PREFETCH_AT_ONCE && queued.length) {
+    const key = queued.shift();
+    if (inflight.has(key) || fresh(key)) continue;
+    inflight.add(key);
+    get(`/api/thread?thread=${encodeURIComponent(key)}`)
+      .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); })
+      .catch(() => { /* opening it will try again */ })
+      .finally(() => { inflight.delete(key); pump(); });
+  }
+}
+/** The threads just before and after the open one (j / k), first in the queue. */
+function prefetchAround(key) {
+  const i = state.order.indexOf(key);
+  if (i < 0) return;
+  for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
 function connect() {
   state.ws?.close();
@@ -1686,6 +1709,11 @@ async function start() {
     render();
     toUrl();
   };
+  // A row under the pointer is about to be opened: fetch it first.
+  $('threads').addEventListener('pointerover', (e) => {
+    const row = e.target.closest('.t');
+    if (row) prefetch(row.dataset.thread, { urgent: true });
+  });
   $('threads').onclick = (e) => {
     const sort = e.target.closest('[data-sort]');
     if (sort) { state.sort = sort.dataset.sort; renderThreads(); toUrl(); return; }
