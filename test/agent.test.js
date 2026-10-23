@@ -26,7 +26,7 @@ import {
   agentModel, agentProvider, catalogEntry, gatewayBaseUrl, modelProblem,
 } from '../src/agent/model.js';
 import {
-  accessibleRepos, githubSlug, mirrorName, refreshMirrors,
+  accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
 import { opspileExtension } from '../src/agent/tools.js';
@@ -379,6 +379,46 @@ describe('thread agents', () => {
     e.DB.sqlite.exec("INSERT INTO agent_repos (scope, slug, url) VALUES ('org', 'other', 'https://github.com/made-up/elsewhere')");
     assert.equal((await accessibleRepos(e, { team: 'helix', org: 'acme' })).length, 3);
     assert.equal((await accessibleRepos(e, { team: 'helix', org: 'other' })).length, 4);
+  });
+
+  it('list a repository breadth first, reading the directories of a level at once', async () => {
+    const files = {
+      'z.md': 'z', 'a/one.md': '1', 'a/deep/x.md': 'x', 'b/two.md': '2',
+    };
+    for (let i = 0; i < 450; i += 1) {
+      files[`c/f${String(i).padStart(3, '0')}.md`] = 'f';
+    }
+    const artifacts = fakeArtifacts({ kb: files });
+    const get = artifacts.get.bind(artifacts);
+    let reading = 0;
+    let most = 0;
+    artifacts.get = async (name) => {
+      const repo = await get(name);
+      const readTree = repo.readTree.bind(repo);
+      repo.readTree = async (hash) => {
+        reading += 1;
+        most = Math.max(most, reading);
+        await new Promise((r) => {
+          setTimeout(r, 1);
+        });
+        reading -= 1;
+        return readTree(hash);
+      };
+      return repo;
+    };
+    const e = { ARTIFACTS: artifacts };
+    const { entries, truncated } = await listFiles(e, 'kb', '', { recursive: true });
+    assert.deepEqual(entries.slice(0, 8).map((x) => x.path), [
+      'a', 'b', 'c', 'z.md', 'a/deep', 'a/one.md', 'b/two.md', 'c/f000.md',
+    ]);
+    // At most 400 entries: the listing stops in `c`, before `a/deep`'s files.
+    assert.equal(entries.length, 400);
+    assert.equal(entries.at(-1).path, 'c/f392.md');
+    assert.equal(truncated, true);
+    assert.ok(most >= 3, 'a, b and c are read together');
+    const top = await listFiles(e, 'kb', '');
+    assert.deepEqual(top.entries.map((x) => x.path), ['a', 'b', 'c', 'z.md']);
+    assert.equal(top.truncated, false);
   });
 
   it('read and grep repositories, and save their thread\'s draft as the agent', async () => {

@@ -85,7 +85,8 @@ export async function signalFacts(env, keys) {
  */
 export async function resolutionFacts(env, keys) {
   const list = JSON.stringify(keys);
-  const { results: checks } = await env.DB.prepare(`SELECT r.thread, r.user_key,
+  const [{ results: checks }, { results: customer }] = await Promise.all([
+    env.DB.prepare(`SELECT r.thread, r.user_key,
       COALESCE(r.at, t.root_at) AS at, COALESCE(p.name, i.name) AS name, i.person,
       p.staff, i.email
     FROM reactions r JOIN threads t ON t.thread = r.thread
@@ -94,10 +95,11 @@ export async function resolutionFacts(env, keys) {
     WHERE r.thread IN (SELECT value FROM json_each(?))
       AND r.emoji IN (SELECT value FROM json_each(?))
       AND r.message = t.source || ':' || t.tenant || ':' || t.channel_id || ':' || t.root_id`)
-    .bind(list, JSON.stringify(RESOLVED_FORMS)).all();
-  const { results: customer } = await env.DB.prepare(`SELECT thread, MAX(at) AS at FROM messages
+      .bind(list, JSON.stringify(RESOLVED_FORMS)).all(),
+    env.DB.prepare(`SELECT thread, MAX(at) AS at FROM messages
     WHERE thread IN (SELECT value FROM json_each(?)) AND counted = 1 AND staff = 0
-      AND deleted = 0 GROUP BY thread`).bind(list).all();
+      AND deleted = 0 GROUP BY thread`).bind(list).all(),
+  ]);
   const facts = new Map(keys.map((k) => [k, { checks: [], customerAt: null }]));
   for (const c of checks || []) {
     if (facts.has(c.thread) && (c.staff || isStaffDomain(env, c.email))) {

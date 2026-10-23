@@ -61,9 +61,17 @@ export async function quiet(fn) {
   }
 }
 
+// R2 gives every write a new version; unique across buckets, as R2's are.
+let versions = 0;
+const nextVersion = () => {
+  versions += 1;
+  return `v${versions}`;
+};
+
 /** An R2 bucket with get/put, enough for pile 2. */
 export function fakeBucket(initial = {}) {
-  const objects = new Map(Object.entries(initial).map(([k, body]) => [k, { body, options: {} }]));
+  const objects = new Map(Object.entries(initial)
+    .map(([k, body]) => [k, { body, options: {}, version: nextVersion() }]));
   return {
     objects,
     async get(key) {
@@ -77,7 +85,7 @@ export function fakeBucket(initial = {}) {
       };
     },
     async put(key, body, options) {
-      objects.set(key, { body, options });
+      objects.set(key, { body, options, version: nextVersion() });
     },
     async head(key) {
       return objects.has(key) ? { key } : null;
@@ -91,7 +99,7 @@ export function fakeBucket(initial = {}) {
       const page = keys.slice(from, from + limit);
       const truncated = from + limit < keys.length;
       return {
-        objects: page.map((key) => ({ key })),
+        objects: page.map((key) => ({ key, version: objects.get(key).version })),
         truncated,
         cursor: truncated ? String(from + limit) : undefined,
       };

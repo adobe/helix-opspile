@@ -124,24 +124,35 @@ async function entryAt(repo, rootTree, path) {
   return entry;
 }
 
-/** Files and directories below `path`, breadth first, at most `limit`. */
+/**
+ * Files and directories below `path`, breadth first, at most `limit`. The directories of one
+ * level are read at once (the knowledge-base editor lists the whole tree, and reading it a
+ * directory at a time took seconds); the result is the same as reading them one by one.
+ */
 async function walk(repo, tree, prefix, { recursive, limit }) {
   const out = [];
-  const queue = [{ hash: tree, prefix }];
+  let queue = [{ hash: tree, prefix }];
   while (queue.length && out.length < limit) {
-    const { hash, prefix: p } = queue.shift();
+    const level = queue;
+    queue = [];
     // eslint-disable-next-line no-await-in-loop
-    const children = (await repo.readTree(hash)) || [];
-    for (const c of children.sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = p ? `${p}/${c.name}` : c.name;
-      out.push({ path, type: c.type, hash: c.hash });
-      if (recursive && c.type === 'tree') {
-        queue.push({ hash: c.hash, prefix: path });
-      }
-      if (out.length >= limit) {
-        break;
+    const trees = await Promise.all(level.map((d) => repo.readTree(d.hash)));
+    let i = 0;
+    for (; i < level.length && out.length < limit; i += 1) {
+      const p = level[i].prefix;
+      for (const c of (trees[i] || []).sort((a, b) => a.name.localeCompare(b.name))) {
+        const path = p ? `${p}/${c.name}` : c.name;
+        out.push({ path, type: c.type, hash: c.hash });
+        if (recursive && c.type === 'tree') {
+          queue.push({ hash: c.hash, prefix: path });
+        }
+        if (out.length >= limit) {
+          break;
+        }
       }
     }
+    // Directories of this level not taken in yet stay ahead of the next level, as before.
+    queue = [...level.slice(i), ...queue];
   }
   return { entries: out, truncated: queue.length > 0 || out.length >= limit };
 }
