@@ -15,7 +15,7 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/valida
 import { unseal } from '../post.js';
 
 /**
- * The MCP servers configured for a team or an org (`mcp_servers`, migration 0022), and talking
+ * The MCP servers configured for a team or an org (`mcp_servers`, migration 0023), and talking
  * to them: Streamable HTTP with the official client, request headers (credentials) from D1,
  * sealed with TOKEN_KEY. Used by the thread agents (src/agent/mcp.js) and by the knowledge-base
  * editor's check (src/mcpadmin.js).

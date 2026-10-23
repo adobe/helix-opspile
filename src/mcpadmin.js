@@ -17,7 +17,7 @@ import { repoName } from './kb.js';
 import { isAdmin, managesTeam } from './review.js';
 
 /**
- * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0022),
+ * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
  * behind `/api/kb/mcp`. Next to the per-channel switch of the agents: a knowledge base's
  * servers are those of its team (`kb-team-*`) or its customer (`kb-org-*`), and the same
  * people manage them who edit it (the admin team; team managers for their teams).
