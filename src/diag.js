@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { syncInstalledBots } from './bots.js';
 import { graphClient, graphToken } from './graph.js';
 import { ensureSubscription } from './subscription.js';
 
@@ -66,7 +67,7 @@ async function probeSubscription(graph, origin) {
  * GET /diag/teams — checks the Microsoft side end to end without exposing a token:
  * the granted application roles, how many teams the app can see, and (with `?sub=1`)
  * whether a /teams/getAllMessages subscription can be created. `?ensure=1` runs the cron's
- * ensureSubscription now and returns what it did.
+ * ensureSubscription now and returns what it did, and `?bots=1` the cron's syncInstalledBots.
  */
 export async function diagTeams(url, env) {
   const { token, roles, expiresIn } = await graphToken(env);
@@ -78,6 +79,9 @@ export async function diagTeams(url, env) {
   }
   if (url.searchParams.get('ensure') === '1') {
     out.ensure = await ensureSubscription(env, { graph });
+  }
+  if (url.searchParams.get('bots') === '1') {
+    out.bots = await syncInstalledBots(env, { graph }).catch((e) => ({ error: e.message }));
   }
   return out;
 }

@@ -348,13 +348,17 @@ A reply goes to the latest platform thread of an inbox entry and comes back thro
 normal ingestion path, like any other message.
 
 **Mentions.** `@` in a reply suggests the people opspile knows on the thread's platform, and
-on Teams also the bots seen in the thread's Teams team (a bot that posted, or was mentioned,
-in one of its channels; `bot_teams` in D1). A picked bot is sent as an `application` mention,
+on Teams also the bots of the thread's Teams team (`bot_teams` in D1): the bots installed there,
+which the cron lists from Graph (`installedApps`) for every Teams team with a channel in D1, and
+any bot that posted, or was mentioned, in one of its channels. Bots people used come first. A
+bot nobody has mentioned in a team yet can be mentioned from the inbox all the same; an `@name`
+typed without picking it goes out as plain text, which the bot never receives. A picked bot is sent as an `application` mention,
 which the bot receives exactly like a mention typed in Teams, from the person who wrote the
 reply. That is how a team member is added from the inbox: `@<admin bot> add someone@example.com`
 asks the bot that manages the Teams team, which answers in the thread (and in turn comes back
 through ingestion). A bot is mentioned by the name people use for it (`handle`, the mention text),
-which can differ from the name it posts under.
+which can differ from the name it posts under; for an installed bot that is the app's name,
+which is what Teams writes when someone mentions it.
 
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as

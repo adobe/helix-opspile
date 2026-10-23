@@ -25,6 +25,7 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/index.js` — router
 - `src/slack.js` — Slack Events API endpoint
 - `src/teams.js` — Graph validation endpoint, token and client helpers
+- `src/bots.js` — the bots installed in each Teams team (cron), so replies can mention them
 - `src/diag.js` — guarded `/diag/teams` self-test
 - `src/drafts.js` — shared drafts: one unsent reply per thread, seen by the channel's team
 - `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts

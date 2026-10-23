@@ -18,6 +18,7 @@ import { syncAccessQuietly } from './accesssync.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
+import { syncInstalledBots } from './bots.js';
 import { diagTeams } from './diag.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
@@ -145,8 +146,8 @@ export default {
   },
 
   /**
- * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, and keep the
- * agents' GitHub mirrors fresh.
+ * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
+ * agents' GitHub mirrors fresh, and learn the bots installed in each Teams team.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -160,6 +161,9 @@ export default {
     ctx.waitUntil(refreshMirrors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mirrors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mirrors: 'error', error: e.message }))));
+    ctx.waitUntil(syncInstalledBots(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
   },
 };
 
