@@ -454,9 +454,31 @@ export function clefOf(l) {
 }
 
 /**
+ * How much one person's activity in a channel says about it, tf-idf style: the channels are
+ * the documents and the team's members the terms. The term frequency grows with the log of
+ * their posts and reactions (being a member only is half a post); the inverse document
+ * frequency, `ln((1 + N) / (1 + df))` over the admin team's N channels, is zero for someone
+ * active in all of them. An admin who is in every channel then hardly moves the ranking, and a
+ * member active in a handful of channels counts the most there.
+ *
+ * The corpus is the admin team's channels, not every channel: a member busy in their own
+ * team's channels is no less telling about the few of the admin team's they are in.
+ */
+export function tfidf({ posted = 0, reacted = 0, member = false }, df, n) {
+  const acts = posted + reacted;
+  let tf = 0;
+  if (acts > 0) {
+    tf = 1 + Math.log(acts);
+  } else if (member) {
+    tf = 0.5;
+  }
+  return tf * Math.log((1 + n) / (1 + df));
+}
+
+/**
  * The admin team's channels that `team` might want: the ones its members post in, react in
- * or are in, and the ones Clef gives it at least SUGGEST_P. Most active first, then Clef's
- * confidence, then the latest activity.
+ * or are in, and the ones Clef gives it at least SUGGEST_P. Ranked by the sum of the members'
+ * tf-idf (see `tfidf`), then by how many are active, Clef's confidence and the latest activity.
  */
 export async function suggestionsFor(env, team) {
   const people = new Map((await rows(env, `SELECT p.id, p.name, p.email FROM team_members tm
@@ -513,10 +535,21 @@ export async function suggestionsFor(env, team) {
     }
   }
   const orgs = new Map((await rows(env, 'SELECT slug, name, type FROM orgs')).map((o) => [o.slug, o]));
+  // In how many of the admin team's channels each member is active.
+  const df = new Map();
+  for (const byPerson of activity.values()) {
+    for (const id of byPerson.keys()) {
+      df.set(id, (df.get(id) || 0) + 1);
+    }
+  }
+  const round = (x) => Math.round(x * 1000) / 1000;
   const out = [];
   for (const c of admin) {
     const active = [...(activity.get(key(c))?.values() || [])]
-      .sort((a, b) => (b.posted - a.posted) || (b.reacted - a.reacted)
+      .map((a) => ({
+        ...a, channels: df.get(a.id), weight: round(tfidf(a, df.get(a.id), admin.length)),
+      }))
+      .sort((a, b) => (b.weight - a.weight) || (b.posted - a.posted) || (b.reacted - a.reacted)
         || String(a.name).localeCompare(String(b.name)));
     const clef = clefOf({
       ...c, team: c.l_team, teams: c.l_teams, kind: c.l_kind,
@@ -536,13 +569,13 @@ export async function suggestionsFor(env, team) {
         threads: c.threads,
         latest: c.latest,
         people: active,
+        score: round(active.reduce((s, a) => s + a.weight, 0)),
         membersListed: Boolean(c.members_at && !c.members_error),
         clef: clef && { ...clef, here: p },
       });
     }
   }
-  const posts = (s) => s.people.reduce((n, a) => n + a.posted + a.reacted, 0);
-  out.sort((a, b) => (b.people.length - a.people.length) || (posts(b) - posts(a))
+  out.sort((a, b) => (b.score - a.score) || (b.people.length - a.people.length)
     || ((b.clef?.here ?? 0) - (a.clef?.here ?? 0)) || String(b.latest || '').localeCompare(String(a.latest || '')));
   return {
     suggestions: out.slice(0, 100),
