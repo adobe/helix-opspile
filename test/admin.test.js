@@ -310,6 +310,22 @@ describe('admin: rules and re-filing', () => {
     assert.deepEqual(r.body.moves.map((m) => m.to.team), ['_unassigned']);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/assign', { target: 'team', channelId: 'C3' })).status, 404);
   });
+
+  it('hands a channel a rule files under a team back to the admin team', async () => {
+    const e = env();
+    const r = await call(e, ADA, 'POST', '/api/admin/assign', {
+      target: 'team', channelId: 'C1', source: 'slack', value: 'admin',
+    });
+    assert.deepEqual(r.body.moves.map((m) => [m.channel.name, m.to.team, m.to.org]), [['aem-acme', 'admin', 'acme']]);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team, org FROM threads WHERE channel_id = 'C1'"), [
+      { team: 'admin', org: 'acme' },
+    ]);
+    const helix = await call(e, ADA, 'GET', '/api/admin/team?slug=helix');
+    assert.deepEqual(helix.body.channels.map((c) => c.channelId), ['C2']);
+    const back = await call(e, ADA, 'GET', '/api/admin/team?slug=admin');
+    assert.equal(back.body.channels.find((c) => c.channelId === 'C1').manual.team.value, 'admin');
+  });
 });
 
 describe('admin: orgs', () => {

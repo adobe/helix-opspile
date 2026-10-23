@@ -572,7 +572,7 @@ function placePicks(input, picks) {
 function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by channel, Teams team, customer or id" autocomplete="off" aria-label="Assign a channel"><div class="picks" id="picks" hidden></div></div>
-    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).</p></div>`;
+    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).${target === 'team' && state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team the same way.` : ''}</p></div>`;
 }
 
 /**
@@ -607,6 +607,9 @@ function renderChannels() {
   const other = target === 'team' ? 'org' : 'team';
   // On the admin team's page, Clef's pick for each channel, to hand it to that team.
   const triage = target === 'team' && state.view.value === 'admin' && channels.some((c) => c.clef);
+  // On another team's page, a way to hand a channel back to the admin team.
+  const back = target === 'team' && state.me.admin && state.view.value !== 'admin'
+    && state.teams.some((t) => t.slug === 'admin');
   const rows = channels.map((c) => {
     const manual = c.manual[target];
     const pick = triage && c.clef && c.clef.team !== 'none' && c.clef.team !== 'admin' && state.teams.some((t) => t.slug === c.clef.team) ? c.clef.team : null;
@@ -615,7 +618,8 @@ function renderChannels() {
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}" title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td class="nw">${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
-        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}</td></tr>`;
+        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}
+        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin" title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Clef suggests</th>' : ''}<th></th></tr>${rows}</table>`
