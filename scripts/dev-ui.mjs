@@ -58,6 +58,8 @@ const SIMULATE = !process.argv.includes('--no-sim');
 const ADMIN = process.argv.includes('--admin');
 const SIM_EVERY_MS = 25 * 1000;
 const INBOX_LIMIT = 200;
+// What the admin team would say about the fake orgs (src/api.js: customer unless set).
+const ORG_TYPES = { initech: 'vendor' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -273,7 +275,9 @@ function inbox(team) {
     .filter((r) => r.team === team && r.kind !== 'ignore')
     .sort((a, b) => (b.last_at || b.any_at || '').localeCompare(a.last_at || a.any_at || ''))
     .slice(0, INBOX_LIMIT)
-    .map((r) => ({ ...r, root_known: r.root_at !== null }));
+    .map((r) => ({
+      ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
+    }));
   const teamIds = new Set(members(team).map((m) => m.id));
   const keys = new Set(rows.map((r) => r.thread));
   // As in src/api.js: the team's marks, plus every staff member's (for "unseen by Adobe").
@@ -313,7 +317,9 @@ function inbox(team) {
     me: { id: ME, name: store.people.get(ME).name, readonly: false },
     profiles: profiles(threads.flatMap((t) => t.participants.map((p) => p.key))),
     people: Object.fromEntries([...store.people.values()]
-      .map((p) => [p.id, { name: p.name, staff: p.staff }])),
+      .map((p) => [p.id, {
+        name: p.name, staff: p.staff, relation: relationOf({}, p, store.partners),
+      }])),
     teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(team),

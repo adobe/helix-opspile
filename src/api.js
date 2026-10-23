@@ -26,7 +26,7 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { parse } from './channels.js';
-import { profiles } from './profiles.js';
+import { profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
@@ -295,8 +295,13 @@ export async function inbox(env, me, team) {
   ]));
   // Names of everyone posting or mentioned (for "involves"), and the viewer's teams.
   const ids = [...new Set([...(posted || []), ...(named || [])].map((r) => r.person))];
-  const { results: names } = await env.DB.prepare(`SELECT id, name, staff FROM people
+  const { results: names } = await env.DB.prepare(`SELECT id, name, staff, email FROM people
     WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all();
+  // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
+  const { results: partnerRows } = await env.DB
+    .prepare('SELECT domain, name FROM partner_domains').all();
+  const partners = new Map((partnerRows || [])
+    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const { results: teamRows } = await env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
     JOIN teams t ON t.slug = m.team
     WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
@@ -316,7 +321,9 @@ export async function inbox(env, me, team) {
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
-      .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
+      .map((p) => [p.id, {
+        name: p.name, staff: Boolean(p.staff), relation: relationOf(env, p, partners),
+      }])),
     teams: myTeams,
     members: await members(env, team),
     threads: fold(readState(threads, marks || [], mentions || [], me.id)

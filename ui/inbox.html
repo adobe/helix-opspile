@@ -80,6 +80,27 @@
   .c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
   .fr .ico.em { font-size: 13px; line-height: 16px; text-align: center; }
   .c-accent { background: var(--accent) !important; }
+  /*
+   * Facet colours beyond status. Who: me blue, my teams green, their members light green,
+   * the rest of Adobe slate, customers orange, partners magenta, vendors cyan (the Customer
+   * card groups orgs the same way). Platforms in their brand colours; urgency and kind in
+   * the colours of their emoji.
+   */
+  :root { --orange: #f0883e; --pink: #db61a2; --cyan: #39c5cf; --slate: #8f9bb3; --lime: #8ddb8c;
+    --gold: #e3b341; --brown: #b08259; --crimson: #f47067; --teams: #7f85f5; }
+  @media (prefers-color-scheme: light) {
+    :root { --orange: #d1661a; --pink: #bf3989; --cyan: #1b9aaa; --slate: #6e7b91; --lime: #4ac26b;
+      --gold: #bf8700; --brown: #8a5a2b; --crimson: #cf222e; --teams: #5b5fc7; }
+  }
+  .c-me, .c-blue { background: var(--accent) !important; } .c-member { background: var(--lime) !important; }
+  .c-adobe { background: var(--slate) !important; } .c-customer, .c-orange { background: var(--orange) !important; }
+  .c-partner, .c-pink { background: var(--pink) !important; } .c-vendor { background: var(--cyan) !important; }
+  .c-gold { background: var(--gold) !important; } .c-brown { background: var(--brown) !important; }
+  .c-crimson { background: var(--crimson) !important; } .c-msteams { background: var(--teams) !important; }
+  .c-slack { background: linear-gradient(#36c5f0 25%, #2eb67d 0 50%, #ecb22e 0 75%, #e01e5a 0) !important; }
+  /* A group inside a card (the Customer card's org types, the Resolved card's drafts). */
+  .fg { margin: 6px 4px 2px 28px; font-size: 11px; color: var(--faint); text-transform: uppercase;
+    letter-spacing: .04em; }
 
   /* Threads: fixed-height rows, two lines, as in Apple Mail. */
   #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
@@ -776,25 +797,74 @@ const DRAFT_HINT = {
 };
 const draftBy = (d) => (d.by?.id === viewerId() ? 'you' : (d.by?.name || 'a colleague'));
 
+// Who someone in a thread is, to the viewer: on one of their teams, elsewhere at Adobe, or a
+// partner (by mail domain), else as the orgs they post in say (vendor, partner, customer).
+const PERSON_KINDS = ['member', 'customer', 'partner', 'vendor', 'adobe'];
+function personKind(id) {
+  const same = (x) => String(x) === String(id);
+  if (Object.values(state.data?.teams || {}).some((x) => x.members.some(same))) return 'member';
+  const p = state.data?.people?.[id];
+  if (p?.staff || p?.relation === 'adobe') return 'adobe';
+  if (p?.relation === 'partner') return 'partner';
+  const n = {};
+  for (const t of state.data?.threads || []) {
+    if ((t.posters || []).some(same)) n[t.org_type] = (n[t.org_type] || 0) + 1;
+  }
+  const top = Object.entries(n).sort((x, y) => y[1] - x[1])[0]?.[0];
+  return top === 'vendor' || top === 'partner' ? top : 'customer';
+}
+const involvesColor = (v) => {
+  if (v === 'me') return 'c-me';
+  if (v.startsWith('team:')) return 'c-team';
+  return `c-${personKind(v.slice(7))}`;
+};
+// Orgs by type, as the admin team set it; "other" when nobody outside Adobe writes there.
+const ORG_GROUPS = ['partner', 'vendor', 'customer', 'other'];
+const ORG_GROUP_LABEL = {
+  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', other: 'Other',
+};
+function orgGroup(org) {
+  const ts = (state.data?.threads || []).filter((t) => t.org === org && t.kind !== 'alert');
+  if (!ts.some((t) => (t.participants || []).some((x) => !x.staff))) return 'other';
+  return ORG_TYPE[ts[0].org_type] ? ts[0].org_type : 'customer';
+}
+const ORG_COLOR = {
+  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', other: 'c-none',
+};
+const URGENCY_COLOR = {
+  critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
+};
+const KIND_COLOR = {
+  incident: 'c-orange', security: 'c-gold', question: 'c-red', request: 'c-pink', access: 'c-brown', alert: 'c-crimson', other: 'c-none',
+};
+const colorOf = (map) => (v) => map[v] || 'c-none';
+
+// The cards in this order. A facet with `into` is shown in that facet's card, below its own
+// rows, and still filters on its own (both must match).
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
     color: (v) => `c-${v}` },
-  { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel,
-    order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`), ...(state.coPeople || []).map((p) => `person:${p}`)] },
-  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' } },
-  { id: 'platform', title: 'Platform', value: platform },
-  { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' } },
-  { id: 'draft', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
-    emoji: (v) => (v === 'none' ? '' : '✎') },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'] },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
-    emoji: (v) => URGENCY_ICON[v] },
-  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v],
-    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
+    emoji: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
+  { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
+    label: { open: 'Unresolved', resolved: 'Resolved' }, color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
+  { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
+    emoji: (v) => (v === 'none' ? '' : '✎'), color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
-    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? `${orgName(t)}${ORG_TYPE[t.org_type] ? ` (${ORG_TYPE[t.org_type].toLowerCase()})` : ''}` : v; }, limit: 12 },
+    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? orgName(t) : v; }, limit: 12,
+    group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
+  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
+    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'],
+    color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
+  { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
+    order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
+      ...(state.coPeople || []).map((p) => `person:${p}`)
+        .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
+  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
+    label: { conversation: 'Conversations', alert: 'Alerts' }, color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
+  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams'],
+    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams' }) },
 ];
 const valuesOf = (f, t) => {
   const v = f.value(t);
@@ -818,41 +888,54 @@ function bar(f, v, n, max, m, color) {
   return `<span class="bar stack" style="width:${width}">${seg}</span>`;
 }
 
-function renderFilters() {
+function facetRows(f) {
   const all = state.data?.threads || [];
-  $('filters').innerHTML = FACETS.map((f) => {
-    const pool = all.filter((t) => passes(t, f.id));
-    const counts = new Map();
-    const mix = new Map(); // value -> { red, yellow, green, none }
-    for (const t of pool) {
-      for (const v of valuesOf(f, t)) {
-        counts.set(v, (counts.get(v) || 0) + 1);
-        const m = mix.get(v) || {};
-        m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
-        mix.set(v, m);
-      }
+  const pool = all.filter((t) => passes(t, f.id));
+  const counts = new Map();
+  const mix = new Map(); // value -> { red, yellow, green, none }
+  for (const t of pool) {
+    for (const v of valuesOf(f, t)) {
+      counts.set(v, (counts.get(v) || 0) + 1);
+      const m = mix.get(v) || {};
+      m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
+      mix.set(v, m);
     }
-    if (f.multi) counts.delete('(none)');
-    for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
-    let rows = [...counts];
-    const order = typeof f.order === 'function' ? f.order() : f.order;
-    if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
-    rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
-    if (f.limit) rows = rows.slice(0, f.limit);
-    const max = Math.max(1, ...rows.map((r) => r[1]));
-    const on = state.sel[f.id] || new Set();
-    return `<div class="card${on.size ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on.size ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
-      ${rows.map(([v, n]) => {
-        const color = f.color ? f.color(v) : 'c-accent';
-        const ic = f.icon && f.icon(v, all);
-        const em = f.emoji && f.emoji(v);
-        return `<div class="fr ${on.has(v) ? 'on' : ''}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
-          <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-          ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
-          <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
-          <span class="n">${n}</span>
-          ${bar(f, v, n, max, mix.get(v), color)}</div>`;
-      }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>'}</div>`;
+  }
+  if (f.multi) counts.delete('(none)');
+  for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
+  let rows = [...counts];
+  const order = typeof f.order === 'function' ? f.order() : f.order;
+  if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
+  rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
+  if (f.limit) rows = rows.slice(0, f.limit);
+  if (f.group) rows.sort((a, b) => f.groups.indexOf(f.group(a[0])) - f.groups.indexOf(f.group(b[0])));
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  const on = state.sel[f.id] || new Set();
+  let group = null;
+  return rows.map(([v, n]) => {
+    const color = f.color ? f.color(v) : 'c-accent';
+    const ic = f.icon && f.icon(v, all);
+    const em = f.emoji && f.emoji(v);
+    const g = f.group && f.group(v);
+    const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
+    group = g;
+    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
+      <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
+      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
+      <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
+      <span class="n">${n}</span>
+      ${bar(f, v, n, max, mix.get(v), color)}</div>`;
+  }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
+}
+
+const cardFacets = (id) => FACETS.filter((f) => f.id === id || f.into === id);
+
+function renderFilters() {
+  $('filters').innerHTML = FACETS.filter((f) => !f.into).map((f) => {
+    const parts = cardFacets(f.id);
+    const on = parts.some((x) => state.sel[x.id]?.size);
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+      ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   }).join('');
 }
 
@@ -1833,10 +1916,13 @@ async function start() {
   $('filters').onclick = (e) => {
     const card = e.target.closest('.card');
     if (!card) return;
-    const id = card.dataset.f;
-    if (e.target.dataset.clear) { delete state.sel[id]; render(); toUrl(); return; }
+    if (e.target.dataset.clear) {
+      for (const f of cardFacets(card.dataset.f)) delete state.sel[f.id];
+      render(); toUrl(); return;
+    }
     const r = e.target.closest('.fr');
     if (!r || r.dataset.v === undefined) return;
+    const id = r.dataset.f;
     const set = state.sel[id] || (state.sel[id] = new Set());
     if (set.has(r.dataset.v)) set.delete(r.dataset.v); else set.add(r.dataset.v);
     if (!set.size) delete state.sel[id];
