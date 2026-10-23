@@ -294,7 +294,7 @@ async function window(page, t0) {
       block: Math.round(loaf.reduce((n, e) => n + e.block, 0)),
       maxFrame: Math.round(Math.max(0, ...loaf.map((e) => e.d))),
       cls: shifts.reduce((n, e) => n + e.v, 0),
-      shiftSources: [...new Set(shifts.flatMap((e) => e.src))].slice(0, 6),
+      shiftSources: [...new Set(shifts.flatMap((e) => e.src.map((x) => x + '@' + Math.round(e.t - ${t0}))))].slice(0, 6),
       scripts: loaf.flatMap((e) => e.scripts).sort((a, b) => b.d - a.d).slice(0, 3),
     };
   })()`);
@@ -399,9 +399,9 @@ async function scenario(browser) {
   await open('open long thread (uncached)', 'far', '(rows) => rows.find((r) => r.el.offsetTop > 6000 && r.n > 40) || rows[3]', 1200);
   await page.evaluate("document.querySelector('#threads').scrollTop = 0");
   await open('open thread (cached)', 'back', '(rows) => ({ el: document.querySelector("#threads .t:nth-child(3)") })');
-  await step('facet: pick a customer', () => page.click('[data-f="customer"] .fr:nth-of-type(2)'));
+  await step('facet: pick a customer', () => page.click('[data-f="customer"] .fr[data-v]'));
   await step('facet: unpick it', () => page.click('[data-f="customer"] .fr.on'));
-  await step('facet: kind', () => page.click('[data-f="kind"] .fr:nth-of-type(1)'));
+  await step('facet: kind', () => page.click('[data-f="kind"] .fr[data-v]'));
   await step('facet: clear kind', () => page.click('[data-f="kind"] .clear'));
   await step('Smart → Recent', () => page.click('#threads [data-sort]'));
   await step('Recent → Smart', () => page.click('#threads [data-sort]'));
@@ -438,10 +438,10 @@ async function scenario(browser) {
   });
   const other = await page.evaluate("document.querySelector('#threads .t:not(.sel):nth-child(5)').dataset.thread");
   await step('live update (another thread)', () => fetch(`${ORIGIN}/__dev/simulate?thread=${encodeURIComponent(other)}`, { method: 'POST' }), { settle: 2000 });
-  await step('switch team', () => page.evaluate("(() => { const s = document.querySelector('#team'); s.value = 'edge'; s.dispatchEvent(new Event('change')); })()"), {
+  await step('switch team', () => page.evaluate("document.querySelector('[data-team=edge]').click()"), {
     ready: "document.querySelectorAll('#threads .t').length < 100", settle: 1000,
   });
-  await step('switch team back', () => page.evaluate("(() => { const s = document.querySelector('#team'); s.value = 'platform'; s.dispatchEvent(new Event('change')); })()"), {
+  await step('switch team back', () => page.evaluate("document.querySelector('[data-team=platform]').click()"), {
     ready: "document.querySelectorAll('#threads .t').length > 100", settle: 1500,
   });
   if (PROFILE && !PROFILE_STEP) {
@@ -500,6 +500,13 @@ try {
   });
   console.log('\nInteractions (median):');
   console.table(rows);
+  if (process.env.PERF_DEBUG) {
+    // Every run's layout shifts: step, CLS, sources @ ms after the input.
+    for (const x of runs) {
+      const shifted = x.results.filter((y) => y.cls).map((y) => [y.step, y.cls, y.shifts]);
+      console.log(JSON.stringify(shifted));
+    }
+  }
   const errors = runs.flatMap((x) => x.errors);
   if (errors.length) {
     console.log(`\nPage errors (${errors.length}):\n${[...new Set(errors)].join('\n')}`);

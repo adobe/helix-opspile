@@ -34,22 +34,67 @@
   body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
   button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; cursor: pointer; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
-  header .me { margin-left: auto; color: var(--mute); }
-  #review[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
+  /* The toolbar: pages and label review on the left; on the right, whoever is signed in, with a
+     menu for the team, "View as" (admin team), the keyboard shortcuts and logging out. */
+  header { display: flex; gap: 10px; align-items: center; height: 50px; padding: 0 12px 0 14px; flex: none;
+    background: var(--col); border-bottom: 1px solid var(--line); }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
+    letter-spacing: .01em; }
+  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
+  header .spacer { flex: 1; }
+  header .tool { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; color: var(--mute); }
+  header .tool:hover { color: var(--ink); background: var(--hover); }
+  header .tool svg { width: 14px; height: 14px; flex: none; }
+  #review[aria-pressed="true"] { color: var(--ink); background: var(--sel); border-color: var(--accent); }
   /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
-  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
-  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
   nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
     box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
   nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
-  .live.on { background: var(--green); }
+  /* Live updates are only worth a word when they stop. */
+  #offline { color: var(--yellow); font-size: 12.5px; }
+  /* Read-only "View as": loud enough not to be forgotten, and one click to leave. */
+  #viewing { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 11px; font-size: 13px;
+    color: var(--ink); background: color-mix(in srgb, var(--yellow) 18%, var(--card));
+    border-color: color-mix(in srgb, var(--yellow) 55%, var(--line)); border-radius: 15px; }
+  #viewing[hidden] { display: none; }
+  #viewing .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--mute); }
+  #viewing:hover .x { color: var(--ink); background: color-mix(in srgb, var(--yellow) 30%, transparent); }
+  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
+    background: none; border-radius: 10px; text-align: left; }
+  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+  #user .av, .menu .av { width: 28px; height: 28px; border-radius: 50%; font-size: 11px; }
+  #user .who { display: flex; flex-direction: column; line-height: 1.2; }
+  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  #user .sub { color: var(--mute); font-size: 11.5px; white-space: nowrap; }
+  #user svg { width: 12px; height: 12px; color: var(--mute); }
+  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
+  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
+  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
+  .menu .id .nm { font-weight: 650; font-size: 14px; }
+  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
+  .menu section[hidden] { display: none; }
+  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint); }
+  .menu .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 7px;
+    background: none; color: inherit; text-decoration: none; text-align: left; cursor: pointer; }
+  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+  .menu .item .ck { width: 14px; color: var(--accent); flex: none; visibility: hidden; }
+  .menu .item[aria-checked="true"] { font-weight: 600; }
+  .menu .item[aria-checked="true"] .ck { visibility: visible; }
+  .menu .item svg { width: 14px; height: 14px; flex: none; }
+  .menu select { width: calc(100% - 16px); margin: 2px 8px 4px; padding: 4px 8px; }
+  .menu .hint { margin: 0 8px 4px; color: var(--mute); font-size: 11.5px; }
+  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
+  .menu .keys dd { margin: 0; text-align: right; }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 
@@ -80,9 +125,33 @@
   .c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
   .fr .ico.em { font-size: 13px; line-height: 16px; text-align: center; }
   .c-accent { background: var(--accent) !important; }
+  /*
+   * Facet colours beyond status. Who: me blue, my teams green, their members light green,
+   * the rest of Adobe slate, customers orange, partners magenta, vendors cyan (the Customer
+   * card groups orgs the same way). Platforms in their brand colours; urgency and kind in
+   * the colours of their emoji.
+   */
+  :root { --orange: #f0883e; --pink: #db61a2; --cyan: #39c5cf; --slate: #8f9bb3; --lime: #8ddb8c;
+    --gold: #e3b341; --brown: #b08259; --crimson: #f47067; --teams: #7f85f5; }
+  @media (prefers-color-scheme: light) {
+    :root { --orange: #d1661a; --pink: #bf3989; --cyan: #1b9aaa; --slate: #6e7b91; --lime: #4ac26b;
+      --gold: #bf8700; --brown: #8a5a2b; --crimson: #cf222e; --teams: #5b5fc7; }
+  }
+  .c-me, .c-blue { background: var(--accent) !important; } .c-member { background: var(--lime) !important; }
+  .c-adobe { background: var(--slate) !important; } .c-customer, .c-orange { background: var(--orange) !important; }
+  .c-partner, .c-pink { background: var(--pink) !important; } .c-vendor { background: var(--cyan) !important; }
+  .c-gold { background: var(--gold) !important; } .c-brown { background: var(--brown) !important; }
+  .c-crimson { background: var(--crimson) !important; } .c-msteams { background: var(--teams) !important; }
+  .c-slack { background: linear-gradient(#36c5f0 25%, #2eb67d 0 50%, #ecb22e 0 75%, #e01e5a 0) !important; }
+  /* A group inside a card (the Customer card's org types, the Resolved card's drafts). */
+  .fg { margin: 6px 4px 2px 28px; font-size: 11px; color: var(--faint); text-transform: uppercase;
+    letter-spacing: .04em; }
 
   /* Threads: fixed-height rows, two lines, as in Apple Mail. */
-  #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+    scrollbar-width: none; }
+  /* The open thread's lifted row (#lift) is drawn across the list's right edge: no scrollbar there. */
+  #threads::-webkit-scrollbar { display: none; }
   #threads .count { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line);
     position: sticky; top: 0; background: var(--col); z-index: 1; }
   .t { height: 64px; padding: 9px 14px 0 12px; border-bottom: 1px solid var(--line); cursor: pointer;
@@ -131,6 +200,46 @@
   .t .dot.ring { box-shadow: 0 0 0 2px var(--col), 0 0 0 3.5px var(--ring); }
   .t.sel .dot.ring { box-shadow: 0 0 0 2px var(--sel), 0 0 0 3.5px var(--ring); }
   .t .dot.ring:not([class*="c-"]) { background: transparent; }
+
+  /*
+   * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
+   * The filter cards stick out of the page's left edge and hang over the thread list by a
+   * third of their corner radius, two thirds while one of their filters is on, all of it
+   * under the pointer. They need room to do so (and to cast their shadow): the filter
+   * column reaches into the thread list by --fg, and lets the pointer through where it has
+   * no card. The open thread's row is lifted out of its column, over the pane, by a copy
+   * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
+   * the list's heading and the open thread's header, and the list shows no scrollbar for it
+   * to cover.
+   */
+  :root { --r: 14px; --fg: 48px;
+    --card-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.7);
+    --lift-shadow: 0 0 0 1px rgba(0,0,0,.4), 8px 6px 24px 2px rgba(0,0,0,.8); }
+  @media (prefers-color-scheme: light) {
+    :root { --card-shadow: 0 1px 3px rgba(20,30,50,.10), 0 8px 22px rgba(20,30,50,.16);
+      --lift-shadow: 0 2px 4px rgba(20,30,50,.12), 8px 6px 22px 2px rgba(20,30,50,.24); }
+  }
+  main { position: relative; background: var(--col); }
+  #filters { position: relative; z-index: 3; background: transparent; pointer-events: none;
+    margin-right: calc(-1 * var(--fg)); padding: 12px calc(var(--fg) - var(--r) / 3) 12px 0;
+    overflow-x: hidden; scrollbar-width: none; }
+  #filters::-webkit-scrollbar { display: none; }
+  #filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + 18px);
+    border-left: 0; border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
+    transition: transform .18s ease-out; }
+  #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
+  #filters .card:hover { transform: translateX(calc(var(--r) * 2 / 3)); }
+  #filters .card.active:hover { transform: translateX(var(--r)); }
+  @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+  /* Room for the filter cards' overhang, so they never cover a status dot. */
+  .t { padding-left: 18px; }
+  #threads .count { padding-left: 18px; }
+  #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
+  #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
+    content-visibility: visible;
+    background: var(--sel); box-shadow: var(--lift-shadow);
+    padding: calc(9px + var(--lv) - 1px) calc(14px + var(--lr) - 1px) 0 calc(18px + var(--ll) - 1px); }
+  #lift .t .faces .av { border-color: var(--sel); }
   .t.enter { animation: push-in .35s ease-out; overflow: hidden; }
   @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: 64px; opacity: 1; } }
   .msg.enter, .sys.enter { animation: rise .35s ease-out; }
@@ -320,21 +429,35 @@
 </head>
 <body>
 <header>
-  <h1>opspile</h1>
+  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
   <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team): the open thread's customer, else this team">Knowledge bases</a><a id="adminPage" href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors (admin team)">Admin</a></nav>
-  <select id="team" aria-label="Team"></select>
-  <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
-  <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
-  <span class="live" id="live" title="live updates"></span>
-  <span class="me" id="me"></span>
-  <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
-  <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd></span>
-  <span title="in the reply box: save it as the thread's draft, which your team sees"><kbd>⌘S</kbd></span>
+  <button id="review" class="tool" hidden aria-pressed="false" title="Review Clef labels (admin team)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg>Review labels</button>
+  <span class="spacer"></span>
+  <span id="offline" hidden title="Live updates stopped; trying again">Reconnecting…</span>
+  <button id="viewing" hidden title="Read-only. Click to see your own inbox again."></button>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account, team and shortcuts">
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="teamName"></span></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section aria-labelledby="teamsLabel"><h4 id="teamsLabel">Team</h4><div id="teams" role="radiogroup" aria-labelledby="teamsLabel"></div></section>
+    <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
+      <p class="hint">See the inbox as someone else, read-only.</p></section>
+    <section><h4>Keyboard</h4><dl class="keys">
+      <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
+      <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>
+      <dt title="in the reply box: your team sees it">Save the reply as a draft</dt><dd><kbd>⌘S</kbd></dd>
+    </dl></section>
+    <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
 </header>
 <main>
   <section id="filters" aria-label="Filters"></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
   <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
+  <div id="lift" inert aria-hidden="true" hidden></div>
 </main>
 <script>/* MARKDOWN */</script>
 <script type="module">
@@ -796,25 +919,74 @@ const DRAFT_HINT = {
 };
 const draftBy = (d) => (d.by?.id === viewerId() ? 'you' : (d.by?.name || 'a colleague'));
 
+// Who someone in a thread is, to the viewer: on one of their teams, elsewhere at Adobe, or a
+// partner (by mail domain), else as the orgs they post in say (vendor, partner, customer).
+const PERSON_KINDS = ['member', 'customer', 'partner', 'vendor', 'adobe'];
+function personKind(id) {
+  const same = (x) => String(x) === String(id);
+  if (Object.values(state.data?.teams || {}).some((x) => x.members.some(same))) return 'member';
+  const p = state.data?.people?.[id];
+  if (p?.staff || p?.relation === 'adobe') return 'adobe';
+  if (p?.relation === 'partner') return 'partner';
+  const n = {};
+  for (const t of state.data?.threads || []) {
+    if ((t.posters || []).some(same)) n[t.org_type] = (n[t.org_type] || 0) + 1;
+  }
+  const top = Object.entries(n).sort((x, y) => y[1] - x[1])[0]?.[0];
+  return top === 'vendor' || top === 'partner' ? top : 'customer';
+}
+const involvesColor = (v) => {
+  if (v === 'me') return 'c-me';
+  if (v.startsWith('team:')) return 'c-team';
+  return `c-${personKind(v.slice(7))}`;
+};
+// Orgs by type, as the admin team set it; "other" when nobody outside Adobe writes there.
+const ORG_GROUPS = ['partner', 'vendor', 'customer', 'other'];
+const ORG_GROUP_LABEL = {
+  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', other: 'Other',
+};
+function orgGroup(org) {
+  const ts = (state.data?.threads || []).filter((t) => t.org === org && t.kind !== 'alert');
+  if (!ts.some((t) => (t.participants || []).some((x) => !x.staff))) return 'other';
+  return ORG_TYPE[ts[0].org_type] ? ts[0].org_type : 'customer';
+}
+const ORG_COLOR = {
+  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', other: 'c-none',
+};
+const URGENCY_COLOR = {
+  critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
+};
+const KIND_COLOR = {
+  incident: 'c-orange', security: 'c-gold', question: 'c-red', request: 'c-pink', access: 'c-brown', alert: 'c-crimson', other: 'c-none',
+};
+const colorOf = (map) => (v) => map[v] || 'c-none';
+
+// The cards in this order. A facet with `into` is shown in that facet's card, below its own
+// rows, and still filters on its own (both must match).
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
     color: (v) => `c-${v}` },
-  { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel,
-    order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`), ...(state.coPeople || []).map((p) => `person:${p}`)] },
-  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' } },
-  { id: 'platform', title: 'Platform', value: platform },
-  { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' } },
-  { id: 'draft', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
-    emoji: (v) => (v === 'none' ? '' : '✎') },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'] },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
-    emoji: (v) => URGENCY_ICON[v] },
-  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v],
-    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
+    emoji: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
+  { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
+    label: { open: 'Unresolved', resolved: 'Resolved' }, color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
+  { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
+    emoji: (v) => (v === 'none' ? '' : '✎'), color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
-    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? `${orgName(t)}${ORG_TYPE[t.org_type] ? ` (${ORG_TYPE[t.org_type].toLowerCase()})` : ''}` : v; }, limit: 12 },
+    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? orgName(t) : v; }, limit: 12,
+    group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
+  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
+    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'],
+    color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
+  { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
+    order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
+      ...(state.coPeople || []).map((p) => `person:${p}`)
+        .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
+  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
+    label: { conversation: 'Conversations', alert: 'Alerts' }, color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
+  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams'],
+    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams' }) },
 ];
 const facetValues = (f, t) => {
   const v = f.value(t);
@@ -845,42 +1017,55 @@ function bar(f, v, n, max, m, color) {
   return `<span class="bar stack" style="width:${width}">${seg}</span>`;
 }
 
+function facetRows(f) {
+  const all = state.data?.threads || [];
+  const pool = all.filter((t) => passes(t, f.id));
+  const counts = new Map();
+  const mix = new Map(); // value -> { red, yellow, green, none }
+  for (const t of pool) {
+    for (const v of valuesOf(f, t)) {
+      counts.set(v, (counts.get(v) || 0) + 1);
+      const m = mix.get(v) || {};
+      m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
+      mix.set(v, m);
+    }
+  }
+  if (f.multi) counts.delete('(none)');
+  for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
+  let rows = [...counts];
+  const order = typeof f.order === 'function' ? f.order() : f.order;
+  if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
+  rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
+  if (f.limit) rows = rows.slice(0, f.limit);
+  if (f.group) rows.sort((a, b) => f.groups.indexOf(f.group(a[0])) - f.groups.indexOf(f.group(b[0])));
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  const on = state.sel[f.id] || new Set();
+  let group = null;
+  return rows.map(([v, n]) => {
+    const color = f.color ? f.color(v) : 'c-accent';
+    const ic = f.icon && f.icon(v, all);
+    const em = f.emoji && f.emoji(v);
+    const g = f.group && f.group(v);
+    const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
+    group = g;
+    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
+      <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
+      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
+      <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
+      <span class="n">${n}</span>
+      ${bar(f, v, n, max, mix.get(v), color)}</div>`;
+  }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
+}
+
+const cardFacets = (id) => FACETS.filter((f) => f.id === id || f.into === id);
+
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
-  const all = state.data?.threads || [];
-  const cards = FACETS.map((f) => {
-    const pool = all.filter((t) => passes(t, f.id));
-    const counts = new Map();
-    const mix = new Map(); // value -> { red, yellow, green, none }
-    for (const t of pool) {
-      for (const v of valuesOf(f, t)) {
-        counts.set(v, (counts.get(v) || 0) + 1);
-        const m = mix.get(v) || {};
-        m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
-        mix.set(v, m);
-      }
-    }
-    if (f.multi) counts.delete('(none)');
-    for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
-    let rows = [...counts];
-    const order = typeof f.order === 'function' ? f.order() : f.order;
-    if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
-    rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
-    if (f.limit) rows = rows.slice(0, f.limit);
-    const max = Math.max(1, ...rows.map((r) => r[1]));
-    const on = state.sel[f.id] || new Set();
-    return `<div class="card" data-f="${f.id}"><h3>${esc(f.title)}${on.size ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
-      ${rows.map(([v, n]) => {
-        const color = f.color ? f.color(v) : 'c-accent';
-        const ic = f.icon && f.icon(v, all);
-        const em = f.emoji && f.emoji(v);
-        return `<div class="fr ${on.has(v) ? 'on' : ''}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
-          <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-          ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
-          <span class="lab ${v === '(none)' ? 'dim' : ''}">${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
-          <span class="n">${n}</span>
-          ${bar(f, v, n, max, mix.get(v), color)}</div>`;
-      }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>'}</div>`;
+  const cards = FACETS.filter((f) => !f.into).map((f) => {
+    const parts = cardFacets(f.id);
+    const on = parts.some((x) => state.sel[x.id]?.size);
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+      ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
   // Only the cards whose counts or selection changed are rebuilt.
   const box = $('filters');
@@ -1055,6 +1240,70 @@ function threadRows() {
   state.prevKeys = known;
 }
 function render() { inPass(() => { renderFilters(); renderThreads(); }); }
+
+// The open thread's row, lifted out of its column: a copy of it over the real one, wider by
+// LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
+// list's heading while its row is below it, and slides under it with its row: above the
+// heading's lower edge #lift fades out, over its top LIFT.v and shadow (LIFT.shade) at rest,
+// over less and less of it as the row goes under, to a hard edge once it has.
+const LIFT = { left: 10, right: 16, v: 3, room: 48, shade: 16 };
+let liftOf = null;
+function syncLift(copy) {
+  const list = $('threads');
+  const lift = $('lift');
+  const sel = list.querySelector('.t.sel');
+  lift.hidden = !sel;
+  if (!sel) { liftOf = null; return; }
+  if (copy || liftOf !== sel) {
+    liftOf = sel;
+    lift.innerHTML = sel.outerHTML;
+    lift.firstElementChild.classList.remove('enter');
+  }
+  const main = lift.parentElement.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  const head = list.querySelector('.count')?.offsetHeight || 0;
+  const r = sel.getBoundingClientRect();
+  const over = LIFT.v + LIFT.shade;
+  const f = over - Math.min(Math.max(box.top + head - r.top, 0), over);
+  const mask = `linear-gradient(transparent ${head - f}px, #000 ${head - (LIFT.v * f) / over}px)`;
+  Object.assign(lift.style, {
+    left: `${box.left - main.left - LIFT.room}px`,
+    top: `${box.top - main.top}px`,
+    width: `${box.width + 2 * LIFT.room}px`,
+    height: `${box.height}px`,
+    maskImage: mask,
+    webkitMaskImage: mask,
+  });
+  const { style } = lift.firstElementChild;
+  // Moved with a transform: the copy follows the row as the list scrolls, and a move by
+  // `top` would count as a layout shift (CLS) on every scroll.
+  Object.assign(style, {
+    left: '0px',
+    top: '0px',
+    transform: `translate(${r.left - box.left + LIFT.room - LIFT.left}px, ${r.top - box.top - LIFT.v}px)`,
+    width: `${r.width + LIFT.left + LIFT.right}px`,
+    height: `${r.height + 2 * LIFT.v}px`,
+  });
+  style.setProperty('--ll', `${LIFT.left}px`);
+  style.setProperty('--lr', `${LIFT.right}px`);
+  style.setProperty('--lv', `${LIFT.v}px`);
+}
+{
+  let frame = 0;
+  let copy = false;
+  const later = (again) => {
+    copy ||= again;
+    if (!frame) {
+      frame = requestAnimationFrame(() => { frame = 0; syncLift(copy); copy = false; });
+    }
+  };
+  new MutationObserver(() => later(true)).observe($('threads'), {
+    childList: true, subtree: true, attributes: true, characterData: true,
+  });
+  $('threads').addEventListener('scroll', () => later(false), { passive: true });
+  $('threads').addEventListener('animationend', () => later(false));
+  new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
+}
 
 // ---------------------------------------------------------------- messages
 const TECH_LABEL = {
@@ -1760,16 +2009,37 @@ function reloadSoon(thread) {
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
   state.teams = who.teams;
-  $('team').innerHTML = who.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
-  $('team').value = state.team;
+  renderUser();
+}
+const CHECK = '<svg class="ck" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" '
+  + 'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/**
+ * The toolbar's right end: you and the team on screen, and the menu behind them (the teams to
+ * switch to, "View as", shortcuts, log out). Viewing as someone shows who, until left.
+ */
+function renderUser() {
+  const name = state.me.name || state.me.email;
+  $('me').textContent = name;
+  $('teamName').textContent = state.teams?.find((t) => t.slug === state.team)?.name || '';
+  for (const id of ['userAv', 'menuAv']) {
+    $(id).textContent = initials(name);
+    $(id).style.background = hue(name);
+  }
+  $('menuName').textContent = name;
+  $('menuEmail').textContent = state.me.email || '';
+  $('teams').innerHTML = (state.teams || []).map((t) => `<button class="item" role="radio" aria-checked="${t.slug === state.team}"
+    data-team="${esc(t.slug)}">${CHECK}${esc(t.name)}</button>`).join('');
+  const as = state.data?.me?.readonly ? state.data.me.name : null;
+  $('viewing').hidden = !as;
+  $('viewing').innerHTML = as ? `Viewing as <b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
 }
 
 async function loadInbox(early = null) {
   const ahead = early && await early;
   state.data = ahead && ahead.team === state.team ? ahead : await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
   mergeProfiles(state.data.profiles);
-  $('me').textContent = state.data.me?.readonly ? `${state.me.name} · viewing as ${state.data.me.name}` : (state.me.name || state.me.email);
+  renderUser();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
@@ -1809,8 +2079,13 @@ function connect() {
   state.ws?.close();
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}${state.as ? `&as=${state.as}` : ''}`);
   state.ws = ws;
-  ws.onopen = () => $('live').classList.add('on');
-  ws.onclose = () => { $('live').classList.remove('on'); if (state.ws === ws) setTimeout(connect, 3000); };
+  // Reconnecting is only shown when it takes a while (not for a team switch or a blip).
+  ws.onopen = () => { clearTimeout(state.offline); state.offline = null; $('offline').hidden = true; };
+  ws.onclose = () => {
+    if (state.ws !== ws) return;
+    setTimeout(connect, 3000);
+    state.offline ??= setTimeout(() => { $('offline').hidden = false; }, 5000);
+  };
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'read' && ev.person === state.me.id) return;
@@ -1888,7 +2163,7 @@ function move(step) {
 
 async function switchTeam(slug) {
   state.team = slug; state.open = null; state.prevKeys = null;
-  $('team').value = slug;
+  renderUser();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
 }
@@ -1900,8 +2175,7 @@ async function start() {
   const early = asked.get('team') && !asked.get('as')
     ? get(`/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null) : null;
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  $('me').textContent = state.me.name || state.me.email;
-  $('team').innerHTML = state.me.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
+  state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(`Connected your ${q.get('connected') === 'slack' ? 'Slack' : 'Microsoft'} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
@@ -1911,14 +2185,23 @@ async function start() {
   state.open = initial.open || null;
   await loadWho();
   toUrl(false);
-  $('team').onchange = () => switchTeam($('team').value);
+  $('teams').onclick = (e) => {
+    const b = e.target.closest('[data-team]');
+    if (!b) return;
+    $('menu').hidePopover();
+    if (b.dataset.team !== state.team) switchTeam(b.dataset.team);
+  };
+  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
     const card = e.target.closest('.card');
     if (!card) return;
-    const id = card.dataset.f;
-    if (e.target.dataset.clear) { delete state.sel[id]; render(); toUrl(); return; }
+    if (e.target.dataset.clear) {
+      for (const f of cardFacets(card.dataset.f)) delete state.sel[f.id];
+      render(); toUrl(); return;
+    }
     const r = e.target.closest('.fr');
     if (!r || r.dataset.v === undefined) return;
+    const id = r.dataset.f;
     const set = state.sel[id] || (state.sel[id] = new Set());
     if (set.has(r.dataset.v)) set.delete(r.dataset.v); else set.add(r.dataset.v);
     if (!set.size) delete state.sel[id];
@@ -1995,7 +2278,7 @@ async function start() {
   window.addEventListener('popstate', async () => {
     const team = state.team;
     const { open, review } = fromUrl();
-    $('team').value = state.team;
+    renderUser();
     if (team !== state.team) { state.prevKeys = null; await loadInbox(); connect(); }
     state.review = review;
     $('review').setAttribute('aria-pressed', String(review));
@@ -2005,13 +2288,14 @@ async function start() {
   });
   if (state.me.admin) {
     const sel = $('as');
-    sel.hidden = false;
+    $('asBox').hidden = false;
     get('/api/people').then(({ people }) => {
-      sel.innerHTML = `<option value="">View as: me</option>${people.filter((p) => p.id !== state.me.id).map((p) => `<option value="${p.id}">View as ${esc(p.name)}</option>`).join('')}`;
+      sel.innerHTML = `<option value="">Me</option>${people.filter((p) => p.id !== state.me.id).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}`;
       sel.value = state.as ? String(state.as) : '';
     });
-    sel.onchange = async () => {
-      state.as = Number(sel.value) || null;
+    const viewAs = async (id) => {
+      state.as = id;
+      sel.value = id ? String(id) : '';
       state.cache.clear();
       state.prevKeys = null;
       state.open = null;
@@ -2021,11 +2305,9 @@ async function start() {
       await loadInbox();
       connect();
     };
+    sel.onchange = () => { $('menu').hidePopover(); viewAs(Number(sel.value) || null); };
+    $('viewing').onclick = () => viewAs(null);
     $('review').hidden = false;
-    $('pages').hidden = false;
-    $('inbox').onclick = (e) => e.preventDefault();
-    // Fresh at the moment it is used (the open thread's customer may have loaded since).
-    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {
       state.review = !state.review;
@@ -2033,6 +2315,14 @@ async function start() {
       toUrl();
       if (state.open) openThread(state.open, { live: true });
     };
+  }
+  // The switch to the editor and the admin pages: the admin team, and team managers (who see
+  // their teams' members and knowledge bases there).
+  if (state.me.admin || state.me.manages?.length) {
+    $('pages').hidden = false;
+    $('inbox').onclick = (e) => e.preventDefault();
+    // Fresh at the moment it is used (the open thread's customer may have loaded since).
+    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }
   await loadInbox(early);
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }

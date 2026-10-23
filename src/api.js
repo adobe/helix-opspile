@@ -26,10 +26,10 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { parse } from './channels.js';
-import { profiles } from './profiles.js';
+import { profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
-  ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
+  ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 
@@ -82,10 +82,16 @@ async function participants(env, keys) {
 }
 
 async function personWithTeams(env, person) {
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name, m.role FROM team_members m
     JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
   const teams = results || [];
-  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
+  return {
+    ...person,
+    teams,
+    admin: teams.some((t) => t.slug === 'admin'),
+    // Teams whose members and knowledge base this person manages (see migration 0018).
+    manages: teams.filter((t) => t.role === 'manager').map((t) => t.slug),
+  };
 }
 
 /**
@@ -295,8 +301,13 @@ export async function inbox(env, me, team) {
   ]));
   // Names of everyone posting or mentioned (for "involves"), and the viewer's teams.
   const ids = [...new Set([...(posted || []), ...(named || [])].map((r) => r.person))];
-  const { results: names } = await env.DB.prepare(`SELECT id, name, staff FROM people
+  const { results: names } = await env.DB.prepare(`SELECT id, name, staff, email FROM people
     WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all();
+  // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
+  const { results: partnerRows } = await env.DB
+    .prepare('SELECT domain, name FROM partner_domains').all();
+  const partners = new Map((partnerRows || [])
+    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const { results: teamRows } = await env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
     JOIN teams t ON t.slug = m.team
     WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
@@ -316,7 +327,9 @@ export async function inbox(env, me, team) {
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
-      .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
+      .map((p) => [p.id, {
+        name: p.name, staff: Boolean(p.staff), relation: relationOf(env, p, partners),
+      }])),
     teams: myTeams,
     members: await members(env, team),
     threads: fold(readState(threads, marks || [], mentions || [], me.id)
@@ -607,15 +620,17 @@ export async function api(request, env, url, { viewer: injected } = {}) {
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
   }
+  // The admin pages and the editor: the admin team, and team managers for their teams (the
+  // routes check which).
   if (url.pathname.startsWith('/api/admin/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'for the admin team and team managers' }, 403);
     }
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'the knowledge-base editor is for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'the knowledge-base editor is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }

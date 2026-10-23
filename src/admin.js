@@ -14,17 +14,24 @@ import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
 import { isStaffDomain, loadRules } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
-import { ADMIN_TEAM } from './review.js';
+import {
+  ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
+} from './review.js';
 import { slug as toSlug, UNASSIGNED } from './rules.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
  *
- * - teams: create, rename, delete; members: add (found by name or email), remove;
+ * - teams: create, rename, delete, self-managed or not; members: add (found by name or
+ *   email), remove, promote to team manager or demote;
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
  *   of one channel (a `channel_id` rule with priority 10);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments.
+ *
+ * Team managers (migration 0018) use the same API for the teams they manage, and only for
+ * their members: they see those teams, add and remove people, and promote or demote them.
+ * Everything else is for the admin team.
  *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
@@ -268,27 +275,31 @@ async function assign(env, me, body, remove) {
 
 // ---- teams and members ------------------------------------------------------------------
 
-async function listTeams(env) {
-  const teams = await rows(env, `SELECT t.slug, t.name,
+async function listTeams(env, me) {
+  const all = await rows(env, `SELECT t.slug, t.name, t.self_managed,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members,
+      (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug AND m.role = 'manager') AS managers,
       (SELECT COUNT(*) FROM rules r WHERE r.target = 'team' AND r.value = t.slug) AS rules,
       (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads
     FROM teams t ORDER BY t.name`);
-  const unassigned = await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
-      COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first();
-  return json({ teams, unassigned });
+  const everything = isAdmin(me);
+  const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
+    .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
+  const unassigned = everything ? await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
+      COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first() : null;
+  return json({ teams, unassigned, admin: everything });
 }
 
 async function team(env, slug) {
-  const t = await env.DB.prepare('SELECT slug, name FROM teams WHERE slug = ?').bind(slug).first();
+  const t = await env.DB.prepare('SELECT slug, name, self_managed FROM teams WHERE slug = ?').bind(slug).first();
   if (!t && slug !== UNASSIGNED) {
     return json({ error: 'no such team' }, 404);
   }
   const rules = await loadRules(env);
   return json({
-    team: t || { slug, name: 'Unassigned' },
-    members: await rows(env, `SELECT p.id, p.name, p.email, p.staff FROM team_members m
+    team: t ? { ...t, self_managed: Boolean(t.self_managed) } : { slug, name: 'Unassigned', self_managed: false },
+    members: await rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
       JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
     rules: rules.filter((r) => r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
@@ -314,13 +325,32 @@ async function createTeam(env, body) {
   return json({ ok: true, team: { slug, name } });
 }
 
-async function renameTeam(env, body) {
-  const name = clean(body.name);
-  if (!name) {
-    return bad('give the team a name');
+/**
+ * PUT /api/admin/teams `{ slug, name?, selfManaged? }`: renames a team, or makes it
+ * self-managed (every member a team manager, now and when they join) or not (roles stay as
+ * they are; new members join as members).
+ */
+async function updateTeam(env, body) {
+  const slug = clean(body.slug);
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
   }
-  const { meta } = await env.DB.prepare('UPDATE teams SET name = ? WHERE slug = ?').bind(name, clean(body.slug)).run();
-  return meta.changes ? json({ ok: true }) : json({ error: 'no such team' }, 404);
+  if (body.name !== undefined) {
+    const name = clean(body.name);
+    if (!name) {
+      return bad('give the team a name');
+    }
+    await env.DB.prepare('UPDATE teams SET name = ? WHERE slug = ?').bind(name, slug).run();
+  }
+  if (body.selfManaged !== undefined) {
+    const on = Boolean(body.selfManaged);
+    await env.DB.prepare('UPDATE teams SET self_managed = ? WHERE slug = ?').bind(on ? 1 : 0, slug).run();
+    if (on) {
+      await env.DB.prepare("UPDATE team_members SET role = 'manager' WHERE team = ?").bind(slug).run();
+    }
+  }
+  const t = await env.DB.prepare('SELECT slug, name, self_managed FROM teams WHERE slug = ?').bind(slug).first();
+  return json({ ok: true, team: { ...t, self_managed: Boolean(t.self_managed) } });
 }
 
 async function deleteTeam(env, body) {
@@ -346,7 +376,8 @@ async function addMember(env, body) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return bad('give the person\'s email address');
   }
-  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(teamSlug).first()) {
+  const t = await env.DB.prepare('SELECT self_managed FROM teams WHERE slug = ?').bind(teamSlug).first();
+  if (!t) {
     return json({ error: 'no such team' }, 404);
   }
   // The name comes from the person's platform account, if opspile has seen one.
@@ -358,11 +389,39 @@ async function addMember(env, body) {
     ON CONFLICT (email) DO UPDATE SET staff = 1, name = COALESCE(people.name, excluded.name)`)
     .bind(email, name).run();
   const person = await env.DB.prepare('SELECT id, name, email, staff FROM people WHERE email = ?').bind(email).first();
-  await env.DB.prepare('INSERT OR IGNORE INTO team_members (team, person) VALUES (?, ?)').bind(teamSlug, person.id).run();
+  // In a self-managed team everyone is a manager, newcomers too.
+  const role = t.self_managed ? 'manager' : 'member';
+  await env.DB.prepare(`INSERT INTO team_members (team, person, role) VALUES (?, ?, ?)
+    ON CONFLICT (team, person) DO UPDATE SET role = CASE WHEN ? THEN 'manager' ELSE team_members.role END`)
+    .bind(teamSlug, person.id, role, t.self_managed ? 1 : 0).run();
+  const member = await env.DB.prepare('SELECT role FROM team_members WHERE team = ? AND person = ?')
+    .bind(teamSlug, person.id).first();
   // Identities with this email belong to the person from now on.
   await env.DB.prepare('UPDATE identities SET person = ? WHERE email = ? AND person IS NULL')
     .bind(person.id, email).run();
-  return json({ ok: true, person });
+  return json({ ok: true, person: { ...person, role: member.role } });
+}
+
+/**
+ * PUT /api/admin/members `{ team, person, role }`: promotes a member to team manager, or
+ * demotes them. A self-managed team has only managers.
+ */
+async function setRole(env, body) {
+  const teamSlug = clean(body.team);
+  const role = clean(body.role);
+  if (!['member', 'manager'].includes(role)) {
+    return bad('the role is member or manager');
+  }
+  const t = await env.DB.prepare('SELECT self_managed FROM teams WHERE slug = ?').bind(teamSlug).first();
+  if (!t) {
+    return json({ error: 'no such team' }, 404);
+  }
+  if (t.self_managed && role === 'member') {
+    return json({ error: 'in a self-managed team every member is a manager; turn that off first' }, 409);
+  }
+  const { meta } = await env.DB.prepare('UPDATE team_members SET role = ? WHERE team = ? AND person = ?')
+    .bind(role, teamSlug, Number(body.person)).run();
+  return meta.changes ? json({ ok: true, role }) : json({ error: 'not a member' }, 404);
 }
 
 /**
@@ -513,13 +572,25 @@ export async function admin(request, env, url, me) {
   const body = m === 'GET' ? {} : await request.json().catch(() => ({}));
   const q = (k) => clean(url.searchParams.get(k));
   const route = `${m} ${p.slice('/api/admin/'.length)}`;
+  // Team managers: their teams' members, nothing else.
+  const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
+  const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members'];
+  if (!isAdmin(me)) {
+    if (!forManagers.includes(route)) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    if (route !== 'GET teams' && !managesTeam(me, teamOf)) {
+      return json({ error: 'you do not manage this team' }, 403);
+    }
+  }
   switch (route) {
-    case 'GET teams': return listTeams(env);
+    case 'GET teams': return listTeams(env, me);
     case 'POST teams': return createTeam(env, body);
-    case 'PUT teams': return renameTeam(env, body);
+    case 'PUT teams': return updateTeam(env, body);
     case 'DELETE teams': return deleteTeam(env, body);
     case 'GET team': return team(env, q('slug'));
     case 'POST members': return addMember(env, body);
+    case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
     case 'DELETE members': return removeMember(env, me, body);
     case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
