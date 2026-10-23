@@ -189,6 +189,7 @@
   #threads .count .unread { display: grid; place-items: center; width: 26px; height: 22px; padding: 0;
     border-radius: 7px; color: var(--mute); }
   #threads .count .unread svg { width: 15px; height: 15px; }
+  #threads .rows > .older { display: block; width: calc(100% - 28px); margin: 10px 14px 18px; padding: 8px; color: var(--mute); }
   #threads .count .unread:hover { color: var(--ink); }
   #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .t .tags { margin-left: auto; display: flex; gap: 4px; overflow: hidden; flex-shrink: 1; }
@@ -1318,7 +1319,8 @@ function threadRows() {
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = Object.values(state.sel).reduce((n, set) => n + set.size, 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const count = `${filt}<span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span>`;
+  const more = state.data.page?.next;
+  const count = `${filt}<span title="${more ? 'Older threads are still loading, or wait at the end of the list' : ''}">${shown.length} of ${state.data.threads.length}${more ? '+' : ''} threads</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.count');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -1365,9 +1367,18 @@ function threadRows() {
     for (const c of list.children) preload.unobserve(c);
     list.innerHTML = '<div class="empty">Nothing matches these filters.</div>';
   } else {
-    [...list.children].forEach((c) => { if (!keep.has(c)) { preload.unobserve(c); c.remove(); } });
+    [...list.children].forEach((c) => { if (!keep.has(c) && !c.classList.contains('older')) { preload.unobserve(c); c.remove(); } });
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
   }
+  // The end of the list: older threads, while there are any.
+  let older = list.querySelector(':scope > .older');
+  const label = paging ? 'Loading older threads…' : 'Load older threads';
+  if (more) {
+    if (!older) older = toNode('<button class="older" data-older></button>');
+    if (older.textContent !== label) older.textContent = label;
+    older.disabled = Boolean(paging);
+    if (list.lastElementChild !== older) list.append(older);
+  } else if (older) older.remove();
   // Rows of threads that are no longer in the inbox are let go.
   const known = new Set(state.data.threads.map((t) => t.thread));
   for (const k of existing.keys()) if (!known.has(k)) existing.delete(k);
@@ -2187,15 +2198,68 @@ function renderUser() {
   $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
 }
 
+// The inbox comes in pages, newest activity first: the first page shows at once, older ones
+// are fetched behind it (up to BACKFILL entries), and more on demand at the end of the list.
+// Reloading the first page (live updates) keeps the older pages already here.
+const BACKFILL = 1000;
+const pageUrl = (before) => `/api/inbox?team=${encodeURIComponent(state.team)}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
 async function loadInbox(early = null) {
   const ahead = early && await early;
-  state.data = ahead && ahead.team === state.team ? ahead : await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+  const first = ahead && ahead.team === state.team ? ahead : await get(pageUrl());
+  const prev = state.data && state.data.team === first.team && state.data.as === (state.as || null) ? state.data : null;
+  first.as = state.as || null;
+  first.page = first.page || { next: null };
+  if (prev) {
+    const keys = new Set(first.threads.map((t) => t.thread));
+    first.threads = [...first.threads, ...prev.threads.filter((t) => !keys.has(t.thread))];
+    first.people = { ...prev.people, ...first.people };
+    // The deepest page loaded so far is where the next one starts.
+    if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
+  }
+  state.data = first;
   mergeProfiles(state.data.profiles);
   renderUser();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
   syncPages();
+  backfill();
+}
+
+/** Adds an older page to the inbox: new entries only, with their scores and profiles. */
+function addPage(p) {
+  const keys = new Set(state.data.threads.map((t) => t.thread));
+  const added = p.threads.filter((t) => !keys.has(t.thread));
+  state.data.threads.push(...added);
+  state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
+  state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
+  mergeProfiles(p.profiles);
+  inPass(() => { for (const t of added) state.scores.set(t.thread, smartScore(t)); });
+  state.coPeople = coParticipants();
+  render();
+}
+
+let paging = null;
+/** Fetches older pages one after the other, while idle, until `limit` entries are here. */
+function backfill(limit = BACKFILL) {
+  if (paging || !state.data?.page?.next || state.data.threads.length >= limit) return paging;
+  const { team, as } = state.data;
+  paging = (async () => {
+    while (state.data?.team === team && state.data.as === as && state.data.page?.next
+      && state.data.threads.length < limit) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 1500 }) : setTimeout(r, 50)));
+      // eslint-disable-next-line no-await-in-loop
+      const p = await get(pageUrl(state.data.page.next)).catch(() => null);
+      if (!p || state.data?.team !== team || state.data.as !== as) break;
+      addPage(p);
+    }
+  })().finally(() => { paging = null; if (state.data) renderThreads(); });
+  return paging;
+}
+/** "Load older threads": one more page past what is here. */
+function loadOlder() {
+  backfill(state.data.threads.length + 1);
 }
 // Threads are fetched ahead, so opening one is instant: a queue, not a drop. A row that
 // scrolls into view, the rows next to the open one and a row under the pointer all queue
@@ -2387,6 +2451,7 @@ async function start() {
     const row = e.target.closest('.t');
     if (row) prefetch(row.dataset.thread, { urgent: true });
   });
+  $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
     const sort = e.target.closest('[data-sort]');

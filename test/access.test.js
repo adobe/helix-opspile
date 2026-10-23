@@ -177,6 +177,37 @@ describe('inbox groups', () => {
     );
     assert.equal(threads[0].members.length, 6); // the first thread and the five most recent
   });
+
+  it('pages through the groups, newest first, with no gaps or repeats, even at equal times', async () => {
+    const DB = d1({
+      teams: [{ slug: 'helix', name: 'Helix' }],
+      people: [{
+        id: 1, email: 'a@staff.example', name: 'A', staff: 1, teams: ['helix'],
+      }],
+    });
+    const row = DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      kind, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix', 'channel', 't', ?, ?, ?, ?, 1, ?)`);
+    for (let i = 0; i < 7; i += 1) {
+      // Two threads share each minute.
+      const at = new Date(Date.UTC(2026, 9, 20, 0, Math.floor(i / 2))).toISOString();
+      row.run(`t${i}`, `${i}`, `p${i}/`, at, at, at, at);
+    }
+    const pages = [];
+    let cursor = null;
+    for (let n = 0; n < 5; n += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const { threads, page } = await inbox({ DB }, { id: 1 }, 'helix', { before: cursor, limit: 3 });
+      pages.push(threads.map((t) => t.thread).sort().reverse());
+      cursor = page.next;
+      if (!cursor) {
+        break;
+      }
+    }
+    // Pages follow each other in time; within a page the inbox sorts as it likes.
+    assert.deepEqual(pages, [['t6', 't5', 't4'], ['t3', 't2', 't1'], ['t0']]);
+    assert.equal(cursor, null);
+  });
 });
 
 describe('system-only threads', () => {

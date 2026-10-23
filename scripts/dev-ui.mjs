@@ -66,7 +66,8 @@ const ADMIN = process.argv.includes('--admin');
 const MANAGER = process.argv.includes('--manager');
 const SIM_EVERY_MS = 25 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
-const INBOX_LIMIT = 200;
+// Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
+const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
 const ORG_TYPES = { initech: 'vendor' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
@@ -287,12 +288,19 @@ function people(entry) {
   };
 }
 
-function inbox(team) {
-  const rows = [...store.threads.values()]
+function inbox(team, before = null) {
+  const latest = (r) => r.last_at || r.any_at || '';
+  const all = [...store.threads.values()]
     .map((e) => e.row)
     .filter((r) => r.team === team && r.kind !== 'ignore')
-    .sort((a, b) => (b.last_at || b.any_at || '').localeCompare(a.last_at || a.any_at || ''))
-    .slice(0, INBOX_LIMIT)
+    .sort((a, b) => latest(b).localeCompare(latest(a)) || b.thread.localeCompare(a.thread));
+  const [at, key] = before ? String(before).split('|') : [null, null];
+  const after = at === null ? all
+    : all.filter((r) => latest(r) < at || (latest(r) === at && r.thread < key));
+  const pageRows = after.slice(0, INBOX_PAGE);
+  const lastRow = pageRows[pageRows.length - 1];
+  const page = { next: after.length > INBOX_PAGE && lastRow ? `${latest(lastRow)}|${lastRow.thread}` : null };
+  const rows = pageRows
     .map((r) => ({
       ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
     }));
@@ -342,6 +350,7 @@ function inbox(team) {
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(team),
     threads,
+    page,
   };
 }
 
@@ -564,13 +573,13 @@ async function api(req, res, url) {
     if (!teamsOf(as.id).some((t) => t.slug === team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, { ...inbox(team), me: { id: as.id, name: as.name, readonly: true } });
+    return json(res, { ...inbox(team, url.searchParams.get('before')), me: { id: as.id, name: as.name, readonly: true } });
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, inbox(team));
+    return json(res, inbox(team, url.searchParams.get('before')));
   }
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));
