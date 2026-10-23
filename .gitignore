@@ -156,3 +156,6 @@ vite.config.ts.timestamp-*
 
 # Production session copied for the local UI preview (scripts/dev-ui-session.mjs)
 .dev-ui-session.json
+
+# Built by scripts/ui-markdown.mjs (npm run build; cf deploy and cf dev build it too)
+src/ui-markdown.bundle.js

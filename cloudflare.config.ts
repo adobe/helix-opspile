@@ -16,12 +16,18 @@
 // CLOUDFLARE_ACCOUNT_ID), and the plain-text ids come from the environment or an
 // uncommitted `.env`. cf has no `keep_vars`, so a deploy without them would wipe them.
 // Secrets are declared only by name; cf checks that they exist and keeps their values.
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
   bindings, defineConfig, exports as workerExports, triggers,
 } from 'cf/config';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
+
+// The inbox's markdown renderer, bundled for the browser (src/ui-markdown.bundle.js, not
+// committed): built on every cf deploy and cf dev, so the page matches src/ui-markdown.js and
+// the pinned micromark.
+execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {
   prod: 'helix-opspile-prod',

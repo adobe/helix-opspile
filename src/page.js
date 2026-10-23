@@ -11,13 +11,23 @@
  */
 
 import { SKIN_TONES, SLACK_EMOJI } from './emoji.js';
+import MARKDOWN from './ui-markdown.bundle.js';
 
 const PLACEHOLDER = '/* SLACK_EMOJI */ { names: {}, skin: [] }';
+const MARKDOWN_PLACEHOLDER = '<script>/* MARKDOWN */</script>';
 
-/** ui/inbox.html as served: with Slack's emoji names filled in. */
+/**
+ * ui/inbox.html as served: with Slack's emoji names filled in, and the markdown renderer
+ * (src/ui-markdown.js) as the global `Markdown`.
+ */
 export function inboxPage(html) {
   if (!html.includes(PLACEHOLDER)) {
     throw new Error('ui/inbox.html has no SLACK_EMOJI placeholder');
   }
-  return html.replace(PLACEHOLDER, () => JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES }));
+  if (!html.includes(MARKDOWN_PLACEHOLDER)) {
+    throw new Error('ui/inbox.html has no MARKDOWN placeholder');
+  }
+  return html
+    .replace(PLACEHOLDER, () => JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES }))
+    .replace(MARKDOWN_PLACEHOLDER, () => `<script>${MARKDOWN}</script>`);
 }

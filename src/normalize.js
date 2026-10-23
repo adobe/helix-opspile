@@ -23,6 +23,8 @@
  * in the platform's format (`text` + `format`), converted later once mentions are known.
  */
 
+import { mdLink } from './markdown.js';
+
 /** Slack subtypes that are ordinary messages from a person or a bot. */
 const SLACK_CONTENT = new Set([
   undefined, 'thread_broadcast', 'bot_message', 'file_share', 'me_message',
@@ -48,9 +50,9 @@ function slackFiles(files) {
   const ok = (files || []).filter((f) => f && (f.permalink || f.name));
   // Images are shown inline (through the inbox's media proxy); other files are links.
   const images = ok.filter((f) => /^image\//.test(f.mimetype || '') && f.url_private)
-    .map((f) => `![${f.title || f.name || 'image'}](${f.url_private})`);
+    .map((f) => mdLink(f.title || f.name || 'image', f.url_private, true));
   const links = ok.filter((f) => !(/^image\//.test(f.mimetype || '') && f.url_private))
-    .map((f) => `- [${f.title || f.name || 'file'}](${f.permalink || ''})`);
+    .map((f) => `- ${mdLink(f.title || f.name || 'file', f.permalink)}`);
   return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
 }
 
@@ -237,8 +239,9 @@ export function normalizeTeams(key, msg) {
   }
   const attachments = (msg.attachments || [])
     .filter((a) => a && a.contentType === 'reference')
-    .map((a) => `- [${a.name || 'file'}](${a.contentUrl || ''})`)
+    .map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`)
     .join('\n');
+  const html = (msg.body && msg.body.contentType) === 'html';
   const message = {
     source: 'teams',
     tenant,
@@ -252,8 +255,10 @@ export function normalizeTeams(key, msg) {
     version: teamsVersion(msg.lastModifiedDateTime || msg.createdDateTime),
     authorRef,
     subject: msg.subject || undefined,
-    format: (msg.body && msg.body.contentType) === 'html' ? 'html' : 'text',
-    text: [(msg.body && msg.body.content) || '', attachments && `<p>Attachments:</p>\n${attachments}`]
+    format: html ? 'html' : 'text',
+    // The same list as for Slack files; a plain-text body gets no HTML around it.
+    text: [(msg.body && msg.body.content) || '', attachments
+      && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
       .filter(Boolean).join('\n'),
     permalink: msg.webUrl,
     raw: key,
