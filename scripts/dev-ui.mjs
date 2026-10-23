@@ -17,6 +17,7 @@
  *   npm run ui:dev                 # http://localhost:8787/inbox
  *   PORT=9000 npm run ui:dev
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
+ *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *
  * What is shared with the Worker: `ui/inbox.html`, served from disk on every request (the
  * Worker imports the same file), and the pure helpers `readState`, `waitingOn`, `titleOf`
@@ -52,6 +53,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const uiDir = join(root, 'ui');
 const PORT = Number(process.env.PORT) || 8787;
 const SIMULATE = !process.argv.includes('--no-sim');
+// Dana in the admin team: the inbox shows the switch to the knowledge-base editor, "View as"
+// (read-only) and label review.
+const ADMIN = process.argv.includes('--admin');
 const SIM_EVERY_MS = 25 * 1000;
 const INBOX_LIMIT = 200;
 const SESSION_FILE = join(root, '.dev-ui-session.json');
@@ -441,11 +445,28 @@ async function kbApi(req, res, url) {
   return json(res, { error: 'not found' }, 404);
 }
 
+const teamsOf = (id) => store.teams.filter((t) => t.members.includes(id))
+  .map(({ slug, name }) => ({ slug, name }));
+
+/**
+ * With `--admin`, whom an admin looks at the inbox as (`x-opspile-as`, or `as=`), as in
+ * src/api.js; null for Dana herself.
+ */
+function viewingAs(req, url) {
+  const as = Number(req.headers['x-opspile-as'] || url.searchParams.get('as'));
+  return ADMIN && as && as !== ME ? store.people.get(as) || null : null;
+}
+
 async function api(req, res, url) {
   if (backendState.mode === 'prod') {
     return proxyApi(req, res, url, backendState);
   }
   const team = url.searchParams.get('team');
+  const as = viewingAs(req, url);
+  // As src/api.js: looking as someone else is read-only.
+  if (as && req.method !== 'GET') {
+    return json(res, { error: 'read-only while viewing as someone else' }, 403);
+  }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     return kbApi(req, res, url);
   }
@@ -454,12 +475,26 @@ async function api(req, res, url) {
     const r = await adminApi(req, url, body);
     return json(res, await r.json(), r.status);
   }
+  if (url.pathname === '/api/me' && as) {
+    return json(res, {
+      id: as.id,
+      name: as.name,
+      email: as.email,
+      teams: teamsOf(as.id),
+      admin: false,
+      viewer: { id: ME, name: store.me.name },
+      readonly: true,
+      connected: {},
+      react: {},
+    });
+  }
   if (url.pathname === '/api/me') {
     const {
       id, name, email, teams,
     } = store.me;
-    // Dana is not in the admin team, except on the admin pages, so they can be tried.
-    const admin = store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || '');
+    // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
+    // be tried.
+    const admin = ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || '');
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
@@ -471,9 +506,29 @@ async function api(req, res, url) {
       react: { slack: true, teams: true },
     });
   }
-  if (url.pathname.startsWith('/api/review')) {
+  if (url.pathname === '/api/people' && ADMIN) {
+    // Everyone in a team, for "View as".
+    return json(res, {
+      people: [...store.people.values()]
+        .filter((p) => store.teams.some((t) => t.members.includes(p.id)))
+        .map(({ id, name }) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  }
+  if (url.pathname === '/api/review/queue' && ADMIN) {
+    // No labels in the fake data, so nothing to review.
+    return json(res, { queue: [], answers: {} });
+  }
+  if (url.pathname.startsWith('/api/review') || url.pathname === '/api/people') {
     // The fake user is not in the admin team, so the review API answers as it does for her.
     return json(res, { error: 'label review is for the admin team' }, 403);
+  }
+  if (url.pathname === '/api/inbox' && as) {
+    // Dana's inbox of that team, marked as theirs: enough to try the read-only view.
+    if (!teamsOf(as.id).some((t) => t.slug === team)) {
+      return json(res, { error: 'not a member of this team' }, 403);
+    }
+    return json(res, { ...inbox(team), me: { id: as.id, name: as.name, readonly: true } });
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(team)) {

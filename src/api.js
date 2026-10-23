@@ -359,26 +359,56 @@ export async function thread(env, me, key) {
     WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
   const group = memberRows && memberRows.length ? memberRows : [row];
   const keys = JSON.stringify(group.map((m) => m.thread));
-  const link = await env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
-    AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first();
+  // The latest member's label speaks for the group.
+  const labelKey = [...group]
+    .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0].thread;
+  const entryKeys = [key, ...group.map((m) => m.thread)];
+  // Everything below depends only on the group: ask D1 and R2 at once, not one by one
+  // (opening a thread waited for some fifteen round trips in a row).
+  const [
+    link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
+    reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts,
+  ] = await Promise.all([
+    env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
+      AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
+    Promise.all(group.map(async (m) => {
+      const listed = await env.CHANNELS.list({ prefix: m.path });
+      return Promise.all(listed.objects.map(async (o) => {
+        const obj = await env.CHANNELS.get(o.key);
+        return obj ? parse(await obj.text()) : null;
+      }));
+    })).then((lists) => lists.flat()),
+    env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
+        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key
+      FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
+      .bind(keys).all(),
+    env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
+        COALESCE(p.name, i.name) AS name, i.person = ? AS mine
+      FROM reactions r
+      LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+      LEFT JOIN people p ON p.id = i.person
+      WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all(),
+    env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
+      FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
+      WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(row.team, keys).all(),
+    env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(labelKey).first(),
+    isAdmin(me) ? env.DB.prepare(`SELECT r.question, r.model_value, r.value,
+        r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
+      FROM label_reviews r JOIN people p ON p.id = r.reviewer
+      WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()
+      .then((r) => r.results || []) : [],
+    reviewsFor(env.DB, [labelKey]),
+    resolutionFacts(env, group.map((m) => m.thread)),
+    env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first(),
+    env.DB.prepare(`SELECT tech, p FROM channel_tech
+      WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
+      .bind(row.source, row.tenant, row.channel_id).all(),
+    env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
+      FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
+      .bind(keys).all(),
+    draftsFor(env, entryKeys),
+  ]);
   row.permalink = link ? link.permalink : null;
-  const files = (await Promise.all(group.map(async (m) => {
-    const listed = await env.CHANNELS.list({ prefix: m.path });
-    return Promise.all(listed.objects.map(async (o) => {
-      const obj = await env.CHANNELS.get(o.key);
-      return obj ? parse(await obj.text()) : null;
-    }));
-  }))).flat();
-  const { results: idx } = await env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-      || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key
-    FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
-    .bind(keys).all();
-  const { results: rx } = await env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
-      COALESCE(p.name, i.name) AS name, i.person = ? AS mine
-    FROM reactions r
-    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
-    LEFT JOIN people p ON p.id = i.person
-    WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all();
   const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
   const reactionsBy = new Map();
   for (const r of rx || []) {
@@ -409,27 +439,7 @@ export async function thread(env, me, key) {
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
-    FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
-    WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(row.team, keys).all();
-  // The latest member's label speaks for the group.
-  const labelKey = [...group]
-    .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0].thread;
-  const model = await env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(labelKey).first();
-  const reviews = isAdmin(me) ? (await env.DB.prepare(`SELECT r.question, r.model_value, r.value,
-      r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
-    FROM label_reviews r JOIN people p ON p.id = r.reviewer
-    WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()).results || [] : [];
-  const label = effectiveLabel(model, model ? await reviewsFor(env.DB, [labelKey]) : []);
-  const facts = await resolutionFacts(env, group.map((m) => m.thread));
-  const entryKeys = [key, ...group.map((m) => m.thread)];
-  const anchorLabel = await env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first();
-  const { results: tech } = await env.DB.prepare(`SELECT tech, p FROM channel_tech
-    WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
-    .bind(row.source, row.tenant, row.channel_id).all();
-  const { results: found } = await env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
-    FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
-    .bind(keys).all();
+  const label = effectiveLabel(model, model ? reviewed : []);
   return {
     thread: {
       ...row,
@@ -453,7 +463,7 @@ export async function thread(env, me, key) {
     reviews,
     facts: found || [],
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
-    draft: draftOf(await draftsFor(env, entryKeys), entryKeys),
+    draft: draftOf(drafts, entryKeys),
   };
 }
 

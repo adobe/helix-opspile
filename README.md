@@ -182,7 +182,9 @@ No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 The admin pages are at <http://localhost:8787/inbox/admin>: the real `src/admin.js` over an
 in-memory D1 with the migrations, seeded from the fake inbox
 ([scripts/dev-ui-admin.mjs](scripts/dev-ui-admin.mjs)); the fake inbox itself does not see
-their changes. On both, Dana counts as a member of the admin team.
+their changes. On both, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
+makes her one in the inbox too, with what admins see there: the switch to the editor and the
+admin pages, "View as" (read-only) and label review.
 
 To point the preview at production instead, sign in to the inbox in Chrome with remote
 debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access
