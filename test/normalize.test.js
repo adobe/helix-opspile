@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  channelPath, merge, parse, render,
+  channelPath, FORMAT, merge, parse, render,
 } from '../src/channels.js';
 import { htmlToMarkdown } from '../src/markdown.js';
 import { normalize, slackVersion } from '../src/normalize.js';
@@ -266,6 +266,15 @@ describe('pile-2 files', () => {
 
   it('does nothing for a replay of the same raw object', () => {
     assert.equal(merge(file('1'), file('1')), null);
+  });
+
+  it('rewrites the same version when a newer normalizer renders it differently, once', () => {
+    const old = { ...file('1', {}, 'plain'), format: 1 };
+    const now = { ...file('1', {}, 'with size'), format: FORMAT };
+    assert.equal(merge(old, now).body, 'with size');
+    assert.equal(merge({ ...now, format: FORMAT }, { ...file('1', {}, 'other'), format: FORMAT }), null);
+    // An older format never wins.
+    assert.equal(merge({ ...file('1', {}, 'with size'), format: FORMAT }, { ...file('1', {}, 'plain'), format: 1 }), null);
   });
 
   it('turns a file into a tombstone and keeps it one', () => {

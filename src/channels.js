@@ -64,6 +64,13 @@ export function parse(text) {
 const union = (a = [], b = []) => [...new Set([...a, ...b])].sort();
 
 /**
+ * How messages are turned into markdown. Raise it when the normalizer renders the same raw
+ * message differently (e.g. image sizes): a replay then rewrites files of the same version,
+ * which it otherwise leaves alone. Files from before it have format 1.
+ */
+export const FORMAT = 2;
+
+/**
  * Merges an incoming operation with the file that is already there.
  *
  * @param {object|null} existing `{ meta, body, version, deleted }` or null
@@ -93,7 +100,10 @@ export function merge(existing, incoming) {
       body: '',
     };
   }
-  if (incoming.version > existing.version) {
+  // A newer version, or the same version rendered by a newer normalizer.
+  const rerendered = incoming.version === existing.version
+    && (incoming.format || FORMAT) > (existing.format || 1) && incoming.body !== existing.body;
+  if (incoming.version > existing.version || rerendered) {
     return {
       ...incoming,
       meta: { ...incoming.meta, at: existing.meta.at || incoming.meta.at, raw },
@@ -117,18 +127,22 @@ export async function readExisting(bucket, path) {
     ...parsed,
     version: meta.version || '',
     deleted: meta.deleted === '1',
+    format: Number(meta.format) || 1,
   };
 }
 
 /** Writes one merged file. Returns the path, or null when nothing changed. */
-export async function writeMessage(bucket, path, incoming) {
+export async function writeMessage(bucket, path, op) {
+  const incoming = { format: FORMAT, ...op };
   const next = merge(await readExisting(bucket, path), incoming);
   if (!next) {
     return null;
   }
   await bucket.put(path, render(next.meta, next.body), {
     httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
-    customMetadata: { version: next.version, deleted: next.deleted ? '1' : '0' },
+    customMetadata: {
+      version: next.version, deleted: next.deleted ? '1' : '0', format: String(next.format || 1),
+    },
   });
   return path;
 }
