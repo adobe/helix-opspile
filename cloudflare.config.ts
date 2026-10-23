@@ -47,6 +47,10 @@ const VARS = [
 // (comma-separated channel ids). AGENT_GATEWAY names the AI Gateway in front of Amazon Bedrock,
 // in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
 // region (default us-east-2).
+// The sign-in allow list (Cloudflare Access policy of the inbox) follows the ops teams when
+// these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write).
+const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_ID'] as const;
+
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',
@@ -60,6 +64,8 @@ const SECRETS = [
   // an authenticated AI Gateway. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BEDROCK_API_KEY'] : []),
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
+  // Access sync: required only where it is configured.
+  ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -106,7 +112,7 @@ function vars(deployed: boolean) {
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
-    [...VARS, ...AGENT_VARS].filter((name) => values[name])
+    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS].filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
 }

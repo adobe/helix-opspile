@@ -18,6 +18,7 @@ import {
   ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
 } from './review.js';
 import { slug as toSlug, UNASSIGNED } from './rules.js';
+import { syncAccessQuietly } from './accesssync.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -563,6 +564,20 @@ async function deleteOrg(env, body) {
 // ---- routes -----------------------------------------------------------------------------
 
 /** Routes `/api/admin/*` for a member of the admin team. Returns null for other paths. */
+/**
+ * After a membership change succeeded, the sign-in allow list follows (Cloudflare Access):
+ * the answer then says `access: { added, removed }` (counts), or `access: { error }`.
+ */
+async function withAccessSync(env, why, pending) {
+  const res = await pending;
+  if (!res.ok) {
+    return res;
+  }
+  const access = await syncAccessQuietly(env, why);
+  const body = await res.json();
+  return json({ ...body, access }, res.status);
+}
+
 export async function admin(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
@@ -587,12 +602,12 @@ export async function admin(request, env, url, me) {
     case 'GET teams': return listTeams(env, me);
     case 'POST teams': return createTeam(env, body);
     case 'PUT teams': return updateTeam(env, body);
-    case 'DELETE teams': return deleteTeam(env, body);
+    case 'DELETE teams': return withAccessSync(env, 'team deleted', deleteTeam(env, body));
     case 'GET team': return team(env, q('slug'));
-    case 'POST members': return addMember(env, body);
+    case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
-    case 'DELETE members': return removeMember(env, me, body);
+    case 'DELETE members': return withAccessSync(env, 'member removed', removeMember(env, me, body));
     case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
     case 'POST rules': return createRule(env, me, body);
     case 'PUT rules': return updateRule(env, me, body);
