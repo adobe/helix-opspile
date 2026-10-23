@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opspile · knowledge bases</title>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
+    --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
+    --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
+    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
+    --code: #0b0d10;
+    font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
+      -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--ink);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
+      --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
+      --sel: #dde9fb; --purple: #8250df; --code: #f3f4f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
+  button, input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 9px; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--red); }
+  a { color: var(--link); }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  header h1 a { color: inherit; text-decoration: none; }
+  header .crumb { color: var(--mute); }
+  header .me { margin-left: auto; color: var(--mute); }
+  main { flex: 1; display: grid; grid-template-columns: 260px 320px 1fr; min-height: 0; }
+  main > section { overflow: auto; min-height: 0; border-right: 1px solid var(--line); }
+  #bases { padding: 12px; background: var(--bg); }
+  #files { padding: 12px 10px; background: var(--col); }
+  #editor { display: flex; flex-direction: column; min-width: 0; border-right: 0; background: var(--card); }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mute);
+    margin: 14px 4px 6px; }
+  h2:first-child { margin-top: 0; }
+  #filter { width: 100%; margin-bottom: 8px; }
+  .row { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: 7px; cursor: pointer;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .row:hover { background: var(--hover); }
+  .row.on { background: var(--sel); }
+  .row .sub { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+  .row.dir { color: var(--mute); cursor: default; font-size: 13px; }
+  .row.dir:hover { background: none; }
+  .row .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); }
+  .row .tag.missing { border-style: dashed; }
+  .tools { display: flex; gap: 6px; margin: 10px 4px 0; flex-wrap: wrap; }
+  .empty { color: var(--mute); padding: 24px; }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .bar .path { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; min-width: 160px; }
+  .bar input.path { padding: 3px 7px; }
+  .bar .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+  .note { padding: 8px 12px; color: var(--mute); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .note.warn { color: var(--yellow); }
+  .note.err { color: var(--red); }
+  .note.ok { color: var(--green); }
+  textarea { flex: 1; width: 100%; border: 0; resize: none; padding: 12px 14px; outline: none;
+    background: var(--code); color: var(--ink); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    tab-size: 2; }
+  textarea[readonly] { color: var(--mute); }
+  .foot { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
+  .foot input { flex: 1; }
+  .log { padding: 4px 12px 12px; }
+  .log .c { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .log .c .h { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+  .log .c .m { margin-top: 2px; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/inbox">opspile</a></h1>
+  <span class="crumb">Knowledge bases</span>
+  <span class="me" id="me"></span>
+  <span title="save the open file"><kbd>⌘S</kbd></span>
+</header>
+<main>
+  <section id="bases"><div class="empty">Loading…</div></section>
+  <section id="files"></section>
+  <section id="editor"><div class="empty">Pick a knowledge base.</div></section>
+</main>
+<script>
+/*
+ * The knowledge-base editor, for the admin team: every knowledge base (pile 3), its files,
+ * and an editor that commits each save as the signed-in person. `systemprompt.md` holds the
+ * instructions appended to the system prompt of every thread agent that uses the knowledge
+ * base; agents cannot change it. index.md and log.md are written by code and shown read-only.
+ */
+const SYSTEM_PROMPT = 'systemprompt.md';
+const GENERATED = new Set(['index.md', 'log.md']);
+const state = {
+  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
+};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const base = () => state.bases.find((b) => b.repo === state.repo);
+
+async function call(path, options = {}) {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    ...options,
+    headers: options.body ? { 'content-type': 'application/json' } : {},
+  });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, ok: res.ok, body };
+}
+
+function systemPromptTemplate(b) {
+  const who = b.kind === 'team' ? `the ops team ${b.name}` : `the customer ${b.name}`;
+  return `---\ntype: System Prompt\ntitle: Agent instructions for ${who}\ndescription: Appended to the system prompt of every thread agent that uses this knowledge base.\n---\n\n`
+    + `<!-- Instructions for the agents of every thread of ${who}, in Markdown: how to address people, what to\n`
+    + '     always check, what never to promise, who to ask. Comments like this one are not sent to the agents. -->\n\n';
+}
+
+function conceptTemplate(path) {
+  const title = path.split('/').pop().replace(/\.md$/, '').replace(/[-_]+/g, ' ');
+  return `---\ntype: Reference\ntitle: ${title}\ndescription: One sentence that says what this is.\ntags: []\n---\n\n`;
+}
+
+function dirty() {
+  const f = state.file;
+  return Boolean(f && !f.readonly && $('text') && $('text').value !== f.text);
+}
+
+function leave() {
+  return !dirty() || window.confirm('Discard your unsaved changes?');
+}
+
+function toUrl() {
+  const q = new URLSearchParams();
+  if (state.repo) q.set('repo', state.repo);
+  if (state.file && !state.file.isNew) q.set('path', state.file.path);
+  if (state.view === 'history') q.set('view', 'history');
+  history.replaceState(null, '', `/inbox/kb${q.size ? `?${q}` : ''}`);
+}
+
+// ---- knowledge bases --------------------------------------------------------------------
+
+function renderBases() {
+  const f = state.filter.toLowerCase();
+  const shown = state.bases.filter((b) => !f || `${b.name} ${b.slug} ${b.repo}`.toLowerCase().includes(f));
+  const group = (kind, title) => {
+    const list = shown.filter((b) => b.kind === kind);
+    if (!list.length) return '';
+    return `<h2>${title}</h2>${list.map((b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}">
+      <span>${esc(b.name)}</span><span class="sub">${esc(b.repo)}</span></div>`).join('')}`;
+  };
+  $('bases').innerHTML = `<input id="filter" placeholder="Filter" value="${esc(state.filter)}" aria-label="Filter knowledge bases">`
+    + (group('team', 'Ops teams') + group('org', 'Customers and vendors') || '<div class="empty">No knowledge bases.</div>');
+  $('filter').oninput = (e) => {
+    state.filter = e.target.value;
+    const at = e.target.selectionStart;
+    renderBases();
+    $('filter').focus();
+    $('filter').setSelectionRange(at, at);
+  };
+  for (const el of $('bases').querySelectorAll('[data-repo]')) {
+    el.onclick = () => openRepo(el.dataset.repo);
+  }
+}
+
+async function openRepo(repo, { path, view } = {}) {
+  if (repo !== state.repo && !leave()) return;
+  state.repo = repo;
+  state.file = null;
+  state.view = view || 'file';
+  renderBases();
+  $('files').innerHTML = '<div class="empty">Loading…</div>';
+  $('editor').innerHTML = '<div class="empty">Pick a file.</div>';
+  const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(repo)}`);
+  if (!ok) {
+    $('files').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the files.')}</div>`;
+    return;
+  }
+  state.files = body.files;
+  state.hasSystemPrompt = body.hasSystemPrompt;
+  state.truncated = body.truncated;
+  renderFiles();
+  if (state.view === 'history') showHistory();
+  else openFile(path || SYSTEM_PROMPT, { force: true });
+  toUrl();
+}
+
+// ---- files ------------------------------------------------------------------------------
+
+function renderFiles() {
+  const b = base();
+  const others = state.files.filter((f) => f.path !== SYSTEM_PROMPT);
+  const rows = [];
+  let lastDir = null;
+  for (const f of others) {
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+    if (dir !== lastDir && dir) rows.push(`<div class="row dir">${esc(dir)}/</div>`);
+    lastDir = dir;
+    const name = f.path.slice(dir ? dir.length + 1 : 0);
+    rows.push(`<div class="row${state.file?.path === f.path ? ' on' : ''}" data-path="${esc(f.path)}" style="padding-left:${dir ? 20 : 8}px">
+      <span>${esc(name)}</span>${GENERATED.has(name) ? '<span class="tag">generated</span>' : ''}</div>`);
+  }
+  $('files').innerHTML = `<h2>${esc(b.name)}</h2>
+    <div class="row${state.file?.path === SYSTEM_PROMPT ? ' on' : ''}" data-path="${SYSTEM_PROMPT}">
+      <span>${SYSTEM_PROMPT}</span><span class="tag${state.hasSystemPrompt ? '' : ' missing'}">${state.hasSystemPrompt ? 'agent instructions' : 'not written yet'}</span></div>
+    <h2>Files</h2>
+    ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
+    ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
+    <div class="tools"><button id="new">New file</button><button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>`;
+  for (const el of $('files').querySelectorAll('[data-path]')) {
+    el.onclick = () => openFile(el.dataset.path);
+  }
+  $('new').onclick = newFile;
+  $('history').onclick = () => { if (leave()) showHistory(); };
+}
+
+async function openFile(path, { force = false } = {}) {
+  if (!force && !leave()) return;
+  state.view = 'file';
+  const b = base();
+  const exists = state.files.some((f) => f.path === path);
+  if (!exists) {
+    // Only the system prompt is offered before it exists.
+    state.file = { path, text: '', hash: null, isNew: true, draft: path === SYSTEM_PROMPT ? systemPromptTemplate(b) : conceptTemplate(path) };
+  } else {
+    $('editor').innerHTML = '<div class="empty">Loading…</div>';
+    const { ok, body } = await call(`/api/kb/file?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`);
+    if (!ok) {
+      $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
+      return;
+    }
+    state.file = { path, text: body.text, hash: body.hash, readonly: GENERATED.has(path.split('/').pop()) };
+  }
+  renderFiles();
+  renderEditor();
+  toUrl();
+}
+
+function newFile() {
+  if (!leave()) return;
+  state.view = 'file';
+  state.file = { path: '', text: '', hash: null, isNew: true, choosePath: true, draft: conceptTemplate('new-concept.md') };
+  renderFiles();
+  renderEditor();
+  toUrl();
+  $('path').focus();
+}
+
+// ---- editor -----------------------------------------------------------------------------
+
+function renderEditor(note) {
+  const f = state.file;
+  const isPrompt = f.path === SYSTEM_PROMPT;
+  const explain = f.readonly
+    ? 'Written by code from the concepts; changes to the concepts update it.'
+    : isPrompt
+      ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it.${f.isNew ? ' It does not exist yet: save to create it.' : ''}`
+      : 'An OKF concept: YAML frontmatter with a <code>type</code>, then Markdown. index.md and log.md are updated when you save.';
+  $('editor').innerHTML = `
+    <div class="bar">
+      ${f.choosePath
+    ? '<input class="path" id="path" placeholder="path/of/the-concept.md" aria-label="Path">'
+    : `<span class="path">${esc(f.path)}</span>`}
+      ${f.hash ? `<span class="hash" title="blob ${esc(f.hash)}">${esc(f.hash.slice(0, 12))}</span>` : ''}
+    </div>
+    <div class="note${note ? ` ${note.kind}` : ''}" id="note">${note ? esc(note.text) : explain}</div>
+    <textarea id="text" spellcheck="false"${f.readonly ? ' readonly' : ''} aria-label="File contents"></textarea>
+    ${f.readonly ? '' : `<div class="foot">
+      <input id="message" placeholder="What you changed (commit message)" aria-label="Commit message">
+      ${f.isNew ? '' : '<button id="delete" class="danger">Delete</button>'}
+      <button id="revert">Revert</button>
+      <button id="save" class="primary">${f.isNew ? 'Create' : 'Save'}</button>
+    </div>`}`;
+  $('text').value = f.isNew ? f.draft : f.text;
+  if (f.readonly) return;
+  $('save').onclick = save;
+  $('revert').onclick = () => { $('text').value = f.isNew ? f.draft : f.text; };
+  if ($('delete')) $('delete').onclick = remove;
+}
+
+function setNote(kind, text) {
+  const el = $('note');
+  el.className = `note ${kind}`;
+  el.textContent = text;
+}
+
+async function save() {
+  const f = state.file;
+  const path = f.choosePath ? $('path').value.trim().replace(/^\/+/, '') : f.path;
+  if (!path) { setNote('err', 'Give the file a path, like issues/cdn-purge-delay.md.'); return; }
+  $('save').disabled = true;
+  setNote('', 'Committing…');
+  const { status, ok, body } = await call('/api/kb/file', {
+    method: 'PUT',
+    body: JSON.stringify({ repo: state.repo, path, content: $('text').value, base: f.hash, message: $('message').value }),
+  });
+  $('save').disabled = false;
+  if (status === 409) {
+    setNote('warn', `${body.error}. Your text is still in the editor; copy it, then Revert to load theirs.`);
+    if (body.current) { f.text = body.current.text; f.hash = body.current.hash; f.isNew = false; }
+    return;
+  }
+  if (!ok) { setNote('err', body.error || `Saving failed (${status}).`); return; }
+  if (body.unchanged) { setNote('', 'Nothing changed.'); return; }
+  await reloadFiles();
+  await openFile(path, { force: true });
+  setNote('ok', `Committed ${String(body.commit).slice(0, 12)}.`);
+}
+
+async function remove() {
+  const f = state.file;
+  if (!window.confirm(`Delete ${f.path}? It stays in the history.`)) return;
+  setNote('', 'Committing…');
+  const { status, ok, body } = await call('/api/kb/file', {
+    method: 'DELETE',
+    body: JSON.stringify({ repo: state.repo, path: f.path, base: f.hash, message: $('message').value }),
+  });
+  if (!ok) { setNote(status === 409 ? 'warn' : 'err', body.error || `Deleting failed (${status}).`); return; }
+  state.file = null;
+  await reloadFiles();
+  $('editor').innerHTML = `<div class="empty">Deleted ${esc(f.path)} in ${esc(String(body.commit).slice(0, 12))}.</div>`;
+  toUrl();
+}
+
+async function reloadFiles() {
+  const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(state.repo)}`);
+  if (ok) {
+    state.files = body.files;
+    state.hasSystemPrompt = body.hasSystemPrompt;
+    state.truncated = body.truncated;
+  }
+  renderFiles();
+}
+
+async function showHistory() {
+  state.view = 'history';
+  state.file = null;
+  renderFiles();
+  toUrl();
+  $('editor').innerHTML = '<div class="empty">Loading…</div>';
+  const { ok, body } = await call(`/api/kb/log?repo=${encodeURIComponent(state.repo)}`);
+  if (!ok) { $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the history.')}</div>`; return; }
+  $('editor').innerHTML = `<div class="bar"><span class="path">History of ${esc(state.repo)}</span></div>
+    <div class="log">${body.commits.map((c) => `<div class="c"><div class="h">${esc(c.hash)} · ${esc(new Date(c.at).toLocaleString())} · ${esc(c.author)}</div>
+      <div class="m">${esc(c.message)}</div></div>`).join('') || '<div class="empty">No commits yet.</div>'}</div>`;
+}
+
+// ---- start ------------------------------------------------------------------------------
+
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    if ($('save') && !$('save').disabled) save();
+  }
+});
+window.addEventListener('beforeunload', (e) => { if (dirty()) e.preventDefault(); });
+
+(async () => {
+  const me = await call('/api/me');
+  if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
+  state.me = me.body;
+  $('me').textContent = state.me.name || state.me.email || '';
+  if (!state.me.admin) {
+    $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team.</div>';
+    $('editor').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
+    return;
+  }
+  const { ok, body } = await call('/api/kb');
+  if (!ok) { $('bases').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the knowledge bases.')}</div>`; return; }
+  state.bases = body.bases;
+  renderBases();
+  const q = new URLSearchParams(location.search);
+  const repo = q.get('repo');
+  if (repo && state.bases.some((b) => b.repo === repo)) {
+    openRepo(repo, { path: q.get('path') || undefined, view: q.get('view') || undefined });
+  }
+})();
+</script>
+</body>
+</html>

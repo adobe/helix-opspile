@@ -165,8 +165,11 @@ export async function listFiles(env, artifact, path, { recursive = false } = {})
   });
 }
 
-/** One file as text, with its blob hash (the `base` for a later write). */
-export async function readText(env, artifact, path) {
+/**
+ * One file as text, with its blob hash (the `base` for a later write). Long files are cut
+ * for the model; `full` reads all of it (the editor, which writes it back).
+ */
+export async function readText(env, artifact, path, { full = false } = {}) {
   return withRepo(env, artifact, async (repo) => {
     const head = await headOf(repo);
     const at = head && await entryAt(repo, head.treeHash, path);
@@ -179,7 +182,7 @@ export async function readText(env, artifact, path) {
       path: cleanPath(path),
       hash: at.hash,
       commit: head.hash,
-      text: text.length > MAX_READ ? `${text.slice(0, MAX_READ)}\n[… truncated at ${MAX_READ / 1024} KB]` : text,
+      text: !full && text.length > MAX_READ ? `${text.slice(0, MAX_READ)}\n[… truncated at ${MAX_READ / 1024} KB]` : text,
     };
   });
 }

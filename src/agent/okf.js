@@ -19,7 +19,6 @@
 
 export const OKF_VERSION = '0.2';
 export const RESERVED = new Set(['index.md', 'log.md']);
-const MAX_FILE = 64 * 1024;
 
 /** The frontmatter block and the body, or null when there is none. */
 export function splitFrontmatter(text) {
@@ -29,6 +28,30 @@ export function splitFrontmatter(text) {
   }
   return { yaml: m[1], body: String(text).slice(m[0].length) };
 }
+
+/**
+ * `systemprompt.md` at the root of a knowledge base: instructions that the agents of every
+ * thread it applies to get appended to their system prompt. It is a concept of type
+ * `System Prompt`, so the bundle stays conformant, but only the admin team writes it.
+ */
+export const SYSTEM_PROMPT = 'systemprompt.md';
+export const SYSTEM_PROMPT_TYPE = 'System Prompt';
+
+/** A system prompt with frontmatter, as a concept; text without frontmatter gets some. */
+export function asSystemPrompt(content, title = 'Agent instructions') {
+  const text = String(content || '');
+  if (splitFrontmatter(text)) {
+    return text;
+  }
+  return `---\ntype: ${SYSTEM_PROMPT_TYPE}\ntitle: ${title}\ndescription: Instructions appended to the system prompt of the agents that use this knowledge base.\n---\n\n${text.replace(/^\n+/, '')}`;
+}
+
+/** The instructions of a system prompt file: its body, without frontmatter or comments. */
+export function systemPromptBody(content) {
+  const fm = splitFrontmatter(content);
+  return (fm ? fm.body : String(content || '')).replace(/<!--[\s\S]*?-->/g, '').trim();
+}
+const MAX_FILE = 64 * 1024;
 
 const unquote = (v) => {
   const s = String(v).trim();
