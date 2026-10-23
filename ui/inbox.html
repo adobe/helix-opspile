@@ -82,7 +82,10 @@
   .c-accent { background: var(--accent) !important; }
 
   /* Threads: fixed-height rows, two lines, as in Apple Mail. */
-  #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  #threads { background: var(--col); border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+    scrollbar-width: none; }
+  /* The open thread's lifted row (#lift) is drawn across the list's right edge: no scrollbar there. */
+  #threads::-webkit-scrollbar { display: none; }
   #threads .count { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line);
     position: sticky; top: 0; background: var(--col); z-index: 1; }
   .t { height: 64px; padding: 9px 14px 0 12px; border-bottom: 1px solid var(--line); cursor: pointer;
@@ -136,7 +139,8 @@
    * under the pointer. They need room to do so (and to cast their shadow): the filter
    * column reaches into the thread list by --fg, and lets the pointer through where it has
    * no card. The open thread's row is lifted out of its column, over the pane, by a copy
-   * of it in #lift (see syncLift), since the list's scroller would clip it.
+   * of it in #lift (see syncLift), since the list's scroller would clip it. It passes under
+   * the open thread's header (.ph), and the list shows no scrollbar for it to cover.
    */
   :root { --r: 14px; --fg: 48px;
     --card-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.7);
@@ -207,7 +211,8 @@
   /* Messages: bubbles, customers left, Adobe right. */
   #pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane); }
   #pane .scroller { flex: 1; overflow: auto; overscroll-behavior: contain; }
-  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--pane); flex: none; }
+  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--pane); flex: none;
+    position: relative; z-index: 3; }
   .ph h2 { margin: 0 0 3px; font-size: 17px; display: flex; gap: 10px; align-items: baseline; }
   .ph .sub { color: var(--mute); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ph .sub img { width: 14px; height: 14px; border-radius: 3px; }
