@@ -326,8 +326,8 @@ export async function processKey(env, key, cache = {}) {
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
-  // A thread agent reads every new message of its thread (only in the listed channels).
-  if (written && !deleted && cls.kind === 'channel' && agentEnabled(env, message.channelId)) {
+  // A thread agent reads every new message of its thread (only in channels where it is on).
+  if (written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId)) {
     await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
   await notifyRoom(env, cls.team, { type: 'thread', thread: message.thread });
