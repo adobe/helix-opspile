@@ -77,6 +77,13 @@
   .log .c { padding: 6px 0; border-bottom: 1px solid var(--line); }
   .log .c .h { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
   .log .c .m { margin-top: 2px; }
+  dialog.confirm { max-width: min(520px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; }
+  dialog.confirm::backdrop { background: rgba(0,0,0,.35); }
+  dialog.confirm p { margin: 0 0 6px; }
+  dialog.confirm .detail { color: var(--mute); font-size: 13px; }
+  dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .note button { margin-left: 6px; padding: 1px 8px; font-size: 13px; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
 </style>
 </head>
@@ -85,7 +92,7 @@
   <h1><a href="/inbox">opspile</a></h1>
   <span class="crumb">Knowledge bases</span>
   <span class="me" id="me"></span>
-  <span title="save the open file"><kbd>⌘S</kbd></span>
+  <span title="changes are saved as you type; ⌘S saves right away"><kbd>⌘S</kbd></span>
 </header>
 <main>
   <section id="bases"><div class="empty">Loading…</div></section>
@@ -95,7 +102,10 @@
 <script>
 /*
  * The knowledge-base editor, for the admin team: every knowledge base (pile 3), its files,
- * and an editor that commits each save as the signed-in person. `systemprompt.md` holds the
+ * and an editor that saves as you type: a pause in typing commits the file as the signed-in
+ * person. No native dialogs (alert, confirm, beforeunload): a debugger attached over CDP
+ * dismisses them on its own, so the questions that remain are asked in the page.
+ * `systemprompt.md` holds the
  * instructions appended to the system prompt of every thread agent that uses the knowledge
  * base; agents cannot change it. index.md and log.md are written by code and shown read-only.
  */
@@ -130,13 +140,39 @@ function conceptTemplate(path) {
   return `---\ntype: Reference\ntitle: ${title}\ndescription: One sentence that says what this is.\ntags: []\n---\n\n`;
 }
 
-function dirty() {
+/** Whether the editor holds text that is not saved: edited since it was opened or saved. */
+function edited() {
   const f = state.file;
-  return Boolean(f && !f.readonly && $('text') && $('text').value !== f.text);
+  return Boolean(f && !f.readonly && $('text') && $('text').value !== f.baseline);
 }
 
-function leave() {
-  return !dirty() || window.confirm('Discard your unsaved changes?');
+/**
+ * Asks in the page, with a modal <dialog>: resolves true for `yes`, false otherwise
+ * (including Escape). Not window.confirm(): a debugger attached over CDP dismisses those.
+ */
+function ask(question, detail, yes) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'confirm';
+    dlg.setAttribute('aria-label', question);
+    dlg.innerHTML = `<form method="dialog"><p><b>${esc(question)}</b></p>${detail ? `<p class="detail">${esc(detail)}</p>` : ''}
+      <div class="apply"><button value="no">Cancel</button><button value="yes" class="primary">${esc(yes)}</button></div></form>`;
+    dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
+    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('[value="no"]').focus();
+  });
+}
+
+/**
+ * Before the editor shows something else: saves what is pending. Asks only when there are
+ * edits that could not be saved (a conflict, an invalid concept, no path yet).
+ */
+async function leave() {
+  await flush();
+  if (!edited()) return true;
+  return ask('Your last changes are not saved.', state.file.problem || 'They could not be committed.', 'Discard them');
 }
 
 function toUrl() {
@@ -173,7 +209,7 @@ function renderBases() {
 }
 
 async function openRepo(repo, { path, view } = {}) {
-  if (repo !== state.repo && !leave()) return;
+  if (repo !== state.repo && !(await leave())) return;
   state.repo = repo;
   state.file = null;
   state.view = view || 'file';
@@ -220,17 +256,18 @@ function renderFiles() {
     el.onclick = () => openFile(el.dataset.path);
   }
   $('new').onclick = newFile;
-  $('history').onclick = () => { if (leave()) showHistory(); };
+  $('history').onclick = () => showHistory();
 }
 
 async function openFile(path, { force = false } = {}) {
-  if (!force && !leave()) return;
+  if (!force && !(await leave())) return;
   state.view = 'file';
   const b = base();
   const exists = state.files.some((f) => f.path === path);
   if (!exists) {
     // Only the system prompt is offered before it exists.
-    state.file = { path, text: '', hash: null, isNew: true, draft: path === SYSTEM_PROMPT ? systemPromptTemplate(b) : conceptTemplate(path) };
+    const draft = path === SYSTEM_PROMPT ? systemPromptTemplate(b) : conceptTemplate(path);
+    state.file = { path, hash: null, isNew: true, baseline: draft };
   } else {
     $('editor').innerHTML = '<div class="empty">Loading…</div>';
     const { ok, body } = await call(`/api/kb/file?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`);
@@ -238,17 +275,19 @@ async function openFile(path, { force = false } = {}) {
       $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
       return;
     }
-    state.file = { path, text: body.text, hash: body.hash, readonly: GENERATED.has(path.split('/').pop()) };
+    state.file = { path, hash: body.hash, baseline: body.text, readonly: GENERATED.has(path.split('/').pop()) };
   }
   renderFiles();
   renderEditor();
   toUrl();
 }
 
-function newFile() {
-  if (!leave()) return;
+async function newFile() {
+  if (!(await leave())) return;
   state.view = 'file';
-  state.file = { path: '', text: '', hash: null, isNew: true, choosePath: true, draft: conceptTemplate('new-concept.md') };
+  state.file = {
+    path: '', hash: null, isNew: true, choosePath: true, baseline: conceptTemplate('new-concept.md'),
+  };
   renderFiles();
   renderEditor();
   toUrl();
@@ -257,72 +296,162 @@ function newFile() {
 
 // ---- editor -----------------------------------------------------------------------------
 
+const PATH = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.md$/;
+const AUTOSAVE_MS = 1200;
+
 function renderEditor(note) {
   const f = state.file;
   const isPrompt = f.path === SYSTEM_PROMPT;
   const explain = f.readonly
     ? 'Written by code from the concepts; changes to the concepts update it.'
     : isPrompt
-      ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it.${f.isNew ? ' It does not exist yet: save to create it.' : ''}`
-      : 'An OKF concept: YAML frontmatter with a <code>type</code>, then Markdown. index.md and log.md are updated when you save.';
+      ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it. Saved as you type.${f.isNew ? ' It does not exist yet: start typing to create it.' : ''}`
+      : `An OKF concept: YAML frontmatter with a <code>type</code>, then Markdown. Saved as you type; index.md and log.md follow.${f.choosePath ? ' Give it a path first.' : ''}`;
   $('editor').innerHTML = `
     <div class="bar">
       ${f.choosePath
     ? '<input class="path" id="path" placeholder="path/of/the-concept.md" aria-label="Path">'
     : `<span class="path">${esc(f.path)}</span>`}
-      ${f.hash ? `<span class="hash" title="blob ${esc(f.hash)}">${esc(f.hash.slice(0, 12))}</span>` : ''}
+      <span class="hash" id="hash"></span>
     </div>
     <div class="note${note ? ` ${note.kind}` : ''}" id="note">${note ? esc(note.text) : explain}</div>
     <textarea id="text" spellcheck="false"${f.readonly ? ' readonly' : ''} aria-label="File contents"></textarea>
-    ${f.readonly ? '' : `<div class="foot">
-      <input id="message" placeholder="What you changed (commit message)" aria-label="Commit message">
-      ${f.isNew ? '' : '<button id="delete" class="danger">Delete</button>'}
-      <button id="revert">Revert</button>
-      <button id="save" class="primary">${f.isNew ? 'Create' : 'Save'}</button>
-    </div>`}`;
-  $('text').value = f.isNew ? f.draft : f.text;
+    ${f.readonly || f.isNew ? '' : '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>'}`;
+  $('text').value = f.baseline;
+  showHash();
   if (f.readonly) return;
-  $('save').onclick = save;
-  $('revert').onclick = () => { $('text').value = f.isNew ? f.draft : f.text; };
+  $('text').addEventListener('input', schedule);
+  $('text').addEventListener('blur', () => { flush(); });
+  if ($('path')) $('path').addEventListener('input', schedule);
   if ($('delete')) $('delete').onclick = remove;
 }
 
-function setNote(kind, text) {
-  const el = $('note');
-  el.className = `note ${kind}`;
-  el.textContent = text;
+function showHash() {
+  const f = state.file;
+  const el = $('hash');
+  if (!el) return;
+  el.textContent = f.hash ? f.hash.slice(0, 12) : '';
+  el.title = f.hash ? `blob ${f.hash}` : '';
 }
 
-async function save() {
+function setNote(kind, text, actions = []) {
+  const el = $('note');
+  if (!el) return;
+  el.className = `note ${kind}`;
+  el.textContent = text;
+  for (const [label, run] of actions) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = run;
+    el.append(b);
+  }
+}
+
+/** Saves a pause after the last keystroke. */
+function schedule() {
   const f = state.file;
+  clearTimeout(state.timer);
+  if (f.conflict) return;
+  if (!edited()) { setNote('', 'No changes.'); return; }
+  setNote('', 'Editing…');
+  state.timer = setTimeout(() => { flush(); }, AUTOSAVE_MS);
+}
+
+/** Saves now, if there is anything to save; one save at a time, the latest text wins. */
+async function flush() {
+  clearTimeout(state.timer);
+  while (state.saving) await state.saving;
+  const f = state.file;
+  if (!f || f.readonly || f.conflict || !edited()) return;
+  state.saving = commit(f).finally(() => { state.saving = null; });
+  await state.saving;
+}
+
+async function commit(f) {
+  const text = $('text').value;
   const path = f.choosePath ? $('path').value.trim().replace(/^\/+/, '') : f.path;
-  if (!path) { setNote('err', 'Give the file a path, like issues/cdn-purge-delay.md.'); return; }
-  $('save').disabled = true;
-  setNote('', 'Committing…');
-  const { status, ok, body } = await call('/api/kb/file', {
-    method: 'PUT',
-    body: JSON.stringify({ repo: state.repo, path, content: $('text').value, base: f.hash, message: $('message').value }),
-  });
-  $('save').disabled = false;
-  if (status === 409) {
-    setNote('warn', `${body.error}. Your text is still in the editor; copy it, then Revert to load theirs.`);
-    if (body.current) { f.text = body.current.text; f.hash = body.current.hash; f.isNew = false; }
+  if (!PATH.test(path)) {
+    f.problem = 'Give the file a lowercase path that ends in .md, like issues/cdn-purge-delay.md.';
+    setNote('warn', f.problem);
     return;
   }
-  if (!ok) { setNote('err', body.error || `Saving failed (${status}).`); return; }
-  if (body.unchanged) { setNote('', 'Nothing changed.'); return; }
-  await reloadFiles();
-  await openFile(path, { force: true });
-  setNote('ok', `Committed ${String(body.commit).slice(0, 12)}.`);
+  setNote('', 'Saving…');
+  const { status, ok, body } = await call('/api/kb/file', {
+    method: 'PUT',
+    body: JSON.stringify({ repo: state.repo, path, content: text, base: f.hash }),
+  });
+  if (state.file !== f) return;
+  if (status === 409) {
+    f.conflict = { current: body.current || null };
+    f.problem = body.error;
+    setNote('warn', `${body.error}. Nothing was saved.`, [
+      ['Load their version', () => resolveConflict(f, 'theirs')],
+      ['Save mine over it', () => resolveConflict(f, 'mine')],
+    ]);
+    return;
+  }
+  if (!ok) {
+    f.problem = body.error || `Saving failed (${status}).`;
+    setNote('err', `${f.problem} Not saved; fix it and keep typing.`);
+    return;
+  }
+  f.problem = null;
+  f.baseline = text;
+  if (body.hash) f.hash = body.hash;
+  const created = f.isNew;
+  f.isNew = false;
+  if (f.choosePath) {
+    f.choosePath = false;
+    f.path = path;
+  }
+  if (created) {
+    // The file is new: list it, and show it as an existing file (path fixed, Delete), in
+    // place, so typing goes on undisturbed.
+    if ($('path')) {
+      const span = document.createElement('span');
+      span.className = 'path';
+      span.textContent = path;
+      $('path').replaceWith(span);
+    }
+    if (!$('delete')) {
+      $('editor').insertAdjacentHTML('beforeend', '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>');
+      $('delete').onclick = remove;
+    }
+    await reloadFiles();
+    toUrl();
+  }
+  showHash();
+  setNote('ok', body.unchanged ? 'Saved (nothing changed).' : `Saved · ${String(body.commit).slice(0, 12)}`);
+  // Typed on while the save was in flight: save that too.
+  if (edited()) schedule();
+}
+
+/** After a conflict: take the other version, or save this text over it. */
+function resolveConflict(f, keep) {
+  const theirs = f.conflict && f.conflict.current;
+  f.conflict = null;
+  f.problem = null;
+  f.hash = theirs ? theirs.hash : null;
+  f.isNew = !theirs;
+  if (theirs && !state.files.some((x) => x.path === f.path)) reloadFiles();
+  if (keep === 'theirs') {
+    f.baseline = theirs ? theirs.text : '';
+    $('text').value = f.baseline;
+    showHash();
+    setNote('', 'Loaded their version.');
+    return;
+  }
+  flush();
 }
 
 async function remove() {
   const f = state.file;
-  if (!window.confirm(`Delete ${f.path}? It stays in the history.`)) return;
-  setNote('', 'Committing…');
+  await flush();
+  if (!(await ask(`Delete ${f.path}?`, 'It stays in the history of the knowledge base.', 'Delete'))) return;
+  setNote('', 'Deleting…');
   const { status, ok, body } = await call('/api/kb/file', {
     method: 'DELETE',
-    body: JSON.stringify({ repo: state.repo, path: f.path, base: f.hash, message: $('message').value }),
+    body: JSON.stringify({ repo: state.repo, path: f.path, base: f.hash }),
   });
   if (!ok) { setNote(status === 409 ? 'warn' : 'err', body.error || `Deleting failed (${status}).`); return; }
   state.file = null;
@@ -342,6 +471,7 @@ async function reloadFiles() {
 }
 
 async function showHistory() {
+  if (state.file && !(await leave())) return;
   state.view = 'history';
   state.file = null;
   renderFiles();
@@ -359,10 +489,21 @@ async function showHistory() {
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 's') {
     e.preventDefault();
-    if ($('save') && !$('save').disabled) save();
+    flush();
   }
 });
-window.addEventListener('beforeunload', (e) => { if (dirty()) e.preventDefault(); });
+// Leaving the page saves what is pending, without asking: keepalive lets the request finish.
+window.addEventListener('pagehide', () => {
+  const f = state.file;
+  if (!edited() || f.conflict || f.choosePath) return;
+  fetch('/api/kb/file', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    keepalive: true,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repo: state.repo, path: f.path, content: $('text').value, base: f.hash }),
+  });
+});
 
 (async () => {
   const me = await call('/api/me');
