@@ -171,10 +171,13 @@ prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team have an editor at `/inbox/kb` (linked from the inbox
 header): every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. A save is one commit authored by the person, stamped `generated: { by:
-human:<email> }`, through the same write path as the agents' (OKF checks, indexes and log
-written by code). A save names the blob it was written from, so a colleague's or an agent's
-newer version is never overwritten unseen; `index.md` and `log.md` are read-only there.
+and the concepts. It saves as you type: a pause of a second (or leaving the file, or ⌘S)
+commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
+through the same write path as the agents' (OKF checks, indexes and log written by code).
+A save names the blob it was written from, so a colleague's or an agent's newer version is
+never overwritten unseen: the editor offers to load theirs or save over it. `index.md` and
+`log.md` are read-only there. It asks only in the page (no native dialogs, which a debugger
+attached over CDP dismisses), and only when edits could not be saved or before a delete.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
