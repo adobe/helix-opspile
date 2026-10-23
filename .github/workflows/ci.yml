@@ -39,6 +39,7 @@ jobs:
       MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
       MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
       PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
+      WORKER_DOMAINS: ${{ secrets.WORKER_DOMAINS }}
       STAFF_DOMAINS: ${{ secrets.STAFF_DOMAINS }}
       ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
       ACCESS_AUD: ${{ secrets.ACCESS_AUD }}

@@ -71,6 +71,7 @@ Nothing below is committed; set it on the Worker.
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
+| `WORKER_DOMAINS` | deploy | Optional, comma-separated custom domains of the deployed Worker (`cf deploy` adds the DNS record and certificate in the domain's zone, which must be in the account); `workers.dev` stays on |
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox` and `/api` |
