@@ -131,6 +131,8 @@
   .picks .pickrow .where { flex: none; text-align: right; font-size: 13px; padding-top: 1px; }
   mark { background: color-mix(in srgb, var(--yellow) 35%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
   .sep { color: var(--faint); }
+  td.nw { white-space: nowrap; }
+  td .sub .mono { overflow-wrap: anywhere; }
   tr.section td { font-size: 12px; font-weight: 600; color: var(--mute); padding-top: 16px; }
   .tag.clef { color: var(--mute); }
   .tag.clef.yes { color: var(--green); border-color: var(--green); }
@@ -557,8 +559,8 @@ function renderChannels() {
     return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
       <td>${esc(other === 'org' ? orgLabel(c.org) : teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
-      ${triage ? `<td>${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}">give to ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
-      <td>${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
+      ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}" title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
+      <td class="nw">${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
@@ -611,7 +613,8 @@ function wireChannelPicker() {
         <span class="name"><span class="ch">${channelName(c, words)}</span>
           <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
           · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
-        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}`}</span></div>`;
+        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}`}
+          ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
     }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
     picks.hidden = false;
     placePicks(input, picks);
