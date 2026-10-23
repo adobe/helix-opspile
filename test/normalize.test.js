@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import {
   channelPath, merge, parse, render,
 } from '../src/channels.js';
+import { htmlToMarkdown } from '../src/markdown.js';
 import { normalize, slackVersion } from '../src/normalize.js';
 
 // Made-up ids only.
@@ -150,6 +151,19 @@ describe('normalize (teams)', () => {
     assert.equal(message.format, 'html');
     assert.equal(message.authorRef.userId, 'u-1');
     assert.equal(message.permalink, 'https://teams.example/l/message/1');
+  });
+
+  it('lists file attachments as links, with spaces in their addresses encoded', () => {
+    const attachments = [{
+      contentType: 'reference',
+      name: 'notes [v2].pdf',
+      contentUrl: 'https://files.example/sites/x/Shared Documents/A B/notes [v2].pdf',
+    }];
+    const link = '- [notes \\[v2\\].pdf](https://files.example/sites/x/Shared%20Documents/A%20B/notes%20[v2].pdf)';
+    const { message } = normalize(TKEY, msg({ attachments }));
+    assert.equal(htmlToMarkdown(message.text), `hi\n\nAttachments:\n\n${link}`);
+    const plain = normalize(TKEY, msg({ attachments, body: { contentType: 'text', content: 'hi' } }));
+    assert.equal(plain.message.text, `hi\n\nAttachments:\n\n${link}`);
   });
 
   it('turns a soft-deleted message into a tombstone', () => {
