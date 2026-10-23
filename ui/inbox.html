@@ -13,7 +13,8 @@
     --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
     --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
     --me: #2f7cf6; --me-ink: #fff; --me-link: #fff;
-    --them: #2b3037; --them-ink: #e8eaed;
+    --them: #2b3037; --them-ink: #e8eaed; --them-code: rgba(0,0,0,.25);
+    --pane: #0f1114;
     --code: #0b0d10;
     font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
       -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -23,7 +24,9 @@
     :root {
       --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
       --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
-      --sel: #dde9fb; --purple: #8250df; --them: #e9ebee; --them-ink: #1d2025; --code: #f3f4f6;
+      --sel: #dde9fb; --purple: #8250df; --them: #e1e5ea; --them-ink: #1d2025; --code: #f3f4f6;
+      /* A white pane, so customer bubbles stand out (1.27:1) as Adobe's blue ones do. */
+      --pane: #fff; --them-code: rgba(0,0,0,.08); --them-link: #0a4fa8;
     }
   }
   * { box-sizing: border-box; }
@@ -165,9 +168,9 @@
   .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
   /* Messages: bubbles, customers left, Adobe right. */
-  #pane { display: flex; flex-direction: column; overflow: hidden; }
+  #pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane); }
   #pane .scroller { flex: 1; overflow: auto; overscroll-behavior: contain; }
-  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+  .ph { padding: 12px 22px; border-bottom: 1px solid var(--line); background: var(--pane); flex: none; }
   .ph h2 { margin: 0 0 3px; font-size: 17px; display: flex; gap: 10px; align-items: baseline; }
   .ph .sub { color: var(--mute); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ph .sub img { width: 14px; height: 14px; border-radius: 3px; }
@@ -182,7 +185,7 @@
   .msg.cont { margin-top: 3px; }
   .msg .face { position: relative; flex: none; width: 36px; }
   .msg .face .badge-ico { position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border-radius: 4px;
-    background: #fff; border: 2px solid var(--bg); }
+    background: #fff; border: 2px solid var(--pane); }
   .msg.cont .face { visibility: hidden; height: 0; }
   .msg.adobe { flex-direction: row-reverse; }
   .msg .col { max-width: min(74%, 760px); display: flex; flex-direction: column; align-items: flex-start; }
@@ -193,11 +196,12 @@
   .bubble { background: var(--them); color: var(--them-ink); padding: 8px 13px; border-radius: 18px;
     border-bottom-left-radius: 5px; overflow-wrap: anywhere; line-height: 1.5; }
   .msg.adobe .bubble { background: var(--me); color: var(--me-ink); border-bottom-left-radius: 18px; border-bottom-right-radius: 5px; }
-  .bubble a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+  .bubble a { color: var(--them-link, var(--link)); text-decoration: underline; text-underline-offset: 2px; }
   .msg.adobe .bubble a { color: var(--me-link); }
   .bubble p { margin: 0; }
   .bubble p + p { margin-top: 8px; }
-  .bubble code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(0,0,0,.25); padding: 1px 4px; border-radius: 4px; }
+  .bubble code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--them-code); padding: 1px 4px; border-radius: 4px; }
+  .msg.adobe .bubble code { background: rgba(0,0,0,.25); }
   .bubble pre { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); color: var(--ink);
     border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; overflow: auto; margin: 6px 0; white-space: pre-wrap; }
   .bubble pre code { font: inherit; background: none; padding: 0; border-radius: 0; }
@@ -206,7 +210,7 @@
   .bubble > :last-child { margin-bottom: 0; }
   .bubble hr { border: 0; border-top: 1px solid currentColor; opacity: .3; margin: 8px 0; }
   .bubble table { border-collapse: collapse; margin: 6px 0; display: block; overflow-x: auto; }
-  .bubble th, .bubble td { border: 1px solid var(--line); padding: 3px 8px; }
+  .bubble th, .bubble td { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding: 3px 8px; }
   .bubble li > input[type=checkbox] { margin: 0 4px 0 -2px; vertical-align: -1px; }
   .bubble blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid currentColor; opacity: .85; }
   .bubble ul, .bubble ol { margin: 4px 0; padding-left: 20px; }
@@ -1047,6 +1051,7 @@ const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80
 async function openThread(key, { live = false, cached = false } = {}) {
   const switching = state.open !== key;
   state.open = key;
+  if (switching) prefetchAround(key);
   if (switching) toUrl();
   renderThreads();
   const pane = $('pane');
@@ -1592,14 +1597,36 @@ async function loadInbox() {
   render();
   syncPages();
 }
+// Threads are fetched ahead, so opening one is instant: a queue, not a drop. A row that
+// scrolls into view, the rows next to the open one and a row under the pointer all queue
+// their thread; urgent ones (pointer, neighbours) go to the front. Six at a time.
 const inflight = new Set();
-async function prefetch(key) {
-  const hit = state.cache.get(key);
-  if (!key || inflight.has(key) || (hit && Date.now() - hit.at < 60000) || inflight.size >= 4) return;
-  inflight.add(key);
-  try {
-    state.cache.set(key, { data: await get(`/api/thread?thread=${encodeURIComponent(key)}`), at: Date.now() });
-  } catch { /* opening it will try again */ } finally { inflight.delete(key); }
+const queued = [];
+const PREFETCH_AT_ONCE = 6;
+const fresh = (key) => { const hit = state.cache.get(key); return hit && Date.now() - hit.at < 60000; };
+function prefetch(key, { urgent = false } = {}) {
+  if (!key || inflight.has(key) || fresh(key)) return;
+  const at = queued.indexOf(key);
+  if (at >= 0) { if (!urgent) return; queued.splice(at, 1); }
+  if (urgent) queued.unshift(key); else queued.push(key);
+  pump();
+}
+function pump() {
+  while (inflight.size < PREFETCH_AT_ONCE && queued.length) {
+    const key = queued.shift();
+    if (inflight.has(key) || fresh(key)) continue;
+    inflight.add(key);
+    get(`/api/thread?thread=${encodeURIComponent(key)}`)
+      .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); })
+      .catch(() => { /* opening it will try again */ })
+      .finally(() => { inflight.delete(key); pump(); });
+  }
+}
+/** The threads just before and after the open one (j / k), first in the queue. */
+function prefetchAround(key) {
+  const i = state.order.indexOf(key);
+  if (i < 0) return;
+  for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
 function connect() {
   state.ws?.close();
@@ -1716,6 +1743,11 @@ async function start() {
     render();
     toUrl();
   };
+  // A row under the pointer is about to be opened: fetch it first.
+  $('threads').addEventListener('pointerover', (e) => {
+    const row = e.target.closest('.t');
+    if (row) prefetch(row.dataset.thread, { urgent: true });
+  });
   $('threads').onclick = (e) => {
     const sort = e.target.closest('[data-sort]');
     if (sort) { state.sort = sort.dataset.sort; renderThreads(); toUrl(); return; }
