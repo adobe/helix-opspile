@@ -236,8 +236,9 @@ name, an `https://` URL, what it is for (the agents are told), request headers f
 credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
 only tools agents may call. Adding or changing one connects to it and lists its tools.
 
-For admins, both pages' headers have the same switch between **Inbox** and **Knowledge
-bases**, and context goes along both ways. From the inbox, the editor opens the knowledge base
+For admins and team managers, the pages' headers have the same switch between **Inbox**,
+**Agents** (this editor: the agents' knowledge bases, channels, MCP servers and instructions)
+and **Admin**, and context goes along between the inbox and the editor. From the inbox, the editor opens the knowledge base
 of the open thread's customer (or of the one customer filtered on) if it has one, else the
 team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
 origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
