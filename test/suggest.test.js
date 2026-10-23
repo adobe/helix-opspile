@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { channelMatch } from '../src/admin.js';
 import { api } from '../src/api.js';
 import {
-  channelState, classifyChannels, NONE, suggestionsFor,
+  channelState, classifyChannels, NONE, suggestionsFor, tfidf,
 } from '../src/suggest.js';
 import { d1 } from './d1.js';
 import { quiet } from './fakes.js';
@@ -235,6 +235,33 @@ describe('channel suggestions', () => {
     assert.deepEqual(coverage, { channels: 4, classified: 4, membersListed: 4 });
     assert.equal(suggestions[0].orgName, 'Globex Corporation');
     assert.deepEqual((await suggestionsFor(e, 'helix')).suggestions, []);
+  });
+
+  it('weigh down the members who are active in most of the admin team\'s channels', async () => {
+    const e = env();
+    // Ada, an admin, is in Edge ops too and posts ten times in three of the four channels;
+    // Cy is a member of the test channel.
+    const posts = ['C2', 'C3', 'C4'].flatMap((ch) => Array.from({ length: 10 }, (_, i) => `('slack', 'X1',
+      '${ch}', 'a${i}', 'slack:X1:${ch}:r${ch.slice(1)}', '${T0}', 1, 1, 1)`));
+    e.DB.sqlite.exec(`INSERT INTO team_members (team, person) VALUES ('edge', 1);
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, person, staff, counted)
+        VALUES ${posts.join(', ')};
+      INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
+        VALUES ('slack', 'X1', 'C4', 'UC', 'cy@staff.example', 'Cy');`);
+    const { suggestions } = await suggestionsFor(e, 'edge');
+    // Counting people and posts would put C2, C4 and C3 first; Bo's two posts in the one
+    // channel he is in say more than Ada's thirty everywhere.
+    const who = (s) => s.people.map((p) => [p.name, p.channels]);
+    assert.deepEqual(suggestions.map((s) => [s.channelId, who(s)]), [
+      ['C1', [['Bo', 1]]],
+      ['C2', [['Ada', 3], ['Cy', 2]]],
+      ['C4', [['Ada', 3], ['Cy', 2]]],
+      ['C3', [['Ada', 3]]],
+    ]);
+    const [c1, c2, c4, c3] = suggestions;
+    assert.ok(c1.score > c2.score && c2.score > c4.score && c4.score > c3.score);
+    assert.equal(c3.score, c3.people[0].weight);
+    assert.equal(tfidf({ posted: 5 }, 4, 4), 0);
   });
 
   it('are on a team\'s page for the admin team, and the search finds channels by customer', async () => {

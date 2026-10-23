@@ -79,7 +79,9 @@ team, a Slack Connect team), manual assignments of channels to a team or an org,
 org's name, icon and type. A team's page suggests channels for it among the ones the admin team
 holds (the rule of last resort files every channel no other rule claims there): the ones where
 the team's members post, react or are members (listed from Slack, or from the Teams team, into
-`channel_members`), and the ones Clef gives the team. The cron asks Clef about a batch of the admin
+`channel_members`), ranked tf-idf style so that someone active in most of the admin team's
+channels (an admin, say) counts for little and a member active in a few counts the most, and the
+ones Clef gives the team. The cron asks Clef about a batch of the admin
 team's channels every run, one question set per channel (`channel_labels`): which ops team should
 follow it (each described by its rules, some of its channels and its members, or none of them),
 and whether it is a conversation, an alert feed or not worth following. Clef is told the channel's

@@ -718,12 +718,14 @@ function wireChannelPicker() {
 const CLEF_SHOWN = 10;
 
 /** One suggested channel: where it is, who of the team is active in it, what Clef says. */
-function suggestionRow(c) {
+function suggestionRow(c, total) {
   const org = c.org && !c.org.startsWith('_') ? (c.orgName || c.org) : '';
   const who = c.people.map((p) => {
     const did = [p.posted ? `${p.posted} post${p.posted === 1 ? '' : 's'}` : '', p.reacted ? `${p.reacted} reaction${p.reacted === 1 ? '' : 's'}` : '', p.member ? 'member' : '']
       .filter(Boolean).join(', ');
-    return `<span class="person" title="${esc(did)}">${esc(p.name)}<span class="sub"> · ${esc(did)}</span></span>`;
+    // The rank weighs each person down by how many of the admin team's channels they are in.
+    const where = p.channels && total ? `; active in ${p.channels} of the admin team's ${total} channels, weight ${p.weight}` : '';
+    return `<span class="person" title="${esc(did + where)}">${esc(p.name)}<span class="sub"> · ${esc(did)}</span></span>`;
   }).join('');
   return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))}${org ? ` · customer <b>${esc(org)}</b>` : ''}${c.topic ? ` · <span title="${esc(c.topic)}">${esc(c.topic.length > 80 ? `${c.topic.slice(0, 80)}…` : c.topic)}</span>` : ''}</div></td>
     <td>${who || '<span class="sub">nobody yet</span>'}</td>
@@ -737,10 +739,11 @@ function renderSuggestions() {
   const active = suggestions.filter((c) => c.people.length);
   const clefOnly = suggestions.filter((c) => !c.people.length);
   const shown = showAllClef ? clefOnly : clefOnly.slice(0, CLEF_SHOWN);
+  const row = (c) => suggestionRow(c, coverage && coverage.channels);
   const head = '<tr><th>Channel</th><th>Active here from this team</th><th>Clef</th><th>Threads</th><th>Latest</th><th></th></tr>';
   const none = '<tr><td colspan="6" class="sub">No member of this team posts, reacts or is a member in a channel the admin team holds.</td></tr>';
-  const table = suggestions.length ? `<table>${head}${active.length ? active.map(suggestionRow).join('') : none}
-    ${clefOnly.length ? `<tr class="section"><td colspan="6">Clef also suggests, though nobody from this team is active there</td></tr>${shown.map(suggestionRow).join('')}` : ''}</table>
+  const table = suggestions.length ? `<table>${head}${active.length ? active.map(row).join('') : none}
+    ${clefOnly.length ? `<tr class="section"><td colspan="6">Clef also suggests, though nobody from this team is active there</td></tr>${shown.map(row).join('')}` : ''}</table>
     ${clefOnly.length > shown.length ? `<button class="link" id="sMore">Show ${clefOnly.length - shown.length} more</button>` : ''}`
     : '<div class="empty">No channel of the admin team has members of this team in it, and Clef suggests none.</div>';
   $('suggestTable').innerHTML = `${table}
