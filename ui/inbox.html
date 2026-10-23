@@ -93,9 +93,17 @@
     background: var(--card); border: 2px solid var(--col); margin-left: -5px; }
   .moods .em:first-child { margin-left: 0; }
   #threads .count { display: flex; align-items: center; }
-  #threads .count .sort { margin-left: auto; display: flex; gap: 4px; }
-  #threads .count .sort button { font-size: 11px; padding: 1px 8px; }
-  #threads .count .sort button[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
+  #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  /* Smart and Recent: one switch, the active side highlighted. */
+  #threads .count .order { display: flex; padding: 1px; border-radius: 9px; font-size: 11px; }
+  #threads .count .order span { padding: 1px 8px; border-radius: 7px; color: var(--mute); }
+  #threads .count .order span.on { background: var(--sel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
+  /* Unread only: an icon, filled with the accent colour while it filters. */
+  #threads .count .unread { display: grid; place-items: center; width: 26px; height: 22px; padding: 0;
+    border-radius: 7px; color: var(--mute); }
+  #threads .count .unread svg { width: 15px; height: 15px; }
+  #threads .count .unread:hover { color: var(--ink); }
+  #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .t .tags { margin-left: auto; display: flex; gap: 4px; overflow: hidden; flex-shrink: 1; }
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; color: var(--mute); }
   .tag.hot { color: var(--red); border-color: var(--red); }
@@ -317,7 +325,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const state = {
   me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
-  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', scores: new Map(),
+  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', unread: false, keep: new Set(), scores: new Map(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(),
 };
 
@@ -731,7 +739,9 @@ const valuesOf = (f, t) => {
   if (f.multi) return v && v.length ? v : ['(none)'];
   return [v ?? '(none)'];
 };
-const passes = (t, except) => FACETS.every((f) => f.id === except || !state.sel[f.id]?.size
+// Unread only keeps the threads read since it was turned on, so a row does not vanish
+// when you open it.
+const passes = (t, except) => (!state.unread || t.unread || state.keep.has(t.thread)) && FACETS.every((f) => f.id === except || !state.sel[f.id]?.size
   || valuesOf(f, t).some((v) => state.sel[f.id].has(v)));
 
 /**
@@ -867,6 +877,8 @@ const preload = new IntersectionObserver((entries) => {
   for (const e of entries) if (e.isIntersecting) prefetch(e.target.dataset.thread);
 }, { root: $('threads'), rootMargin: '200px' });
 
+const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M7 12h2"/></svg>';
+
 function renderThreads() {
   const box = $('threads');
   if (!state.data) return;
@@ -876,7 +888,10 @@ function renderThreads() {
   // never moves the row you clicked.
   else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
   if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
-  const sorter = ['smart', 'recent'].map((k) => `<button data-sort="${k}" aria-pressed="${state.sort === k}">${k === 'smart' ? 'Smart' : 'Recent'}</button>`).join('');
+  const recent = state.sort === 'recent';
+  const sorter = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`
+    + `<button class="order" data-sort="${recent ? 'smart' : 'recent'}" role="switch" aria-checked="${recent}" aria-label="Sort by latest activity" title="${recent ? 'Latest activity first' : 'What needs you most first'}">`
+    + `<span class="${recent ? '' : 'on'}">Smart</span><span class="${recent ? 'on' : ''}">Recent</span></button>`;
   box.querySelector('.count').innerHTML = `<span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span>`;
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images).
   const list = box.querySelector('.rows');
@@ -1531,6 +1546,7 @@ function markRead(t) {
     else fetch('/api/read', { method: 'POST', body: JSON.stringify(msg), credentials: 'same-origin' });
   }
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
+  if (state.unread && t.unread) state.keep.add(t.thread);
   Object.assign(t, { unread: false, unseen: false, mentionedMe: false });
   if (lastOf(t)) t.unseenByAdobe = false;
   const applies = { 'mentioned-team': t.mentionedTeam.length > 0 };
@@ -1588,6 +1604,11 @@ function connect() {
   };
 }
 
+function setUnread(on, open = state.open) {
+  if (on !== state.unread) state.keep = new Set(on && open ? [open] : []);
+  state.unread = on;
+}
+
 // ---------------------------------------------------------------- URL state
 function toUrl(push = true) {
   const q = new URLSearchParams();
@@ -1597,6 +1618,7 @@ function toUrl(push = true) {
   if (state.open) q.set('t', state.open);
   if (state.review) q.set('review', '1');
   if (state.sort !== 'smart') q.set('sort', state.sort);
+  if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](null, '', url);
@@ -1610,6 +1632,7 @@ function fromUrl() {
     for (const [k, v] of q) if (k.startsWith('f.') && v) state.sel[k.slice(2)] = new Set(v.split('|'));
   }
   state.sort = q.get('sort') === 'recent' ? 'recent' : 'smart';
+  setUnread(q.get('unread') === '1', q.get('t'));
   state.as = Number(q.get('as')) || null;
   return { open: q.get('t'), review: q.get('review') === '1' };
 }
@@ -1657,7 +1680,9 @@ async function start() {
     toUrl();
   };
   $('threads').onclick = (e) => {
-    if (e.target.dataset.sort) { state.sort = e.target.dataset.sort; renderThreads(); toUrl(); return; }
+    const sort = e.target.closest('[data-sort]');
+    if (sort) { state.sort = sort.dataset.sort; renderThreads(); toUrl(); return; }
+    if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('a')) return;
     const el = e.target.closest('.t');
     if (el) openThread(el.dataset.thread);
@@ -1848,7 +1873,7 @@ const WEBMCP_TOOLS = [
       return out({
         viewer: state.data.me?.name || state.me.name, readonly: Boolean(state.data.me?.readonly),
         team: state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
-        filters: activeFilters(), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
+        unread_only: state.unread, filters: activeFilters(), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
       });
     },
   },
@@ -1870,6 +1895,7 @@ const WEBMCP_TOOLS = [
         customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
         sort: { type: 'string', enum: ['smart', 'recent'], description: 'smart: what needs the viewer most first; recent: latest activity first' },
+        unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state; switching team closes the open thread' },
       },
     },
@@ -1897,16 +1923,17 @@ const WEBMCP_TOOLS = [
         }
       }
       if (args.team && args.team !== state.team) await switchTeam(args.team);
-      if (args.clear) state.sel = {};
+      if (args.clear) { state.sel = {}; setUnread(false); }
       for (const [arg, vals] of Object.entries(next)) {
         if (vals.length) state.sel[FILTER_ARGS[arg]] = new Set(vals); else delete state.sel[FILTER_ARGS[arg]];
       }
       if (args.involves_me === true) state.sel.involves = new Set(['me']);
       else if (args.involves_me === false) delete state.sel.involves;
       if (args.sort === 'smart' || args.sort === 'recent') state.sort = args.sort;
+      if (typeof args.unread_only === 'boolean') setUnread(args.unread_only);
       render();
       toUrl();
-      return out({ team: state.team, filters: activeFilters(), sort: state.sort, shown: state.order.length, total: state.data.threads.length });
+      return out({ team: state.team, filters: activeFilters(), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length });
     },
   },
   {
