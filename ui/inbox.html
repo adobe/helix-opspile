@@ -1005,6 +1005,10 @@ function renderFilters() {
 // ---------------------------------------------------------------- thread list
 // `:name:` to the character, for titles (the body renderer does the same).
 const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
+/** Text without what platforms rewrite: emoji (characters or :codes:), markup, spacing. */
+const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu, '')
+  .replace(/<@[^>]+>|@\S+/g, '').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ')
+  .trim();
 
 const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
 const ourMove = (t) => t.waiting_on === 'us';
@@ -1336,9 +1340,12 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const myRead = watermarks.filter((w) => w.person === state.me.id).map((w) => w.read_at).sort().pop() || null;
   const ids = new Set(messages.map((m) => `${m.thread}|${m.id}`));
   const fresh = (m) => live && state.shownIds && !state.shownIds.has(`${m.thread}|${m.id}`);
-  // Replies I sent that have not arrived yet.
+  // Replies I sent that have not arrived yet: a reply has arrived once a message has the id
+  // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
+  // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions).
   state.sending = state.sending.filter((p) => p.thread === key && Date.now() - p.sentAt < 60000
-    && !messages.some((m) => m.author?.name === state.me.name && m.body.trim() === p.body.trim()));
+    && !messages.some((m) => (p.postedId ? String(m.id) === String(p.postedId)
+      : m.author?.name === state.me.name && looseText(m.body) === looseText(p.body))));
   const shown = [...messages, ...state.sending.map((p) => ({
     ...p, author: { kind: 'person', name: state.me.name, staff: true }, pending: true,
   }))];
@@ -1615,7 +1622,9 @@ async function send(key, thread) {
   if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   mention.picked.delete(key);
   const last = state.shownIds ? [...state.shownIds].pop() : null;
-  state.sending.push({ thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, source: thread.source, last });
+  state.sending.push({
+    thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, postedId: data.id || null, source: thread.source, last,
+  });
   openThread(key, { live: true });
   return true;
 }
