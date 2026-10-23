@@ -44,6 +44,7 @@ import { inboxPage as withEmoji } from '../src/page.js';
 import { partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
+import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,6 +57,7 @@ const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
 const store = createStore();
+const kb = await createKnowledgeBases();
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 const reloadClients = new Set();
@@ -388,15 +390,69 @@ async function proxyApi(req, res, url, b) {
   return true;
 }
 
+/** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
+async function kbApi(req, res, url) {
+  if (url.pathname === '/api/kb') {
+    return json(res, { systemPrompt: 'systemprompt.md', bases: kb.list() });
+  }
+  const body = req.method === 'GET' ? {} : await readJson(req);
+  const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
+  if (!kb.has(repo)) {
+    return json(res, { error: 'no such knowledge base' }, 404);
+  }
+  if (url.pathname === '/api/kb/files') {
+    const files = await kb.files(repo);
+    return json(res, {
+      repo, files, truncated: false, hasSystemPrompt: files.some((f) => f.path === 'systemprompt.md'),
+    });
+  }
+  if (url.pathname === '/api/kb/log') {
+    return json(res, { repo, commits: await kb.log(repo) });
+  }
+  if (url.pathname === '/api/kb/file' && req.method === 'GET') {
+    const r = await kb.read(repo, url.searchParams.get('path'));
+    return json(res, r, r.error ? 404 : 200);
+  }
+  if (url.pathname === '/api/kb/file') {
+    const remove = req.method === 'DELETE';
+    const base = body.base || null;
+    const change = remove ? { path: body.path, delete: true, base }
+      : {
+        path: body.path, content: body.content, base, create: !base,
+      };
+    const message = body.message || `${remove ? 'Delete' : 'Update'} ${body.path}`;
+    const r = await kb.write(repo, [change], {
+      message, by: `human:${store.me.email}`, at: new Date().toISOString(), logEntry: `**Update**: ${message} (${store.me.name})`, author: { name: store.me.name, email: store.me.email },
+    });
+    if (r.error) {
+      return json(res, { error: r.error }, 400);
+    }
+    if (r.conflict) {
+      const current = await kb.read(repo, body.path);
+      return json(res, { error: r.conflict, current: current.error ? null : current }, 409);
+    }
+    const now = remove ? null : await kb.read(repo, body.path);
+    return json(res, {
+      ok: true, commit: r.commit, unchanged: r.unchanged, hash: now && now.hash,
+    });
+  }
+  return json(res, { error: 'not found' }, 404);
+}
+
 async function api(req, res, url) {
   if (backendState.mode === 'prod') {
     return proxyApi(req, res, url, backendState);
   }
   const team = url.searchParams.get('team');
+  if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
+    return kbApi(req, res, url);
+  }
   if (url.pathname === '/api/me') {
     const {
-      id, name, email, teams, admin,
+      id, name, email, teams,
     } = store.me;
+    // Dana is not in the admin team, except on the knowledge-base editor, so it can be tried.
+    const admin = store.me.admin || /\/inbox\/kb\b/.test(req.headers.referer || '');
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
@@ -764,7 +820,7 @@ function reloadStream(req, res) {
 function watchUi() {
   let timer;
   watch(uiDir, (event, file) => {
-    if (file && file !== 'inbox.html') {
+    if (file && file !== 'inbox.html' && file !== 'kb.html') {
       return;
     }
     clearTimeout(timer);
@@ -809,6 +865,12 @@ const server = createServer(async (req, res) => {
     await refreshBackend();
     if (url.pathname === '/') {
       res.writeHead(302, { location: '/inbox' }).end();
+      return;
+    }
+    if (url.pathname === '/inbox/kb') {
+      const html = await readFile(join(uiDir, 'kb.html'), 'utf8');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(html.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`));
       return;
     }
     if (url.pathname === '/inbox') {

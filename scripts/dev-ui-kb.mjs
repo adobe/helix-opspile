@@ -1,0 +1,108 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+import git from 'isomorphic-git';
+import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
+import { memfs } from '../src/agent/memfs.js';
+import { SYSTEM_PROMPT } from '../src/agent/okf.js';
+
+/**
+ * Fake knowledge bases for `npm run ui:dev`: real git repos in memory, written by the same
+ * `commitChanges` as production (OKF checks, indexes, log), behind the `/api/kb*` routes of
+ * src/kbadmin.js. Made-up content only.
+ */
+
+const DIR = '/kb';
+const SEED = {
+  'kb-team-platform': {
+    name: 'Platform ops',
+    kind: 'team',
+    files: {
+      [SYSTEM_PROMPT]: '---\ntype: System Prompt\ntitle: Agent instructions for Platform ops\n---\n\nSign drafts with the team name, never a person\'s.\n',
+      'playbooks/cdn-purge.md': '---\ntype: Playbook\ntitle: CDN purge takes long\ndescription: What to check when a purge seems slow.\n---\n\n1. Check the cache TTL.\n2. Check for a second CDN in front.\n',
+    },
+  },
+  'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },
+  'kb-org-acme': {
+    name: 'acme',
+    kind: 'org',
+    files: {
+      'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
+    },
+  },
+};
+
+export async function createKnowledgeBases() {
+  const repos = new Map();
+  for (const [repo, seed] of Object.entries(SEED)) {
+    const fs = memfs();
+    // eslint-disable-next-line no-await-in-loop
+    await fs.mkdirp(DIR);
+    // eslint-disable-next-line no-await-in-loop
+    await git.init({ fs, dir: DIR, defaultBranch: 'main' });
+    const changes = Object.entries(seed.files).map(([path, content]) => ({ path, content }));
+    if (changes.length) {
+      // eslint-disable-next-line no-await-in-loop
+      await commitChanges(fs, changes, {
+        message: 'Seed', by: 'human:dana@staff.example', at: '2026-10-20T09:00:00.000Z', logEntry: '**Creation**: seed',
+      });
+    }
+    repos.set(repo, { ...seed, fs });
+  }
+
+  const blobHash = async (fs, path) => (await git.hashBlob({
+    object: await fs.promises.readFile(`${DIR}/${path}`),
+  })).oid;
+  const tracked = async (r) => {
+    try {
+      return await git.listFiles({ fs: r.fs, dir: DIR });
+    } catch {
+      return [];
+    }
+  };
+
+  return {
+    list: () => [...repos].map(([repo, r]) => ({
+      repo,
+      kind: r.kind,
+      slug: repo.replace(/^kb-(team|org)-/, ''),
+      name: r.name,
+      created_at: '2026-10-20T09:00:00.000Z',
+    })).sort((x, y) => y.kind.localeCompare(x.kind) || x.slug.localeCompare(y.slug)),
+    has: (repo) => repos.has(repo),
+    async files(repo) {
+      const r = repos.get(repo);
+      const paths = await tracked(r);
+      return Promise.all(paths.map(async (path) => ({ path, hash: await blobHash(r.fs, path) })));
+    },
+    async read(repo, path) {
+      const r = repos.get(repo);
+      if (!(await tracked(r)).includes(path)) {
+        return { error: `no such file: ${path}` };
+      }
+      return { path, hash: await blobHash(r.fs, path), text: await r.fs.promises.readFile(`${DIR}/${path}`, 'utf8') };
+    },
+    async write(repo, changes, options) {
+      const invalid = checkChanges(changes, { staff: true });
+      return invalid ? { error: invalid } : commitChanges(repos.get(repo).fs, changes, options);
+    },
+    async log(repo) {
+      const commits = await git.log({ fs: repos.get(repo).fs, dir: DIR }).catch(() => []);
+      return commits.map((c) => ({
+        hash: c.oid.slice(0, 12),
+        at: new Date(c.commit.author.timestamp * 1000).toISOString(),
+        author: c.commit.author.name,
+        message: c.commit.message.split('\n')[0],
+      }));
+    },
+  };
+}

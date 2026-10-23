@@ -35,6 +35,8 @@
   header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
   header .me { margin-left: auto; color: var(--mute); }
   #review[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
+  #kb { color: inherit; text-decoration: none; background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 9px; }
   .live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
   .live.on { background: var(--green); }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
@@ -299,6 +301,7 @@
   <select id="team" aria-label="Team"></select>
   <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
   <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
+  <a id="kb" hidden href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team)">Knowledge bases</a>
   <span class="live" id="live" title="live updates"></span>
   <span class="me" id="me"></span>
   <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
@@ -1745,6 +1748,7 @@ async function start() {
       connect();
     };
     $('review').hidden = false;
+    $('kb').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {
       state.review = !state.review;

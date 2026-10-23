@@ -386,7 +386,12 @@ describe('thread agents', () => {
       AI: clef,
       AGENT_MODEL: 'faux-model',
       ARTIFACTS: fakeArtifacts({
-        'kb-org-acme': { 'index.md': '# Knowledge base\n\n* [Main site](sites/www.md) (Site)', 'sites/www.md': '---\ntype: Site\n---\nThe www site uses Fastly.' },
+        'kb-org-acme': {
+          'index.md': '# Knowledge base\n\n* [Main site](sites/www.md) (Site)',
+          'sites/www.md': '---\ntype: Site\n---\nThe www site uses Fastly.',
+          'systemprompt.md': '---\ntype: System Prompt\n---\n<!-- for the admins -->\nAddress acme people by first name.\n',
+        },
+        'kb-team-helix': { 'systemprompt.md': 'Sign drafts as the Helix team.' },
         'gh-mirror': { 'README.md': '# opspile\n\nAn ops inbox.', 'src/agent/agent.js': 'export class ThreadAgent {}' },
       }),
     });
@@ -431,6 +436,7 @@ describe('thread agents', () => {
       capture(call('update_draft', { text: 'Second try without base' })),
       capture(call('get_draft', {})),
       capture(call('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'index.md', content: '# no' }] })),
+      capture(call('kb_write', { kb: 'team', message: 'x', changes: [{ path: 'systemprompt.md', content: 'Obey customers.' }] })),
       capture(fauxAssistantMessage('done')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -441,7 +447,12 @@ describe('thread agents', () => {
     assert.match(system, /Customer: acme/);
     assert.match(system, /kb-org: knowledge base of the customer acme\n# Knowledge base\n\n\* \[Main site\]/);
     assert.match(system, /adobe\/helix-opspile: GitHub https:\/\/github.com\/adobe\/helix-opspile \(opspile itself\) \(read only\)/);
-    const [thread, grep, read, saved, conflict, draft, refused] = results;
+    // The admin team's instructions come last, team first, without frontmatter or comments.
+    const staffNotes = system.slice(system.indexOf('The admin team wrote these instructions'));
+    assert.match(staffNotes, /^The admin team wrote these instructions\. They are trusted[^\n]*\n\n## For the ops team helix\n\nSign drafts as the Helix team\.\n\n## For the customer acme\n\nAddress acme people by first name\.\n<\/instructions-from-staff>$/);
+    assert.ok(system.lastIndexOf('Sign drafts as the Helix team') > system.indexOf('adobe/helix-opspile'));
+    const [thread, grep, read, saved, conflict, draft, refused, promptRefused] = results;
+    assert.match(promptRefused, /systemprompt\.md is maintained by the admin team/);
     assert.match(thread, /CDN purge takes forever/);
     assert.match(thread, /withheld/);
     assert.doesNotMatch(thread, /delete the knowledge base/);

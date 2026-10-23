@@ -11,6 +11,7 @@
  */
 
 import inboxHtml from '../ui/inbox.html';
+import kbHtml from '../ui/kb.html';
 import { accessEmail } from './access.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
@@ -100,6 +101,13 @@ export default {
     });
     if (oauthResponse) {
       return oauthResponse;
+    }
+    if (pathname === '/inbox/kb') {
+      // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same
+      // Access application covers it.
+      return new Response(kbHtml, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
     }
     if (pathname === '/inbox') {
       return new Response(INBOX_PAGE, {

@@ -112,7 +112,33 @@ export async function gitServer() {
       return {
         info: async () => ({ name, remote: `${base}/${name}.git` }),
         createToken: async () => ({ plaintext: 'art_v1_made-up?expires=1' }),
-        log: async () => (head(name) ? [{ hash: head(name) }] : []),
+        // The read side of the binding, from the bare repository.
+        async log({ limit = 50 } = {}) {
+          if (!head(name)) {
+            return [];
+          }
+          const out = execFileSync('git', ['-C', bare(name), 'log', `-${limit}`, '--format=%H%x09%T%x09%ct%x09%an%x09%s', 'main'])
+            .toString().trim().split('\n');
+          return out.map((line) => {
+            const [hash, treeHash, at, author, message] = line.split('\t');
+            return {
+              hash, treeHash, committedAt: Number(at), author: { name: author }, message,
+            };
+          });
+        },
+        async readTree(hash) {
+          const out = execFileSync('git', ['-C', bare(name), 'ls-tree', hash]).toString().trim();
+          return out ? out.split('\n').map((line) => {
+            const [meta, entryName] = line.split('\t');
+            const [mode, type, oid] = meta.split(' ');
+            return {
+              name: entryName, mode, type, hash: oid,
+            };
+          }) : [];
+        },
+        async readBlob(hash) {
+          return new Blob([execFileSync('git', ['-C', bare(name), 'cat-file', 'blob', hash])]);
+        },
         [Symbol.dispose]() {},
       };
     },
