@@ -83,6 +83,15 @@ already at the new place, from a message that arrived meanwhile, is newer and ke
 thread rows take the new org, team and kind, and the new org and team get their knowledge
 bases. A large channel moves a few hundred files per job.
 
+**Team managers.** A member of a team can be its **manager**: they get the admin pages and
+the knowledge-base editor for that team only, where they add and remove members, promote
+them to manager or demote them, and edit the team's knowledge base (its `systemprompt.md`
+too). Teams, rules, assignments, orgs and the customers' knowledge bases stay with the admin
+team. A team can be **self-managed**: every member is a manager, and so is everyone who joins.
+Turning that off keeps the roles as they are; from then on new members join as members, and
+managers can be demoted. The role is `team_members.role`, the flag `teams.self_managed`;
+only the admin team sets the flag.
+
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
@@ -187,7 +196,8 @@ before each model request; HTML comments in them are left out. Only the admin te
 them, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
-**Editor.** Members of the admin team have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
+**Editor.** Members of the admin team, and team managers for their teams' knowledge bases,
+have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).
@@ -236,6 +246,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
+- The toolbar is the same on the inbox and the admin pages: the pages and label review on the
+  left, and on the right whoever is signed in. Their name opens a menu with the team to show
+  (the inbox), "View as" (admin team; while it is on, a chip next to the name says whose inbox
+  this is and leaves it in one click), the keyboard shortcuts, and **Log out**, which is
+  Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the toolbar
+  says "Reconnecting…" when the WebSocket has been down for a few seconds.
 
 ## Read state
 

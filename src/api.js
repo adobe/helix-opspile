@@ -26,10 +26,10 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
-import { profiles } from './profiles.js';
+import { profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
-  ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
+  ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 import { Timing, withTiming } from './timing.js';
@@ -87,16 +87,24 @@ async function participants(env, keys) {
  * first), or null.
  */
 async function personWhere(env, column, value) {
-  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, t.slug, t.name AS team
+  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, t.slug, t.name AS team,
+      m.role
     FROM people p LEFT JOIN team_members m ON m.person = p.id LEFT JOIN teams t ON t.slug = m.team
     WHERE p.${column === 'id' ? 'id' : 'email'} = ? ORDER BY t.slug`).bind(value).all();
   if (!results || !results.length) {
     return null;
   }
   const { id, name, email } = results[0];
-  const teams = results.filter((r) => r.slug).map((r) => ({ slug: r.slug, name: r.team }));
+  const teams = results.filter((r) => r.slug)
+    .map((r) => ({ slug: r.slug, name: r.team, role: r.role }));
   return {
-    id, name, email, teams, admin: teams.some((t) => t.slug === 'admin'),
+    id,
+    name,
+    email,
+    teams,
+    admin: teams.some((t) => t.slug === 'admin'),
+    // Teams whose members and knowledge base this person manages (see migration 0018).
+    manages: teams.filter((t) => t.role === 'manager').map((t) => t.slug),
   };
 }
 
@@ -266,7 +274,7 @@ export async function inbox(env, me, team) {
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
-    drafts, { results: teamRows }, teamMembers, orgs,
+    drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
     env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
@@ -300,7 +308,7 @@ export async function inbox(env, me, team) {
     reviewsFor(env.DB, threadKeys),
     // Names of everyone posting or mentioned (for "involves"): the people of the two queries
     // above, asked for in the same round.
-    env.DB.prepare(`SELECT id, name, staff FROM people WHERE id IN (
+    env.DB.prepare(`SELECT id, name, staff, email FROM people WHERE id IN (
         SELECT person FROM messages WHERE thread IN (SELECT value FROM json_each(?))
           AND person IS NOT NULL AND deleted = 0
         UNION SELECT person FROM mentions WHERE thread IN (SELECT value FROM json_each(?)))`)
@@ -310,6 +318,7 @@ export async function inbox(env, me, team) {
     teamRowsP,
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
+    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -328,6 +337,9 @@ export async function inbox(env, me, team) {
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
   ]));
   // The viewer's teams.
+  // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
+  const partners = new Map((partnerRows || [])
+    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const myTeams = {};
   for (const r of teamRows || []) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
@@ -341,7 +353,9 @@ export async function inbox(env, me, team) {
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
-      .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
+      .map((p) => [p.id, {
+        name: p.name, staff: Boolean(p.staff), relation: relationOf(env, p, partners),
+      }])),
     teams: myTeams,
     members: teamMembers,
     threads: fold(readState(threads, marks || [], mentions || [], me.id)
@@ -626,15 +640,17 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
   }
+  // The admin pages and the editor: the admin team, and team managers for their teams (the
+  // routes check which).
   if (url.pathname.startsWith('/api/admin/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'for the admin team and team managers' }, 403);
     }
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'the knowledge-base editor is for the admin team' }, 403);
+    if (!isManager(me)) {
+      return json({ error: 'the knowledge-base editor is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }

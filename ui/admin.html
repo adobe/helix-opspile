@@ -36,23 +36,51 @@
   button.link { border: 0; background: none; color: var(--link); padding: 0 4px; }
   a { color: var(--link); }
   code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-  header h1 a { color: inherit; text-decoration: none; }
+  /* The toolbar, as in the inbox: you on the right, with a menu to log out. */
+  header { display: flex; gap: 10px; align-items: center; height: 50px; padding: 0 12px 0 14px; flex: none;
+    background: var(--col); border-bottom: 1px solid var(--line); }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
+    letter-spacing: .01em; }
+  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
+  header .spacer { flex: 1; }
+  .av { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; color: #fff;
+    font-size: 11px; font-weight: 600; }
+  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
+    background: none; border-radius: 10px; text-align: left; }
+  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  #user svg { width: 12px; height: 12px; color: var(--mute); }
+  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
+  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
+  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
+  .menu .id .nm { font-weight: 650; font-size: 14px; }
+  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
+  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint); }
+  .menu .item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: inherit;
+    text-decoration: none; }
+  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+  .menu .item svg { width: 14px; height: 14px; flex: none; }
+  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
+  .menu .keys dd { margin: 0; text-align: right; }
   /* Inbox ↔ knowledge bases ↔ admin, for the admin team: the same switch in every header. */
-  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
-  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
   nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
     box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
   nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   header nav.tabs { display: flex; gap: 4px; }
-  header nav.tabs a { color: var(--mute); text-decoration: none; padding: 3px 10px; border-radius: 7px; }
+  header nav.tabs a { display: flex; align-items: center; height: 30px; color: var(--mute); text-decoration: none; padding: 0 11px;
+    border-radius: 7px; }
+  header nav.tabs a:hover { color: var(--ink); background: var(--hover); }
   header nav.tabs a[aria-current="page"] { color: var(--ink); background: var(--sel); }
-  header .me { margin-left: auto; color: var(--mute); }
   main { flex: 1; display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; }
   #list { padding: 12px; border-right: 1px solid var(--line); background: var(--col); }
@@ -108,13 +136,21 @@
 </head>
 <body>
 <header>
-  <h1>opspile</h1>
+  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
   <nav class="pages" aria-label="Admin pages"><a href="/inbox" title="Back to the inbox">Inbox</a><a href="/inbox/kb">Knowledge bases</a><a href="/inbox/admin" aria-current="page">Admin</a></nav>
   <nav class="tabs" aria-label="Admin sections">
     <a href="/inbox/admin?tab=teams" data-tab="teams">Teams</a>
     <a href="/inbox/admin?tab=orgs" data-tab="orgs">Customers, partners, vendors</a>
   </nav>
-  <span class="me" id="me"></span>
+  <span class="spacer"></span>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
+    <span class="av" id="userAv"></span><span class="nm" id="me"></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
 </header>
 <main>
   <section id="list"><div class="empty">Loading…</div></section>
@@ -123,6 +159,9 @@
 <script>
 /*
  * The admin team's pages for ops teams (#17) and orgs (#18), over /api/admin (src/admin.js).
+ *
+ * Team managers (and every member of a self-managed team) see the teams they manage, add and
+ * remove members and promote or demote them; the rest is for the admin team.
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
@@ -136,6 +175,22 @@ const state = {
   me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
 };
 const $ = (id) => document.getElementById(id);
+const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
+/** You, at the toolbar's right end (the same colour and initials as in the inbox), and its menu. */
+function renderUser(me) {
+  const name = me.name || me.email || '';
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  for (const id of ['userAv', 'menuAv']) {
+    $(id).textContent = initials;
+    $(id).style.background = COLORS[h % COLORS.length];
+  }
+  $('me').textContent = name;
+  $('menuName').textContent = name;
+  $('menuEmail').textContent = me.email || '';
+  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
 const ico = (icon) => (icon ? `<img class="ico" src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.className='ico none';this.removeAttribute('src')">` : '<span class="ico none"></span>');
@@ -228,7 +283,9 @@ function toUrl() {
 }
 
 async function load() {
-  const [teams, orgs] = await Promise.all([call('/api/admin/teams'), call('/api/admin/orgs')]);
+  // Team managers see their teams only, and no orgs.
+  const [teams, orgs] = await Promise.all([call('/api/admin/teams'),
+    state.me.admin ? call('/api/admin/orgs') : Promise.resolve({ body: {} })]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   state.teams = teams.body.teams;
   state.unassigned = teams.body.unassigned;
@@ -237,20 +294,36 @@ async function load() {
   return true;
 }
 
+function wireFilter() {
+  $('filter').oninput = (e) => {
+    state.filter = e.target.value;
+    const at = e.target.selectionStart;
+    renderList();
+    $('filter').focus();
+    $('filter').setSelectionRange(at, at);
+  };
+  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => select(el.dataset.sel);
+}
+
 function renderList() {
   const f = state.filter.toLowerCase();
   if (state.tab === 'teams') {
     const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
       <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
         <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
+        ${t.self_managed ? '<span class="tag manual" title="Every member is a team manager">self-managed</span>' : ''}
         <span class="sub">${t.members} people · ${t.channels} ch</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${state.unassigned.channels} ch</span></div>` : '';
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
-      <h2>Ops teams</h2>${rows || '<div class="empty">No teams.</div>'}${un}
-      <h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
-        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required style="width:110px"><button class="primary">Create</button></form>
+      <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
+      ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
+        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required style="width:110px"><button class="primary">Create</button></form>` : ''}
       <div class="status" id="listStatus"></div>`;
+    if (!state.me.admin) {
+      wireFilter();
+      return;
+    }
     $('ntName').oninput = () => { if (!$('ntSlug').dataset.touched) $('ntSlug').value = $('ntName').value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); };
     $('ntSlug').oninput = () => { $('ntSlug').dataset.touched = '1'; };
     $('newTeam').onsubmit = async (e) => {
@@ -284,14 +357,7 @@ function renderList() {
       select(r.body.org.slug);
     };
   }
-  $('filter').oninput = (e) => {
-    state.filter = e.target.value;
-    const at = e.target.selectionStart;
-    renderList();
-    $('filter').focus();
-    $('filter').setSelectionRange(at, at);
-  };
-  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => select(el.dataset.sel);
+  wireFilter();
 }
 
 function select(sel) {
@@ -398,7 +464,7 @@ function renderChannels() {
       <td>${esc(other === 'org' ? orgLabel(c.org) : teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       <td>${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
-        <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : '<span class="sub">by rule</span>'}</td></tr>`;
+        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>`
@@ -458,11 +524,28 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function renderMembers() {
   const { members, team } = state.view;
+  const role = (m) => {
+    if (team.self_managed) return '<span class="tag manual" title="Every member of a self-managed team is a team manager">manager</span>';
+    return m.role === 'manager'
+      ? `<span class="tag manual">manager</span> <button class="link" data-role="member" data-person="${m.id}" title="Back to member">demote</button>`
+      : `<button class="link" data-role="manager" data-person="${m.id}" title="May add and remove members and edit the team's knowledge base">make manager</button>`;
+  };
   $('membersTable').innerHTML = members.length
-    ? `<table><tr><th>Name</th><th>Email</th><th></th></tr>${members.map((m) => `<tr>
+    ? `<table><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>${members.map((m) => `<tr>
       <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
+      <td>${role(m)}</td>
       <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>`
     : '<div class="empty">Nobody yet.</div>';
+  for (const b of $('membersTable').querySelectorAll('[data-role]')) {
+    b.onclick = async () => {
+      const m = members.find((x) => String(x.id) === b.dataset.person);
+      const res = await call('/api/admin/members', 'PUT', { team: team.slug, person: m.id, role: b.dataset.role });
+      if (!res.ok) { status('err', res.body.error); return; }
+      m.role = res.body.role;
+      status('ok', `${m.name || m.email} is ${m.role === 'manager' ? 'a team manager now' : 'a member again'}.`);
+      renderMembers();
+    };
+  }
   for (const b of $('membersTable').querySelectorAll('[data-remove]')) {
     b.onclick = async () => {
       const m = members.find((x) => String(x.id) === b.dataset.remove);
@@ -497,7 +580,9 @@ function wireMemberPicker() {
     const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined });
     if (!res.ok) { status('err', res.body.error); return; }
     const { person } = res.body;
-    if (!state.view.members.some((m) => m.id === person.id)) {
+    const had = state.view.members.find((m) => m.id === person.id);
+    if (had) had.role = person.role;
+    if (!had) {
       state.view.members.push(person);
       state.view.members.sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
       const row = state.teams.find((t) => t.slug === slug);
@@ -658,24 +743,49 @@ async function showTeam(slug) {
   };
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
+  const admin = Boolean(state.me.admin);
+  let title = '<h1 style="margin:0;font-size:20px">Unassigned channels</h1>';
+  if (real) {
+    title = admin ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">`
+      : `<h1 style="margin:0;font-size:20px;flex:1">${esc(team.name)}</h1>`;
+  }
   $('detail').innerHTML = `
-    <div class="title">${real ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">` : '<h1 style="margin:0;font-size:20px">Unassigned channels</h1>'}
-      <span class="sub mono">${esc(team.slug)}</span>${real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
+    <div class="title">${title}
+      <span class="sub mono">${esc(team.slug)}</span>
+      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}&back=${encodeURIComponent(`${location.pathname}${location.search}`)}">Knowledge base</a>` : ''}
+      ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
     <div class="status" id="status"></div>
+    ${real ? `<div class="card"><label style="display:flex;gap:8px;align-items:center">
+      <input type="checkbox" id="tSelf"${team.self_managed ? ' checked' : ''}${admin ? '' : ' disabled'}>
+      <span><b>Self-managed</b>: every member is a team manager and may add and remove members and edit the team's knowledge base.</span></label>
+      <p class="hint">${admin ? 'Turning it on makes every member a manager, now and when they join. Turning it off keeps the roles as they are; new members join as members, and managers can be demoted.' : 'Only the admin team changes this.'}</p></div>` : ''}
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
       <div class="form picker"><input id="mFind" class="grow" placeholder="Add a member: type a name or an email" autocomplete="off" aria-label="Add a member"><div class="picks" id="mPicks" hidden></div></div>
       <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
 
-    <div class="card"><h2>Rules</h2><div id="rulesTable"></div>
+    ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
-      ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}
-    ${channelsCard('team')}`;
+      ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
+    ${admin ? channelsCard('team') : '<div class="card"><h2>Channels</h2><div id="channelsTable"></div><p class="hint">The admin team decides which channels a team gets.</p></div>'}`;
   renderChannels();
-  wireChannelPicker();
+  if (admin) wireChannelPicker();
   if (!real) return;
   renderMembers();
   wireMemberPicker();
+  $('tSelf').onchange = async () => {
+    const on = $('tSelf').checked;
+    const res = await call('/api/admin/teams', 'PUT', { slug, selfManaged: on });
+    if (!res.ok) { $('tSelf').checked = !on; status('err', res.body.error); return; }
+    state.view.team.self_managed = on;
+    if (on) for (const m of state.view.members) m.role = 'manager';
+    const row = state.teams.find((t) => t.slug === slug);
+    if (row) row.self_managed = on;
+    status('ok', on ? 'Self-managed: every member is a team manager now.' : 'Not self-managed any more: roles stay as they are.');
+    renderMembers();
+    renderList();
+  };
+  if (!admin) return;
   renderRules();
   wireRuleForm();
   $('tName').onchange = async () => {
@@ -773,15 +883,16 @@ async function showOrg(slug) {
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  $('me').textContent = state.me.name || state.me.email || '';
-  if (!state.me.admin) {
-    $('list').innerHTML = '<div class="empty">These pages are for the admin team.</div>';
+  renderUser(state.me);
+  if (!state.me.admin && !state.me.manages?.length) {
+    $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
     $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
     return;
   }
   if (!(await load())) return;
   const q = new URLSearchParams(location.search);
-  state.tab = q.get('tab') === 'orgs' ? 'orgs' : 'teams';
+  state.tab = q.get('tab') === 'orgs' && state.me.admin ? 'orgs' : 'teams';
+  if (!state.me.admin) document.querySelector('nav [data-tab="orgs"]').hidden = true;
   for (const a of document.querySelectorAll('nav [data-tab]')) {
     a.onclick = (e) => { e.preventDefault(); switchTab(a.dataset.tab); };
   }
