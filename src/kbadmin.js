@@ -14,10 +14,18 @@ import { writeKnowledge } from './agent/kbwrite.js';
 import { SYSTEM_PROMPT } from './agent/okf.js';
 import { commitLog, listFiles, readText } from './agent/repos.js';
 import { json } from './http.js';
+import { isAdmin, managesTeam } from './review.js';
 
 /**
- * The knowledge-base editor's API, for the admin team only (`/inbox/kb`): list the knowledge
- * bases, list and read their files, and change them as the signed-in person. Writes go
+ * May `me` edit this knowledge base? The admin team edits all of them; a team manager the
+ * knowledge base of the teams they manage.
+ */
+const mayEdit = (me, base) => isAdmin(me) || (base.kind === 'team' && managesTeam(me, base.slug));
+
+/**
+ * The knowledge-base editor's API, for the admin team and team managers (`/inbox/kb`): list
+ * the knowledge bases, list and read their files, and change them as the signed-in person
+ * (team managers: their teams' knowledge bases only). Writes go
  * through the same path as the agents' (OKF checks, indexes and log by code, retry on a
  * concurrent push), are committed with the person as author and stamped `human:<email>`, and
  * may also change `systemprompt.md`, which agents cannot.
@@ -34,14 +42,14 @@ async function knownRepo(env, repo) {
 }
 
 /** GET /api/kb: every knowledge base, teams first, with the team's or customer's name. */
-async function listBases(env) {
+async function listBases(env, me) {
   const { results } = await env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at,
       t.name AS team_name
     FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
     ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all();
   return json({
     systemPrompt: SYSTEM_PROMPT,
-    bases: (results || []).map((r) => ({
+    bases: (results || []).filter((r) => mayEdit(me, r)).map((r) => ({
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
@@ -107,7 +115,7 @@ async function change(env, me, body, remove) {
 /** Routes `/api/kb*` for a member of the admin team. Returns null for other paths. */
 export async function kbAdmin(request, env, url, me) {
   if (url.pathname === '/api/kb' && request.method === 'GET') {
-    return listBases(env);
+    return listBases(env, me);
   }
   if (!url.pathname.startsWith('/api/kb/')) {
     return null;
@@ -117,7 +125,8 @@ export async function kbAdmin(request, env, url, me) {
   }
   const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
   const repo = request.method === 'GET' ? url.searchParams.get('repo') : body.repo;
-  if (!await knownRepo(env, repo)) {
+  const base = await knownRepo(env, repo);
+  if (!base || !mayEdit(me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {

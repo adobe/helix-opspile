@@ -29,7 +29,7 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/drafts.js` — shared drafts: one unsent reply per thread, seen by the channel's team
 - `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts
 - `src/admin.js` and `ui/admin.html` — the admin team's pages for teams, members, rules and
-  orgs at `/inbox/admin`; `src/refile.js` moves channels a rule change re-files
+  orgs at `/inbox/admin` (team managers: their teams' members); `src/refile.js` moves channels a rule change re-files
 - `src/kbadmin.js` and `ui/kb.html` — the admin team's knowledge-base editor at `/inbox/kb`
   (including each knowledge base's `systemprompt.md` for the agents)
 - `src/agent/` — thread agents: `agent.js` (the `ThreadAgent` Durable Object, Pi via
