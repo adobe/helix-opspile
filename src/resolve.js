@@ -56,7 +56,7 @@ export async function signalFacts(env, keys) {
   const { results } = await env.DB.prepare(`SELECT r.thread, r.emoji, r.at, i.person,
       COALESCE(p.staff, 0) AS staff, i.email
     FROM reactions r
-    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person
     WHERE r.thread IN (SELECT value FROM json_each(?))
       AND r.emoji IN (SELECT value FROM json_each(?))`)
@@ -90,7 +90,7 @@ export async function resolutionFacts(env, keys) {
       COALESCE(r.at, t.root_at) AS at, COALESCE(p.name, i.name) AS name, i.person,
       p.staff, i.email
     FROM reactions r JOIN threads t ON t.thread = r.thread
-    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+    LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person
     WHERE r.thread IN (SELECT value FROM json_each(?))
       AND r.emoji IN (SELECT value FROM json_each(?))

@@ -42,7 +42,7 @@ import { Timing, withTiming } from './timing.js';
 const INBOX_LIMIT = 200;
 const MAX_PARTICIPANTS = 5;
 
-const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = m.author_key";
+const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key";
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
 
 /**
@@ -287,7 +287,9 @@ export async function inbox(env, me, team) {
       .bind(team, keys, team).all(),
     env.DB.prepare(`SELECT n.thread, n.person, n.at
       FROM mentions n JOIN team_members m ON m.person = n.person AND m.team = ?
-      JOIN messages x ON x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = n.message
+      -- A mention's message is in the mention's thread: the thread narrows the search.
+      JOIN messages x ON x.thread = n.thread
+        AND x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = +n.message
       WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
       .bind(team, keys).all(),
     env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
@@ -419,7 +421,7 @@ export async function thread(env, me, key) {
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
         COALESCE(p.name, i.name) AS name, i.person = ? AS mine
       FROM reactions r
-      LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = r.user_key
+      LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
       LEFT JOIN people p ON p.id = i.person
       WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all(),
     env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
