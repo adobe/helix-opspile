@@ -121,12 +121,146 @@ const CHANNELS = {
   },
 };
 
+// ---- a prod-sized inbox (`--big`), for performance work --------------------------------
+
+const SYLLABLES = ['ar', 'bel', 'cor', 'dan', 'el', 'fi', 'gor', 'hal', 'is', 'jo', 'kar', 'lum',
+  'mor', 'nex', 'or', 'pra', 'qui', 'ros', 'sol', 'tan', 'ul', 'vex', 'wen', 'yor', 'zan'];
+const FIRST = ['Alex', 'Billie', 'Casey', 'Devon', 'Emery', 'Finley', 'Gray', 'Harper', 'Indy',
+  'Jules', 'Kai', 'Logan', 'Morgan', 'Noel', 'Oakley', 'Parker', 'Quinn', 'Riley', 'Sage', 'Taylor'];
+const LAST = ['Abara', 'Brandt', 'Castillo', 'Dubois', 'Eriksen', 'Fontaine', 'Gallo', 'Haddad',
+  'Ivanova', 'Jensen', 'Kowalski', 'Lindqvist', 'Moreau', 'Nakamura', 'Okoro', 'Petrov'];
+const PHRASES = [
+  'The preview build for `/en/products` has been failing since the last config push.',
+  'We see **intermittent 503s** on the live site, roughly one in fifty requests :warning:',
+  'Could you check whether the cache purge went through? Headers still show the old `etag`.',
+  'Thanks, that fixed it on our side :pray:',
+  'Here are the logs from the last hour:\n\n```\nGET /index.plain.html 503 1203ms\nGET /nav.plain.html 200 41ms\nGET /footer.plain.html 503 998ms\n```',
+  'Steps to reproduce:\n\n1. Open the page in a private window\n2. Publish any change\n3. Reload twice\n\nThe second reload shows the stale version.',
+  'Is there an ETA? Our launch is *tomorrow morning* and marketing is asking :eyes:',
+  'I opened a ticket and linked the trace: https://example.com/trace/1234 and the dashboard https://example.com/d/abcd',
+  'Rolled back the redirect rules; error rate is back to normal :white_check_mark:',
+  '> the sitemap is missing half the pages\n\nYes, the index only covers `/blog/**` at the moment.',
+  '| region | p50 | p99 |\n|---|---|---|\n| eu | 40ms | 310ms |\n| us | 38ms | 2.4s |',
+  'Can we schedule a quick call? ~~Today~~ Tomorrow works better for us.',
+  'Looping in the CDN team, they own the origin shield config.',
+  '- [x] DNS updated\n- [x] certificate issued\n- [ ] traffic switched',
+  'One more question: does the bulk publish API respect the folder permissions?',
+  'Deployed the fix to stage, please verify before we go live :rocket:',
+];
+const QUICK_RX = ['white_check_mark', 'eyes', 'pray', '+1', 'rocket', 'joy', 'tada'];
+const KINDS = ['incident', 'question', 'request', 'security', 'access', 'other'];
+
+/** A small deterministic PRNG, so every start shows the same big inbox. */
+function prng(seedValue) {
+  let a = seedValue;
+  /* eslint-disable no-bitwise */
+  return () => {
+    a = (a + 0x6d2b79f5) | 0; // eslint-disable-line operator-assignment
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  /* eslint-enable no-bitwise */
+}
+
+/**
+ * Forty invented customers with two people each, a channel per customer (some on Teams), and
+ * some 250 threads in the platform team plus alerts, sized like production: most threads are
+ * short, a quarter run to 50–150 messages, with markdown, reactions, labels and read marks.
+ */
+function addBigInbox({
+  people, byKey, seed, threads,
+}) {
+  const rnd = prng(42);
+  const pick = (xs) => xs[Math.floor(rnd() * xs.length)];
+  const staff = ['dana', 'priya', 'lena', 'tom'];
+  const orgs = [];
+  let id = 100;
+  for (let i = 0; i < 40; i += 1) {
+    const org = `${pick(SYLLABLES)}${pick(SYLLABLES)}${i}`;
+    const folks = [];
+    for (const n of [id + 1, id + 2]) {
+      const p = {
+        key: `c${n}`,
+        id: n,
+        name: `${pick(FIRST)} ${pick(LAST)}`,
+        email: `p${n}@${org}.example`,
+        org,
+        staff: false,
+      };
+      people.set(p.id, p);
+      byKey.set(p.key, p);
+      folks.push(p.key);
+    }
+    id += 2;
+    const teams = i % 5 === 4;
+    orgs.push({
+      folks,
+      ch: teams ? {
+        source: 'teams', channelId: `CH-${org}`, name: `${org} support`, org, team: 'platform', teamId: 'TEAM-PLATFORM',
+      } : {
+        source: 'slack', channelId: `C0${org.toUpperCase()}`, name: `aem-${org}`, org, team: 'platform',
+      },
+    });
+  }
+  const bot = {
+    source: 'slack', channelId: 'C0BIGALERTS', name: 'alerts-big', org: 'opspile', team: 'platform', kind: 'alert',
+  };
+  for (let n = 0; n < 250; n += 1) {
+    const { ch, folks } = pick(orgs);
+    const long = rnd() < 0.25;
+    const count = long ? 50 + Math.floor(rnd() * 100) : 1 + Math.floor(rnd() * 12);
+    // Started up to three weeks ago; the latest message somewhere in that span.
+    const start = 30 + Math.floor(rnd() * 30000);
+    const step = start / (count + 1);
+    const messages = [];
+    for (let k = 0; k < count; k += 1) {
+      const who = k % 2 === 0 || rnd() < 0.3 ? pick(folks) : pick(staff);
+      const body = rnd() < 0.3 ? `${pick(PHRASES)}\n\n${pick(PHRASES)}` : pick(PHRASES);
+      messages.push([who, Math.max(1, Math.round(start - k * step)), body]);
+    }
+    const reads = {};
+    for (const s of staff) {
+      if (rnd() < 0.5) {
+        reads[s] = rnd() < 0.6 ? 'latest' : Math.round(start / 2);
+      }
+    }
+    const key = seed({
+      ch,
+      messages,
+      reads,
+      label: rnd() < 0.85 ? {
+        kind: pick(KINDS),
+        next_actor: pick(['us', 'customer', 'nobody']),
+        urgency: rnd() * 3,
+        resolved_p: rnd(),
+      } : undefined,
+      facts: rnd() < 0.3 ? [['ticket', `OPS-${2000 + n}`]] : [],
+      mentioned: rnd() < 0.15 ? [pick(staff)] : [],
+    });
+    const entry = threads.get(key);
+    entry.reactionSeeds = entry.messages
+      .filter(() => rnd() < 0.15)
+      .map((m) => ({ id: m.id, emoji: pick(QUICK_RX), by: pick(staff) }));
+  }
+  for (let n = 0; n < 40; n += 1) {
+    seed({
+      ch: bot,
+      messages: [['bot', 5 + Math.floor(rnd() * 20000), `[FIRING] ${pick(['Disk', 'Queue depth', 'Error rate', 'Latency'])} above threshold on node-${n}`]],
+      reads: rnd() < 0.5 ? { dana: 'latest' } : {},
+    });
+  }
+}
+
 /**
  * Builds the fake store. Times are relative to `now`, so the inbox always looks fresh.
  *
  * @param {number} now epoch ms
+ * @param {object} [options]
+ * @param {boolean} [options.big] adds prod-sized traffic (see `addBigInbox`): some 250 threads
+ *   in the platform team, many of them 50 to 150 messages long, from forty invented customers
  */
-export function createStore(now = Date.now()) {
+export function createStore(now = Date.now(), { big = false } = {}) {
   const people = new Map(PEOPLE.map((p) => [p.id, p]));
   const byKey = new Map(PEOPLE.map((p) => [p.key, p]));
   const threads = new Map(); // key -> { row, team, rootId, path, messages: [...] }
@@ -248,7 +382,7 @@ export function createStore(now = Date.now()) {
     writeFile(entry, m);
     Object.assign(entry, { row: deriveRow(entry) });
     if (m.author.kind === 'person') {
-      const person = PEOPLE.find((p) => p.name === m.author.name);
+      const person = [...byKey.values()].find((p) => p.name === m.author.name);
       advance(person.id, entry.key, m.at, 'post');
     }
   }
@@ -429,6 +563,12 @@ export function createStore(now = Date.now()) {
     ],
     reads: { dana: 3990 },
   });
+
+  if (big) {
+    addBigInbox({
+      people, byKey, seed, threads,
+    });
+  }
 
   return {
     now,

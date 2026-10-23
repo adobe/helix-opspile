@@ -19,6 +19,11 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
+ *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
+ *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
+ *
+ * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
+ * (a random one without `thread`) and sends the live update, as the simulation does.
  *
  * What is shared with the Worker: `ui/inbox.html`, served from disk on every request (the
  * Worker imports the same file), and the pure helpers `readState`, `waitingOn`, `titleOf`
@@ -60,13 +65,14 @@ const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
 const SIM_EVERY_MS = 25 * 1000;
+const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
 const INBOX_LIMIT = 200;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
 const ORG_TYPES = { initech: 'vendor' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
-const store = createStore();
+const store = createStore(Date.now(), { big: process.argv.includes('--big') });
 const kb = await createKnowledgeBases();
 const adminApi = createAdmin(store, { manager: MANAGER });
 const ME = store.me.id;
@@ -138,6 +144,15 @@ const personNamed = (name) => [...store.people.values()].find((p) => p.name === 
       if (/thank/i.test(m.body) && tom) {
         reactions.set(`${entry.key}|${m.id}`, [{ emoji: 'thumbsup', person: tom.id, at: m.at }]);
       }
+    }
+  }
+  for (const entry of store.threads.values()) {
+    // The big inbox (--big) comes with reactions of its own.
+    for (const r of entry.reactionSeeds || []) {
+      const who = [...store.people.values()].find((p) => p.key === r.by);
+      const k = `${entry.key}|${r.id}`;
+      const list = reactions.get(k) || [];
+      reactions.set(k, [...list, { emoji: r.emoji, person: who.id, at: entry.row.any_at }]);
     }
   }
   const done = [...store.threads.values()]
@@ -924,9 +939,10 @@ const LINES = [
   'Opened a ticket, linking it here.',
 ];
 
-function simulate() {
+/** A new message in a random conversation, or in `key` (POST /__dev/simulate?thread=). */
+function simulate(key) {
   const live = [...store.threads.values()].filter((e) => e.row.kind === 'channel');
-  const entry = live[Math.floor(Math.random() * live.length)];
+  const entry = store.threads.get(key) || live[Math.floor(Math.random() * live.length)];
   const teamMembers = members(entry.row.team).map((m) => store.people.get(m.id));
   // Customers of the thread's org answer sometimes, staff the rest of the time.
   const customers = [...store.people.values()].filter((p) => p.org === entry.row.org);
@@ -964,11 +980,21 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
       return;
     }
+    if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
+      simulate(url.searchParams.get('thread'));
+      res.writeHead(204).end();
+      return;
+    }
     if (url.pathname === '/__dev/reload') {
       reloadStream(req, res);
       return;
     }
     if (url.pathname.startsWith('/api/')) {
+      if (LATENCY_MS) {
+        await new Promise((r) => {
+          setTimeout(r, LATENCY_MS);
+        });
+      }
       if (!(await api(req, res, url))) {
         json(res, { error: 'not found' }, 404);
       }

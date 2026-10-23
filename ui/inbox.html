@@ -155,7 +155,10 @@
   #threads .count { padding: 8px 14px; color: var(--mute); font-size: 12px; border-bottom: 1px solid var(--line);
     position: sticky; top: 0; background: var(--col); z-index: 1; }
   .t { height: 64px; padding: 9px 14px 0 12px; border-bottom: 1px solid var(--line); cursor: pointer;
-    display: grid; grid-template-rows: 22px 24px; row-gap: 2px; }
+    display: grid; grid-template-rows: 22px 24px; row-gap: 2px;
+    /* Rows out of view skip layout and paint: a filter, a sort or a live update re-lays the
+       dozen rows on screen, not all two hundred. Rows are always 64px high. */
+    content-visibility: auto; contain-intrinsic-size: auto 64px; }
   .t:hover { background: var(--hover); }
   .t.sel { background: var(--sel); }
   .t .l1, .t .l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -233,6 +236,7 @@
   #threads .count { padding-left: 18px; }
   #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
   #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
+    content-visibility: visible;
     background: var(--sel); box-shadow: var(--lift-shadow);
     padding: calc(9px + var(--lv) - 1px) calc(14px + var(--lr) - 1px) 0 calc(18px + var(--ll) - 1px); }
   #lift .t .faces .av { border-color: var(--sel); }
@@ -472,6 +476,20 @@ async function get(path) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
   return res.json();
 }
+// Dates and times: one formatter each, made once (toLocale*String builds one per call, and a
+// long thread asks for hundreds), and each day's label once.
+const formatter = (opts) => {
+  let f = null; // made when first used: making one takes a while
+  return (d) => {
+    if (Number.isNaN(d.getTime())) return 'Invalid Date';
+    f = f || new Intl.DateTimeFormat(undefined, opts);
+    return f.format(d);
+  };
+};
+const SHORT_DATE = formatter({ day: 'numeric', month: 'short' });
+const CLOCK = formatter({ hour: 'numeric', minute: '2-digit' });
+const LONG_DAY = formatter({ weekday: 'long', month: 'long', day: 'numeric' });
+const days = new Map();
 function ago(iso) {
   if (!iso) return '';
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -479,15 +497,16 @@ function ago(iso) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return SHORT_DATE(new Date(iso));
 }
-const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+const clock = (iso) => CLOCK(new Date(iso));
 function dayLabel(iso) {
   const d = new Date(iso);
-  const today = new Date(); const y = new Date(Date.now() - 86400000);
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const day = d.toDateString();
+  if (day === new Date().toDateString()) return 'Today';
+  if (day === new Date(Date.now() - 86400000).toDateString()) return 'Yesterday';
+  if (!days.has(day)) days.set(day, LONG_DAY(d));
+  return days.get(day);
 }
 const platform = (t) => (t.source === 'slack' ? 'Slack' : 'Teams');
 const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
@@ -715,11 +734,32 @@ const SIGNAL_HINT = {
 // proxy, which adds the platform's credentials.
 // Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention.
 let mentionNames = null;
+// Each distinct set of names gets a short id, for the cache of rendered messages below.
+let mentionSet = '';
+const mentionSets = new Map();
 function setMentionNames(names) {
   mentionNames = Markdown.mentionPattern(names);
+  const source = mentionNames ? mentionNames.source : '';
+  if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
+  mentionSet = mentionSets.get(source);
 }
 const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
-const md = (src) => Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied });
+// Rendered once per text and set of known names: opening a thread again, or a live update,
+// renders only the messages that are new or changed.
+const rendered = new Map();
+const RENDERED_MAX = 4000;
+function md(src) {
+  const k = `${mentionSet}\u0000${src}`;
+  let html = rendered.get(k);
+  if (html === undefined) {
+    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied });
+    if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
+  } else {
+    rendered.delete(k);
+  }
+  rendered.set(k, html);
+  return html;
+}
 
 // ---------------------------------------------------------------- facets
 // Status: red = nobody at Adobe has seen it, or you were mentioned; yellow = a teammate was
@@ -738,7 +778,21 @@ const resolvedOf = (t) => t.resolution?.verdict
 const checked = (t) => t.resolution?.verdict === 'resolved';
 const resolvedP = (t) => (t.resolution?.verdict ? Number(checked(t)) : (t.label?.resolved_p ?? 0));
 const viewerId = () => state.data?.me?.id ?? state.me.id;
-const teamIds = () => new Set(Object.values(state.data?.teams || {}).flatMap((x) => x.members));
+const teamIds = () => {
+  if (pass?.team) return pass.team;
+  const ids = new Set(Object.values(state.data?.teams || {}).flatMap((x) => x.members));
+  if (pass) pass.team = ids;
+  return ids;
+};
+// A render pass (the filter cards and the list together): each thread's status and facet
+// values are worked out once in it, not once per facet card and again per row. Nothing
+// changes a thread during a pass; the next pass starts afresh.
+let pass = null;
+function inPass(fn) {
+  if (pass) return fn();
+  pass = { status: new WeakMap(), values: new Map(), team: null };
+  try { return fn(); } finally { pass = null; }
+}
 /**
  * Us, Customer (customer or vendor), Nobody. The API works it out (`waitingOn` in
  * src/threads.js): Clef's label, except that a thread where Adobe posted last never waits on
@@ -784,6 +838,11 @@ function signals(t) {
 }
 
 function statusOf(t) {
+  if (!pass) return computeStatus(t);
+  if (!pass.status.has(t)) pass.status.set(t, computeStatus(t));
+  return pass.status.get(t);
+}
+function computeStatus(t) {
   const me = viewerId();
   const u = urgencyOf(t);
   const alert = t.kind === 'alert';
@@ -929,11 +988,18 @@ const FACETS = [
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams'],
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams' }) },
 ];
-const valuesOf = (f, t) => {
+const facetValues = (f, t) => {
   const v = f.value(t);
   if (f.multi) return v && v.length ? v : ['(none)'];
   return [v ?? '(none)'];
 };
+function valuesOf(f, t) {
+  if (!pass) return facetValues(f, t);
+  let byThread = pass.values.get(f.id);
+  if (!byThread) pass.values.set(f.id, (byThread = new WeakMap()));
+  if (!byThread.has(t)) byThread.set(t, facetValues(f, t));
+  return byThread.get(t);
+}
 // Unread only keeps the threads read since it was turned on, so a row does not vanish
 // when you open it.
 const passes = (t, except) => (!state.unread || t.unread || state.keep.has(t.thread)) && FACETS.every((f) => f.id === except || !state.sel[f.id]?.size
@@ -993,13 +1059,28 @@ function facetRows(f) {
 
 const cardFacets = (id) => FACETS.filter((f) => f.id === id || f.into === id);
 
-function renderFilters() {
-  $('filters').innerHTML = FACETS.filter((f) => !f.into).map((f) => {
+function renderFilters() { inPass(filterCards); }
+function filterCards() {
+  const cards = FACETS.filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => state.sel[x.id]?.size);
     return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
-  }).join('');
+  });
+  // Only the cards whose counts or selection changed are rebuilt.
+  const box = $('filters');
+  const old = [...box.children];
+  if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
+    box.innerHTML = cards.join('');
+    [...box.children].forEach((c, i) => { c.__html = cards[i]; });
+    return;
+  }
+  cards.forEach((html, i) => {
+    if (old[i].__html === html) return;
+    const node = toNode(html);
+    node.__html = html;
+    old[i].replaceWith(node);
+  });
 }
 
 // ---------------------------------------------------------------- thread list
@@ -1091,7 +1172,8 @@ const preload = new IntersectionObserver((entries) => {
 
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M7 12h2"/></svg>';
 
-function renderThreads() {
+function renderThreads() { inPass(threadRows); }
+function threadRows() {
   const box = $('threads');
   if (!state.data) return;
   const shown = state.data.threads.filter((t) => passes(t));
@@ -1104,10 +1186,14 @@ function renderThreads() {
   const sorter = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`
     + `<button class="order" data-sort="${recent ? 'smart' : 'recent'}" role="switch" aria-checked="${recent}" aria-label="Sort by latest activity" title="${recent ? 'Latest activity first' : 'What needs you most first'}">`
     + `<span class="${recent ? '' : 'on'}">Smart</span><span class="${recent ? 'on' : ''}">Recent</span></button>`;
-  box.querySelector('.count').innerHTML = `<span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span>`;
-  // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images).
+  const count = `<span>${shown.length} of ${state.data.threads.length} threads</span><span class="sort">${sorter}</span>`;
+  const head = box.querySelector('.count');
+  if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
+  // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
+  // also rows a filter hid for a while, which are kept aside for when they show again.
   const list = box.querySelector('.rows');
-  const existing = new Map([...list.children].filter((c) => c.dataset.thread).map((c) => [c.dataset.thread, c]));
+  const existing = state.rowNodes || (state.rowNodes = new Map());
+  for (const c of list.children) if (c.dataset.thread) existing.set(c.dataset.thread, c);
   const nodes = shown.map((t) => {
     const html = row(t);
     // Selection, read state and the status dot change on a click; only the first line is
@@ -1116,31 +1202,48 @@ function renderThreads() {
     const body = html.trim().replace(/^<div class="[^"]*"/, '<div');
     const old = existing.get(t.thread);
     const l2 = /<div class="l2">[\s\S]*$/.exec(body)[0];
-    if (old && old.__body === body) {
+    if (old && (old.__body === body || old.__l2 === l2)) {
       old.className = cls.replace(/\benter\b/, '').trim();
+      if (old.__body !== body) {
+        old.querySelector('.l1').outerHTML = /<div class="l1">[\s\S]*?<\/div>/.exec(body)[0];
+        old.__body = body;
+      }
+      if (!old.isConnected) preload.observe(old);
       return old;
     }
-    if (old && old.__l2 === l2) {
-      old.className = cls.replace(/\benter\b/, '').trim();
-      old.querySelector('.l1').outerHTML = /<div class="l1">[\s\S]*?<\/div>/.exec(body)[0];
-      old.__body = body;
-      return old;
-    }
-    const node = toNode(html);
-    node.__body = body;
-    node.__l2 = l2;
-    preload.observe(node);
-    return node;
+    return { html, body, l2, thread: t.thread };
   });
-  if (!nodes.length) { list.innerHTML = '<div class="empty">Nothing matches these filters.</div>'; } else {
-    [...list.children].forEach((c) => { if (!nodes.includes(c)) { preload.unobserve(c); c.remove(); } });
+  // New rows are parsed together, in one go.
+  const fresh = nodes.map((n, i) => i).filter((i) => !(nodes[i] instanceof Element));
+  if (fresh.length) {
+    tpl.innerHTML = fresh.map((i) => nodes[i].html.trim()).join('');
+    const made = [...tpl.content.children];
+    for (const [k, i] of fresh.entries()) {
+      const n = nodes[i];
+      const node = made.length === fresh.length ? made[k] : toNode(n.html);
+      node.__body = n.body;
+      node.__l2 = n.l2;
+      preload.observe(node);
+      existing.set(n.thread, node);
+      nodes[i] = node;
+    }
+  }
+  const keep = new Set(nodes);
+  if (!nodes.length) {
+    for (const c of list.children) preload.unobserve(c);
+    list.innerHTML = '<div class="empty">Nothing matches these filters.</div>';
+  } else {
+    [...list.children].forEach((c) => { if (!keep.has(c)) { preload.unobserve(c); c.remove(); } });
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
   }
+  // Rows of threads that are no longer in the inbox are let go.
+  const known = new Set(state.data.threads.map((t) => t.thread));
+  for (const k of existing.keys()) if (!known.has(k)) existing.delete(k);
   cardGone();
   state.order = shown.map((t) => t.thread);
-  state.prevKeys = new Set(state.data.threads.map((t) => t.thread));
+  state.prevKeys = known;
 }
-function render() { renderFilters(); renderThreads(); }
+function render() { inPass(() => { renderFilters(); renderThreads(); }); }
 
 // The open thread's row, lifted out of its column: a copy of it over the real one, wider by
 // LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
@@ -1176,9 +1279,12 @@ function syncLift(copy) {
     webkitMaskImage: mask,
   });
   const { style } = lift.firstElementChild;
+  // Moved with a transform: the copy follows the row as the list scrolls, and a move by
+  // `top` would count as a layout shift (CLS) on every scroll.
   Object.assign(style, {
-    left: `${r.left - box.left + LIFT.room - LIFT.left}px`,
-    top: `${r.top - box.top - LIFT.v}px`,
+    left: '0px',
+    top: '0px',
+    transform: `translate(${r.left - box.left + LIFT.room - LIFT.left}px, ${r.top - box.top - LIFT.v}px)`,
     width: `${r.width + LIFT.left + LIFT.right}px`,
     height: `${r.height + 2 * LIFT.v}px`,
   });
@@ -1306,6 +1412,60 @@ function composer(thread, draft, resolve = '') {
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 
+/** Resolves once the next frame has been painted (at once in a hidden tab, which paints none). */
+const afterPaint = () => new Promise((resolve) => {
+  if (document.visibilityState !== 'visible') { resolve(); return; }
+  requestAnimationFrame(() => setTimeout(resolve, 0));
+  setTimeout(resolve, 100);
+});
+
+/**
+ * Shows a thread in the pane: header, review panel, feed, reply box. Showing the same thread
+ * again (a live update, a reaction, a refresh) patches it: only the parts and messages whose
+ * HTML changed are rebuilt, so the rest keeps its DOM (images, the reply box and its focus,
+ * the scroll position), and an unchanged thread costs next to nothing.
+ */
+function renderPane(pane, key, {
+  head, review, items, reply, patch,
+}) {
+  const feed = patch && pane.__key === key && pane.querySelector(':scope > .scroller > .feed');
+  const enter = (node, item) => { if (item.enter) node.classList.add('enter'); return node; };
+  const make = (html) => { const node = toNode(html); node.__html = html; return node; };
+  if (!feed) {
+    pane.innerHTML = `${head}<div class="scroller">${review}<div class="feed">${items.map((i) => i.html).join('')}</div></div>${reply}`;
+    pane.__key = key;
+    const [ph, scroller, box] = pane.children;
+    ph.__html = head;
+    box.__html = reply;
+    if (review) scroller.firstElementChild.__html = review;
+    const nodes = [...scroller.lastElementChild.children];
+    if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; enter(n, items[i]); });
+    return;
+  }
+  const ph = pane.querySelector(':scope > .ph');
+  if (ph.__html !== head) ph.replaceWith(make(head));
+  const rv = feed.parentElement.querySelector(':scope > .rv');
+  if ((rv ? rv.__html : '') !== review) {
+    rv?.remove();
+    if (review) feed.before(make(review));
+  }
+  // Feed items by their HTML: unchanged ones stay, new and changed ones are built.
+  const spare = new Map();
+  for (const n of feed.children) {
+    if (!spare.has(n.__html)) spare.set(n.__html, []);
+    spare.get(n.__html).push(n);
+  }
+  const nodes = items.map((item) => spare.get(item.html)?.shift() || enter(make(item.html), item));
+  const keep = new Set(nodes);
+  [...feed.children].forEach((n) => { if (!keep.has(n)) n.remove(); });
+  nodes.forEach((n, i) => { if (feed.children[i] !== n) feed.insertBefore(n, feed.children[i] || null); });
+  const box = pane.querySelector(':scope > .composer');
+  if (!box || box.__html !== reply) {
+    const node = make(reply);
+    if (box) box.replaceWith(node); else pane.append(node);
+  }
+}
+
 async function openThread(key, { live = false, cached = false } = {}) {
   const switching = state.open !== key;
   state.open = key;
@@ -1323,10 +1483,18 @@ async function openThread(key, { live = false, cached = false } = {}) {
   let data;
   const hit = (!live || cached) && state.cache.get(key);
   try {
-    data = hit ? hit.data : await get(`/api/thread?thread=${encodeURIComponent(key)}`);
+    // A thread being fetched ahead is waited for, not fetched a second time.
+    const ahead = !hit && !live && inflight.get(key);
+    data = hit ? hit.data : ((ahead && await ahead) || await get(`/api/thread?thread=${encodeURIComponent(key)}`));
   } catch (e) {
     pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     return;
+  }
+  // Opened from the cache: let the selected row paint first, then render the thread (the
+  // click or key press is answered in one frame, not after the whole thread is built).
+  if (hit && switching) {
+    await afterPaint();
+    if (state.open !== key) return;
   }
   state.cache.set(key, { data, at: hit ? hit.at : Date.now() });
   mergeProfiles(data.profiles);
@@ -1354,14 +1522,15 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ...Object.values(state.data?.people || {}).map((p) => p.name),
     ...mention.names,
   ]);
-  let feed = '';
+  // The feed, one element per item; `enter` marks the messages that just arrived.
+  const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before opspile started listening.</div>' }];
   let prev = null;
   let day = null;
   shown.forEach((m, i) => {
-    if (dayLabel(m.at) !== day) { day = dayLabel(m.at); feed += `<div class="day"><span>${esc(day)}</span></div>`; prev = null; }
-    if (group && prev && prev.thread !== m.thread) { feed += `<div class="post">new post · ${clock(m.at)}</div>`; prev = null; }
-    if (!group && i === 1 && thread.root_at && messages.length > 1) { feed += `<div class="divider">${messages.length - 1} ${messages.length === 2 ? 'reply' : 'replies'}</div>`; prev = null; }
-    feed += message(m, prev, fresh(m));
+    if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
+    if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post">new post · ${clock(m.at)}</div>` }); prev = null; }
+    if (!group && i === 1 && thread.root_at && messages.length > 1) { items.push({ html: `<div class="divider">${messages.length - 1} ${messages.length === 2 ? 'reply' : 'replies'}</div>` }); prev = null; }
+    items.push({ html: message(m, prev, false), enter: fresh(m) });
     prev = m;
   });
   // Sites as links (main--site--org.aem.live), tickets and CVEs as chips, and the tech the
@@ -1373,17 +1542,17 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }).join(' ');
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
-  pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
+  const head = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
       <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
         ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>
-      ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>
-    <div class="scroller">
-      ${state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : ''}
-      <div class="feed">${thread.root_at ? '' : '<div class="sys">Earlier messages were posted before opspile started listening.</div>'}${feed}</div>
-    </div>
-    ${composer(thread, data.draft, resolveButton(thread, resolution))}`;
+      ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>`;
+  const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
+  const reply = composer(thread, data.draft, resolveButton(thread, resolution));
+  renderPane(pane, key, {
+    head, review, items, reply, patch: !switching,
+  });
   state.shownIds = ids;
   cardGone();
   const scroller = pane.querySelector('.scroller');
@@ -1836,8 +2005,11 @@ let reload;
 function reloadSoon(thread) {
   clearTimeout(reload);
   reload = setTimeout(async () => {
+    // The open thread itself changed: fetch it alongside the inbox, not after it.
+    const early = state.open && state.open === thread ? state.open : null;
+    if (early) openThread(early, { live: true });
     await loadInbox();
-    if (state.open && (state.open === thread || state.data.threads.find((t) => t.thread === state.open)?.members?.some((m) => m.thread === thread))) {
+    if (state.open && state.open !== early && (state.open === thread || state.data.threads.find((t) => t.thread === state.open)?.members?.some((m) => m.thread === thread))) {
       openThread(state.open, { live: true });
     }
   }, 500);
@@ -1872,19 +2044,20 @@ function renderUser() {
   $('viewing').innerHTML = as ? `Viewing as <b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
 }
 
-async function loadInbox() {
-  state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
+async function loadInbox(early = null) {
+  const ahead = early && await early;
+  state.data = ahead && ahead.team === state.team ? ahead : await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
   mergeProfiles(state.data.profiles);
   renderUser();
   state.coPeople = coParticipants();
-  state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
+  state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
   syncPages();
 }
 // Threads are fetched ahead, so opening one is instant: a queue, not a drop. A row that
 // scrolls into view, the rows next to the open one and a row under the pointer all queue
 // their thread; urgent ones (pointer, neighbours) go to the front. Six at a time.
-const inflight = new Set();
+const inflight = new Map(); // key -> the request, resolving with the thread or null
 const queued = [];
 const PREFETCH_AT_ONCE = 6;
 const fresh = (key) => { const hit = state.cache.get(key); return hit && Date.now() - hit.at < 60000; };
@@ -1899,11 +2072,10 @@ function pump() {
   while (inflight.size < PREFETCH_AT_ONCE && queued.length) {
     const key = queued.shift();
     if (inflight.has(key) || fresh(key)) continue;
-    inflight.add(key);
-    get(`/api/thread?thread=${encodeURIComponent(key)}`)
-      .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); })
-      .catch(() => { /* opening it will try again */ })
-      .finally(() => { inflight.delete(key); pump(); });
+    inflight.set(key, get(`/api/thread?thread=${encodeURIComponent(key)}`)
+      .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); return data; })
+      .catch(() => null) // opening it will try again
+      .finally(() => { inflight.delete(key); pump(); }));
   }
 }
 /** The threads just before and after the open one (j / k), first in the queue. */
@@ -2006,6 +2178,11 @@ async function switchTeam(slug) {
 }
 
 async function start() {
+  // The team is in the address (after the first visit): its inbox is fetched alongside
+  // /api/me instead of after it. Viewing as someone else waits, as their teams decide.
+  const asked = new URLSearchParams(location.search);
+  const early = asked.get('team') && !asked.get('as')
+    ? get(`/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null) : null;
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);
@@ -2156,7 +2333,7 @@ async function start() {
     // Fresh at the moment it is used (the open thread's customer may have loaded since).
     for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }
-  await loadInbox();
+  await loadInbox(early);
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
   if (initial.open) openThread(initial.open);
   connect();
