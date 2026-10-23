@@ -58,19 +58,37 @@ are removed before an event is stored.
 channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
-Every channel belongs to one **org** (a customer or a vendor) and one **team** (the ops team
-that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+Every channel belongs to one **org** (a customer, a partner or a vendor) and one **team** (the
+ops team that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
 channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
 expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
 so are the overrides for vendor channels, alert channels and irregular names. Channels that
-no rule matches are filed under `_unassigned`.
+no rule matches are filed under `_unassigned`. A **manual assignment** of one channel is a
+rule too: its `channel_id`, priority 10.
+
+An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
+URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
+one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
+the agents show the name and the type.
+
+**Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
+their members (found by name or email among the people and platform accounts opspile knows;
+names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
+team, a Slack Connect team), manual assignments of channels to a team or an org, and each
+org's name, icon and type. Every rule change is tried first: the page lists the channels it
+would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the
+NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
+already at the new place, from a message that arrived meanwhile, is newer and kept), its
+thread rows take the new org, team and kind, and the new org and team get their knowledge
+bases. A large channel moves a few hundred files per job.
 
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
-tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2; after a rule
-change, pile 2 is emptied and replayed.
+tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2. A rule
+changed in D1 by hand needs pile 2 emptied and replayed; one changed in the admin UI re-files
+the channels it moves (below).
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn

@@ -318,7 +318,7 @@
 <body>
 <header>
   <h1>opspile</h1>
-  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team): the open thread's customer, else this team">Knowledge bases</a></nav>
+  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team): the open thread's customer, else this team">Knowledge bases</a><a id="adminPage" href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors (admin team)">Admin</a></nav>
   <select id="team" aria-label="Team"></select>
   <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
   <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
@@ -369,7 +369,13 @@ function dayLabel(iso) {
 }
 const platform = (t) => (t.source === 'slack' ? 'Slack' : 'Teams');
 const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
-const favicon = (domain) => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
+  : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`);
+// An org as the admin team set it up (/inbox/admin): its name and icon, else the slug and
+// the favicon of the customer's usual mail domain. `favicon()` takes either.
+const orgName = (t) => t.org_name || t.org;
+const orgIcon = (t) => t.org_icon || t.customerDomain || null;
+const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor' };
 const backlink = (t, label) => (t.permalink
   ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
 
@@ -418,7 +424,9 @@ function cardContext(el) {
   const key = el.closest('.t')?.dataset.thread || state.open;
   const t = state.data?.threads.find((x) => x.thread === key) || {};
   const th = state.cache.get(key)?.data?.thread || {};
-  return { org: t.org || th.org, customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name };
+  return {
+    org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
+  };
 }
 
 function cardHtml(p, ctx) {
@@ -431,7 +439,7 @@ function cardHtml(p, ctx) {
   if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
   if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
   if (ctx.org) {
-    rows.push(['Channel', `${ico(ctx.customerDomain)}${esc(ctx.org)}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
+    rows.push(['Channel', `${ico(ctx.icon)}${esc(ctx.org)}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
   }
   // A customer from another domain than the channel's customer may be a partner nobody listed.
   const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
@@ -747,7 +755,8 @@ const FACETS = [
     emoji: (v) => URGENCY_ICON[v] },
   { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v],
     order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
-  { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => ts.find((t) => t.org === v && t.customerDomain)?.customerDomain, limit: 12 },
+  { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
+    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? `${orgName(t)}${ORG_TYPE[t.org_type] ? ` (${ORG_TYPE[t.org_type].toLowerCase()})` : ''}` : v; }, limit: 12 },
 ];
 const valuesOf = (f, t) => {
   const v = f.value(t);
@@ -844,7 +853,7 @@ function row(t) {
       <span class="title">${t.root_known ? '' : '↳ '}${emojify(t.title || '(no text)')}</span>
       <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
     <div class="l2">
-      <span class="cust">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="" loading="lazy">` : ''}${esc(t.org)}</span>
+      <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
       <span class="faces">${faces}</span>
       ${occurrences}${replies && !occurrences ? `<span class="replies">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
       <span class="tags">${moods(t)}</span>
@@ -1113,7 +1122,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
   pane.innerHTML = `<div class="ph"><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
-      <div class="sub">${t.customerDomain ? `<img src="${esc(favicon(t.customerDomain))}" alt="">` : ''}<span>${esc(thread.org)}</span> ·
+      <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
         ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>

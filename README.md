@@ -17,6 +17,8 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `POST /teams/notify` | Microsoft Graph change-notification URL. Echoes `validationToken`. Drops notifications whose `clientState` is not `GRAPH_CLIENT_STATE`, stores the rest in pile 1, answers 202, then fetches and stores the message. |
 | `POST /teams/lifecycle` | Graph lifecycle-notification URL. Stores lifecycle notifications the same way, then renews (`reauthorizationRequired`) or recreates (`subscriptionRemoved`) the subscription. `missed` is only logged until the catch-up (#8). |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
+| `GET /inbox/admin` | Teams, members, rules and manual assignments; customers, partners and vendors (name, icon, type, manual assignments). One static page, for the admin team. |
+| `/api/admin/*` | Its API, admin team only: `teams`, `team?slug=`, `members`, `people?q=` (to add as members), `rules`, `assign`, `channels?q=`, `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. |
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, admin team only: knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
@@ -35,7 +37,7 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. Only in their teams. See "Thread agents". |
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, or `kb:<team>:<org>`), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
-| queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs and thread-agent pokes (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
+| queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs, thread-agent pokes and re-filing after a rule change (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
 | cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
@@ -72,7 +74,7 @@ Nothing below is committed; set it on the Worker.
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
-| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
+| `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
 | `AI` | Workers AI | Clef (thread labels, re-threading, the agents' prompt-injection check) and Clairic (facts), `bge-base-en-v1.5` embeddings |
 | `VECTORS` | Vectorize | `helix-opspile-roots` (`-stage`): one vector per root message. Create it by hand: 768 dimensions, cosine, metadata indexes `channel` (string) and `at` (number) |
 | `ARTIFACTS` | Artifacts | Pile 3: namespace `helix-opspile` (`-stage`), one repo per org (`kb-org-<slug>`) and per team (`kb-team-<slug>`), created when a channel is discovered and by the cron for every team; and read-only mirrors of GitHub repositories for the agents (`gh-<owner>-<name>-<time>`) |
@@ -139,6 +141,10 @@ the matching rule with the lowest `priority` wins. `field` is `channel_id`, `nam
 case-insensitive regular expression and `value` may use `$1`. For example
 `org | name | ^aem-(.+)$ | $1` files `aem-acme` under the org `acme`.
 
+The admin team edits teams, members, rules, manual assignments and orgs at `/inbox/admin`,
+which also re-files the channels a change moves. Rules changed in D1 by hand need a replay
+with `--clear`.
+
 Rows in `partner_domains` (`domain`, `name`) mark people from a partner's mail domain (or a
 subdomain of it) as partners on their profile card, instead of customers:
 `INSERT INTO partner_domains (domain, name) VALUES ('agency.example', 'Agency')`.
@@ -172,10 +178,13 @@ and Access are replaced by an in-memory store in
 New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off).
 No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 <http://localhost:8787/inbox/kb>, over a few made-up knowledge bases in memory
-([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production;
-there Dana counts as a member of the admin team. `npm run ui:dev -- --admin` makes her one in
-the inbox too, with what admins see there: the switch to the editor, "View as" (read-only) and
-label review.
+([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production.
+The admin pages are at <http://localhost:8787/inbox/admin>: the real `src/admin.js` over an
+in-memory D1 with the migrations, seeded from the fake inbox
+([scripts/dev-ui-admin.mjs](scripts/dev-ui-admin.mjs)); the fake inbox itself does not see
+their changes. On both, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
+makes her one in the inbox too, with what admins see there: the switch to the editor and the
+admin pages, "View as" (read-only) and label review.
 
 To point the preview at production instead, sign in to the inbox in Chrome with remote
 debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access

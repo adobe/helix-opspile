@@ -22,6 +22,7 @@ import {
 } from './lookup.js';
 import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
+import { refile } from './refile.js';
 import { notifyRoom } from './notify.js';
 import { classify } from './rules.js';
 import {
@@ -347,7 +348,8 @@ export async function consume(batch, env) {
       || (body.label && `label:${body.label}`)
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
-      || (body.agent && `agent:${body.agent}`);
+      || (body.agent && `agent:${body.agent}`)
+      || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`);
     try {
       let r;
       if (body.backfill) {
@@ -356,6 +358,9 @@ export async function consume(batch, env) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
+      } else if (body.refile) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await refile(env, body.refile) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await pokeAgent(env, body.agent) };
