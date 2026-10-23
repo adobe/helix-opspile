@@ -460,6 +460,30 @@
   @media (hover: none) and (pointer: coarse) {
     .composer textarea, .menu select { font-size: 16px; }
   }
+  /*
+   * Touch targets on a touch screen: the small controls get 120% of their height (and some
+   * more padding), the text stays as it is. The emoji-only ones (quick reactions, the picker,
+   * reaction chips) are zoomed whole. Thread rows are tall enough already, and fixed at 64px.
+   */
+  @media (hover: none) and (pointer: coarse) {
+    header .tool, nav.pages { height: 36px; }
+    nav.pages a { padding: 0 14px; }
+    #user { min-height: 44px; }
+    #threads .count { padding-top: 6px; padding-bottom: 6px; }
+    #threads .count .filt, #threads .count .unread { height: 27px; }
+    #threads .count .unread { width: 32px; }
+    #threads .count .order span { padding: 4px 11px; }
+    .fr { padding: 7px 4px; }
+    .card h3 .clear { padding: 4px 6px; margin: -4px -6px -4px auto; }
+    .ph .close { width: 40px; height: 40px; }
+    .msg .meta { margin-top: 5px; min-height: 22px; }
+    .msg .meta .react { padding: 2px 10px; font-size: 12px; }
+    .msg .meta a { display: inline-block; padding: 2px 0; }
+    .msg .quick, .picker, .rx { zoom: 1.2; }
+    .draftbar button, .rv button { padding: 3px 11px; }
+    .composer button.send { padding: 9px 20px; }
+    .sendwrap .hold button { padding: 8px 16px; }
+  }
   @media (max-width: 1099px) {
     main { grid-template-columns: minmax(300px, 42%) minmax(0, 1fr); }
     #filters { position: fixed; z-index: 30; top: var(--head); bottom: 0; left: 0; width: min(340px, 88vw);
