@@ -55,6 +55,22 @@ const breaks = {
   },
 };
 
+// Slack puts its link markup (`<https://…|label>`) into code too, where it is not
+// translated: code shows what the person typed, the label (or the bare URL).
+const SLACK_LINK = /<((?:https?|mailto):[^|>\s]+)(?:\|([^>]*))?>/g;
+export const unslackCode = (s) => s.replace(SLACK_LINK, (_, url, label) => label || url);
+const slackCode = {
+  exit: {
+    codeTextData(token) {
+      this.raw(this.encode(unslackCode(this.sliceSerialize(token))));
+    },
+    codeFlowValue(token) {
+      this.raw(this.encode(unslackCode(this.sliceSerialize(token))));
+      this.setData('flowCodeSeenData', true);
+    },
+  },
+};
+
 const OPTIONS = {
   extensions: [
     gfmAutolinkLiteral(),
@@ -69,6 +85,7 @@ const OPTIONS = {
     gfmTableHtml(),
     gfmTaskListItemHtml(),
     breaks,
+    slackCode,
   ],
 };
 

@@ -96,3 +96,12 @@ describe('htmlToMarkdown', () => {
     assert.equal(htmlToMarkdown(''), '');
   });
 });
+
+describe('Slack markup in code', () => {
+  it('keeps what the person typed: the label, the URL or @name', () => {
+    const md = slackToMarkdown('try (`<https://www.site.example|www.site.example>`) or `<@U1>`\n```<http://x.example/a>```', (id) => (id === 'U1' ? 'Ada' : undefined));
+    assert.match(md, /\(`www\.site\.example`\)/);
+    assert.match(md, /`@Ada`/);
+    assert.match(md, /```\nhttp:\/\/x\.example\/a\n```/);
+  });
+});
