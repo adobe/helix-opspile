@@ -36,23 +36,51 @@
   button.link { border: 0; background: none; color: var(--link); padding: 0 4px; }
   a { color: var(--link); }
   code, .mono { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-  header h1 a { color: inherit; text-decoration: none; }
+  /* The toolbar, as in the inbox: you on the right, with a menu to log out. */
+  header { display: flex; gap: 10px; align-items: center; height: 50px; padding: 0 12px 0 14px; flex: none;
+    background: var(--col); border-bottom: 1px solid var(--line); }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
+    letter-spacing: .01em; }
+  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
+  header .spacer { flex: 1; }
+  .av { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; color: #fff;
+    font-size: 11px; font-weight: 600; }
+  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
+    background: none; border-radius: 10px; text-align: left; }
+  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  #user svg { width: 12px; height: 12px; color: var(--mute); }
+  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
+  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
+  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
+  .menu .id .nm { font-weight: 650; font-size: 14px; }
+  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
+  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint); }
+  .menu .item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: inherit;
+    text-decoration: none; }
+  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+  .menu .item svg { width: 14px; height: 14px; flex: none; }
+  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
+  .menu .keys dd { margin: 0; text-align: right; }
   /* Inbox ↔ knowledge bases ↔ admin, for the admin team: the same switch in every header. */
-  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
-  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
   nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
     box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
   nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   header nav.tabs { display: flex; gap: 4px; }
-  header nav.tabs a { color: var(--mute); text-decoration: none; padding: 3px 10px; border-radius: 7px; }
+  header nav.tabs a { display: flex; align-items: center; height: 30px; color: var(--mute); text-decoration: none; padding: 0 11px;
+    border-radius: 7px; }
+  header nav.tabs a:hover { color: var(--ink); background: var(--hover); }
   header nav.tabs a[aria-current="page"] { color: var(--ink); background: var(--sel); }
-  header .me { margin-left: auto; color: var(--mute); }
   main { flex: 1; display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; }
   #list { padding: 12px; border-right: 1px solid var(--line); background: var(--col); }
@@ -108,13 +136,21 @@
 </head>
 <body>
 <header>
-  <h1>opspile</h1>
+  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
   <nav class="pages" aria-label="Admin pages"><a href="/inbox" title="Back to the inbox">Inbox</a><a href="/inbox/kb">Knowledge bases</a><a href="/inbox/admin" aria-current="page">Admin</a></nav>
   <nav class="tabs" aria-label="Admin sections">
     <a href="/inbox/admin?tab=teams" data-tab="teams">Teams</a>
     <a href="/inbox/admin?tab=orgs" data-tab="orgs">Customers, partners, vendors</a>
   </nav>
-  <span class="me" id="me"></span>
+  <span class="spacer"></span>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
+    <span class="av" id="userAv"></span><span class="nm" id="me"></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
 </header>
 <main>
   <section id="list"><div class="empty">Loading…</div></section>
@@ -139,6 +175,22 @@ const state = {
   me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
 };
 const $ = (id) => document.getElementById(id);
+const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
+/** You, at the toolbar's right end (the same colour and initials as in the inbox), and its menu. */
+function renderUser(me) {
+  const name = me.name || me.email || '';
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  for (const id of ['userAv', 'menuAv']) {
+    $(id).textContent = initials;
+    $(id).style.background = COLORS[h % COLORS.length];
+  }
+  $('me').textContent = name;
+  $('menuName').textContent = name;
+  $('menuEmail').textContent = me.email || '';
+  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
 const ico = (icon) => (icon ? `<img class="ico" src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.className='ico none';this.removeAttribute('src')">` : '<span class="ico none"></span>');
@@ -831,7 +883,7 @@ async function showOrg(slug) {
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  $('me').textContent = state.me.name || state.me.email || '';
+  renderUser(state.me);
   if (!state.me.admin && !state.me.manages?.length) {
     $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
     $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';

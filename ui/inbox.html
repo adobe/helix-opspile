@@ -34,22 +34,67 @@
   body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
   button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; cursor: pointer; }
-  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .02em; }
-  header .me { margin-left: auto; color: var(--mute); }
-  #review[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); }
+  /* The toolbar: pages and label review on the left; on the right, whoever is signed in, with a
+     menu for the team, "View as" (admin team), the keyboard shortcuts and logging out. */
+  header { display: flex; gap: 10px; align-items: center; height: 50px; padding: 0 12px 0 14px; flex: none;
+    background: var(--col); border-bottom: 1px solid var(--line); }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
+    letter-spacing: .01em; }
+  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
+  header .spacer { flex: 1; }
+  header .tool { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; color: var(--mute); }
+  header .tool:hover { color: var(--ink); background: var(--hover); }
+  header .tool svg { width: 14px; height: 14px; flex: none; }
+  #review[aria-pressed="true"] { color: var(--ink); background: var(--sel); border-color: var(--accent); }
   /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
-  nav.pages { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
-  nav.pages a { color: var(--mute); text-decoration: none; padding: 3px 10px; }
+  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
   nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
     box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
   nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .live { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
-  .live.on { background: var(--green); }
+  /* Live updates are only worth a word when they stop. */
+  #offline { color: var(--yellow); font-size: 12.5px; }
+  /* Read-only "View as": loud enough not to be forgotten, and one click to leave. */
+  #viewing { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 11px; font-size: 13px;
+    color: var(--ink); background: color-mix(in srgb, var(--yellow) 18%, var(--card));
+    border-color: color-mix(in srgb, var(--yellow) 55%, var(--line)); border-radius: 15px; }
+  #viewing[hidden] { display: none; }
+  #viewing .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--mute); }
+  #viewing:hover .x { color: var(--ink); background: color-mix(in srgb, var(--yellow) 30%, transparent); }
+  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
+    background: none; border-radius: 10px; text-align: left; }
+  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+  #user .av, .menu .av { width: 28px; height: 28px; border-radius: 50%; font-size: 11px; }
+  #user .who { display: flex; flex-direction: column; line-height: 1.2; }
+  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  #user .sub { color: var(--mute); font-size: 11.5px; white-space: nowrap; }
+  #user svg { width: 12px; height: 12px; color: var(--mute); }
+  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
+  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
+  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
+  .menu .id .nm { font-weight: 650; font-size: 14px; }
+  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
+  .menu section[hidden] { display: none; }
+  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--faint); }
+  .menu .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 7px;
+    background: none; color: inherit; text-decoration: none; text-align: left; cursor: pointer; }
+  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+  .menu .item .ck { width: 14px; color: var(--accent); flex: none; visibility: hidden; }
+  .menu .item[aria-checked="true"] { font-weight: 600; }
+  .menu .item[aria-checked="true"] .ck { visibility: visible; }
+  .menu .item svg { width: 14px; height: 14px; flex: none; }
+  .menu select { width: calc(100% - 16px); margin: 2px 8px 4px; padding: 4px 8px; }
+  .menu .hint { margin: 0 8px 4px; color: var(--mute); font-size: 11.5px; }
+  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
+  .menu .keys dd { margin: 0; text-align: right; }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 
@@ -354,16 +399,29 @@
 </head>
 <body>
 <header>
-  <h1>opspile</h1>
+  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
   <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Edit the knowledge bases and the agents' system prompts (admin team): the open thread's customer, else this team">Knowledge bases</a><a id="adminPage" href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors (admin team)">Admin</a></nav>
-  <select id="team" aria-label="Team"></select>
-  <select id="as" hidden aria-label="View as" title="See the inbox as someone else (admin team, read-only)"></select>
-  <button id="review" hidden aria-pressed="false" title="Review Clef labels (admin team)">Review labels</button>
-  <span class="live" id="live" title="live updates"></span>
-  <span class="me" id="me"></span>
-  <span title="next / previous thread"><kbd>j</kbd> <kbd>k</kbd></span>
-  <span title="resolve the open thread with ✅ on its first message, or take your ✅ off again"><kbd>e</kbd></span>
-  <span title="in the reply box: save it as the thread's draft, which your team sees"><kbd>⌘S</kbd></span>
+  <button id="review" class="tool" hidden aria-pressed="false" title="Review Clef labels (admin team)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg>Review labels</button>
+  <span class="spacer"></span>
+  <span id="offline" hidden title="Live updates stopped; trying again">Reconnecting…</span>
+  <button id="viewing" hidden title="Read-only. Click to see your own inbox again."></button>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account, team and shortcuts">
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="teamName"></span></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section aria-labelledby="teamsLabel"><h4 id="teamsLabel">Team</h4><div id="teams" role="radiogroup" aria-labelledby="teamsLabel"></div></section>
+    <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
+      <p class="hint">See the inbox as someone else, read-only.</p></section>
+    <section><h4>Keyboard</h4><dl class="keys">
+      <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
+      <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>
+      <dt title="in the reply box: your team sees it">Save the reply as a draft</dt><dd><kbd>⌘S</kbd></dd>
+    </dl></section>
+    <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
 </header>
 <main>
   <section id="filters" aria-label="Filters"></section>
@@ -1683,15 +1741,36 @@ function reloadSoon(thread) {
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
   state.teams = who.teams;
-  $('team').innerHTML = who.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
-  $('team').value = state.team;
+  renderUser();
+}
+const CHECK = '<svg class="ck" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" '
+  + 'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/**
+ * The toolbar's right end: you and the team on screen, and the menu behind them (the teams to
+ * switch to, "View as", shortcuts, log out). Viewing as someone shows who, until left.
+ */
+function renderUser() {
+  const name = state.me.name || state.me.email;
+  $('me').textContent = name;
+  $('teamName').textContent = state.teams?.find((t) => t.slug === state.team)?.name || '';
+  for (const id of ['userAv', 'menuAv']) {
+    $(id).textContent = initials(name);
+    $(id).style.background = hue(name);
+  }
+  $('menuName').textContent = name;
+  $('menuEmail').textContent = state.me.email || '';
+  $('teams').innerHTML = (state.teams || []).map((t) => `<button class="item" role="radio" aria-checked="${t.slug === state.team}"
+    data-team="${esc(t.slug)}">${CHECK}${esc(t.name)}</button>`).join('');
+  const as = state.data?.me?.readonly ? state.data.me.name : null;
+  $('viewing').hidden = !as;
+  $('viewing').innerHTML = as ? `Viewing as <b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
 }
 
 async function loadInbox() {
   state.data = await get(`/api/inbox?team=${encodeURIComponent(state.team)}`);
   mergeProfiles(state.data.profiles);
-  $('me').textContent = state.data.me?.readonly ? `${state.me.name} · viewing as ${state.data.me.name}` : (state.me.name || state.me.email);
+  renderUser();
   state.coPeople = coParticipants();
   state.scores = new Map(state.data.threads.map((t) => [t.thread, smartScore(t)]));
   render();
@@ -1732,8 +1811,13 @@ function connect() {
   state.ws?.close();
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}${state.as ? `&as=${state.as}` : ''}`);
   state.ws = ws;
-  ws.onopen = () => $('live').classList.add('on');
-  ws.onclose = () => { $('live').classList.remove('on'); if (state.ws === ws) setTimeout(connect, 3000); };
+  // Reconnecting is only shown when it takes a while (not for a team switch or a blip).
+  ws.onopen = () => { clearTimeout(state.offline); state.offline = null; $('offline').hidden = true; };
+  ws.onclose = () => {
+    if (state.ws !== ws) return;
+    setTimeout(connect, 3000);
+    state.offline ??= setTimeout(() => { $('offline').hidden = false; }, 5000);
+  };
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'read' && ev.person === state.me.id) return;
@@ -1811,15 +1895,14 @@ function move(step) {
 
 async function switchTeam(slug) {
   state.team = slug; state.open = null; state.prevKeys = null;
-  $('team').value = slug;
+  renderUser();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
 }
 
 async function start() {
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  $('me').textContent = state.me.name || state.me.email;
-  $('team').innerHTML = state.me.teams.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('');
+  state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(`Connected your ${q.get('connected') === 'slack' ? 'Slack' : 'Microsoft'} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
@@ -1829,7 +1912,13 @@ async function start() {
   state.open = initial.open || null;
   await loadWho();
   toUrl(false);
-  $('team').onchange = () => switchTeam($('team').value);
+  $('teams').onclick = (e) => {
+    const b = e.target.closest('[data-team]');
+    if (!b) return;
+    $('menu').hidePopover();
+    if (b.dataset.team !== state.team) switchTeam(b.dataset.team);
+  };
+  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
     const card = e.target.closest('.card');
     if (!card) return;
@@ -1913,7 +2002,7 @@ async function start() {
   window.addEventListener('popstate', async () => {
     const team = state.team;
     const { open, review } = fromUrl();
-    $('team').value = state.team;
+    renderUser();
     if (team !== state.team) { state.prevKeys = null; await loadInbox(); connect(); }
     state.review = review;
     $('review').setAttribute('aria-pressed', String(review));
@@ -1923,13 +2012,14 @@ async function start() {
   });
   if (state.me.admin) {
     const sel = $('as');
-    sel.hidden = false;
+    $('asBox').hidden = false;
     get('/api/people').then(({ people }) => {
-      sel.innerHTML = `<option value="">View as: me</option>${people.filter((p) => p.id !== state.me.id).map((p) => `<option value="${p.id}">View as ${esc(p.name)}</option>`).join('')}`;
+      sel.innerHTML = `<option value="">Me</option>${people.filter((p) => p.id !== state.me.id).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}`;
       sel.value = state.as ? String(state.as) : '';
     });
-    sel.onchange = async () => {
-      state.as = Number(sel.value) || null;
+    const viewAs = async (id) => {
+      state.as = id;
+      sel.value = id ? String(id) : '';
       state.cache.clear();
       state.prevKeys = null;
       state.open = null;
@@ -1939,6 +2029,8 @@ async function start() {
       await loadInbox();
       connect();
     };
+    sel.onchange = () => { $('menu').hidePopover(); viewAs(Number(sel.value) || null); };
+    $('viewing').onclick = () => viewAs(null);
     $('review').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
     $('review').onclick = () => {

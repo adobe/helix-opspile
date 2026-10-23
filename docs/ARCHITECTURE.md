@@ -246,6 +246,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
+- The toolbar is the same on the inbox and the admin pages: the pages and label review on the
+  left, and on the right whoever is signed in. Their name opens a menu with the team to show
+  (the inbox), "View as" (admin team; while it is on, a chip next to the name says whose inbox
+  this is and leaves it in one click), the keyboard shortcuts, and **Log out**, which is
+  Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the toolbar
+  says "Reconnecting…" when the WebSocket has been down for a few seconds.
 
 ## Read state
 
