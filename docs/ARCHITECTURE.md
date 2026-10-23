@@ -404,8 +404,9 @@ draft. Staff notes are trusted and not checked by Clef.
 `us.anthropic.claude-opus-5-5` in `us-east-2`), through Cloudflare AI Gateway: Bedrock's
 `bedrock-runtime` endpoint speaks the Anthropic Messages API at `/anthropic`, AI Gateway
 passes it through, and the Bedrock API key goes in `Authorization: Bearer`. (`bedrock-mantle`
-speaks it too, but serves only older Claude models in that region.) The gateway logs and
-meters every request.
+speaks it too, but serves only older Claude models in that region.) The gateway meters every
+request but keeps **no logs**: prompts carry customer messages, so request logging is off
+(turn it off on any new gateway too).
 
 **Replay.** Agents are not part of the replay path. Their output is user state (drafts) or
 pile 3 (git history); replaying pile 1 pokes them, but they find nothing past their watermark.
