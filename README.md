@@ -160,7 +160,9 @@ node scripts/replay.mjs --relabel           # label every thread again (titles, 
 ```
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
-`Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`.
+`Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `User.Read.All`, and
+`TeamsAppInstallation.ReadForTeam.All` (the cron lists each Teams team's installed bots, so replies
+can mention them; `/diag/teams?bots=1` runs that once).
 For replies and reactions it also needs the **delegated** permissions `ChannelMessage.Send`
 (which covers `setReaction`/`unsetReaction` on channel messages), `offline_access` and
 `User.Read`, and the web redirect URI `<origin>/api/auth/teams/callback`. The Slack app needs
