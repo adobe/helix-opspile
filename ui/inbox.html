@@ -354,8 +354,6 @@
   .rx span, .rx button { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
   .rx button.mine { background: var(--sel); border-color: var(--accent); }
   .msg .col { position: relative; }
-  .msg .meta .react { visibility: hidden; font-size: 11px; padding: 0 6px; border-radius: 9px; color: var(--mute); margin-right: 6px; }
-  .msg:hover .meta .react, .msg .meta .react:focus-visible, .msg .meta .react[aria-expanded="true"] { visibility: visible; }
   .picker { position: absolute; bottom: 100%; z-index: 4; display: flex; gap: 2px; padding: 4px; background: var(--card);
     border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
   .msg.adobe .picker { right: 0; }
@@ -389,8 +387,6 @@
   .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
   .msg .quick button[aria-pressed="true"] { background: var(--sel); }
   .msg .quick .more { font-size: 14px; color: var(--mute); }
-  .msg .meta .react { display: none; }
-  @media (hover: none) { .msg .meta .react { display: inline; visibility: visible; } }
   .ph .resolved { color: var(--green); }
   .ph .reopened { color: var(--yellow); }
   .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }
@@ -423,7 +419,8 @@
   .rv .apply { display: flex; gap: 8px; margin-top: 8px; }
   .rv .apply .send { border-radius: 8px; padding: 3px 12px; background: var(--me); color: #fff; border: 0; }
   .rv .apply .send:disabled { opacity: .45; }
-  .rv { position: sticky; top: 0; z-index: 3; box-shadow: 0 6px 16px rgba(0,0,0,.18); margin: 12px 22px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 13px; }
+  /* Above a message's quick reactions and the reaction picker, which scroll under it. */
+  .rv { position: sticky; top: 0; z-index: 5; box-shadow: 0 6px 16px rgba(0,0,0,.18); margin: 12px 22px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 13px; }
   .rv .q { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 3px 0; }
   .rv .q b { width: 86px; font-weight: 600; }
   .rv button { padding: 1px 8px; font-size: 12px; }
@@ -1496,13 +1493,12 @@ function message(m, prev, fresh) {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button></div>` : '';
-  const add = can ? `<button class="react" data-picker="1" aria-haspopup="true" aria-expanded="false" title="Add a reaction, as you">☺ React</button>` : '';
   return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${m.editedAt || m.permalink || m.pending || add ? `<div class="meta">${add}${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
+      ${m.editedAt || m.permalink || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
     </div></div>`;
 }
 
