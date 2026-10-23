@@ -446,8 +446,9 @@ export function createStore(now = Date.now()) {
     mentions,
 
     /** Adds a live message to a thread, as the normalizer would. Returns the thread key. */
-    post(key, who, body, at = new Date().toISOString(), id = newId(threads.get(key).ch.source, Date.parse(at))) {
+    post(key, who, body, at = new Date().toISOString(), given = null) {
       const entry = threads.get(key);
+      const id = given || newId(entry.ch.source, Date.parse(at));
       put(entry, {
         id, at, author: author(who), body,
       });
