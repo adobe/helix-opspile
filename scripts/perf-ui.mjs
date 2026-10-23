@@ -64,6 +64,8 @@ async function launch() {
       '--no-first-run', '--no-default-browser-check', '--window-size=1440,900', 'about:blank'],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
+  // No headless Chrome left behind when a step fails.
+  process.on('exit', () => proc.kill());
   const url = await new Promise((resolve, reject) => {
     let buf = '';
     proc.stderr.on('data', (d) => {
@@ -169,7 +171,7 @@ async function session(browser) {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: OBSERVE });
   const center = async (selector) => {
     const r = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)});
-      if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const r = el.getBoundingClientRect();
+      if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
       return { x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 }; })()`);
     if (!r) {
       throw new Error(`no ${selector}`);
