@@ -39,7 +39,10 @@ import { Timing, withTiming } from './timing.js';
  * verified Access email, and sees only the threads of the teams that person is in.
  */
 
-const INBOX_LIMIT = 200;
+// One page of the inbox, in groups (a re-threaded group counts once): the first page comes
+// with the page, older pages are fetched behind it with `before`.
+export const INBOX_PAGE = 100;
+const MAX_PAGE = 300;
 const MAX_PARTICIPANTS = 5;
 
 const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key";
@@ -230,7 +233,14 @@ export function fold(threads) {
   }).sort((a, b) => String(b.last_at || b.any_at).localeCompare(String(a.last_at || a.any_at)));
 }
 
-export async function inbox(env, me, team) {
+/**
+ * A page of the inbox. `before` is the `next` cursor of the previous page (`<latest>|<group>`):
+ * the groups whose latest activity comes after it in the newest-first order.
+ */
+export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE } = {}) {
+  const size = Math.max(1, Math.min(MAX_PAGE, Number(limit) || INBOX_PAGE));
+  const cursor = before ? String(before).split('|') : null;
+  const [beforeAt, beforeG] = cursor && cursor.length === 2 ? cursor : [null, null];
   // Who is on the viewer's teams and on this one does not depend on the threads: asked for
   // at once with the groups. Everything after the thread rows is asked for at once too
   // (loading the inbox used to wait for some twenty round trips in a row).
@@ -250,7 +260,17 @@ export async function inbox(env, me, team) {
       -- are not shown: no person posted, and no message has an author account (bots do).
       AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
         WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
-    GROUP BY g ORDER BY latest DESC LIMIT ?`).bind(team, INBOX_LIMIT).all();
+    GROUP BY g
+    HAVING ? IS NULL OR latest < ? OR (latest = ? AND g < ?)
+    ORDER BY latest DESC, g DESC LIMIT ?`)
+    .bind(team, beforeAt, beforeAt, beforeAt, beforeG, size + 1).all();
+  // One more than the page says whether there is another.
+  const more = (groups || []).length > size;
+  if (more) {
+    groups.pop();
+  }
+  const last = (groups || [])[groups.length - 1];
+  const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
@@ -267,7 +287,9 @@ export async function inbox(env, me, team) {
     .bind(team, groupKeys, groupKeys).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
-    return { team, members: await membersP, threads: [] };
+    return {
+      team, members: await membersP, threads: [], page,
+    };
   }
   const threadKeys = threads.map((t) => t.thread);
   const keys = JSON.stringify(threadKeys);
@@ -352,6 +374,7 @@ export async function inbox(env, me, team) {
     .flatMap((t) => t.participants.map((p) => p.key)));
   return {
     team,
+    page,
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
@@ -633,7 +656,9 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
     if (!inTeam(me, team)) {
       return json({ error: 'not a member of this team' }, 403);
     }
-    return json(await inbox(env, me, team));
+    return json(await inbox(env, me, team, {
+      before: url.searchParams.get('before'), limit: url.searchParams.get('limit'),
+    }));
   }
   if (url.pathname === '/api/thread') {
     const result = await thread(env, me, url.searchParams.get('thread'));
