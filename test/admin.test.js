@@ -128,8 +128,8 @@ describe('admin: teams and members', () => {
     assert.deepEqual(r.body.members.map((m) => m.name), ['Cy Platform']);
     r = await call(e, ADA, 'GET', '/api/admin/people?team=search&q=cy');
     assert.deepEqual(r.body.people.map((p) => p.name), ['Cyd Customer']);
-    // Names are not edited here.
-    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { person: cy.id, name: 'Cyril' })).status, 404);
+    // Names are not edited here: PUT members sets a role, and nothing else.
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { team: 'search', person: cy.id, name: 'Cyril' })).status, 400);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/members', { team: 'search', person: cy.id })).status, 200);
 
     // The admin team keeps a member; a team with threads or rules stays.
@@ -137,6 +137,104 @@ describe('admin: teams and members', () => {
     assert.match((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'helix' })).body.error, /1 rule\(s\) and 3 thread\(s\)/);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'admin' })).status, 400);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'search' })).status, 200);
+  });
+});
+
+describe('admin: team managers', () => {
+  // Bo manages helix; Cy is a member of edge only.
+  const CY = {
+    id: 3, email: 'cy@staff.example', name: 'Cy', staff: 1, teams: ['edge'],
+  };
+  const managers = () => {
+    const e = env();
+    e.DB.sqlite.exec(`INSERT INTO people (id, email, name, staff) VALUES (3, 'cy@staff.example', 'Cy', 1);
+      INSERT INTO team_members (team, person) VALUES ('edge', 3);
+      UPDATE team_members SET role = 'manager' WHERE team = 'helix' AND person = 2`);
+    return e;
+  };
+  const bo = { ...BO, manages: ['helix'] };
+  const asBo = (p) => ({ ...asMe(p), teams: [{ slug: 'helix', role: 'manager' }] });
+
+  async function as(e, who, method, path, body) {
+    const url = new URL(`https://opspile.example${path}`);
+    const request = new Request(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const res = await api(request, e, url, { viewer: who });
+    return { status: res.status, body: await res.json() };
+  }
+
+  it('manage the members of their teams, and nothing else', async () => {
+    const e = managers();
+    const me = asBo(bo);
+    let r = await as(e, me, 'GET', '/api/admin/teams');
+    assert.deepEqual([r.body.teams.map((t) => t.slug), r.body.admin, r.body.unassigned], [['helix'], false, null]);
+    r = await as(e, me, 'GET', '/api/admin/team?slug=helix');
+    assert.deepEqual(r.body.members.map((m) => [m.name, m.role]), [['Ada', 'member'], ['Bo', 'manager']]);
+    assert.equal((await as(e, me, 'GET', '/api/admin/team?slug=edge')).status, 403);
+    assert.equal((await as(e, me, 'GET', '/api/admin/people?team=edge&q=cy')).status, 403);
+    assert.equal((await as(e, me, 'GET', '/api/admin/people?team=helix&q=cy')).body.people[0].name, 'Cy');
+
+    // Add, promote, demote, remove in their own team.
+    r = await as(e, me, 'POST', '/api/admin/members', { team: 'helix', email: 'cy@staff.example' });
+    assert.equal(r.body.person.role, 'member');
+    assert.equal((await as(e, me, 'PUT', '/api/admin/members', { team: 'helix', person: 3, role: 'manager' })).status, 200);
+    assert.equal((await as(e, me, 'PUT', '/api/admin/members', { team: 'helix', person: 3, role: 'member' })).status, 200);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/members', { team: 'helix', person: 3 })).status, 200);
+    // Not in another team, and not the rest of the admin API.
+    assert.equal((await as(e, me, 'POST', '/api/admin/members', { team: 'edge', email: 'x@staff.example' })).status, 403);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/members', { team: 'edge', person: 3 })).status, 403);
+    for (const [method, path, body] of [
+      ['PUT', '/api/admin/teams', { slug: 'helix', selfManaged: true }],
+      ['POST', '/api/admin/teams', { slug: 'x', name: 'X' }],
+      ['POST', '/api/admin/rules', {
+        target: 'team', field: 'name', pattern: '^x', value: 'helix',
+      }],
+      ['POST', '/api/admin/assign', { target: 'team', channelId: 'C3', value: 'helix' }],
+      ['GET', '/api/admin/orgs'],
+      ['GET', '/api/admin/channels?q=aem'],
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await as(e, me, method, path, body)).status, 403, `${method} ${path}`);
+    }
+    // A plain member has no admin pages at all.
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/teams')).status, 403);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 403);
+  });
+
+  it('edit their teams\' knowledge base, and no other', async () => {
+    const e = managers();
+    e.ARTIFACTS = {};
+    e.DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-team-helix', 'team', 'helix', 'r', 'x'), ('kb-team-edge', 'team', 'edge', 'r', 'x'),
+      ('kb-org-acme', 'org', 'acme', 'r', 'x')`);
+    const me = asBo(bo);
+    const r = await as(e, me, 'GET', '/api/kb');
+    assert.deepEqual(r.body.bases.map((b) => b.repo), ['kb-team-helix']);
+    assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 404);
+    assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+    assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
+  });
+
+  it('are everyone in a self-managed team; turning it off keeps the roles', async () => {
+    const e = managers();
+    let r = await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'edge', selfManaged: true });
+    assert.equal(r.body.team.self_managed, true);
+    r = await call(e, ADA, 'GET', '/api/admin/team?slug=edge');
+    assert.deepEqual(r.body.members.map((m) => m.role), ['manager']);
+    // Newcomers are managers too, and nobody can be demoted.
+    r = await call(e, ADA, 'POST', '/api/admin/members', { team: 'edge', email: 'bo@staff.example' });
+    assert.equal(r.body.person.role, 'manager');
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { team: 'edge', person: 2, role: 'member' })).status, 409);
+    // A manager of edge now sees it in the admin pages.
+    const cy = { ...asMe(CY), teams: [{ slug: 'edge', role: 'manager' }] };
+    assert.deepEqual((await as(e, cy, 'GET', '/api/admin/teams')).body.teams.map((t) => t.slug), ['edge']);
+
+    // Off again: roles stay, newcomers are members, demotion works.
+    await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'edge', selfManaged: false });
+    r = await call(e, ADA, 'POST', '/api/admin/members', { team: 'edge', email: 'new@staff.example' });
+    assert.equal(r.body.person.role, 'member');
+    r = await call(e, ADA, 'GET', '/api/admin/team?slug=edge');
+    assert.deepEqual(r.body.members.map((m) => [m.name, m.role]), [[null, 'member'], ['Bo', 'manager'], ['Cy', 'manager']]);
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { team: 'edge', person: 2, role: 'member' })).status, 200);
   });
 });
 

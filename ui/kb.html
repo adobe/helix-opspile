@@ -604,8 +604,9 @@ window.addEventListener('popstate', async () => {
   if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
   $('me').textContent = state.me.name || state.me.email || '';
-  if (!state.me.admin) {
-    $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team.</div>';
+  // Team managers see their teams' knowledge bases only (the API lists no others).
+  if (!state.me.admin && !state.me.manages?.length) {
+    $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team and team managers.</div>';
     $('editor').innerHTML = `<div class="empty"><a href="${esc(inboxUrl())}">Back to the inbox</a></div>`;
     return;
   }

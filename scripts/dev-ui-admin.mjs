@@ -21,7 +21,7 @@ import { fakeBucket } from '../test/fakes.js';
  * teams, people and threads. Re-filing jobs run at once on a fake pile 2. Made-up data only.
  */
 
-export function createAdmin(store) {
+export function createAdmin(store, { manager = false } = {}) {
   const DB = d1({
     teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
     people: [...store.people.values()].map((p) => ({
@@ -87,9 +87,15 @@ export function createAdmin(store) {
   const env = {
     DB, CHANNELS, NORMALIZE: { send: async (body) => queued.push(body) },
   };
-  const me = {
-    ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }],
-  };
+  // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
+  if (manager) {
+    DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
+  }
+  const me = manager
+    ? {
+      ...store.me, admin: false, teams: store.me.teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })), manages: ['edge'],
+    }
+    : { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
 
   return async function handle(req, url, body) {
     const request = new Request(url, {
