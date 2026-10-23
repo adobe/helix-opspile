@@ -25,13 +25,14 @@ import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
-import { parse } from './channels.js';
+import { folderFiles } from './filecache.js';
 import { profiles } from './profiles.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
+import { Timing, withTiming } from './timing.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -81,11 +82,22 @@ async function participants(env, keys) {
   }]));
 }
 
-async function personWithTeams(env, person) {
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name FROM team_members m
-    JOIN teams t ON t.slug = m.team WHERE m.person = ? ORDER BY t.slug`).bind(person.id).all();
-  const teams = results || [];
-  return { ...person, teams, admin: teams.some((t) => t.slug === 'admin') };
+/**
+ * A person with their teams, by `id` or `email`, in one round trip (every API call asks this
+ * first), or null.
+ */
+async function personWhere(env, column, value) {
+  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, t.slug, t.name AS team
+    FROM people p LEFT JOIN team_members m ON m.person = p.id LEFT JOIN teams t ON t.slug = m.team
+    WHERE p.${column === 'id' ? 'id' : 'email'} = ? ORDER BY t.slug`).bind(value).all();
+  if (!results || !results.length) {
+    return null;
+  }
+  const { id, name, email } = results[0];
+  const teams = results.filter((r) => r.slug).map((r) => ({ slug: r.slug, name: r.team }));
+  return {
+    id, name, email, teams, admin: teams.some((t) => t.slug === 'admin'),
+  };
 }
 
 /**
@@ -94,9 +106,7 @@ async function personWithTeams(env, person) {
  */
 /** A person by id, with their teams (an MCP client's token names the person). */
 export async function personById(env, id) {
-  const person = await env.DB.prepare('SELECT id, name, email FROM people WHERE id = ?')
-    .bind(id).first();
-  return person ? personWithTeams(env, person) : null;
+  return personWhere(env, 'id', id);
 }
 
 /**
@@ -119,9 +129,7 @@ const orgFields = (orgs, slug) => {
 
 /** A person by email, with their teams, or null. */
 export async function personByEmail(env, email) {
-  const person = await env.DB.prepare('SELECT id, name, email FROM people WHERE email = ?')
-    .bind(email).first();
-  return person ? personWithTeams(env, person) : null;
+  return personWhere(env, 'email', email);
 }
 
 export async function viewer(request, env, options) {
@@ -129,17 +137,14 @@ export async function viewer(request, env, options) {
   if (!email) {
     return null;
   }
-  const person = await env.DB.prepare('SELECT id, name, email FROM people WHERE email = ?')
-    .bind(email).first();
-  if (!person) {
+  const me = await personWhere(env, 'email', email);
+  if (!me) {
     return null;
   }
-  const me = await personWithTeams(env, person);
   const as = Number(request.headers.get('x-opspile-as') || new URL(request.url).searchParams.get('as'));
   if (me.admin && as && as !== me.id) {
-    const other = await env.DB.prepare('SELECT id, name, email FROM people WHERE id = ?').bind(as).first();
-    if (other) {
-      const them = await personWithTeams(env, other);
+    const them = await personWhere(env, 'id', as);
+    if (them) {
       return { ...them, viewer: { id: me.id, name: me.name }, readonly: true };
     }
   }
@@ -218,6 +223,16 @@ export function fold(threads) {
 }
 
 export async function inbox(env, me, team) {
+  // Who is on the viewer's teams and on this one does not depend on the threads: asked for
+  // at once with the groups. Everything after the thread rows is asked for at once too
+  // (loading the inbox used to wait for some twenty round trips in a row).
+  const teamRowsP = env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
+    JOIN teams t ON t.slug = m.team
+    WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
+  const membersP = members(env, team);
+  // Settled either way, so a failure elsewhere does not leave these rejections unhandled.
+  teamRowsP.catch(() => {});
+  membersP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
@@ -244,36 +259,58 @@ export async function inbox(env, me, team) {
     .bind(team, groupKeys, groupKeys).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
-    return { team, members: await members(env, team), threads: [] };
+    return { team, members: await membersP, threads: [] };
   }
-  const orgs = await orgsOf(env, threads.map((t) => t.org));
-  const keys = JSON.stringify(threads.map((t) => t.thread));
-  // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
-  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
-      p.staff, EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?)
-        AS in_team
-    FROM watermarks w JOIN people p ON p.id = w.person
-    WHERE w.thread IN (SELECT value FROM json_each(?))
-      AND (p.staff = 1 OR EXISTS (
-        SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?))`)
-    .bind(team, keys, team).all();
-  const { results: mentions } = await env.DB.prepare(`SELECT n.thread, n.person, n.at
-    FROM mentions n JOIN team_members m ON m.person = n.person AND m.team = ?
-    JOIN messages x ON x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = n.message
-    WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
-    .bind(team, keys).all();
-  const { results: labels } = await env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
-      kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
-    WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
-  const people = await participants(env, keys);
-  const { results: rx } = await env.DB.prepare(`SELECT thread, emoji, COUNT(*) AS n FROM reactions
-    WHERE thread IN (SELECT value FROM json_each(?)) GROUP BY thread, emoji`).bind(keys).all();
-  const { results: posted } = await env.DB.prepare(`SELECT DISTINCT thread, person FROM messages
-    WHERE thread IN (SELECT value FROM json_each(?)) AND person IS NOT NULL AND deleted = 0`)
-    .bind(keys).all();
-  const { results: named } = await env.DB.prepare(`SELECT DISTINCT n.thread, n.person, p.staff
-    FROM mentions n JOIN people p ON p.id = n.person
-    WHERE n.thread IN (SELECT value FROM json_each(?))`).bind(keys).all();
+  const threadKeys = threads.map((t) => t.thread);
+  const keys = JSON.stringify(threadKeys);
+  const [
+    { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
+    { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
+    drafts, { results: teamRows }, teamMembers, orgs,
+  ] = await Promise.all([
+    // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
+    env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
+        p.staff, EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?)
+          AS in_team
+      FROM watermarks w JOIN people p ON p.id = w.person
+      WHERE w.thread IN (SELECT value FROM json_each(?))
+        AND (p.staff = 1 OR EXISTS (
+          SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?))`)
+      .bind(team, keys, team).all(),
+    env.DB.prepare(`SELECT n.thread, n.person, n.at
+      FROM mentions n JOIN team_members m ON m.person = n.person AND m.team = ?
+      JOIN messages x ON x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = n.message
+      WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
+      .bind(team, keys).all(),
+    env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
+        kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
+      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
+    participants(env, keys),
+    env.DB.prepare(`SELECT thread, emoji, COUNT(*) AS n FROM reactions
+      WHERE thread IN (SELECT value FROM json_each(?)) GROUP BY thread, emoji`).bind(keys).all(),
+    env.DB.prepare(`SELECT DISTINCT thread, person FROM messages
+      WHERE thread IN (SELECT value FROM json_each(?)) AND person IS NOT NULL AND deleted = 0`)
+      .bind(keys).all(),
+    env.DB.prepare(`SELECT DISTINCT n.thread, n.person, p.staff
+      FROM mentions n JOIN people p ON p.id = n.person
+      WHERE n.thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
+    resolutionFacts(env, threadKeys),
+    signalFacts(env, threadKeys),
+    // Reviews of any of the threads; only those of labelled ones are used.
+    reviewsFor(env.DB, threadKeys),
+    // Names of everyone posting or mentioned (for "involves"): the people of the two queries
+    // above, asked for in the same round.
+    env.DB.prepare(`SELECT id, name, staff FROM people WHERE id IN (
+        SELECT person FROM messages WHERE thread IN (SELECT value FROM json_each(?))
+          AND person IS NOT NULL AND deleted = 0
+        UNION SELECT person FROM mentions WHERE thread IN (SELECT value FROM json_each(?)))`)
+      .bind(keys, keys).all(),
+    // Shared drafts, on any member of an entry (an entry has at most one).
+    draftsFor(env, [...threadKeys, ...threads.map((t) => t.logical_thread).filter(Boolean)]),
+    teamRowsP,
+    membersP,
+    orgsOf(env, threads.map((t) => t.org)),
+  ]);
   const by = (rows, f) => {
     const m = new Map();
     for (const r of rows || []) {
@@ -287,27 +324,15 @@ export async function inbox(env, me, team) {
   const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
-  const resolved = await resolutionFacts(env, threads.map((t) => t.thread));
-  const signals = await signalFacts(env, threads.map((t) => t.thread));
-  const reviews = await reviewsFor(env.DB, (labels || []).map((l) => l.thread));
   const labelBy = new Map((labels || []).map((l) => [
     l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
   ]));
-  // Names of everyone posting or mentioned (for "involves"), and the viewer's teams.
-  const ids = [...new Set([...(posted || []), ...(named || [])].map((r) => r.person))];
-  const { results: names } = await env.DB.prepare(`SELECT id, name, staff FROM people
-    WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all();
-  const { results: teamRows } = await env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
-    JOIN teams t ON t.slug = m.team
-    WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
+  // The viewer's teams.
   const myTeams = {};
   for (const r of teamRows || []) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
     myTeams[r.team].members.push(r.person);
   }
-  // Shared drafts, on any member of an entry (an entry has at most one).
-  const drafts = await draftsFor(env, [...threads.map((t) => t.thread),
-    ...threads.map((t) => t.logical_thread).filter(Boolean)]);
   // Profile cards of everyone in the avatar stacks, once per person.
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
@@ -318,7 +343,7 @@ export async function inbox(env, me, team) {
     people: Object.fromEntries((names || [])
       .map((p) => [p.id, { name: p.name, staff: Boolean(p.staff) }])),
     teams: myTeams,
-    members: await members(env, team),
+    members: teamMembers,
     threads: fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
         const label = labelBy.get(t.thread) || null;
@@ -351,13 +376,14 @@ export async function inbox(env, me, team) {
  * every member's messages in order. Each message carries its platform `thread`.
  */
 export async function thread(env, me, key) {
-  const row = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
+  // The thread and the threads re-threaded into it, in one round trip.
+  const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
+    WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
+  const row = (memberRows || []).find((m) => m.thread === key);
   if (!row || !(inTeam(me, row.team) || isAdmin(me))) {
     return null;
   }
-  const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
-    WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
-  const group = memberRows && memberRows.length ? memberRows : [row];
+  const group = memberRows;
   const keys = JSON.stringify(group.map((m) => m.thread));
   // The latest member's label speaks for the group.
   const labelKey = [...group]
@@ -367,17 +393,11 @@ export async function thread(env, me, key) {
   // (opening a thread waited for some fifteen round trips in a row).
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
-    reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts,
+    reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
   ] = await Promise.all([
     env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
-    Promise.all(group.map(async (m) => {
-      const listed = await env.CHANNELS.list({ prefix: m.path });
-      return Promise.all(listed.objects.map(async (o) => {
-        const obj = await env.CHANNELS.get(o.key);
-        return obj ? parse(await obj.text()) : null;
-      }));
-    })).then((lists) => lists.flat()),
+    Promise.all(group.map((m) => folderFiles(env.CHANNELS, m.path))).then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
@@ -407,6 +427,7 @@ export async function thread(env, me, key) {
       FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
       .bind(keys).all(),
     draftsFor(env, entryKeys),
+    orgsOf(env, [row.org]),
   ]);
   row.permalink = link ? link.permalink : null;
   const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
@@ -443,7 +464,7 @@ export async function thread(env, me, key) {
   return {
     thread: {
       ...row,
-      ...orgFields(await orgsOf(env, [row.org]), row.org),
+      ...orgFields(rowOrgs, row.org),
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
       label_thread: labelKey,
     },
@@ -510,13 +531,11 @@ function room(env, team) {
   return env.ROOMS.get(env.ROOMS.idFromName(team));
 }
 
-/** Routes `/api/*`. Returns null for paths it does not own. */
-export async function api(request, env, url, { viewer: injected } = {}) {
-  if (!url.pathname.startsWith('/api/')) {
-    return null;
-  }
+/** `/api/*` with the viewer known; see `api`. */
+async function route(request, env, url, { viewer: injected } = {}, timing = null) {
   // `viewer` can be injected by tests; in the Worker it always comes from Access.
   const me = injected || await viewer(request, env);
+  timing?.mark('auth');
   if (!me) {
     return json({ error: 'not signed in, or not a member of any team' }, 403);
   }
@@ -658,4 +677,16 @@ export async function api(request, env, url, { viewer: injected } = {}) {
     return room(env, team).fetch(new Request('https://room/connect', { headers }));
   }
   return json({ error: 'not found' }, 404);
+}
+
+/**
+ * Routes `/api/*`. Returns null for paths it does not own. Every answer says where its time
+ * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only).
+ */
+export async function api(request, env, url, options = {}) {
+  if (!url.pathname.startsWith('/api/')) {
+    return null;
+  }
+  const timing = new Timing();
+  return withTiming(await route(request, timing.wrap(env), url, options, timing), timing);
 }

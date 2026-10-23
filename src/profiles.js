@@ -66,13 +66,17 @@ export async function profiles(env, keys) {
   if (!wanted.length) {
     return {};
   }
-  const { results: rows } = await env.DB.prepare(`WITH k AS (
+  // The partner domains do not depend on who is asked about: ask D1 for both at once.
+  const [{ results: rows }, { results: partnerRows }] = await Promise.all([
+    env.DB.prepare(`WITH k AS (
       SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS t,
         json_extract(value, '$[2]') AS u FROM json_each(?))
     SELECT i.source, i.tenant, i.user_id, i.kind, COALESCE(p.name, i.name) AS name, i.avatar,
       i.email, i.title, i.company, i.person, COALESCE(p.staff, 0) AS staff
     FROM k JOIN identities i ON i.source = k.s AND i.tenant = k.t AND i.user_id = k.u
-    LEFT JOIN people p ON p.id = i.person`).bind(JSON.stringify(wanted.map(splitKey))).all();
+    LEFT JOIN people p ON p.id = i.person`).bind(JSON.stringify(wanted.map(splitKey))).all(),
+    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+  ]);
   if (!rows || !rows.length) {
     return {};
   }
@@ -81,8 +85,6 @@ export async function profiles(env, keys) {
       t.name FROM team_members m JOIN teams t ON t.slug = m.team
     WHERE m.person IN (SELECT value FROM json_each(?)) ORDER BY t.name`)
     .bind(JSON.stringify(persons)).all() : { results: [] };
-  const { results: partnerRows } = await env.DB
-    .prepare('SELECT domain, name FROM partner_domains').all();
   const partners = new Map((partnerRows || [])
     .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const teamsOf = new Map();
