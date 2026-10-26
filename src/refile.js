@@ -154,6 +154,10 @@ async function moveFolder(bucket, from, to, budget) {
  * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]] } }`: files
  * the channel's threads where the rules say now. Runs again for the threads it did not get
  * to, so a large channel moves in several jobs.
+ *
+ * Each thread's folder is read from D1, not taken from the job: several rule changes in a
+ * row queue several jobs for a channel, and an earlier one may have moved the folder since
+ * this job was queued. The folder in the job is for a thread D1 no longer has.
  */
 export async function refile(env, job) {
   const row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')
@@ -163,11 +167,16 @@ export async function refile(env, job) {
   }
   const cls = classify(await loadRules(env), toChannel(row, job.source, job.channelId));
   await ensureChannelKnowledgeBases(env, cls);
+  const { results: current } = await env.DB.prepare(`SELECT thread, path FROM threads
+    WHERE source = ? AND tenant = ? AND channel_id = ?`)
+    .bind(job.source, job.tenant, job.channelId).all();
+  const pathOf = new Map((current || []).map((r) => [r.thread, r.path]));
   let budget = MAX_OBJECTS;
   let threads = 0;
   let objects = 0;
   const left = [];
-  for (const [thread, folder] of job.threads || []) {
+  for (const [thread, queued] of job.threads || []) {
+    const folder = pathOf.get(thread) || queued;
     if (budget <= 0) {
       left.push([thread, folder]);
       // eslint-disable-next-line no-continue
