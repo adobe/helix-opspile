@@ -47,7 +47,12 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   isomorphic-git in memory), `mcp.js` and `mcpclient.js` (the team's and customer's MCP
   servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
   SDK)
-- `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org
+- `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org,
+  and the global ones' switches per team and channel
+- `src/agent/globals.js` — the global MCP servers (`browser`, `github`), their switches and
+  connections; `src/agent/browser.js` and `src/agent/boxprogram.js` — the browser boxes
+  (a container per agent running chrome-devtools-mcp on Cloudflare Browser Run);
+  `src/github.js` — the GitHub App of the `github` server (manifest flow, installation tokens)
 - `src/timing.js` — the `Server-Timing` header on every `/api/*` answer (D1, R2, auth, total;
   durations and counts only); `src/filecache.js` — thread files kept per isolate by R2 version
 - `src/mcp.js` — `/mcp` MCP server (transport, protocol); `src/mcp-tools.js` — its tools

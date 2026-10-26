@@ -19,6 +19,12 @@ import {
 // Made-up values only.
 const ORIGIN = 'https://opspile.test';
 const ENV = { PUBLIC_ORIGIN: `${ORIGIN}/`, GRAPH_CLIENT_STATE: 'test-client-state' };
+// Catch-ups asked for, instead of queueing them.
+let caught = [];
+const catchUp = async (env, since, why) => {
+  caught.push({ since, why });
+  return 3;
+};
 const NOW = Date.UTC(2026, 9, 21, 12, 0, 0);
 const later = (min) => new Date(NOW + min * 60 * 1000).toISOString();
 
@@ -61,7 +67,7 @@ const ours = (id, expiresIn, extra = {}) => ({
 describe('ensureSubscription', () => {
   it('creates the subscription when there is none', async () => {
     const { graph, calls } = fakeGraph();
-    const r = await ensureSubscription(ENV, { graph, now: NOW });
+    const r = await ensureSubscription(ENV, { graph, now: NOW, catchUp });
     assert.equal(r.action, 'created');
     const post = calls.find((c) => c.method === 'POST');
     assert.deepEqual(post.payload, {
@@ -77,7 +83,7 @@ describe('ensureSubscription', () => {
 
   it('renews an existing subscription instead of creating one', async () => {
     const { graph, calls } = fakeGraph([ours('a', 10)]);
-    const r = await ensureSubscription(ENV, { graph, now: NOW });
+    const r = await ensureSubscription(ENV, { graph, now: NOW, catchUp });
     assert.equal(r.action, 'renewed');
     assert.equal(r.id, 'a');
     assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ['GET /subscriptions', 'PATCH /subscriptions/a']);
@@ -86,12 +92,12 @@ describe('ensureSubscription', () => {
 
   it('matches the resource regardless of its leading slash and case', async () => {
     const { graph } = fakeGraph([ours('a', 10, { resource: 'teams/getallmessages' })]);
-    assert.equal((await ensureSubscription(ENV, { graph, now: NOW })).action, 'renewed');
+    assert.equal((await ensureSubscription(ENV, { graph, now: NOW, catchUp })).action, 'renewed');
   });
 
   it('keeps the newest of several and deletes the rest', async () => {
     const { graph, calls } = fakeGraph([ours('old', 5), ours('new', 30), ours('mid', 15)]);
-    const r = await ensureSubscription(ENV, { graph, now: NOW });
+    const r = await ensureSubscription(ENV, { graph, now: NOW, catchUp });
     assert.equal(r.id, 'new');
     assert.equal(r.removed, 2);
     assert.deepEqual(
@@ -105,31 +111,59 @@ describe('ensureSubscription', () => {
       ours('probe', 10, { notificationUrl: `${ORIGIN}/teams/notify?probe=1` }),
       ours('other', 10, { notificationUrl: 'https://elsewhere.test/teams/notify' }),
     ]);
-    const r = await ensureSubscription(ENV, { graph, now: NOW });
+    const r = await ensureSubscription(ENV, { graph, now: NOW, catchUp });
     assert.equal(r.action, 'created');
     assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
   });
 
-  it('after a move, creates the subscription at the new origin and deletes the retired one', async () => {
+  it('after a move, replaces the retired subscription and catches up the gap', async () => {
+    caught = [];
     const env = { ...ENV, RETIRED_ORIGINS: 'https://before.test/' };
     const { graph, calls } = fakeGraph([
       ours('old', 30, { notificationUrl: 'https://before.test/teams/notify' }),
       ours('other', 30, { notificationUrl: 'https://elsewhere.test/teams/notify' }),
     ]);
-    const r = await ensureSubscription(env, { graph, now: NOW });
-    assert.deepEqual([r.action, r.retired], ['created', 1]);
-    assert.equal(calls.find((c) => c.method === 'POST').payload.notificationUrl, `${ORIGIN}/teams/notify`);
+    const r = await ensureSubscription(env, { graph, now: NOW, catchUp });
+    assert.deepEqual([r.action, r.retired, r.caughtUp], ['created', 1, 3]);
+    // Graph allows one: the old one goes first.
+    assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`), ['DELETE /subscriptions/old', 'POST /subscriptions']);
+    assert.equal(calls.find((c) => c.method === 'POST').payload.lifecycleNotificationUrl, `${ORIGIN}/teams/lifecycle`);
+    assert.deepEqual(caught, [{ since: NOW, why: 'replaced' }]);
+  });
+
+  it('replaces our subscription when its lifecycle URL is elsewhere, and only then', async () => {
+    caught = [];
+    let { graph, calls } = fakeGraph([ours('cur', 30, { lifecycleNotificationUrl: 'https://before.test/teams/lifecycle' })]);
+    assert.equal((await ensureSubscription(ENV, { graph, now: NOW, catchUp })).action, 'created');
+    assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method), ['DELETE', 'POST']);
+    ({ graph, calls } = fakeGraph([ours('cur', 30, { lifecycleNotificationUrl: `${ORIGIN}/teams/lifecycle` })]));
+    assert.equal((await ensureSubscription(ENV, { graph, now: NOW, catchUp })).action, 'renewed');
+    assert.equal(caught.length, 1);
+  });
+
+  it('deletes retired subscriptions once the current one exists', async () => {
+    const env = { ...ENV, RETIRED_ORIGINS: 'https://before.test' };
+    const { graph, calls } = fakeGraph([ours('cur', 30), ours('old', 30, { notificationUrl: 'https://before.test/teams/notify' })]);
+    const r = await ensureSubscription(env, { graph, now: NOW, catchUp });
+    assert.deepEqual([r.action, r.retired], ['renewed', 1]);
     assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/subscriptions/old']);
+  });
+
+  it('catches up from when an expired subscription ran out', async () => {
+    caught = [];
+    const { graph } = fakeGraph([ours('old', -15)]);
+    await ensureSubscription(ENV, { graph, now: NOW, catchUp });
+    assert.deepEqual(caught, [{ since: NOW - 15 * 60 * 1000, why: 'created' }]);
   });
 
   it('recreates when the subscription is gone by the time it is renewed', async () => {
     const { graph } = fakeGraph([ours('a', 10)], { patchStatus: 404 });
-    assert.equal((await ensureSubscription(ENV, { graph, now: NOW })).action, 'created');
+    assert.equal((await ensureSubscription(ENV, { graph, now: NOW, catchUp })).action, 'created');
   });
 
   it('recreates instead of renewing an expired subscription', async () => {
     const { graph, calls } = fakeGraph([ours('a', -1)]);
-    assert.equal((await ensureSubscription(ENV, { graph, now: NOW })).action, 'created');
+    assert.equal((await ensureSubscription(ENV, { graph, now: NOW, catchUp })).action, 'created');
     assert.equal(calls.filter((c) => c.method === 'PATCH').length, 0);
   });
 
@@ -157,20 +191,22 @@ describe('handleLifecycle', () => {
   it('renews on reauthorizationRequired', async () => {
     const { graph } = fakeGraph([ours('a', 10)]);
     const item = { lifecycleEvent: 'reauthorizationRequired' };
-    const r = await handleLifecycle(ENV, item, { graph, now: NOW });
+    const r = await handleLifecycle(ENV, item, { graph, now: NOW, catchUp });
     assert.equal(r.action, 'renewed');
   });
 
   it('recreates on subscriptionRemoved', async () => {
     const { graph } = fakeGraph([]);
-    const r = await handleLifecycle(ENV, { lifecycleEvent: 'subscriptionRemoved' }, { graph, now: NOW });
+    const r = await handleLifecycle(ENV, { lifecycleEvent: 'subscriptionRemoved' }, { graph, now: NOW, catchUp });
     assert.equal(r.action, 'created');
   });
 
-  it('does nothing yet on missed (catch-up is #8)', async () => {
+  it('catches up the last two hours on missed', async () => {
+    caught = [];
     const { graph, calls } = fakeGraph([]);
-    const r = await handleLifecycle(ENV, { lifecycleEvent: 'missed' }, { graph, now: NOW });
-    assert.equal(r.action, 'none');
+    const r = await handleLifecycle(ENV, { lifecycleEvent: 'missed' }, { graph, now: NOW, catchUp });
+    assert.deepEqual([r.action, r.channels], ['catch-up', 3]);
     assert.equal(calls.length, 0);
+    assert.deepEqual(caught, [{ since: NOW - 2 * 3600 * 1000, why: 'missed' }]);
   });
 });

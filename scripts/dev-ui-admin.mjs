@@ -10,9 +10,13 @@
  * governing permissions and limitations under the License.
  */
 
+import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
+import { GITHUB_MCP_URL } from '../src/agent/globals.js';
 import { kbAdmin } from '../src/kbadmin.js';
+import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
+import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
@@ -26,6 +30,10 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * `https://*.mcp.example` and `https://status.acme.example` (test/mcp-server.js), so adding and
  * checking a server works in the preview; any other `.example` URL fails the check, as an
  * unreachable server would.
+ *
+ * The global servers: a browser box answers in memory (a made-up chrome-devtools-mcp), and so
+ * do GitHub's API and its MCP server for a made-up GitHub App, installed on one made-up
+ * account, so the editor shows both set up. Start with `--no-github` to see the app missing.
  */
 
 const PREVIEW_TOKEN = 'preview-token';
@@ -66,11 +74,72 @@ const MCP = fakeMcpServers([
     ], 'site'),
   },
 ]);
+const PREVIEW_INSTALL_TOKEN = 'ghs_preview';
+const GLOBAL_MCP = fakeMcpServers([
+  {
+    url: 'https://box.preview.example/mcp',
+    name: 'chrome_devtools',
+    tools: tools([
+      ['list_pages', 'Get a list of pages open in the browser', true],
+      ['navigate_page', 'Navigates the currently selected page to a URL', false],
+      ['take_snapshot', 'Take a text snapshot of the currently selected page', true],
+      ['take_screenshot', 'Take a screenshot of the page or element', true],
+      ['list_console_messages', 'List all console messages for the currently selected page', true],
+      ['list_network_requests', 'List all requests for the currently selected page', true],
+      ['performance_start_trace', 'Starts a performance trace recording', false],
+    ], 'pageId'),
+  },
+  {
+    url: GITHUB_MCP_URL,
+    name: 'github',
+    token: PREVIEW_INSTALL_TOKEN,
+    tools: tools([
+      ['get_file_contents', 'Get the contents of a file or directory', true],
+      ['search_code', 'Search code across repositories', true],
+      ['list_issues', 'List issues in a repository', true],
+      ['pull_request_read', 'Get information on a pull request', true],
+      ['list_workflow_runs', 'List workflow runs of a repository', true],
+    ], 'repo'),
+  },
+]);
+const NO_GITHUB = process.argv.includes('--no-github');
+const { privateKey: PREVIEW_KEY } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+});
+/** GitHub's API as far as the app needs it, for the preview: any JWT will do. */
+function githubApi(request) {
+  const { pathname } = new URL(request.url);
+  if (pathname === '/app/installations') {
+    return Response.json([{
+      id: 4242, account: { login: 'acme-labs', type: 'Organization' }, repository_selection: 'selected', html_url: 'https://github.com/organizations/acme-labs/settings/installations/4242',
+    }]);
+  }
+  if (/\/access_tokens$/.test(pathname)) {
+    const expires = new Date(Date.now() + 3600_000).toISOString();
+    return Response.json({ token: PREVIEW_INSTALL_TOKEN, expires_at: expires }, { status: 201 });
+  }
+  return Response.json({ message: 'Not Found' }, { status: 404 });
+}
+/** The browser boxes of the preview: every one answered by the same made-up server. */
+const PREVIEW_BOXES = {
+  getByName: () => ({
+    fetch: (request) => GLOBAL_MCP.fetch(new Request('https://box.preview.example/mcp', request)),
+  }),
+};
+
 const realFetch = globalThis.fetch;
 globalThis.fetch = (input, init) => {
   const { url } = new Request(input);
   if (MCP.handles(url)) {
     return MCP.fetch(input, init);
+  }
+  if (GLOBAL_MCP.handles(url)) {
+    return GLOBAL_MCP.fetch(input, init);
+  }
+  if (url.startsWith('https://api.github.com/')) {
+    return githubApi(new Request(input, init));
   }
   if (/^https:\/\/[^/]*\.example\//.test(url)) {
     return Promise.reject(new Error(`getaddrinfo ENOTFOUND ${new URL(url).hostname}`));
@@ -325,7 +394,19 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     AGENT_CHANNELS: 'C0ACMEAEM',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
+    PUBLIC_ORIGIN: 'http://localhost:8788',
+    // The global browser server's boxes, in memory.
+    BROWSER: {},
+    BROWSER_BOXES: PREVIEW_BOXES,
   };
+  const githubApp = NO_GITHUB ? Promise.resolve() : seal(env, pkcs8Pem(PREVIEW_KEY)).then((key) => {
+    DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, html_url, client_id, private_key,
+        created_by, created_at) VALUES (1, 'opspile-preview', 'opspile preview', 'acme-labs',
+        'https://github.com/apps/opspile-preview', 'Iv1.preview', ?, 'dev', '2026-10-20T09:00:00Z')`).run(key);
+    // Turned on for the platform team, and off in one of its channels, already.
+    DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
+      VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
+  });
   // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
   if (manager) {
     DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
@@ -343,12 +424,18 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
   // The preview's MCP servers, added once as the admin team would.
   const admins = { ...store.me, admin: true, teams: [{ slug: 'admin', name: 'Admin' }] };
   const mcpUrl = new URL('http://localhost/api/kb/mcp');
+  const checkUrl = new URL('http://localhost/api/kb/mcp/global/check');
   const seeded = SEED_MCP.reduce((done, body) => done.then(() => kbAdmin(
     toRequest({ method: 'POST' }, mcpUrl, body),
     env,
     mcpUrl,
     admins,
-  )), Promise.resolve());
+  )), githubApp).then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+    toRequest({ method: 'POST' }, checkUrl, { server }),
+    env,
+    checkUrl,
+    admins,
+  ))));
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;

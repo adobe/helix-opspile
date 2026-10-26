@@ -10,9 +10,15 @@
  * governing permissions and limitations under the License.
  */
 
+import {
+  GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, storedTools, storeTools,
+} from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
-import { json } from './http.js';
-import { seal } from './post.js';
+import {
+  appManifest, createApp, currentApp, forgetGithub, installations, manifestAction, shownApp,
+} from './github.js';
+import { json, text } from './http.js';
+import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
 import { isAdmin, managesTeam } from './review.js';
 
@@ -30,6 +36,16 @@ import { isAdmin, managesTeam } from './review.js';
  *   server checks it too.
  *
  * Header values are sealed with TOKEN_KEY and only unsealed to talk to the server.
+ *
+ * The global servers (src/agent/globals.js) come with the list, as `globals`: whether each is
+ * available, what its last check found, and its switches for this knowledge base's team and
+ * channels. `PUT /global { server, team | channel, enabled }` switches one (`enabled: null`
+ * hands a channel back to its team's switch), for the admin team and the team's managers;
+ * `POST /global/check { server }` connects and lists its tools again.
+ *
+ * The GitHub App of the github server, for the admin team: `POST /api/kb/github/manifest
+ * { org?, name? }` is what the page posts to GitHub to create it, and GitHub sends the admin
+ * back to `GET /api/kb/github/created`, which keeps the app and goes on to its installation.
  */
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -183,6 +199,251 @@ async function check(env, id) {
   return { server: res.server || null, instructions: res.instructions || null };
 }
 
+// ---- global servers ----------------------------------------------------------------------
+
+/** The browser box the checks use: not any agent's. */
+const CHECK_BOX = 'opspile-check';
+
+const shownSwitch = (r) => r && { enabled: Boolean(r.enabled), by: r.changed_by, at: r.changed_at };
+
+const shownTools = (tools) => (tools || []).map((t) => ({
+  name: t.name,
+  description: String(t.description || t.title || '').split('\n')[0].slice(0, 300),
+  readOnly: Boolean(t.annotations && t.annotations.readOnlyHint),
+}));
+
+/**
+ * The global servers as the editor shows them for a knowledge base's team or customer: each
+ * with its instances and their last check, the team's switch (a team's knowledge base only),
+ * and the switches of the channels the knowledge base learns from. The admin team also gets
+ * the GitHub App and where it is installed.
+ */
+async function globalsView(env, me, owner, only) {
+  const column = owner.scope === 'team' ? 'team' : 'org';
+  const { results } = await env.DB.prepare(`SELECT * FROM mcp_global_switches
+    WHERE (scope = 'team' AND target = ?) OR (scope = 'channel' AND target IN
+      (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
+    .bind(owner.scope === 'team' ? owner.slug : '', owner.slug).all();
+  const rows = results || [];
+  const admin = isAdmin(me);
+  return Promise.all(GLOBAL_SERVERS.filter((g) => !only || g.server === only).map(async (g) => {
+    const { instances, problem } = await instancesOf(env, g.server);
+    const checks = await Promise.all(instances
+      .map((i) => storedTools(env, i.key).catch(() => null)));
+    const view = {
+      server: g.server,
+      title: g.title,
+      description: g.description,
+      available: instances.length > 0,
+      problem,
+      instances: instances.map((i, n) => ({
+        key: i.key,
+        name: i.name,
+        account: i.account || null,
+        tools: shownTools(checks[n] && checks[n].tools),
+        checkedAt: (checks[n] && checks[n].checkedAt) || null,
+        checkError: (checks[n] && checks[n].error) || null,
+      })),
+      team: owner.scope === 'team'
+        ? shownSwitch(rows.find((r) => r.server === g.server && r.scope === 'team'))
+          || { enabled: false }
+        : null,
+      channels: Object.fromEntries(rows.filter((r) => r.server === g.server && r.scope === 'channel')
+        .map((r) => [r.target, shownSwitch(r)])),
+    };
+    if (g.server === 'github' && admin) {
+      const app = await currentApp(env).catch(() => null);
+      view.github = {
+        app: shownApp(app),
+        installations: app ? await installations(env, app).catch(() => []) : [],
+        configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
+      };
+    }
+    return view;
+  }));
+}
+
+/** The team a channel is filed under (its latest thread's), and its kind; null if unknown. */
+async function channelOwner(env, channel) {
+  return env.DB.prepare(`SELECT team, kind FROM threads WHERE channel_id = ?
+    ORDER BY COALESCE(last_at, any_at) DESC LIMIT 1`).bind(channel).first();
+}
+
+/**
+ * PUT /api/kb/mcp/global `{ server, team | channel, enabled }`: turns a global server on or off
+ * for a team, or for a channel (`enabled: null` lets the channel follow its team again). For
+ * the admin team and the managers of the team (of the team that owns the channel).
+ */
+async function switchGlobal(env, me, body) {
+  const server = String(body.server || '');
+  if (!isGlobalServer(server)) {
+    return bad('no such global server');
+  }
+  const { enabled } = body;
+  if (enabled !== null && typeof enabled !== 'boolean') {
+    return bad('give enabled: true or false (or null, for a channel to follow its team)');
+  }
+  let scope;
+  let target;
+  let team;
+  if (body.team) {
+    scope = 'team';
+    target = String(body.team);
+    team = target;
+    if (enabled === null) {
+      return bad('a team\'s switch is on or off');
+    }
+    const known = await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(target).first();
+    if (!known || !managesTeam(me, target)) {
+      return json({ error: 'no such team' }, 404);
+    }
+  } else if (body.channel) {
+    scope = 'channel';
+    target = String(body.channel);
+    const owner = await channelOwner(env, target);
+    if (!owner || owner.kind === 'ignore' || !managesTeam(me, owner.team)) {
+      return json({ error: 'no such channel' }, 404);
+    }
+    team = owner.team;
+  } else {
+    return bad('give a team or a channel');
+  }
+  const by = me.name || me.email || String(me.id);
+  const at = new Date().toISOString();
+  if (enabled === null) {
+    await env.DB.prepare(`DELETE FROM mcp_global_switches WHERE server = ? AND scope = ?
+      AND target = ?`).bind(server, scope, target).run();
+  } else {
+    await env.DB.prepare(`INSERT INTO mcp_global_switches (server, scope, target, enabled,
+        changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (server, scope, target) DO UPDATE SET enabled = excluded.enabled,
+        changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
+      .bind(server, scope, target, enabled ? 1 : 0, by, at).run();
+  }
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'global', server, scope, team, enabled, by: me.id,
+  }));
+  return json({
+    ok: true,
+    server,
+    [scope]: target,
+    switch: enabled === null ? null : { enabled, by, at },
+  });
+}
+
+/** Connects to each instance of a global server and keeps its tools: what each check found. */
+async function checkInstances(env, instances) {
+  return Promise.all(instances.map(async (i) => {
+    const conn = await globalConnection(env, `global:${i.key}`, { agent: CHECK_BOX })
+      .catch((e) => ({ error: e.message }));
+    let res;
+    if (!conn) {
+      res = { error: 'not available' };
+    } else if (conn.error) {
+      res = conn;
+    } else {
+      res = await probe(conn);
+    }
+    await storeTools(env, i.key, res);
+    return {
+      name: i.name,
+      tools: (res.tools || []).length,
+      error: res.error || null,
+      server: res.server || null,
+    };
+  }));
+}
+
+/** POST /api/kb/mcp/global/check `{ server, repo? }`: connects to each instance, lists tools. */
+async function checkGlobal(env, me, body) {
+  const server = String(body.server || '');
+  if (!isGlobalServer(server)) {
+    return bad('no such global server');
+  }
+  const { instances, problem } = await instancesOf(env, server);
+  if (!instances.length) {
+    return json({ error: problem }, 409);
+  }
+  const checked = await checkInstances(env, instances);
+  const owner = body.repo ? await ownerOf(env, me, body.repo) : null;
+  console.log(JSON.stringify({
+    route: 'kb',
+    mcp: 'global check',
+    server,
+    instances: checked.length,
+    errors: checked.filter((c) => c.error).length,
+  }));
+  return json({
+    ok: true,
+    checked,
+    ...(owner ? { global: (await globalsView(env, me, owner, server))[0] } : {}),
+  });
+}
+
+/**
+ * Cron: checks the global servers whose last check is older than `maxAgeMs` (or that were
+ * never checked), so that the tools agents get follow the servers' (GitHub's change).
+ */
+export async function refreshGlobalTools(env, { now = Date.now(), maxAgeMs = 24 * 3600_000 } = {}) {
+  const out = {};
+  for (const g of GLOBAL_SERVERS) {
+    // eslint-disable-next-line no-await-in-loop
+    const { instances } = await instancesOf(env, g.server);
+    // eslint-disable-next-line no-await-in-loop
+    const stale = (await Promise.all(instances.map(async (i) => {
+      const stored = await storedTools(env, i.key).catch(() => null);
+      return !stored || stored.error || now - Date.parse(stored.checkedAt) > maxAgeMs ? i : null;
+    }))).filter(Boolean);
+    if (stale.length) {
+      // eslint-disable-next-line no-await-in-loop
+      const checked = await checkInstances(env, stale);
+      out[g.server] = checked.map((c) => (c.error ? `${c.name}: ${c.error}` : `${c.name}: ${c.tools} tools`));
+    }
+  }
+  return out;
+}
+
+// ---- the GitHub App ----------------------------------------------------------------------
+
+/** POST /api/kb/github/manifest `{ org?, name? }`: where to post which manifest (admin team). */
+async function githubManifest(env, me, body) {
+  if (!isAdmin(me)) {
+    return json({ error: 'the admin team creates the GitHub App' }, 403);
+  }
+  if (!env.TOKEN_KEY || !env.PUBLIC_ORIGIN) {
+    return json({ error: 'TOKEN_KEY and PUBLIC_ORIGIN must be set first' }, 503);
+  }
+  const action = manifestAction(body.org, await makeState(env, me.id, 'github-app'));
+  if (!action) {
+    return bad('that is not a GitHub account name');
+  }
+  return json({ action, manifest: JSON.stringify(appManifest(env, { name: body.name })) });
+}
+
+/** GET /api/kb/github/created?code&state: GitHub created the app; keep it, then install it. */
+async function githubCreated(env, me, url) {
+  if (!isAdmin(me)) {
+    return text('Only the admin team creates the GitHub App.\n', 403);
+  }
+  if (!await checkState(env, url.searchParams.get('state'), me.id, 'github-app')) {
+    return text('This link expired or was not started here. Start again from the'
+      + ' knowledge-base editor.\n', 400);
+  }
+  try {
+    const app = await createApp(env, url.searchParams.get('code'), me.email || String(me.id));
+    forgetGithub();
+    console.log(JSON.stringify({
+      route: 'kb', github: 'app created', app: app.id, by: me.id,
+    }));
+    return new Response(null, {
+      status: 302,
+      headers: { location: `https://github.com/apps/${encodeURIComponent(app.slug)}/installations/new` },
+    });
+  } catch (e) {
+    return text(`GitHub did not create the app: ${e.message}\n`, 502);
+  }
+}
+
 async function list(env, me, repo) {
   const owner = await ownerOf(env, me, repo);
   if (!owner) {
@@ -190,7 +451,11 @@ async function list(env, me, repo) {
   }
   const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
     ORDER BY name`).bind(owner.scope, owner.slug).all();
-  return json({ repo, servers: (results || []).map(shown) });
+  return json({
+    repo,
+    servers: (results || []).map(shown),
+    globals: await globalsView(env, me, owner),
+  });
 }
 
 async function create(env, me, body) {
@@ -293,13 +558,18 @@ async function recheck(env, me, body) {
   return json({ ok: true, ...checked, server: shown(await byId(env, current.id)) });
 }
 
-/** Routes `/api/kb/mcp*`; null for other paths. */
+/** Routes `/api/kb/mcp*` and `/api/kb/github/*`; null for other paths. */
 export async function mcpAdmin(request, env, url, me) {
-  if (url.pathname !== '/api/kb/mcp' && !url.pathname.startsWith('/api/kb/mcp/')) {
+  if (url.pathname !== '/api/kb/mcp' && !url.pathname.startsWith('/api/kb/mcp/')
+    && !url.pathname.startsWith('/api/kb/github/')) {
     return null;
   }
   const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
   switch (`${request.method} ${url.pathname}`) {
+    case 'PUT /api/kb/mcp/global': return switchGlobal(env, me, body);
+    case 'POST /api/kb/mcp/global/check': return checkGlobal(env, me, body);
+    case 'POST /api/kb/github/manifest': return githubManifest(env, me, body);
+    case 'GET /api/kb/github/created': return githubCreated(env, me, url);
     case 'GET /api/kb/mcp': return list(env, me, url.searchParams.get('repo'));
     case 'POST /api/kb/mcp': return create(env, me, body);
     case 'PUT /api/kb/mcp': return update(env, me, body);

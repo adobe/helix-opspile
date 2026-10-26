@@ -13,10 +13,12 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/validators/cf-worker';
 import { unseal } from '../post.js';
+import { globalConnection, globalServersFor } from './globals.js';
 
 /**
- * The MCP servers configured for a team or an org (`mcp_servers`, migration 0023), and talking
- * to them: Streamable HTTP with the official client, request headers (credentials) from D1,
+ * The MCP servers configured for a team or an org (`mcp_servers`, migration 0023), and the
+ * global ones turned on for the team or the channel (src/agent/globals.js), and talking to
+ * them: Streamable HTTP with the official client, request headers (credentials) from D1,
  * sealed with TOKEN_KEY. Used by the thread agents (src/agent/mcp.js) and by the knowledge-base
  * editor's check (src/mcpadmin.js).
  *
@@ -29,17 +31,26 @@ export const MAX_TOOLS = 200;
 const CONNECT_TIMEOUT_MS = 15_000;
 export const CALL_TIMEOUT_MS = 120_000;
 
-/** The enabled servers of a team and an org, team first, without their headers. */
-export async function serversFor(env, { team, org }) {
+/**
+ * The enabled servers of a team and an org, team first, then the global servers on for the
+ * team or the channel; without their headers.
+ */
+export async function serversFor(env, { team, org, channelId }) {
   const { results } = await env.DB.prepare(`SELECT id, scope, slug, name, url, description, allow,
       updated_at FROM mcp_servers
     WHERE enabled = 1 AND ((scope = 'team' AND slug = ?) OR (scope = 'org' AND slug = ?))
     ORDER BY CASE scope WHEN 'team' THEN 0 ELSE 1 END, name`).bind(team || '', org || '').all();
-  return results || [];
+  return [...(results || []), ...await globalServersFor(env, { team, channelId })];
 }
 
-/** One server with its request headers, unsealed; null when it is gone or disabled. */
-export async function serverWithHeaders(env, id) {
+/**
+ * One server with its request headers, unsealed; null when it is gone or disabled. A global
+ * server (`global:<key>`) is connected as `agent`, whose browser box it uses.
+ */
+export async function serverWithHeaders(env, id, { agent } = {}) {
+  if (String(id).startsWith('global:')) {
+    return globalConnection(env, id, { agent });
+  }
   const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, updated_at
     FROM mcp_servers WHERE id = ? AND enabled = 1`).bind(id).first();
   if (!row) {
@@ -74,13 +85,13 @@ function noStream(fetchFn) {
   };
 }
 
-/** A connected client for `{ url, headers }`. */
+/** A connected client for `{ url, headers, fetch? }`: a server's own fetch wins. */
 export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}) {
   const client = new Client(CLIENT_INFO, {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-    fetch: noStream(fetchFn),
+    fetch: noStream(server.fetch || fetchFn),
     requestInit: { headers: server.headers || {} },
   });
   await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connecting to ${server.name || server.url}`);

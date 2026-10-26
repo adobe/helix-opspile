@@ -283,6 +283,30 @@ describe('admin: rules and re-filing', () => {
     assert.deepEqual(e.DB.rows("SELECT DISTINCT team FROM threads WHERE channel_id = 'C1'"), [{ team: 'helix' }]);
   });
 
+  it('re-files from where a thread is now, when an earlier job moved it since', async () => {
+    const e = env();
+    const r = await call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'name', pattern: '^aem-acme', value: 'edge', priority: 50,
+    });
+    // The job as queued, with the folders the threads had then.
+    const [queued] = e.queued;
+    await drain(e);
+    // A second change right after the first, whose job (or one queued before the first ran)
+    // still names the old folders.
+    await call(e, ADA, 'PUT', '/api/admin/rules', {
+      id: r.body.rule.id, target: 'team', field: 'name', pattern: '^aem-acme', value: 'admin', priority: 50,
+    });
+    e.queued.splice(0, e.queued.length, queued);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team, path FROM threads WHERE channel_id = 'C1' ORDER BY path"), [
+      { team: 'admin', path: 'channels/acme/admin/slack-C1/1.1/' },
+      { team: 'admin', path: 'channels/acme/admin/slack-C1/2.1/' },
+    ]);
+    const keys = [...e.CHANNELS.objects.keys()].filter((k) => k.includes('slack-C1'));
+    assert.equal(keys.length, 5);
+    assert.ok(keys.every((k) => k.startsWith('channels/acme/admin/')), keys.join());
+  });
+
   it('assigns one channel to a team or an org by hand, and takes it back', async () => {
     const e = env();
     let r = await call(e, ADA, 'POST', '/api/admin/assign', {

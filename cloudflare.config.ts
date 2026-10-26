@@ -19,7 +19,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
-  bindings, defineConfig, exports as workerExports, triggers,
+  bindings, defineConfig, defineContainer, exports as workerExports, triggers,
 } from 'cf/config';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -105,6 +105,14 @@ function resources(mode: string | undefined) {
   };
 }
 
+// The agents' browser boxes (src/agent/browser.js): a Container application each Durable
+// Object starts itself, from the Cloudflare-managed Node image, so there is no image to build.
+const boxes = (name: string) => defineContainer({
+  name: `${name}-browser-box`,
+  schedulingPolicy: 'durable-object',
+  observability: { enabled: true, logs: { enabled: true } },
+});
+
 function consumers(mode: string | undefined) {
   const suffix = mode === 'prod' ? '' : `-${mode}`;
   return [
@@ -144,7 +152,9 @@ const domains = () => String(process.env.WORKER_DOMAINS || '').split(',')
 export default defineConfig(({ mode }) => {
   const deployed = Boolean(mode && NAMES[mode]);
   const name = deployed ? NAMES[mode as string] : 'helix-opspile';
+  const box = boxes(name);
   return {
+    containers: [box],
     worker: {
       name,
       compatibilityDate: '2026-10-01',
@@ -162,6 +172,9 @@ export default defineConfig(({ mode }) => {
         TeamRoom: workerExports.durableObject({ storage: 'sqlite' }),
         ThreadAgent: workerExports.durableObject({ storage: 'sqlite' }),
         DiscordPoller: workerExports.durableObject({ storage: 'sqlite' }),
+        // One per thread agent that uses the global browser MCP server; reached through
+        // ctx.exports, since a container's class cannot be bound by name.
+        BrowserBox: workerExports.durableObject({ storage: 'sqlite', container: box }),
       },
       triggers: deployed
         ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
@@ -175,6 +188,8 @@ export default defineConfig(({ mode }) => {
         AGENTS: bindings.durableObject({ worker: name, exportName: 'ThreadAgent' }),
         // The Discord poller: one object reads the servers' new messages every minute.
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
+        // Cloudflare Browser Run: the browser of the global browser MCP server's boxes.
+        BROWSER: bindings.browser(),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

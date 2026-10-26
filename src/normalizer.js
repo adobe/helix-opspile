@@ -24,6 +24,7 @@ import { discordApi } from './discord.js';
 import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { refile } from './refile.js';
+import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 import { classify } from './rules.js';
@@ -392,7 +393,8 @@ export async function consume(batch, env) {
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
-      || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`);
+      || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
+      || (body.catchup && `catchup:${body.catchup.channelId}`);
     try {
       let r;
       if (body.backfill) {
@@ -401,6 +403,9 @@ export async function consume(batch, env) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
+      } else if (body.catchup) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await runCatchUp(env, body.catchup) };
       } else if (body.refile) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await refile(env, body.refile) };

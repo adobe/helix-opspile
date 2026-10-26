@@ -138,18 +138,12 @@
   .sep { color: var(--faint); }
   td.nw { white-space: nowrap; }
   td .sub .mono { overflow-wrap: anywhere; }
+  tr.left td { opacity: .55; }
   tr.section td { font-size: 12px; font-weight: 600; color: var(--mute); padding-top: 16px; }
   .tag.clef { color: var(--mute); }
   .tag.clef.yes { color: var(--green); border-color: var(--green); }
   .person { display: inline-block; margin: 1px 8px 1px 0; white-space: nowrap; }
   .empty { color: var(--mute); padding: 20px 4px; }
-  dialog.confirm { max-width: min(620px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);
-    border-radius: 12px; padding: 16px 18px; }
-  dialog.confirm::backdrop { background: rgba(0,0,0,.35); }
-  dialog.confirm p { margin: 0 0 8px; }
-  dialog.confirm .detail { color: var(--mute); font-size: 13px; max-height: 45vh; overflow: auto; }
-  dialog.confirm .detail li { margin: 2px 0; }
-  dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
   #membersTable, #rulesTable, #channelsTable { overflow-x: auto; }
 
@@ -227,13 +221,13 @@
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
  * Teams team name, a Slack Connect team id); and manual assignments of single channels. Orgs: display name, icon and
- * type (customer, partner, vendor), and manual assignments. Every rule change is tried first:
- * if it moves channels to another team or org, the page lists them and asks, in the page (no
- * native dialogs, which a debugger attached over CDP dismisses). Text fields save when they
+ * type (customer, partner, vendor), and manual assignments. Changes apply at once, without
+ * asking (the status line names the channels a rule change moved), and go to the API one
+ * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
  */
 const state = {
-  me: null, tab: 'teams', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
+  me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
 };
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
@@ -265,7 +259,7 @@ const FIELD_LABEL = {
 };
 const UNASSIGNED = '_unassigned';
 
-async function call(path, method = 'GET', body) {
+async function send(path, method, body) {
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
@@ -275,28 +269,95 @@ async function call(path, method = 'GET', body) {
   return { ok: res.ok, status: res.status, body: data };
 }
 
-/** A modal question in the page: resolves true for the `yes` button. */
-function ask(question, detailHtml, yes, { danger = false } = {}) {
-  return new Promise((resolve) => {
-    const dlg = document.createElement('dialog');
-    dlg.className = 'confirm';
-    dlg.setAttribute('aria-label', question);
-    dlg.innerHTML = `<form method="dialog"><p><b>${esc(question)}</b></p>${detailHtml ? `<div class="detail">${detailHtml}</div>` : ''}
-      <div class="apply"><button value="no">Cancel</button><button value="yes" class="${danger ? 'danger' : 'primary'}">${esc(yes)}</button></div></form>`;
-    dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
-    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
-    document.body.append(dlg);
-    dlg.showModal();
-    dlg.querySelector('[value="no"]').focus();
-  });
-}
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-function status(kind, text) {
+// The status line of the open page: the last thing done, every failure since the current
+// burst of changes began (the successes after them do not hide them), and how many changes
+// are still on their way.
+let note = { kind: '', text: '' };
+const failures = [];
+const queue = { tail: Promise.resolve(), pending: 0 };
+function showStatus() {
   const el = $('status');
   if (!el) return;
-  el.className = `status ${kind}`;
-  el.textContent = text;
+  const saving = queue.pending ? `Saving ${queue.pending} change${queue.pending === 1 ? '' : 's'}…` : '';
+  el.className = `status ${failures.length ? 'err' : note.kind}`;
+  el.textContent = [...failures, note.text, saving].filter(Boolean).join(' · ');
 }
+function status(kind, text) {
+  if (kind === 'err') {
+    failures.push(text);
+    if (failures.length > 5) failures.shift();
+  } else {
+    note = { kind, text };
+  }
+  showStatus();
+}
+const failed = (what, r) => status('err', `${what}: ${r.body.error || `failed (${r.status})`}`);
+
+/**
+ * Changes go out one after the other, in the order they were made, while the page stays
+ * usable: a burst of clicks is a queue, not a race. Two rule changes at once would each be
+ * planned without the other, and an undo could overtake what it undoes.
+ */
+function serial(fn) {
+  // A new burst: the failures of the last one were seen.
+  if (!queue.pending) failures.length = 0;
+  queue.pending += 1;
+  showStatus();
+  const run = queue.tail.then(fn).finally(() => {
+    queue.pending -= 1;
+    showStatus();
+  });
+  queue.tail = run.catch(() => {});
+  return run;
+}
+
+/**
+ * An API call. GETs go out at once, changes through the queue (`parallel` skips it). A
+ * request that was not served is sent again: a 429 always, a 503 or a lost connection when
+ * sending it twice cannot do a thing twice (`idempotent`). Answers `ok: false` on failure,
+ * never throws.
+ */
+async function call(path, method = 'GET', body, { parallel = false, idempotent = method !== 'POST' } = {}) {
+  const attempt = async () => {
+    for (let i = 0; ; i += 1) {
+      let r;
+      try {
+        r = await send(path, method, body);
+      } catch (e) {
+        r = { ok: false, status: 0, body: { error: `no answer (${e.message}), it may not have been saved` } };
+      }
+      const again = r.status === 429 || (idempotent && (r.status === 0 || r.status === 503));
+      if (!again || i >= 3) return r;
+      await sleep(500 * 2 ** i);
+    }
+  };
+  return method === 'GET' || parallel ? attempt() : serial(attempt);
+}
+
+/**
+ * Runs `fn` once at a time per `key` (a button clicked twice, a channel picked again while
+ * it is being added); renders draw the buttons of a busy key disabled (`off`).
+ */
+const busy = new Set();
+async function once(key, fn) {
+  if (busy.has(key)) return null;
+  busy.add(key);
+  try {
+    return await fn();
+  } finally {
+    busy.delete(key);
+  }
+}
+const off = (key) => (busy.has(key) ? ' disabled' : '');
+/** Runs `fn` with the button `b` disabled meanwhile (a render may have replaced it since). */
+function press(b, fn) {
+  b.disabled = true;
+  return Promise.resolve(fn()).finally(() => { if (b.isConnected) b.disabled = false; });
+}
+/** `once`, with the button `b` disabled meanwhile. */
+const hold = (b, key, fn) => press(b, () => once(key, fn));
 
 const orgLabel = (slug) => {
   const o = state.orgs.find((x) => x.slug === slug);
@@ -307,30 +368,23 @@ const orgLabel = (slug) => {
 const isHolding = (slug) => !slug || slug === UNASSIGNED || slug === 'admin';
 const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || slug));
 
-function movesHtml(moves) {
-  const where = (x) => `${esc(teamLabel(x.team))} / ${esc(orgLabel(x.org))}${x.kind !== 'channel' ? ` (${esc(x.kind)})` : ''}`;
-  return `<ul>${moves.slice(0, 60).map((m) => `<li><b>${channelName(m.channel)}</b>: ${m.from.map(where).join(', ')} → ${where(m.to)}
-    <span class="sub">(${m.from.reduce((n, f) => n + f.threads, 0)} threads)</span></li>`).join('')}</ul>
-    ${moves.length > 60 ? `<p>… and ${moves.length - 60} more.</p>` : ''}
-    <p>Their threads are re-filed in the background; agents and knowledge bases follow the new team and org.</p>`;
+/** The channels a rule change moved, in a few words. */
+function movesText(moves) {
+  const to = [...new Set(moves.map((m) => teamLabel(m.to.team)))].join(', ');
+  return `${moves.slice(0, 5).map((m) => plainName(m.channel)).join(', ')}${moves.length > 5 ? ` and ${moves.length - 5} more` : ''} → ${to}`;
 }
 
 /**
- * A rule change: tried first; when it moves channels, the page lists them and asks. Returns
- * the applied answer, or null when cancelled or refused.
+ * A rule change, applied at once: the answer lists the channels it moved, which the status
+ * line names and the page re-files in place. Returns the answer, or null when refused.
  */
-async function ruleChange(method, path, body) {
-  status('', 'Checking what this changes…');
-  const tried = await call(path, method, { ...body, dryRun: true });
-  if (!tried.ok) { status('err', tried.body.error || `Failed (${tried.status}).`); return null; }
-  const { moves } = tried.body;
-  if (moves.length && !(await ask(`This moves ${moves.length} channel${moves.length === 1 ? '' : 's'}.`, movesHtml(moves), 'Move them'))) {
-    status('', 'Nothing changed.');
-    return null;
-  }
-  const done = await call(path, method, body);
-  if (!done.ok) { status('err', done.body.error || `Failed (${done.status}).`); return null; }
-  status('ok', moves.length ? `Saved. Re-filing ${moves.length} channel${moves.length === 1 ? '' : 's'}.` : 'Saved. No channel moves.');
+async function ruleChange(method, path, body, what = 'Rule change') {
+  const done = await call(path, method, body, { idempotent: method !== 'POST' || path === '/api/admin/assign' });
+  if (!done.ok) { failed(what, done); return null; }
+  const { moves } = done.body;
+  // An assignment names its channel already; a rule says which channels it moved.
+  const which = path === '/api/admin/assign' ? '' : ` (${movesText(moves)})`;
+  status('ok', moves.length ? `${what}: re-filing ${moves.length} channel${moves.length === 1 ? '' : 's'}${which}.` : `${what}: saved, no channel moves.`);
   return done.body;
 }
 
@@ -363,15 +417,42 @@ async function load() {
 function wireFilter() {
   $('filter').oninput = (e) => {
     state.filter = e.target.value;
-    const at = e.target.selectionStart;
     renderList();
-    $('filter').focus();
-    $('filter').setSelectionRange(at, at);
   };
   for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => select(el.dataset.sel);
 }
 
+/**
+ * Redraws the list on the left, which every change does for its counts, keeping what is
+ * being typed in its fields (a new team's name, say) and where the cursor is.
+ */
 function renderList() {
+  const typed = [...$('list').querySelectorAll('input[id], select[id]')].map((el) => ({
+    id: el.id, value: el.value, touched: el.dataset.touched,
+  }));
+  const focus = document.activeElement && $('list').contains(document.activeElement) ? document.activeElement : null;
+  const at = focus && focus.id ? { id: focus.id, start: focus.selectionStart, end: focus.selectionEnd } : null;
+  drawList();
+  for (const t of typed) {
+    const el = $(t.id);
+    if (el && $('list').contains(el) && t.id !== 'filter') {
+      el.value = t.value;
+      if (t.touched) el.dataset.touched = t.touched;
+    }
+  }
+  if (at && $(at.id)) {
+    $(at.id).focus();
+    if (at.start !== null && at.start !== undefined) $(at.id).setSelectionRange(at.start, at.end);
+  }
+}
+
+/** A failure of the list's forms, kept until the next one succeeds. */
+function listError(text) {
+  state.listError = text;
+  if ($('listStatus')) $('listStatus').textContent = text;
+}
+
+function drawList() {
   const f = state.filter.toLowerCase();
   if (state.tab === 'teams') {
     const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
@@ -385,7 +466,7 @@ function renderList() {
       <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
       ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
         <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required style="width:110px"><button class="primary">Create</button></form>` : ''}
-      <div class="status" id="listStatus"></div>`;
+      <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     if (!state.me.admin) {
       wireFilter();
       return;
@@ -394,8 +475,22 @@ function renderList() {
     $('ntSlug').oninput = () => { $('ntSlug').dataset.touched = '1'; };
     $('newTeam').onsubmit = async (e) => {
       e.preventDefault();
-      const r = await call('/api/admin/teams', 'POST', { slug: $('ntSlug').value, name: $('ntName').value });
-      if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
+      const body = { slug: $('ntSlug').value, name: $('ntName').value };
+      // Emptied at once, for the next team; back in the fields if it could not be created.
+      $('ntSlug').value = '';
+      $('ntName').value = '';
+      delete $('ntSlug').dataset.touched;
+      const r = await call('/api/admin/teams', 'POST', body);
+      if (!r.ok) {
+        listError(`${body.name}: ${r.body.error || `failed (${r.status})`}`);
+        if ($('ntName') && !$('ntName').value) {
+          $('ntName').value = body.name;
+          $('ntSlug').value = body.slug;
+          $('ntSlug').dataset.touched = '1';
+        }
+        return;
+      }
+      state.listError = '';
       state.teams.push({
         ...r.body.team, members: 0, rules: 0, channels: 0, threads: 0,
       });
@@ -413,11 +508,18 @@ function renderList() {
       <h2>New org</h2><form class="form" id="newOrg"><input id="noName" placeholder="Display name" class="grow" required>
         <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
-      <div class="status" id="listStatus"></div>`;
+      <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     $('newOrg').onsubmit = async (e) => {
       e.preventDefault();
-      const r = await call('/api/admin/orgs', 'POST', { name: $('noName').value, type: $('noType').value });
-      if (!r.ok) { $('listStatus').className = 'status err'; $('listStatus').textContent = r.body.error; return; }
+      const body = { name: $('noName').value, type: $('noType').value };
+      $('noName').value = '';
+      const r = await call('/api/admin/orgs', 'POST', body);
+      if (!r.ok) {
+        listError(`${body.name}: ${r.body.error || `failed (${r.status})`}`);
+        if ($('noName') && !$('noName').value) $('noName').value = body.name;
+        return;
+      }
+      state.listError = '';
       state.orgs.push({ ...r.body.org, channels: 0, threads: 0 });
       state.orgs.sort((x, y) => (x.name || x.slug).localeCompare(y.name || y.slug));
       select(r.body.org.slug);
@@ -478,8 +580,7 @@ function count(kind, slug, n, threads) {
  * What a rule change moved, applied to the open view and to the counts on the left: a
  * channel that left this team (org) goes from the table, one that came is added.
  */
-function applyMoves(moves) {
-  const v = state.view;
+function applyMoves(moves, v = state.view) {
   for (const m of moves) {
     const threads = m.from.reduce((n, f) => n + f.threads, 0);
     for (const kind of ['team', 'org']) {
@@ -491,14 +592,17 @@ function applyMoves(moves) {
       }
     }
     if (v) {
-      const before = v.channels.filter((c) => c.channelId === m.channel.channelId);
-      v.channels = v.channels.filter((c) => c.channelId !== m.channel.channelId);
+      const id = m.channel.channelId;
+      const before = v.channels.filter((c) => c.channelId === id);
+      const at = v.channels.findIndex((c) => c.channelId === id);
+      v.channels = v.channels.filter((c) => c.channelId !== id);
       const was = before[0] || {};
       // The teams it is shared with keep it, wherever it is filed; the team it is filed under
       // now does not need it shared as well.
       const sharedWith = (was.sharedWith || []).filter((t) => t !== m.to.team);
+      let row = null;
       if (m.to[v.target] === v.value || (v.target === 'team' && sharedWith.includes(v.value))) {
-        v.channels.unshift({
+        row = {
           source: m.channel.source,
           tenant: m.channel.tenant,
           channelId: m.channel.channelId,
@@ -511,15 +615,22 @@ function applyMoves(moves) {
           threads,
           latest: before.map((c) => c.latest).filter(Boolean).sort().pop() || null,
           manual: was.manual || { team: null, org: null },
-        });
+        };
+      } else if (at >= 0) {
+        // A channel that left stays in its row, marked, until the page is loaded again: the
+        // rows below do not move up under the pointer of someone going down the list.
+        row = {
+          ...was, sharedWith, left: m.to, threads,
+        };
       }
+      // Where it was, or on top when it is new here.
+      if (row) v.channels.splice(at >= 0 ? at : 0, 0, row);
     }
   }
 }
 
-/** Marks a channel of the open view as assigned by hand (`rule`), or not (null). */
-function setManual(channelId, rule) {
-  const v = state.view;
+/** Marks a channel of the view `v` as assigned by hand (`rule`), or not (null). */
+function setManual(channelId, rule, v = state.view) {
   for (const c of v.channels.filter((x) => x.channelId === channelId)) {
     c.manual = { ...c.manual, [v.target]: rule ? { id: rule.id, value: rule.value } : null };
   }
@@ -554,6 +665,9 @@ function channelName(c, words) {
   }
   return `#${hl(c.name || c.channelId, words)}`;
 }
+/** A channel's name as text, for the status line. */
+const plainName = (c) => (c.source === 'teams'
+  ? `${c.groupName ? `${c.groupName} › ` : ''}${c.name || c.channelId}` : `#${c.name || c.channelId}`);
 const platform = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
 const pct = (p) => `${Math.round((p || 0) * 100)}%`;
 /** Clef's pick for a channel, as a tag. */
@@ -591,53 +705,69 @@ function channelsCard(target) {
 
 /**
  * Assigns a channel (as the API listed it) to the open team or org by hand, or to another
- * `value`, and updates the page.
+ * `value`, and updates the page: the view it was made on, if that is still open. The same
+ * assignment twice at once is made once; others queue up behind it (see `serial`).
  */
-async function assignHere(c, value = state.view.value) {
-  const { target } = state.view;
+const assignKey = (target, channelId, value) => `assign:${target}:${channelId}:${value}`;
+function assignHere(c, value = state.view.value) {
+  const v = state.view;
+  const { target } = v;
   const { channelId, source } = c;
-  const res = await ruleChange('POST', '/api/admin/assign', { target, value, channelId, source });
-  if (!res) return null;
-  if (res.shared) {
-    // Another team holds it: shared with this one, filed where it is.
-    const rows = state.view.channels.filter((x) => x.channelId === channelId);
-    for (const row of rows) row.sharedWith = [...new Set([...(row.sharedWith || []), value])];
-    if (!rows.length && value === state.view.value) {
-      state.view.channels.unshift({ ...c, sharedWith: [...(c.sharedWith || []), value], manual: c.manual || { team: null, org: null } });
+  return once(assignKey(target, channelId, value), async () => {
+    const what = `${plainName(c)} → ${target === 'team' ? teamLabel(value) : orgLabel(value)}`;
+    const res = await ruleChange('POST', '/api/admin/assign', {
+      target, value, channelId, source,
+    }, what);
+    if (!res) return null;
+    if (res.shared) {
+      // Another team holds it: shared with this one, filed where it is.
+      const rows = v.channels.filter((x) => x.channelId === channelId);
+      for (const row of rows) row.sharedWith = [...new Set([...(row.sharedWith || []), value])];
+      if (!rows.length && value === v.value) {
+        v.channels.unshift({ ...c, sharedWith: [...(c.sharedWith || []), value], manual: c.manual || { team: null, org: null } });
+      }
+      if (res.shared.added) {
+        const row = state.teams.find((t) => t.slug === value);
+        if (row) row.shared = (row.shared || 0) + 1;
+      }
+      status('ok', `Shared: ${plainName(c)} is in ${teamLabel(value)}'s inbox too, and stays filed under ${teamLabel(res.shared.from)}.`);
     }
-    if (res.shared.added) {
-      const row = state.teams.find((t) => t.slug === value);
-      if (row) row.shared = (row.shared || 0) + 1;
+    applyMoves(res.moves, v);
+    // A channel that came here: what the move does not say about it.
+    for (const row of v.channels.filter((x) => x.channelId === channelId)) {
+      row.groupName = row.groupName || c.groupName || null;
+      row.shared = row.shared ?? c.shared;
+      row.latest = row.latest || c.latest || null;
+      row.orgName = row.orgName || c.orgName || null;
     }
-    status('ok', `Shared: ${c.name || channelId} is in ${teamLabel(value)}'s inbox too, and stays filed under ${teamLabel(res.shared.from)}.`);
-  }
-  applyMoves(res.moves);
-  // A channel that came here: what the move does not say about it.
-  for (const row of state.view.channels.filter((x) => x.channelId === channelId)) {
-    row.groupName = row.groupName || c.groupName || null;
-    row.shared = row.shared ?? c.shared;
-    row.latest = row.latest || c.latest || null;
-    row.orgName = row.orgName || c.orgName || null;
-  }
-  // Already here by rule: no move, but now by hand. A channel the API did not move
-  // (no threads yet) shows up once something is filed.
-  if (value === state.view.value && !res.shared) setManual(channelId, res.rule);
-  if (state.view.suggestions) state.view.suggestions = state.view.suggestions.filter((x) => x.channelId !== channelId);
-  renderChannels();
-  if ($('suggestTable')) renderSuggestions();
-  renderList();
-  return res;
+    // Already here by rule: no move, but now by hand. A channel the API did not move
+    // (no threads yet) shows up once something is filed.
+    if (value === v.value && !res.shared) setManual(channelId, res.rule, v);
+    // A suggestion taken stays in its row, marked, for the same reason as a channel that left.
+    if (value === v.value) for (const x of v.suggestions || []) if (x.channelId === channelId) x.added = true;
+    if (v === state.view) {
+      renderChannels();
+      if ($('suggestTable')) renderSuggestions();
+    }
+    renderList();
+    return res;
+  });
 }
 
 function renderChannels() {
   const { target, channels } = state.view;
   const other = target === 'team' ? 'org' : 'team';
   // On the admin team's page, Clef's pick for each channel, to hand it to that team.
-  const triage = target === 'team' && state.view.value === 'admin' && channels.some((c) => c.clef);
+  const triage = target === 'team' && state.view.value === 'admin' && channels.some((c) => c.clef && !c.left);
   // On another team's page, a way to hand a channel back to the admin team.
   const back = target === 'team' && state.me.admin && state.view.value !== 'admin'
     && state.teams.some((t) => t.slug === 'admin');
   const rows = channels.map((c) => {
+    if (c.left) {
+      return `<tr class="left"><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
+        <td colspan="${triage ? 5 : 4}" class="sub">${c.left.unshared ? `Out of this team's inbox; it stays filed under ${esc(teamLabel(c.left.team))}.`
+    : `Moved to ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))}${c.left.kind !== 'channel' ? ` (${esc(c.left.kind)})` : ''}; its threads are re-filed in the background.`}</td></tr>`;
+    }
     const manual = c.manual[target];
     const shares = c.sharedWith || [];
     // On a team's page, a channel another team holds and shares with this one.
@@ -650,42 +780,50 @@ function renderChannels() {
     return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
       <td>${other === 'org' ? esc(orgLabel(c.org)) : teamCell}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}${alsoTag}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
-      ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}" title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
+      ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
-        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}" title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">remove</button>` : ''}`
+        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">remove</button>` : ''}`
     : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
-        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}
-        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin" title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
+        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>undo</button>` : ''}` : '<span class="sub">by rule</span>'}
+        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin"${off(assignKey(target, c.channelId, 'admin'))} title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Clef suggests</th>' : ''}<th></th></tr>${rows}</table>`
     : '<div class="empty">No channel is filed here.</div>';
+  const v = state.view;
+  const find = (id) => channels.find((c) => c.channelId === id);
   for (const b of $('channelsTable').querySelectorAll('[data-unassign]')) {
-    b.onclick = async () => {
-      const res = await ruleChange('DELETE', '/api/admin/assign', { target, channelId: b.dataset.unassign, source: b.dataset.source });
+    const id = b.dataset.unassign;
+    b.onclick = () => hold(b, `unassign:${target}:${id}`, async () => {
+      const res = await ruleChange('DELETE', '/api/admin/assign', { target, channelId: id, source: b.dataset.source }, `Undo ${plainName(find(id) || { channelId: id })}`);
       if (!res) return;
-      setManual(b.dataset.unassign, null);
-      applyMoves(res.moves);
-      renderChannels();
+      setManual(id, null, v);
+      applyMoves(res.moves, v);
+      if (v === state.view) renderChannels();
       renderList();
-    };
+    });
   }
   for (const b of $('channelsTable').querySelectorAll('[data-give]')) {
-    b.onclick = () => assignHere(channels.find((c) => c.channelId === b.dataset.give), b.dataset.team);
+    b.onclick = () => press(b, () => assignHere(find(b.dataset.give), b.dataset.team));
   }
   for (const b of $('channelsTable').querySelectorAll('[data-unshare]')) {
-    b.onclick = async () => {
-      const team = state.view.value;
-      const c = channels.find((x) => x.channelId === b.dataset.unshare);
+    const c = find(b.dataset.unshare);
+    const team = v.value;
+    b.onclick = () => hold(b, `unshare:${team}:${c.channelId}`, async () => {
       const res = await call('/api/admin/share', 'DELETE', { team, channelId: c.channelId, source: c.source });
-      if (!res.ok) { status('err', res.body.error || `Failed (${res.status}).`); return; }
-      state.view.channels = state.view.channels.filter((x) => x.channelId !== c.channelId);
+      if (!res.ok) { failed(`Remove ${plainName(c)}`, res); return; }
+      // Out of the inbox, but in its row until the page is loaded again (see applyMoves).
+      for (const x of v.channels.filter((y) => y.channelId === c.channelId)) {
+        x.left = {
+          team: x.team, org: x.org, kind: x.kind, unshared: true,
+        };
+      }
       const row = state.teams.find((t) => t.slug === team);
       if (row) row.shared = Math.max(0, (row.shared || 0) - 1);
-      status('ok', `${c.name || c.channelId} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
-      renderChannels();
+      status('ok', `${plainName(c)} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
+      if (v === state.view) renderChannels();
       renderList();
-    };
+    });
   }
 }
 
@@ -784,7 +922,7 @@ function suggestionRow(c, total) {
     <td>${who || '<span class="sub">nobody yet</span>'}</td>
     <td>${c.clef ? clefTag(c.clef, c.clef.here) : '<span class="sub">not yet</span>'}</td>
     <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
-    <td><button data-add="${esc(c.channelId)}" data-source="${esc(c.source)}">Add</button></td></tr>`;
+    <td>${c.added ? '<span class="tag manual">added</span>' : `<button data-add="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(assignKey('team', c.channelId, state.view.value))}>Add</button>`}</td></tr>`;
 }
 
 function renderSuggestions() {
@@ -803,26 +941,27 @@ function renderSuggestions() {
     ${coverage ? `<p class="hint">Of the admin team's ${coverage.channels} channels, Clef has classified ${coverage.classified} and the members of ${coverage.membersListed} are listed; the cron does a batch every 20 minutes.
       ${coverage.classified < coverage.channels ? '<button class="link" id="sClassify">Classify a batch now</button>' : ''}</p>` : ''}`;
   for (const b of $('suggestTable').querySelectorAll('[data-add]')) {
-    b.onclick = async () => {
-      b.disabled = true;
-      const c = state.view.suggestions.find((x) => x.channelId === b.dataset.add);
-      if (!(await assignHere(c))) b.disabled = false;
-    };
+    b.onclick = () => press(b, () => assignHere(state.view.suggestions.find((x) => x.channelId === b.dataset.add)));
   }
   if ($('sMore')) $('sMore').onclick = () => { state.view.showAllClef = true; renderSuggestions(); };
   if ($('sClassify')) {
-    $('sClassify').onclick = async () => {
-      $('sClassify').disabled = true;
+    const b = $('sClassify');
+    b.onclick = () => hold(b, 'classify', async () => {
+      const v = state.view;
       status('', 'Clef is classifying a batch of channels…');
-      const r = await call('/api/admin/classify', 'POST', { limit: 10 });
-      if (!r.ok) { status('err', r.body.error || `Failed (${r.status}).`); $('sClassify').disabled = false; return; }
+      // A batch takes a while: not in the queue, so changes made meanwhile go out.
+      const r = await call('/api/admin/classify', 'POST', { limit: 10 }, { parallel: true });
+      if (!r.ok) { failed('Classify', r); return; }
       status('ok', `Classified ${r.body.classified} channel${r.body.classified === 1 ? '' : 's'}; ${r.body.pending} to go.`);
-      const t = await call(`/api/admin/team?slug=${encodeURIComponent(state.view.value)}`);
-      if (t.ok && state.view.value === t.body.team.slug) {
-        Object.assign(state.view, { suggestions: t.body.suggestions, coverage: t.body.coverage });
-        renderSuggestions();
+      const t = await call(`/api/admin/team?slug=${encodeURIComponent(v.value)}`);
+      if (t.ok) {
+        // What was added meanwhile, and is still being re-filed, shows as added.
+        const here = new Set(v.channels.filter((c) => !c.left).map((c) => c.channelId));
+        v.suggestions = (t.body.suggestions || []).map((c) => (here.has(c.channelId) ? { ...c, added: true } : c));
+        v.coverage = t.body.coverage;
+        if (v === state.view) renderSuggestions();
       }
-    };
+    });
   }
 }
 
@@ -835,38 +974,40 @@ function renderMembers() {
   const role = (m) => {
     if (team.self_managed) return '<span class="tag manual" title="Every member of a self-managed team is a team manager">manager</span>';
     return m.role === 'manager'
-      ? `<span class="tag manual">manager</span> <button class="link" data-role="member" data-person="${m.id}" title="Back to member">demote</button>`
-      : `<button class="link" data-role="manager" data-person="${m.id}" title="May add and remove members and edit the team's knowledge base">make manager</button>`;
+      ? `<span class="tag manual">manager</span> <button class="link" data-role="member" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="Back to member">demote</button>`
+      : `<button class="link" data-role="manager" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="May add and remove members and edit the team's knowledge base">make manager</button>`;
   };
   $('membersTable').innerHTML = members.length
     ? `<table><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>${members.map((m) => `<tr>
       <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
       <td>${role(m)}</td>
-      <td><button class="link" data-remove="${m.id}" style="color:var(--red)">remove</button></td></tr>`).join('')}</table>`
+      <td><button class="link" data-remove="${m.id}"${off(`member:${team.slug}:${m.id}`)} style="color:var(--red)">remove</button></td></tr>`).join('')}</table>`
     : '<div class="empty">Nobody yet.</div>';
+  const v = state.view;
+  // One change at a time per person: a role change and a removal in a row go out in order,
+  // but the same click twice once.
   for (const b of $('membersTable').querySelectorAll('[data-role]')) {
-    b.onclick = async () => {
-      const m = members.find((x) => String(x.id) === b.dataset.person);
+    const m = members.find((x) => String(x.id) === b.dataset.person);
+    b.onclick = () => hold(b, `member:${team.slug}:${m.id}`, async () => {
       const res = await call('/api/admin/members', 'PUT', { team: team.slug, person: m.id, role: b.dataset.role });
-      if (!res.ok) { status('err', res.body.error); return; }
+      if (!res.ok) { failed(m.name || m.email, res); return; }
       m.role = res.body.role;
       status('ok', `${m.name || m.email} is ${m.role === 'manager' ? 'a team manager now' : 'a member again'}.`);
-      renderMembers();
-    };
+      if (v === state.view) renderMembers();
+    });
   }
   for (const b of $('membersTable').querySelectorAll('[data-remove]')) {
-    b.onclick = async () => {
-      const m = members.find((x) => String(x.id) === b.dataset.remove);
-      if (!(await ask(`Remove ${m.name || m.email} from ${team.name}?`, '', 'Remove', { danger: true }))) return;
+    const m = members.find((x) => String(x.id) === b.dataset.remove);
+    b.onclick = () => hold(b, `member:${team.slug}:${m.id}`, async () => {
       const res = await call('/api/admin/members', 'DELETE', { team: team.slug, person: m.id });
-      if (!res.ok) { status('err', res.body.error); return; }
-      state.view.members = state.view.members.filter((x) => x.id !== m.id);
+      if (!res.ok) { failed(`Remove ${m.name || m.email}`, res); return; }
+      v.members = v.members.filter((x) => x.id !== m.id);
       const row = state.teams.find((t) => t.slug === team.slug);
       if (row) row.members -= 1;
       status('ok', `Removed ${m.name || m.email}.`);
-      renderMembers();
+      if (v === state.view) renderMembers();
       renderList();
-    };
+    });
   }
 }
 
@@ -882,24 +1023,30 @@ function wireMemberPicker() {
   let timer;
   let list = [];
   let at = 0;
-  const add = async (p) => {
+  const v = state.view;
+  // The field is cleared at once, for the next person, while this one is being added.
+  const add = (p) => {
     picks.hidden = true;
     input.value = '';
-    const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined });
-    if (!res.ok) { status('err', res.body.error); return; }
-    const { person } = res.body;
-    const had = state.view.members.find((m) => m.id === person.id);
-    if (had) had.role = person.role;
-    if (!had) {
-      state.view.members.push(person);
-      state.view.members.sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
-      const row = state.teams.find((t) => t.slug === slug);
-      if (row) row.members += 1;
-    }
-    status('ok', `Added ${person.name || person.email}.`);
-    renderMembers();
-    renderList();
+    list = [];
     input.focus();
+    return once(`add:${slug}:${p.email}`, async () => {
+      // Adding someone twice keeps one membership: safe to send again.
+      const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined }, { idempotent: true });
+      if (!res.ok) { failed(`Add ${p.name || p.email}`, res); return; }
+      const { person } = res.body;
+      const had = v.members.find((m) => m.id === person.id);
+      if (had) had.role = person.role;
+      if (!had) {
+        v.members.push(person);
+        v.members.sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
+        const row = state.teams.find((t) => t.slug === slug);
+        if (row) row.members += 1;
+      }
+      status('ok', `Added ${person.name || person.email}.`);
+      if (v === state.view) renderMembers();
+      renderList();
+    });
   };
   const render = () => {
     picks.innerHTML = list.map((p, i) => `<div class="row${i === at ? ' on' : ''}" data-i="${i}">
@@ -960,7 +1107,7 @@ function ruleRow(r) {
   return `<tr data-rule="${r.id}"><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
     <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
-    <td><button class="link" data-edit="${r.id}">edit</button><button class="link" data-del="${r.id}" style="color:var(--red)">delete</button></td></tr>`;
+    <td><button class="link" data-edit="${r.id}">edit</button><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)} style="color:var(--red)">delete</button></td></tr>`;
 }
 
 function ruleForm(r = {}) {
@@ -992,24 +1139,33 @@ function renderRules() {
       $('rPattern').focus();
     };
   }
+  const v = state.view;
   for (const b of $('rulesTable').querySelectorAll('[data-del]')) {
-    b.onclick = async () => {
-      const res = await ruleChange('DELETE', '/api/admin/rules', { id: Number(b.dataset.del) });
+    const id = Number(b.dataset.del);
+    b.onclick = () => hold(b, `rule:${id}`, async () => {
+      const res = await ruleChange('DELETE', '/api/admin/rules', { id }, 'Delete rule');
       if (!res) return;
-      state.view.rules = state.view.rules.filter((x) => x.id !== res.deleted);
-      const row = state.teams.find((t) => t.slug === state.view.team.slug);
+      v.rules = v.rules.filter((x) => x.id !== res.deleted);
+      const row = state.teams.find((t) => t.slug === v.team.slug);
       if (row) row.rules -= 1;
-      applyMoves(res.moves);
-      renderRules();
-      renderChannels();
+      applyMoves(res.moves, v);
+      if (v === state.view) {
+        renderRules();
+        renderChannels();
+      }
       renderList();
-    };
+    });
   }
 }
 
+/**
+ * The rule form. Submitted, it is emptied at once for the next rule while this one is saved;
+ * a rule that could not be saved comes back into it, unless the next one is being typed.
+ */
 function wireRuleForm() {
-  const slug = state.view.team.slug;
-  const reset = () => { $('ruleSlot').innerHTML = ruleForm(); wireRuleForm(); };
+  const v = state.view;
+  const slug = v.team.slug;
+  const reset = (r) => { $('ruleSlot').innerHTML = ruleForm(r); wireRuleForm(); };
   $('ruleForm').onsubmit = async (e) => {
     e.preventDefault();
     const id = Number($('ruleForm').dataset.id) || null;
@@ -1024,34 +1180,55 @@ function wireRuleForm() {
       priority: Number($('rPriority').value),
       note: $('rNote').value,
     };
-    const res = await ruleChange(id ? 'PUT' : 'POST', '/api/admin/rules', body);
-    if (!res) return;
+    const focused = document.activeElement && document.activeElement.id;
+    reset();
+    if (focused && $(focused)) $(focused).focus();
+    const res = await ruleChange(id ? 'PUT' : 'POST', '/api/admin/rules', body, `${id ? 'Save' : 'Add'} rule ${raw}`);
+    if (!res) {
+      if (v === state.view && !$('rPattern').value) reset(body);
+      return;
+    }
     if (id) {
-      state.view.rules = state.view.rules.map((x) => (x.id === id ? res.rule : x));
+      v.rules = v.rules.map((x) => (x.id === id ? res.rule : x));
     } else {
-      state.view.rules.push(res.rule);
+      v.rules.push(res.rule);
       const row = state.teams.find((t) => t.slug === slug);
       if (row) row.rules += 1;
     }
-    applyMoves(res.moves);
-    reset();
-    renderRules();
-    renderChannels();
+    applyMoves(res.moves, v);
+    if (v === state.view) {
+      renderRules();
+      renderChannels();
+    }
     renderList();
   };
-  if ($('rCancel')) $('rCancel').onclick = reset;
+  if ($('rCancel')) $('rCancel').onclick = () => reset();
+}
+
+/**
+ * A page being loaded: true while it is still the one asked for last (a team picked while
+ * another was loading takes over), and the status line of the last page is not carried on.
+ */
+let loading = 0;
+function loadingPage() {
+  const ticket = ++loading;
+  note = { kind: '', text: '' };
+  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  return () => ticket === loading;
 }
 
 async function showTeam(slug) {
-  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  const current = loadingPage();
   const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
+  if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
     team, members, rules, channels, suggestions, coverage,
   } = r.body;
-  state.view = {
+  const v = {
     target: 'team', value: slug, team, members, rules, channels, suggestions, coverage,
   };
+  state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
   const admin = Boolean(state.me.admin);
@@ -1082,6 +1259,7 @@ async function showTeam(slug) {
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
       <p class="hint" style="margin:0 0 8px">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
+  showStatus();
   renderChannels();
   if (suggestions) renderSuggestions();
   if (admin) wireChannelPicker();
@@ -1089,15 +1267,21 @@ async function showTeam(slug) {
   renderMembers();
   wireMemberPicker();
   $('tSelf').onchange = async () => {
-    const on = $('tSelf').checked;
+    const box = $('tSelf');
+    const on = box.checked;
     const res = await call('/api/admin/teams', 'PUT', { slug, selfManaged: on });
-    if (!res.ok) { $('tSelf').checked = !on; status('err', res.body.error); return; }
-    state.view.team.self_managed = on;
-    if (on) for (const m of state.view.members) m.role = 'manager';
+    if (!res.ok) {
+      // Unless it was turned again meanwhile.
+      if (box.isConnected && box.checked === on) box.checked = !on;
+      failed('Self-managed', res);
+      return;
+    }
+    v.team.self_managed = on;
+    if (on) for (const m of v.members) m.role = 'manager';
     const row = state.teams.find((t) => t.slug === slug);
     if (row) row.self_managed = on;
     status('ok', on ? 'Self-managed: every member is a team manager now.' : 'Not self-managed any more: roles stay as they are.');
-    renderMembers();
+    if (v === state.view) renderMembers();
     renderList();
   };
   if (!admin) return;
@@ -1106,34 +1290,36 @@ async function showTeam(slug) {
   $('tName').onchange = async () => {
     const name = $('tName').value.trim();
     const res = await call('/api/admin/teams', 'PUT', { slug, name });
-    if (!res.ok) { status('err', res.body.error); return; }
-    state.view.team.name = name;
+    if (!res.ok) { failed('Rename', res); return; }
+    v.team.name = name;
     const row = state.teams.find((t) => t.slug === slug);
     if (row) row.name = name;
     status('ok', 'Renamed.');
     renderList();
   };
   if ($('tDelete')) {
-    $('tDelete').onclick = async () => {
-      if (!(await ask(`Delete the team ${state.view.team.name}?`, '<p>Its members leave it; people stay. Only a team without rules or threads can be deleted.</p>', 'Delete', { danger: true }))) return;
+    // Only a team without rules or threads can be deleted (the API refuses the others).
+    $('tDelete').onclick = () => hold($('tDelete'), `delete:${slug}`, async () => {
       const res = await call('/api/admin/teams', 'DELETE', { slug });
-      if (!res.ok) { status('err', res.body.error); return; }
+      if (!res.ok) { failed(`Delete ${team.name}`, res); return; }
       state.teams = state.teams.filter((t) => t.slug !== slug);
-      switchTab('teams');
-    };
+      if (state.tab === 'teams' && state.sel === slug) switchTab('teams'); else renderList();
+    });
   }
 }
 
 // ---- orgs ---------------------------------------------------------------------------------
 
 async function showOrg(slug) {
-  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  const current = loadingPage();
   const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
+  if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const { org, rules, channels, types } = r.body;
-  state.view = {
+  const v = {
     target: 'org', value: slug, org, rules, channels,
   };
+  state.view = v;
   $('detail').innerHTML = `
     <div class="title">${backButton()}<span id="oIco">${ico(org.icon)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
@@ -1145,6 +1331,7 @@ async function showOrg(slug) {
     ${channelsCard('org')}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
+  showStatus();
   renderChannels();
   wireChannelPicker();
   const pressed = () => $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer';
@@ -1159,15 +1346,20 @@ async function showOrg(slug) {
     if (row) Object.assign(row, { name: o.name, icon: o.icon, type: o.type });
     renderList();
   };
+  // Each save sends every field as the page shows it; only the answer to the last one is
+  // shown, so an earlier answer does not take back what was changed after it.
+  let saves = 0;
   const save = async (patch) => {
     const now = {
       name: $('oName').value, icon: $('oIcon').value, type: pressed(), ...patch,
     };
+    const mine = ++saves;
     const res = await call('/api/admin/orgs', 'PUT', { slug, ...now });
-    if (!res.ok) { status('err', res.body.error); return; }
-    state.view.org = res.body.org;
+    if (!res.ok) { failed('Save', res); return; }
+    if (mine !== saves) return;
+    v.org = res.body.org;
     status('ok', 'Saved.');
-    show(res.body.org);
+    if (v === state.view) show(res.body.org);
   };
   $('oName').onchange = () => save();
   $('oIcon').onchange = () => save();
@@ -1177,19 +1369,19 @@ async function showOrg(slug) {
       save({ type: b.dataset.type });
     };
   }
-  $('oDelete').onclick = async () => {
-    const o = state.view.org;
-    if (!(await ask(`Forget the name, icon and type of ${o.name || o.slug}?`, '<p>Its channels stay where they are; it is shown by its slug again.</p>', 'Reset', { danger: true }))) return;
+  // Its channels stay where they are; it is shown by its slug again.
+  $('oDelete').onclick = () => hold($('oDelete'), `reset:${slug}`, async () => {
     const res = await call('/api/admin/orgs', 'DELETE', { slug });
-    if (!res.ok) { status('err', res.body.error); return; }
-    state.view.org = {
+    if (!res.ok) { failed('Reset', res); return; }
+    v.org = {
       slug, name: null, icon: null, type: 'customer', updated_at: null,
     };
     status('ok', 'Reset.');
+    if (v !== state.view) return;
     $('oName').value = '';
     $('oIcon').value = '';
-    show(state.view.org);
-  };
+    show(v.org);
+  });
 }
 
 // ---- start ------------------------------------------------------------------------------

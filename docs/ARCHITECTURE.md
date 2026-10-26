@@ -108,12 +108,14 @@ and whether it is a conversation, an alert feed or not worth following. Clef is 
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
 looks again when the channel has new activity, the ops teams change, or the label is a week old.
-Every rule change is tried first: the page lists the channels it
-would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the
+Every rule change applies at once (the page names the channels it
+moved; the API still answers `dryRun` with what a change would move), and the page sends its
+changes one after the other, so many can be made in a row. Applied, each moved channel is **re-filed** by a `refile` job on the
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
 thread rows take the new org, team and kind, and the new org and team get their knowledge
-bases. A large channel moves a few hundred files per job.
+bases. A job starts from where each thread is filed in D1, not where it was when the job was
+queued, so several changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
 **Team managers.** A member of a team can be its **manager**: they get the admin pages and
 the knowledge-base editor for that team only, where they add and remove members, promote
@@ -257,7 +259,9 @@ that team's or customer's threads may call from code mode (see [Thread agents](#
 Whoever may edit the knowledge base adds, checks, edits, switches and deletes them. A server is a
 name, an `https://` URL, what it is for (the agents are told), request headers for its
 credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
-only tools agents may call. Adding or changing one connects to it and lists its tools.
+only tools agents may call. Adding or changing one connects to it and lists its tools. Above
+them are the [global servers](#global-mcp-servers), with a switch for the team (in a team's
+knowledge base) and one per channel the knowledge base learns from.
 
 For admins and team managers, the pages' headers have the same switch between **Inbox**,
 **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and instructions)
@@ -535,6 +539,70 @@ servers and tools (no credentials) is kept in the agent's storage, so a restarte
 same tools at once; before the agent is told anything it is checked against D1, and the servers
 are asked again when it changed or after an hour. MCP results come from systems outside
 opspile; the prompt says they are data, not instructions, like customer messages.
+
+### Global MCP servers
+
+Some servers are not a team's or a customer's but opspile's own, built in
+(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. They are off until
+the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
+follows its team). An agent gets those on for its thread's team or channel, next to the team's
+and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
+tools are those the last check found (`mcp_global_tools`), so an agent does not start a
+browser or mint a token just to list them; the editor's **Check** and the cron, once a day,
+ask again. The prompt says that these are opspile's own, and that customer data does not go
+into websites or URLs that are not the customer's or Adobe's.
+
+**`browser`: Cloudflare Browser Run through Chrome DevTools MCP.** Browser Run's
+[setup for MCP clients](https://developers.cloudflare.com/browser-run/cdp/mcp-clients/) runs
+`chrome-devtools-mcp --wsEndpoint=wss://…/browser-run/devtools/browser` with an API token on a
+desktop. A Worker cannot run it, so each agent gets a **browser box** (`src/agent/browser.js`):
+a Durable Object with a container, named like the agent, so threads never share a browser.
+
+```mermaid
+flowchart LR
+  A[ThreadAgent<br/>MCP client] -- Streamable HTTP --> B[BrowserBox<br/>Durable Object]
+  B -- :8080 --> P[container program<br/>HTTP ↔ stdio]
+  P -- stdio --> C[chrome-devtools-mcp]
+  C -- "ws://browser-run.internal" --> O[BrowserBoxCdp<br/>outbound handler]
+  O -- BROWSER binding --> R[Browser Run<br/>session]
+```
+
+- The container is the Cloudflare-managed Node image (`cloudflare/debian-trixie`), so there is
+  no image to build; it starts with `node -e` and the program in `src/agent/boxprogram.js`.
+  That program fetches the pinned chrome-devtools-mcp tarball, checks it against its sha512,
+  unpacks it, runs it on stdio and serves it as Streamable HTTP: one JSON answer per POST,
+  `server/discover` declined (so the client falls back to `initialize`), the first
+  `initialize` remembered for later connections, ids rewritten so two connections never
+  collide, and the server's own requests (roots, sampling) declined. When chrome-devtools-mcp
+  exits, so does the program, and the next request starts the box again.
+- The container has **no Internet**. Two outbound handlers are all it can reach: the npm
+  registry's one tarball URL (`BrowserBoxRegistry`, fetched over HTTPS by the Worker), and
+  `ws://browser-run.internal/` (`BrowserBoxCdp`), which opens a Browser Run session with the
+  Worker's `BROWSER` binding and pipes CDP through it, closing the session when the socket
+  closes. No API token exists anywhere; pages are loaded by Browser Run, not by the box.
+- chrome-devtools-mcp runs without usage statistics, CrUX lookups or `file:` navigations, and
+  redacts sensitive network headers. Its browser is fresh, signed in nowhere.
+- A box stops ten minutes after its last request (`setInactivityTimeout`), and its browser
+  session with it. A cold box answers within a few seconds. Boxes cannot be bound by name (a
+  container's class must be the Worker's own), so the Worker and the agents reach the
+  `BrowserBox` namespace through `exports` of `cloudflare:workers`.
+
+**`github`: GitHub's MCP server, read-only, as the opspile GitHub App.** The server is GitHub's
+hosted one, at `https://api.githubcopilot.com/mcp/readonly` with `X-MCP-Readonly` and
+`X-MCP-Lockdown` (public issue content from people without push access stays hidden: text
+from strangers that nobody screened). It authenticates with **installation tokens** of the
+opspile GitHub App (`src/github.js`), so it reads exactly the repositories the app is
+installed on, all of an account's or a selection, and nothing else; the app asks for read
+permissions only. The admin team creates the app from the editor with GitHub's manifest flow:
+the page posts the manifest to GitHub, GitHub asks to confirm and sends them back with a code
+(and a state opspile signed for them), and opspile trades the code for the app and its private
+key, which stays in D1 (`github_apps`), sealed with `TOKEN_KEY`; then GitHub's installation
+page. Nobody copies a key. A token lives an hour: the Worker signs a JWT with the key (RS256,
+Web Crypto; GitHub's PKCS#1 key is wrapped as PKCS#8), trades it for a token per installation,
+keeps it per isolate until shortly before it expires, and an agent's client is replaced
+before its token runs out. An app installed on several accounts is a server per account,
+`github_<account>`.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the
