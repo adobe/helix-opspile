@@ -1593,8 +1593,10 @@ const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
 
 function agentItem(key) {
-  const turn = state.agents.get(key)?.turn;
+  const { turn, latest } = state.agents.get(key) || {};
   if (!turn) return '';
+  // A note is about the thread as it was: someone posted since (or is sending), it is gone.
+  if (turn.state !== 'working' && latest && latest > (turn.endedAt || turn.startedAt)) return '';
   const body = turn.state === 'working' ? `<span class="spin" aria-hidden="true"></span>${esc(turn.text)}…` : md(turn.text);
   const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
   return `<div class="msg adobe agent ${turn.state === 'done' ? '' : turn.state}" aria-label="${label}"${turn.state === 'working' ? ' aria-live="polite"' : ''}>
@@ -1629,7 +1631,7 @@ async function loadAgent(key, { latest = null } = {}) {
     return;
   }
   const turn = res.enabled ? res.turn || null : null;
-  const last = latest || known?.latest || null;
+  const last = [latest, known?.latest].filter(Boolean).sort().pop() || null;
   const entry = { turn, latest: last, timer: null };
   state.agents.set(key, entry);
   placeAgent(key);
@@ -1807,6 +1809,10 @@ async function openThread(key, { live = false, cached = false } = {}) {
     items.push({ html: message(m, prev, false), enter: fresh(m) });
     prev = m;
   });
+  // The newest message, counting the ones being sent: newer than the agent's note hides it.
+  const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
+  const agent = state.agents.get(key);
+  if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
   // Sites as links (main--site--org.aem.live), tickets and CVEs as chips, and the tech the
@@ -1831,7 +1837,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   });
   state.shownIds = ids;
   cardGone();
-  loadAgent(key, { latest: messages.length ? messages[messages.length - 1].at : null });
+  loadAgent(key, { latest });
   const scroller = pane.querySelector('.scroller');
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
