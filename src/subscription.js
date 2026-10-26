@@ -23,6 +23,12 @@ export const LIFETIME_MINUTES = 55;
 
 const normalize = (resource) => `/${String(resource || '').replace(/^\/+/, '')}`.toLowerCase();
 
+/** Origins this Worker answered on before (comma-separated `RETIRED_ORIGINS`), without `/`. */
+export function retiredOrigins(env) {
+  return String(env.RETIRED_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/+$/, ''))
+    .filter((o) => o.startsWith('https://'));
+}
+
 function urls(env) {
   const origin = String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
   if (!origin.startsWith('https://')) {
@@ -63,11 +69,28 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
   if (!list.ok) {
     throw await fail('list', list);
   }
-  const ours = ((await body(list)).value || [])
+  const all = (await body(list)).value || [];
+  const ours = all
     .filter((s) => normalize(s.resource) === normalize(RESOURCE)
       && s.notificationUrl === notificationUrl)
     .sort((a, b) => Date.parse(b.expirationDateTime) - Date.parse(a.expirationDateTime));
   const [newest, ...duplicates] = ours;
+
+  // Subscriptions that still point at an origin this Worker moved away from (RETIRED_ORIGINS)
+  // go once the current one exists: they would deliver every message a second time.
+  const retired = retiredOrigins(env);
+  const stale = all.filter((s) => normalize(s.resource) === normalize(RESOURCE)
+    && retired.some((o) => s.notificationUrl === `${o}/teams/notify`));
+  // After the current subscription is renewed or created: deletes the retired ones.
+  const retire = async () => {
+    let n = 0;
+    for (const old of stale) {
+      // eslint-disable-next-line no-await-in-loop
+      const del = await g(`/subscriptions/${old.id}`, { method: 'DELETE' });
+      n += del.ok || del.status === 404 ? 1 : 0;
+    }
+    return n;
+  };
 
   let removed = 0;
   for (const dup of duplicates) {
@@ -86,7 +109,7 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
     if (res.ok) {
       const data = await body(res);
       return {
-        action: 'renewed', id: newest.id, expires: data.expirationDateTime, removed,
+        action: 'renewed', id: newest.id, expires: data.expirationDateTime, removed, retired: await retire(),
       };
     }
     if (res.status !== 404) {
@@ -115,7 +138,7 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
   }
   const data = await body(res);
   return {
-    action: 'created', id: data.id, expires: data.expirationDateTime, removed,
+    action: 'created', id: data.id, expires: data.expirationDateTime, removed, retired: await retire(),
   };
 }
 

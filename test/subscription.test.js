@@ -110,6 +110,18 @@ describe('ensureSubscription', () => {
     assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
   });
 
+  it('after a move, creates the subscription at the new origin and deletes the retired one', async () => {
+    const env = { ...ENV, RETIRED_ORIGINS: 'https://before.test/' };
+    const { graph, calls } = fakeGraph([
+      ours('old', 30, { notificationUrl: 'https://before.test/teams/notify' }),
+      ours('other', 30, { notificationUrl: 'https://elsewhere.test/teams/notify' }),
+    ]);
+    const r = await ensureSubscription(env, { graph, now: NOW });
+    assert.deepEqual([r.action, r.retired], ['created', 1]);
+    assert.equal(calls.find((c) => c.method === 'POST').payload.notificationUrl, `${ORIGIN}/teams/notify`);
+    assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/subscriptions/old']);
+  });
+
   it('recreates when the subscription is gone by the time it is renewed', async () => {
     const { graph } = fakeGraph([ours('a', 10)], { patchStatus: 404 });
     assert.equal((await ensureSubscription(ENV, { graph, now: NOW })).action, 'created');

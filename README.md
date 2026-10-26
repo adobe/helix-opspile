@@ -72,6 +72,7 @@ Nothing below is committed; set it on the Worker.
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
+| `RETIRED_ORIGINS` | var | Optional, comma-separated origins the Worker answered on before `PUBLIC_ORIGIN`: pages opened there (`/`, `/inbox…`, the OAuth consent and connect pages) get a 301 to `PUBLIC_ORIGIN`; Slack events, Graph notifications, `/mcp` and the API still answer; the cron deletes Graph subscriptions that still point there |
 | `WORKER_DOMAINS` | deploy | Optional, comma-separated custom domains of the deployed Worker (`cf deploy` adds the DNS record and certificate in the domain's zone, which must be in the account); `workers.dev` stays on |
 | `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |

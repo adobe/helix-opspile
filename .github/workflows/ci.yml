@@ -40,6 +40,7 @@ jobs:
       MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
       PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
       WORKER_DOMAINS: ${{ secrets.WORKER_DOMAINS }}
+      RETIRED_ORIGINS: ${{ secrets.RETIRED_ORIGINS }}
       STAFF_DOMAINS: ${{ secrets.STAFF_DOMAINS }}
       ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
       ACCESS_AUD: ${{ secrets.ACCESS_AUD }}

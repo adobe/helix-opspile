@@ -30,6 +30,7 @@ import { consume } from './normalizer.js';
 import { inboxPage } from './page.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
+import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 
@@ -58,6 +59,10 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
+    const redirect = moved(request, env, url);
+    if (redirect) {
+      return redirect;
+    }
 
     if (request.method === 'POST' && pathname === '/slack/events') {
       return slackEvents(request, env);
