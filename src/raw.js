@@ -63,3 +63,14 @@ export async function putRaw(env, key, body, meta = {}) {
   await env.NORMALIZE.send({ key });
   return key;
 }
+
+/**
+ * Pile-1 key of a fetched message version:
+ * `teams/<tenant>/<team>/<channel>/<yyyy>/<mm>/<dd>/<lastModified ms>-<messageId>.json`.
+ * Two fetches of the same version share a key.
+ */
+export function messageKey(tenantId, res, message) {
+  const modified = new Date(message.lastModifiedDateTime || message.createdDateTime);
+  return `teams/${segment(tenantId)}/${segment(res.teamId)}/${segment(res.channelId)}/`
+    + `${dayPath(modified)}/${modified.getTime()}-${segment(message.id || res.messageId)}.json`;
+}
