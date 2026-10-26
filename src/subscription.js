@@ -79,12 +79,14 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
   // Subscriptions that still point at an origin this Worker moved away from (RETIRED_ORIGINS)
   // go once the current one exists: they would deliver every message a second time.
   const retired = retiredOrigins(env);
-  const stale = all.filter((s) => normalize(s.resource) === normalize(RESOURCE)
+  let stale = all.filter((s) => normalize(s.resource) === normalize(RESOURCE)
     && retired.some((o) => s.notificationUrl === `${o}/teams/notify`));
-  // After the current subscription is renewed or created: deletes the retired ones.
+  // After the current subscription is renewed, moved or created: deletes the retired ones.
   const retire = async () => {
     let n = 0;
-    for (const old of stale) {
+    const gone = stale;
+    stale = [];
+    for (const old of gone) {
       // eslint-disable-next-line no-await-in-loop
       const del = await g(`/subscriptions/${old.id}`, { method: 'DELETE' });
       n += del.ok || del.status === 404 ? 1 : 0;
@@ -100,6 +102,29 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
       removed += 1;
     }
   }
+
+  // Graph allows one getAllMessages subscription per app and tenant, so after a move the
+  // retired one is moved to the new URL in place (no gap in which messages are missed).
+  // Its lifecycle URL stays on the retired origin, which keeps answering /teams/*.
+  const move = !newest && stale.find((x) => Date.parse(x.expirationDateTime) > now);
+  if (move) {
+    stale = stale.filter((x) => x.id !== move.id);
+    const res = await g(`/subscriptions/${move.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notificationUrl, expirationDateTime }),
+    });
+    if (res.ok) {
+      const data = await body(res);
+      return {
+        action: 'moved', id: move.id, expires: data.expirationDateTime, removed, retired: await retire(),
+      };
+    }
+    if (res.status !== 404) {
+      throw await fail('move', res);
+    }
+  }
+  // Before creating one: Graph allows a single subscription, so the retired ones go first.
+  const retiredBefore = newest ? 0 : await retire();
 
   if (newest && Date.parse(newest.expirationDateTime) > now) {
     const res = await g(`/subscriptions/${newest.id}`, {
@@ -138,7 +163,7 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
   }
   const data = await body(res);
   return {
-    action: 'created', id: data.id, expires: data.expirationDateTime, removed, retired: await retire(),
+    action: 'created', id: data.id, expires: data.expirationDateTime, removed, retired: retiredBefore,
   };
 }
 

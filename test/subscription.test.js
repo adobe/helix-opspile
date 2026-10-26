@@ -110,16 +110,29 @@ describe('ensureSubscription', () => {
     assert.equal(calls.filter((c) => c.method === 'DELETE').length, 0);
   });
 
-  it('after a move, creates the subscription at the new origin and deletes the retired one', async () => {
+  it('after a move, moves the retired subscription to the new URL in place, without a gap', async () => {
     const env = { ...ENV, RETIRED_ORIGINS: 'https://before.test/' };
     const { graph, calls } = fakeGraph([
       ours('old', 30, { notificationUrl: 'https://before.test/teams/notify' }),
       ours('other', 30, { notificationUrl: 'https://elsewhere.test/teams/notify' }),
     ]);
     const r = await ensureSubscription(env, { graph, now: NOW });
-    assert.deepEqual([r.action, r.retired], ['created', 1]);
-    assert.equal(calls.find((c) => c.method === 'POST').payload.notificationUrl, `${ORIGIN}/teams/notify`);
+    assert.deepEqual([r.action, r.id], ['moved', 'old']);
+    const patch = calls.find((c) => c.method === 'PATCH');
+    assert.deepEqual([patch.path, patch.payload.notificationUrl], ['/subscriptions/old', `${ORIGIN}/teams/notify`]);
+    assert.equal(calls.some((c) => c.method === 'POST' || c.method === 'DELETE'), false);
+  });
+
+  it('deletes retired subscriptions once the current one exists, and before creating one', async () => {
+    const env = { ...ENV, RETIRED_ORIGINS: 'https://before.test' };
+    let { graph, calls } = fakeGraph([ours('cur', 30), ours('old', 30, { notificationUrl: 'https://before.test/teams/notify' })]);
+    assert.deepEqual([(await ensureSubscription(env, { graph, now: NOW })).retired], [1]);
     assert.deepEqual(calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/subscriptions/old']);
+    // An expired retired one cannot be moved: it goes, then a new one is created.
+    ({ graph, calls } = fakeGraph([ours('old', -5, { notificationUrl: 'https://before.test/teams/notify' })]));
+    const r = await ensureSubscription(env, { graph, now: NOW });
+    assert.deepEqual([r.action, r.retired], ['created', 1]);
+    assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => c.method), ['DELETE', 'POST']);
   });
 
   it('recreates when the subscription is gone by the time it is renewed', async () => {
