@@ -18,7 +18,11 @@ comes next.
 
 ## Ingest Worker
 
-One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage`.
+One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage`. Production
+answers on its custom domain (`WORKER_DOMAINS`, the `PUBLIC_ORIGIN`); its `workers.dev` address
+stays on as a retired origin (`RETIRED_ORIGINS`): pages there redirect, and machine endpoints
+still answer. The Teams subscription's lifecycle URL keeps pointing there, because Graph
+cannot change it on an existing subscription.
 
 | Route | Purpose |
 | --- | --- |
