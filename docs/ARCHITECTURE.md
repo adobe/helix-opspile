@@ -187,7 +187,11 @@ agents; short numbers like status codes stay) is embedded and the most similar e
 the same channel, within 14 days, are found by vector search. A near-identical one (cosine ≥
 0.97) is a match outright; otherwise, above 0.82 (0.6 in conversation channels, where
 follow-ups are worded differently), Clef chooses between up to four candidates
-and "a new topic", and a match needs a probability of at least 0.7. A match sets
+and "a new topic", and a match needs a probability of at least 0.7. In conversation channels
+the channel's previous root from the last hour is always a candidate too, whoever posted it:
+answers, nudges and escalations posted as new messages ("this is a blocker, please help")
+share few words with what they follow up. Clef is told how long before each candidate was
+posted, and candidates of the same group share their probability. A match sets
 `logicalThread` on that one message file and on its thread row, always pointing at the group's
 first thread. The file stays where it is and the platform thread is never modified, so undoing
 the match is a one-field change. Replays arrive in any order, so a root that is matched also
