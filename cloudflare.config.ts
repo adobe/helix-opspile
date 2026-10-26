@@ -52,6 +52,10 @@ const VARS = [
 // these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write).
 const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_ID'] as const;
 
+// RETIRED_ORIGINS: comma-separated origins the Worker answered on before PUBLIC_ORIGIN; pages
+// opened there are redirected, and Graph subscriptions still pointing there are removed.
+const MOVE_VARS = ['RETIRED_ORIGINS'] as const;
+
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',
@@ -113,7 +117,7 @@ function vars(deployed: boolean) {
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
-    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS].filter((name) => values[name])
+    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS].filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
 }
