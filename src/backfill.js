@@ -11,8 +11,9 @@
  */
 
 import { cachedGraph } from './graph.js';
-import { dayPath, putRaw, segment } from './raw.js';
-import { messageKey } from './teams.js';
+import {
+  dayPath, messageKey, putRaw, segment,
+} from './raw.js';
 
 /**
  * Thread backfill: when a reply arrives whose root opspile has never seen, fetch the
@@ -80,10 +81,10 @@ async function backfillSlack(env, { tenant, channelId, rootId }) {
   return messages.length;
 }
 
-async function backfillTeams(env, {
+export async function backfillTeams(env, {
   tenant, groupId, channelId, rootId,
-}) {
-  const graph = await cachedGraph(env);
+}, { graph: injected } = {}) {
+  const graph = injected || await cachedGraph(env);
   const base = `/teams/${encodeURIComponent(groupId)}/channels/${encodeURIComponent(channelId)}`
     + `/messages/${encodeURIComponent(rootId)}`;
   const bodies = [];

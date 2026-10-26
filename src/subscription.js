@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { startCatchUp } from './catchup.js';
 import { cachedGraph } from './graph.js';
 
 /** One tenant-wide subscription for every channel message, roots and replies. */
@@ -60,7 +61,9 @@ async function fail(what, res) {
  * this Worker's `/teams/notify`; it then carries GRAPH_CLIENT_STATE, because only this
  * function creates subscriptions with that URL (the diag probe uses `?probe=1`).
  */
-export async function ensureSubscription(env, { graph, now = Date.now() } = {}) {
+export async function ensureSubscription(env, {
+  graph, now = Date.now(), catchUp = startCatchUp,
+} = {}) {
   const g = graph || await cachedGraph(env);
   const { notificationUrl, lifecycleNotificationUrl } = urls(env);
   const expirationDateTime = new Date(now + LIFETIME_MINUTES * 60 * 1000).toISOString();
@@ -81,7 +84,7 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
   const retired = retiredOrigins(env);
   let stale = all.filter((s) => normalize(s.resource) === normalize(RESOURCE)
     && retired.some((o) => s.notificationUrl === `${o}/teams/notify`));
-  // After the current subscription is renewed, moved or created: deletes the retired ones.
+  // Deletes the retired (and misplaced) subscriptions.
   const retire = async () => {
     let n = 0;
     const gone = stale;
@@ -103,30 +106,18 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
     }
   }
 
-  // Graph allows one getAllMessages subscription per app and tenant, so after a move the
-  // retired one is moved to the new URL in place (no gap in which messages are missed).
-  // Its lifecycle URL stays on the retired origin, which keeps answering /teams/*.
-  const move = !newest && stale.find((x) => Date.parse(x.expirationDateTime) > now);
-  if (move) {
-    stale = stale.filter((x) => x.id !== move.id);
-    const res = await g(`/subscriptions/${move.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ notificationUrl, expirationDateTime }),
-    });
-    if (res.ok) {
-      const data = await body(res);
-      return {
-        action: 'moved', id: move.id, expires: data.expirationDateTime, removed, retired: await retire(),
-      };
-    }
-    if (res.status !== 404) {
-      throw await fail('move', res);
-    }
+  // Graph allows one getAllMessages subscription per app and tenant. A retired one, or ours
+  // with a lifecycle URL elsewhere (moved in place earlier), is replaced: deleted, created
+  // anew below, and the gap between is caught up from the history APIs.
+  const misplaced = newest && newest.lifecycleNotificationUrl
+    && newest.lifecycleNotificationUrl !== lifecycleNotificationUrl ? [newest] : [];
+  let replaced = 0;
+  if (misplaced.length || (!newest && stale.length)) {
+    stale = [...stale, ...misplaced];
+    replaced = await retire();
   }
-  // Before creating one: Graph allows a single subscription, so the retired ones go first.
-  const retiredBefore = newest ? 0 : await retire();
 
-  if (newest && Date.parse(newest.expirationDateTime) > now) {
+  if (newest && !misplaced.length && Date.parse(newest.expirationDateTime) > now) {
     const res = await g(`/subscriptions/${newest.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ expirationDateTime }),
@@ -162,21 +153,34 @@ export async function ensureSubscription(env, { graph, now = Date.now() } = {}) 
     throw await fail('create', res);
   }
   const data = await body(res);
+  // Whatever was posted while there was no subscription (a replacement, an expiry).
+  // Since the replacement (now), since the old one ran out, or the last hour if there was none.
+  let since = now - 3600 * 1000;
+  if (replaced) {
+    since = now;
+  } else if (newest) {
+    since = Math.min(now, Date.parse(newest.expirationDateTime) || now);
+  }
+  const caughtUp = await catchUp(env, since, replaced ? 'replaced' : 'created');
   return {
-    action: 'created', id: data.id, expires: data.expirationDateTime, removed, retired: retiredBefore,
+    action: 'created', id: data.id, expires: data.expirationDateTime, removed, retired: replaced, caughtUp,
   };
 }
 
 /**
  * Acts on one accepted lifecycle notification. `reauthorizationRequired` and
  * `subscriptionRemoved` are both answered by ensureSubscription (renew or recreate).
- * `missed` means notifications were dropped; the catch-up from the history APIs is #8,
- * so for now it is only logged.
+ * `missed` means notifications were dropped: the last hours are caught up.
  */
-export async function handleLifecycle(env, item, options) {
+export async function handleLifecycle(env, item, options = {}) {
   const event = item.lifecycleEvent;
   if (event === 'reauthorizationRequired' || event === 'subscriptionRemoved') {
     return { event, ...await ensureSubscription(env, options) };
+  }
+  if (event === 'missed') {
+    const catchUp = options.catchUp || startCatchUp;
+    const since = (options.now || Date.now()) - 2 * 3600 * 1000;
+    return { event, action: 'catch-up', channels: await catchUp(env, since, 'missed') };
   }
   return { event, action: 'none' };
 }

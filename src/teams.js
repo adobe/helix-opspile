@@ -10,11 +10,12 @@
  * governing permissions and limitations under the License.
  */
 
+// messageKey lives in raw.js (the catch-up and backfill use it too); kept exported here.
 import { cachedGraph } from './graph.js';
 import { text } from './http.js';
 import { handleLifecycle } from './subscription.js';
 import {
-  dayPath, putRaw, segment, sha256,
+  dayPath, messageKey, putRaw, segment, sha256,
 } from './raw.js';
 
 const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
@@ -51,17 +52,6 @@ export async function notificationKey(tenantId, item, json, received, lifecycle)
   const channel = lifecycle ? '_' : segment(res && res.channelId);
   const hash = (await sha256(json)).slice(0, 32);
   return `teams/${segment(tenantId)}/${team}/${channel}/${dayPath(received)}/notification-${hash}.json`;
-}
-
-/**
- * Pile-1 key of a fetched message version:
- * `teams/<tenant>/<team>/<channel>/<yyyy>/<mm>/<dd>/<lastModified ms>-<messageId>.json`.
- * Two fetches of the same version share a key.
- */
-export function messageKey(tenantId, res, message) {
-  const modified = new Date(message.lastModifiedDateTime || message.createdDateTime);
-  return `teams/${segment(tenantId)}/${segment(res.teamId)}/${segment(res.channelId)}/`
-    + `${dayPath(modified)}/${modified.getTime()}-${segment(message.id || res.messageId)}.json`;
 }
 
 /**
@@ -159,3 +149,5 @@ export async function teamsNotify(request, url, env, ctx) {
   }
   return text('', 202);
 }
+
+export { messageKey };
