@@ -12,6 +12,7 @@
 
 import {
   GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, storedTools, storeTools,
+  usableTools,
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
@@ -202,9 +203,6 @@ async function check(env, id) {
 
 // ---- global servers ----------------------------------------------------------------------
 
-/** The browser box the checks use: not any agent's. */
-const CHECK_BOX = 'opspile-check';
-
 const shownSwitch = (r) => r && { enabled: Boolean(r.enabled), by: r.changed_by, at: r.changed_at };
 
 const shownTools = (tools) => (tools || []).map((t) => ({
@@ -241,7 +239,7 @@ async function globalsView(env, me, owner, only) {
         key: i.key,
         name: i.name,
         account: i.account || null,
-        tools: shownTools(checks[n] && checks[n].tools),
+        tools: shownTools(usableTools(g.server, checks[n] && checks[n].tools)),
         checkedAt: (checks[n] && checks[n].checkedAt) || null,
         checkError: (checks[n] && checks[n].error) || null,
       })),
@@ -335,7 +333,7 @@ async function switchGlobal(env, me, body) {
 /** Connects to each instance of a global server and keeps its tools: what each check found. */
 async function checkInstances(env, instances) {
   return Promise.all(instances.map(async (i) => {
-    const conn = await globalConnection(env, `global:${i.key}`, { agent: CHECK_BOX })
+    const conn = await globalConnection(env, `global:${i.key}`)
       .catch((e) => ({ error: e.message }));
     let res;
     if (!conn) {

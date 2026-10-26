@@ -13,7 +13,9 @@
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';
 import { createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
 import { Type } from 'typebox';
-import { globalServer, storedTools, storeTools } from './globals.js';
+import {
+  globalServer, storedTools, storeTools, usableTools,
+} from './globals.js';
 import {
   allowList, callTool, connect, probe, serversFor, serverWithHeaders,
 } from './mcpclient.js';
@@ -82,16 +84,17 @@ function catalogTool(t) {
 export const fingerprint = (servers) => servers.map((s) => `${s.id}@${s.updated_at}`).join(',');
 
 /** Connects to a server and lists its tools: `{ tools, instructions }` or `{ error }`. */
-async function ask(env, s, { fetch: fetchFn, agent }) {
-  const full = await serverWithHeaders(env, s.id, { agent }).catch((e) => ({ error: e.message }));
+async function ask(env, s, { fetch: fetchFn }) {
+  const full = await serverWithHeaders(env, s.id).catch((e) => ({ error: e.message }));
   return full && !full.error
     ? probe(full, { fetch: fetchFn })
     : { error: (full && full.error) || 'not available' };
 }
 
 /**
- * The tools of a global server: those its last check found, so that an agent does not start
- * a browser or mint a token only to list them; asked (and kept) when there are none yet.
+ * The tools of a global server: those its last check found, so that an agent does not ask
+ * the server or mint a token only to list them; asked (and kept) when there are none yet.
+ * Tools the server's definition excludes are left out.
  */
 async function globalTools(env, s, options) {
   const key = String(s.id).replace(/^global:/, '');
@@ -101,20 +104,23 @@ async function globalTools(env, s, options) {
     await storeTools(env, key, res).catch(() => {});
   }
   const own = (globalServer(s.slug) || {}).instructions;
-  return { ...res, instructions: [own, res.instructions].filter(Boolean).join('\n\n') || null };
+  return {
+    ...res,
+    tools: usableTools(s.slug, res.tools),
+    instructions: [own, res.instructions].filter(Boolean).join('\n\n') || null,
+  };
 }
 
 /**
  * Asks every server for its tools: the catalog `{ fingerprint, at, servers }`, where a server
- * that could not be reached has an `error` and no tools. `agent` is the agent's name, which
- * picks its browser box.
+ * that could not be reached has an `error` and no tools.
  */
-export async function buildCatalog(env, target, { fetch: fetchFn, agent } = {}) {
+export async function buildCatalog(env, target, { fetch: fetchFn } = {}) {
   const servers = withNamespaces(await serversFor(env, target));
   const listed = await Promise.all(servers.map(async (s) => {
     const res = s.scope === 'global'
-      ? await globalTools(env, s, { fetch: fetchFn, agent })
-      : await ask(env, s, { fetch: fetchFn, agent });
+      ? await globalTools(env, s, { fetch: fetchFn })
+      : await ask(env, s, { fetch: fetchFn });
     const allowed = allowList(s.allow);
     return {
       id: s.id,
@@ -258,12 +264,10 @@ const EXPIRY_MARGIN_MS = 2 * 60 * 1000;
  * first use and dropped when a call fails (the next call connects again).
  */
 export class AgentMcp {
-  constructor(env, storage, { fetch: fetchFn, agent } = {}) {
+  constructor(env, storage, { fetch: fetchFn } = {}) {
     this.env = env;
     this.storage = storage;
     this.fetch = fetchFn;
-    // The agent's name (or a function returning it): its browser box.
-    this.agentName = typeof agent === 'function' ? agent : () => agent;
     this.clients = new Map();
     this.catalog = null;
   }
@@ -287,9 +291,7 @@ export class AgentMcp {
     if (fingerprint(servers) === stored.fingerprint && (fresh || !servers.length)) {
       return { changed: false, catalog: stored };
     }
-    const catalog = await buildCatalog(this.env, target, {
-      fetch: this.fetch, agent: this.agentName(),
-    });
+    const catalog = await buildCatalog(this.env, target, { fetch: this.fetch });
     await this.storage.put(CATALOG_KEY, catalog);
     this.catalog = catalog;
     for (const id of [...this.clients.keys()]) {
@@ -317,8 +319,7 @@ export class AgentMcp {
       pending = null;
     }
     if (!pending) {
-      const agent = this.agentName();
-      const opened = serverWithHeaders(this.env, server.id, { agent }).then((full) => {
+      const opened = serverWithHeaders(this.env, server.id).then((full) => {
         if (!full) {
           throw new Error(`the MCP server ${server.name} was removed or turned off`);
         }

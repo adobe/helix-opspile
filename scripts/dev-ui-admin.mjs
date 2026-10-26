@@ -12,7 +12,7 @@
 
 import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
-import { GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
@@ -31,7 +31,7 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * checking a server works in the preview; any other `.example` URL fails the check, as an
  * unreachable server would.
  *
- * The global servers: a browser box answers in memory (a made-up chrome-devtools-mcp), and so
+ * The global servers: Cloudflare's Browser Run MCP server answers in memory (made up), and so
  * do GitHub's API and its MCP server for a made-up GitHub App, installed on one made-up
  * account, so the editor shows both set up. Start with `--no-github` to see the app missing.
  */
@@ -77,17 +77,22 @@ const MCP = fakeMcpServers([
 const PREVIEW_INSTALL_TOKEN = 'ghs_preview';
 const GLOBAL_MCP = fakeMcpServers([
   {
-    url: 'https://box.preview.example/mcp',
-    name: 'chrome_devtools',
+    url: BROWSER_MCP_URL,
+    name: 'cloudflare-browser-mcp-server',
+    token: PREVIEW_TOKEN,
     tools: tools([
-      ['list_pages', 'Get a list of pages open in the browser', true],
-      ['navigate_page', 'Navigates the currently selected page to a URL', false],
-      ['take_snapshot', 'Take a text snapshot of the currently selected page', true],
-      ['take_screenshot', 'Take a screenshot of the page or element', true],
-      ['list_console_messages', 'List all console messages for the currently selected page', true],
-      ['list_network_requests', 'List all requests for the currently selected page', true],
-      ['performance_start_trace', 'Starts a performance trace recording', false],
-    ], 'pageId'),
+      ['get_url_markdown', 'Fetches the webpage content and converts it into Markdown format', true],
+      ['get_url_html_content', 'Retrieves the HTML content of the specified URL', true],
+      ['get_url_screenshot', 'Captures a screenshot of the webpage', true],
+      ['get_url_pdf', 'Renders the webpage to a PDF document', true],
+      ['get_url_links', 'Returns the list of links on the page', true],
+      ['scrape_url_elements', 'Scrapes elements from the page by CSS selector', true],
+      ['get_url_json', 'Extracts structured JSON from the page using AI', true],
+      ['start_crawl', 'Starts an asynchronous crawl of a website', false],
+      ['get_crawl_result', 'Returns the status and records of a crawl job', true],
+      ['list_browser_sessions', 'Lists active Browser Run sessions for the account', true],
+      ['kill_browser_session', 'Closes a Browser Run session by its session ID', false],
+    ], 'url'),
   },
   {
     url: GITHUB_MCP_URL,
@@ -124,12 +129,6 @@ function githubApi(request) {
   }
   return Response.json({ message: 'Not Found' }, { status: 404 });
 }
-/** The browser boxes of the preview: every one answered by the same made-up server. */
-const PREVIEW_BOXES = {
-  getByName: () => ({
-    fetch: (request) => GLOBAL_MCP.fetch(new Request('https://box.preview.example/mcp', request)),
-  }),
-};
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (input, init) => {
@@ -397,9 +396,8 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
     PUBLIC_ORIGIN: 'http://localhost:8788',
-    // The global browser server's boxes, in memory.
-    BROWSER: {},
-    BROWSER_BOXES: PREVIEW_BOXES,
+    // The global browser server's API token, made up.
+    BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
   };
   const githubApp = NO_GITHUB ? Promise.resolve() : seal(env, pkcs8Pem(PREVIEW_KEY)).then((key) => {
     DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, html_url, client_id, private_key,

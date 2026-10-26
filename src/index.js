@@ -10,13 +10,11 @@
  * governing permissions and limitations under the License.
  */
 
-import { exports as workerExports } from 'cloudflare:workers';
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
-import { useBoxes } from './agent/globals.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
@@ -42,10 +40,6 @@ const INBOX_PAGE = inboxPage(inboxHtml);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
-
-// The agents' browser boxes (src/agent/browser.js): this Worker's own Durable Object class,
-// reached through its exports (a container's class cannot be bound by name).
-useBoxes(() => (workerExports && workerExports.BrowserBox) || null);
 
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
@@ -214,4 +208,3 @@ export default {
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
-export { BrowserBox, BrowserBoxCdp, BrowserBoxRegistry } from './agent/browser.js';

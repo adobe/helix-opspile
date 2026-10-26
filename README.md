@@ -59,7 +59,7 @@ still answer.
 | `GET`, `POST /diag/discord` | The Discord poller, guarded by `x-opspile-diag`: `GET` says when it polls next and how the last poll went (an error, e.g. a missing permission, included); `POST` polls now, and reads the last day again for edits, deletions and reactions. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs, thread-agent pokes and re-filing after a rule change (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
-| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Checks the global MCP servers once a day (the browser in a box of its own) and keeps the tools they list for the agents. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord poller, which keeps polling on its own alarm. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
+| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Checks the global MCP servers once a day and keeps the tools they list for the agents. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord poller, which keeps polling on its own alarm. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -92,6 +92,7 @@ Nothing below is committed; set it on the Worker.
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
 | `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
+| `BROWSER_RUN_TOKEN` | secret | Account API token with *Browser Run Write* only, for the global `browser` MCP server (Cloudflare's hosted Browser Run one). Required when `AGENT_MODEL` is set |
 | `BEDROCK_API_KEY` | secret | Amazon Bedrock API key (bearer token). Required when `AGENT_MODEL` is set |
 | `AI_GATEWAY_TOKEN` | secret | Optional: a token for an authenticated gateway, sent as `cf-aig-authorization`; set `AI_GATEWAY_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
 | `DISCORD_GUILDS` | var | Optional, comma-separated: the Discord servers (guild ids) to read. With it (and `DISCORD_BOT_TOKEN`), the `DISCORD` object polls them; see "Discord" below |
@@ -105,8 +106,6 @@ Nothing below is committed; set it on the Worker.
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
-| `BROWSER` | Browser Run | The browser of the global `browser` MCP server: one Browser Run session per browser box connection |
-| `BrowserBox` | Durable Object with a container | One per thread agent that uses the global `browser` server, and `opspile-check` for the checks: the container application `<worker>-browser-box`, started from the Cloudflare-managed Node image (nothing to build). Not a binding: the Worker reaches it through its own exports |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
@@ -194,11 +193,10 @@ token in a header.
 the admin team or a team's managers turn them on, for the team (in the team's knowledge base,
 **MCP servers**) or for one channel (**Per channel**; a channel's switch wins over its team's):
 
-- **`browser`**, [Cloudflare Browser Run](https://developers.cloudflare.com/browser-run/cdp/mcp-clients/)
-  through [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp): each
-  thread agent gets a browser box of its own, a container with the pinned chrome-devtools-mcp
-  whose browser is a Browser Run session of the `BROWSER` binding. No API token: the box's
-  CDP connection goes through the Worker. Nothing to set up beyond the deploy.
+- **`browser`**, Cloudflare's hosted [Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering):
+  pages as markdown or HTML, screenshots, PDFs, links, elements by selector, JSON extraction,
+  crawls. It needs the secret `BROWSER_RUN_TOKEN`: an account API token with *Browser Run
+  Write* only.
 - **`github`**, [GitHub's MCP server](https://github.com/github/github-mcp-server), read-only
   (`/mcp/readonly`, lockdown mode), as the opspile **GitHub App**: it reads exactly the
   repositories the app is installed on. To set it up, a member of the admin team opens
