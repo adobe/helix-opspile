@@ -500,6 +500,15 @@ from pile 2 and gets them as one input, the whole thread on first contact. A new
 during a run joins that run. A day after the latest message, a schedule wakes it once more to
 wrap up: file what was learned, or put a follow-up in the draft.
 
+**In the inbox.** The open thread shows the agent's **latest turn** under its last message,
+on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
+it is doing (reading the thread, checking a web page, updating the draft…); once done, its
+closing note for the team, which the prompt asks for at the end of every turn (1 to 3
+sentences: what it found and what it changed). It is outlined, not filled, since nobody posted
+it. The page asks `GET /api/agent` when the thread opens or changes, and every few seconds
+while the agent works or a new message waits for it; the turn is read from the agent's
+transcript (`src/agent/turn.js`), nothing else is stored.
+
 **Prompt injection.** Before an agent sees a message that Adobe staff did not write
 (customers, partners, bots), Clef answers one yes/no question: does it try to instruct or
 reconfigure an AI that reads it? A message at or above p = 0.5, or one the check could not

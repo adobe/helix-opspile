@@ -398,6 +398,18 @@
   .ph .reopened { color: var(--yellow); }
   .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }
   .sys { text-align: center; color: var(--faint); font-size: 12px; margin: 8px 0; }
+  /* The thread agent's latest turn, after the last message: on the Adobe side, outlined, as it
+     is not a message anyone posted. Solid and tinted while it works. */
+  .msg.agent .bubble { background: transparent; color: var(--ink); border: 1.5px dashed color-mix(in srgb, var(--me) 70%, transparent); }
+  .msg.agent .bubble a { color: var(--link); }
+  .msg.agent .bubble code { background: var(--them-code); }
+  .msg.agent.working .bubble { border-style: solid; border-color: color-mix(in srgb, var(--me) 45%, transparent);
+    background: color-mix(in srgb, var(--me) 8%, transparent); }
+  .msg.agent.failed .bubble { color: var(--mute); }
+  .msg.agent .spin { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: -1px;
+    border: 2px solid color-mix(in srgb, var(--me) 30%, transparent); border-top-color: var(--me); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .msg.agent .spin { animation: none; } }
   .seen { text-align: right; color: var(--faint); font-size: 11px; margin-top: 6px; }
   .empty { padding: 40px; color: var(--mute); text-align: center; }
 
@@ -603,6 +615,8 @@ const state = {
   sel: { type: new Set(['conversation']) },
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'smart', unread: false, keep: new Set(), scores: new Map(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), filtering: false,
+  // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
+  agents: new Map(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -1548,6 +1562,63 @@ function message(m, prev, fresh) {
     </div></div>`;
 }
 
+// ---------------------------------------------------------------- the thread agent
+// Its latest turn, under the last message (GET /api/agent): what it is doing while it works,
+// its note for the team once done. Asked when a thread opens or changes, and every few
+// seconds while it works, or while a new message waits for it to start.
+const AGENT_NAME = 'Opspile Agent';
+const AGENT_POLL_MS = 4000;
+const AGENT_WAIT_MS = 2 * 60 * 1000;
+
+function agentItem(key) {
+  const turn = state.agents.get(key)?.turn;
+  if (!turn) return '';
+  const body = turn.state === 'working' ? `<span class="spin" aria-hidden="true"></span>${esc(turn.text)}…` : md(turn.text);
+  const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
+  return `<div class="msg adobe agent ${turn.state === 'done' ? '' : turn.state}" aria-label="${label}"${turn.state === 'working' ? ' aria-live="polite"' : ''}>
+    <span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
+    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble">${body}</div></div></div>`;
+}
+
+/** Puts the agent's turn into the open feed (or takes it out), without rebuilding the rest. */
+function placeAgent(key) {
+  const feed = state.open === key && $('pane').querySelector(':scope > .scroller > .feed');
+  if (!feed) return;
+  const html = agentItem(key);
+  const old = feed.querySelector(':scope > .msg.agent');
+  if ((old ? old.__html : '') === html) return;
+  const scroller = feed.parentElement;
+  const near = nearBottom(scroller);
+  if (!html) { old.remove(); return; }
+  const node = toNode(html);
+  node.__html = html;
+  if (old) old.replaceWith(node); else feed.append(node);
+  if (near) scroller.scrollTop = scroller.scrollHeight;
+}
+
+/** Asks the thread's agent how its latest turn went; keeps asking while it works. */
+async function loadAgent(key, { latest = null } = {}) {
+  const known = state.agents.get(key);
+  clearTimeout(known?.timer);
+  let res;
+  try {
+    res = await get(`/api/agent?thread=${encodeURIComponent(key)}`);
+  } catch {
+    return;
+  }
+  const turn = res.enabled ? res.turn || null : null;
+  const last = latest || known?.latest || null;
+  const entry = { turn, latest: last, timer: null };
+  state.agents.set(key, entry);
+  placeAgent(key);
+  // Working, or a message newer than its turn that it has not picked up yet (it waits a few
+  // seconds for more): ask again, while the thread stays open.
+  const waiting = res.enabled && last && (!turn || turn.startedAt < last) && Date.now() - Date.parse(last) < AGENT_WAIT_MS;
+  if (turn?.state === 'working' || waiting) {
+    entry.timer = setTimeout(() => { if (state.open === key) loadAgent(key); }, AGENT_POLL_MS);
+  }
+}
+
 /** The thread's draft, read-only: who saved it, when, and how it starts. */
 const draftLine = (d) => (d ? `<div class="draftbar"><span class="pen">✎ Draft</span>
   <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}: ${esc(d.body)}</span></div>` : '');
@@ -1702,6 +1773,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     items.push({ html: message(m, prev, false), enter: fresh(m) });
     prev = m;
   });
+  const agentHtml = agentItem(key);
+  if (agentHtml) items.push({ html: agentHtml });
   // Sites as links (main--site--org.aem.live), tickets and CVEs as chips, and the tech the
   // channel is known to use.
   const sites = facts.filter((f) => f.field === 'site').map((f) => {
@@ -1724,6 +1797,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   });
   state.shownIds = ids;
   cardGone();
+  loadAgent(key, { latest: messages.length ? messages[messages.length - 1].at : null });
   const scroller = pane.querySelector('.scroller');
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
