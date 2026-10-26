@@ -302,7 +302,7 @@ describe('thread agents', () => {
     assert.deepEqual(await pokeAgent(e, 'slack:E1:C1:9.9'), { result: 'skip', reason: 'unknown thread' });
 
     const me = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
-    const inTeam = (t) => t === 'helix';
+    const inTeam = (t) => [].concat(t).includes('helix');
     let res = await seedAgent(e, me, { thread: THREAD, text: 'Their CDN is Fastly.' }, inTeam);
     assert.equal(res.status, 202);
     res = await seedAgent(e, me, { team: 'helix', org: 'acme', text: 'Go-live is in March.' }, inTeam);

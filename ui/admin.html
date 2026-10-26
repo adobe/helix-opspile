@@ -302,6 +302,9 @@ const orgLabel = (slug) => {
   const o = state.orgs.find((x) => x.slug === slug);
   return o && o.name ? o.name : slug;
 };
+// The admin team holds the channels no other team has (yet); adding a team to one of those
+// moves it, adding a team to any other channel shares it (src/shares.js).
+const isHolding = (slug) => !slug || slug === UNASSIGNED || slug === 'admin';
 const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || slug));
 
 function movesHtml(moves) {
@@ -375,7 +378,7 @@ function renderList() {
       <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
         <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
         ${t.self_managed ? '<span class="tag manual" title="Every member is a team manager">self-managed</span>' : ''}
-        <span class="sub">${t.members} people · ${t.channels} ch</span></div>`).join('');
+        <span class="sub">${t.members} people · ${t.channels} ch${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${state.unassigned.channels} ch</span></div>` : '';
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
@@ -490,8 +493,11 @@ function applyMoves(moves) {
     if (v) {
       const before = v.channels.filter((c) => c.channelId === m.channel.channelId);
       v.channels = v.channels.filter((c) => c.channelId !== m.channel.channelId);
-      if (m.to[v.target] === v.value) {
-        const was = before[0] || {};
+      const was = before[0] || {};
+      // The teams it is shared with keep it, wherever it is filed; the team it is filed under
+      // now does not need it shared as well.
+      const sharedWith = (was.sharedWith || []).filter((t) => t !== m.to.team);
+      if (m.to[v.target] === v.value || (v.target === 'team' && sharedWith.includes(v.value))) {
         v.channels.unshift({
           source: m.channel.source,
           tenant: m.channel.tenant,
@@ -499,6 +505,7 @@ function applyMoves(moves) {
           name: m.channel.name,
           groupName: was.groupName || m.channel.groupName || null,
           team: m.to.team,
+          sharedWith,
           org: m.to.org,
           kind: m.to.kind,
           threads,
@@ -576,8 +583,10 @@ function placePicks(input, picks) {
 /** The channels card: a table (redrawn on its own) and a picker that assigns one here. */
 function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><input id="pick" class="grow" placeholder="Assign a channel here by hand: search by channel, Teams team, customer or id" autocomplete="off" aria-label="Assign a channel"><div class="picks" id="picks" hidden></div></div>
-    <p class="hint">A manual assignment files one channel ${target === 'team' ? 'under this team' : 'under this org'} whatever the rules say (a channel-id rule with priority 10).${target === 'team' && state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team the same way.` : ''}</p></div>`;
+    <div class="form picker"><input id="pick" class="grow" placeholder="${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}: search by channel, Teams team, customer or id" autocomplete="off" aria-label="${target === 'team' ? 'Add a channel' : 'Assign a channel'}"><div class="picks" id="picks" hidden></div></div>
+    <p class="hint">${target === 'team'
+    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
+    : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
 }
 
 /**
@@ -589,6 +598,19 @@ async function assignHere(c, value = state.view.value) {
   const { channelId, source } = c;
   const res = await ruleChange('POST', '/api/admin/assign', { target, value, channelId, source });
   if (!res) return null;
+  if (res.shared) {
+    // Another team holds it: shared with this one, filed where it is.
+    const rows = state.view.channels.filter((x) => x.channelId === channelId);
+    for (const row of rows) row.sharedWith = [...new Set([...(row.sharedWith || []), value])];
+    if (!rows.length && value === state.view.value) {
+      state.view.channels.unshift({ ...c, sharedWith: [...(c.sharedWith || []), value], manual: c.manual || { team: null, org: null } });
+    }
+    if (res.shared.added) {
+      const row = state.teams.find((t) => t.slug === value);
+      if (row) row.shared = (row.shared || 0) + 1;
+    }
+    status('ok', `Shared: ${c.name || channelId} is in ${teamLabel(value)}'s inbox too, and stays filed under ${teamLabel(res.shared.from)}.`);
+  }
   applyMoves(res.moves);
   // A channel that came here: what the move does not say about it.
   for (const row of state.view.channels.filter((x) => x.channelId === channelId)) {
@@ -599,7 +621,7 @@ async function assignHere(c, value = state.view.value) {
   }
   // Already here by rule: no move, but now by hand. A channel the API did not move
   // (no threads yet) shows up once something is filed.
-  if (value === state.view.value) setManual(channelId, res.rule);
+  if (value === state.view.value && !res.shared) setManual(channelId, res.rule);
   if (state.view.suggestions) state.view.suggestions = state.view.suggestions.filter((x) => x.channelId !== channelId);
   renderChannels();
   if ($('suggestTable')) renderSuggestions();
@@ -617,14 +639,23 @@ function renderChannels() {
     && state.teams.some((t) => t.slug === 'admin');
   const rows = channels.map((c) => {
     const manual = c.manual[target];
+    const shares = c.sharedWith || [];
+    // On a team's page, a channel another team holds and shares with this one.
+    const sharedHere = target === 'team' && c.team !== state.view.value && shares.includes(state.view.value);
+    const also = shares.filter((t) => t !== state.view.value);
+    const alsoTag = target === 'team' && also.length
+      ? ` <span class="tag" title="Shared: in these teams' inboxes too">also ${esc(also.map(teamLabel).join(', '))}</span>` : '';
+    const teamCell = `${esc(teamLabel(c.team))}${shares.length ? ` <span class="tag" title="Shared: in these teams' inboxes too">+ ${esc(shares.map(teamLabel).join(', '))}</span>` : ''}`;
     const pick = triage && c.clef && c.clef.team !== 'none' && c.clef.team !== 'admin' && state.teams.some((t) => t.slug === c.clef.team) ? c.clef.team : null;
     return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
-      <td>${esc(other === 'org' ? orgLabel(c.org) : teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
+      <td>${other === 'org' ? esc(orgLabel(c.org)) : teamCell}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}${alsoTag}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}" title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
-      <td class="nw">${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
+      <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
+        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}" title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">remove</button>` : ''}`
+    : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}">undo</button>` : ''}` : '<span class="sub">by rule</span>'}
-        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin" title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}</td></tr>`;
+        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin" title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Clef suggests</th>' : ''}<th></th></tr>${rows}</table>`
@@ -641,6 +672,20 @@ function renderChannels() {
   }
   for (const b of $('channelsTable').querySelectorAll('[data-give]')) {
     b.onclick = () => assignHere(channels.find((c) => c.channelId === b.dataset.give), b.dataset.team);
+  }
+  for (const b of $('channelsTable').querySelectorAll('[data-unshare]')) {
+    b.onclick = async () => {
+      const team = state.view.value;
+      const c = channels.find((x) => x.channelId === b.dataset.unshare);
+      const res = await call('/api/admin/share', 'DELETE', { team, channelId: c.channelId, source: c.source });
+      if (!res.ok) { status('err', res.body.error || `Failed (${res.status}).`); return; }
+      state.view.channels = state.view.channels.filter((x) => x.channelId !== c.channelId);
+      const row = state.teams.find((t) => t.slug === team);
+      if (row) row.shared = Math.max(0, (row.shared || 0) - 1);
+      status('ok', `${c.name || c.channelId} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
+      renderChannels();
+      renderList();
+    };
   }
 }
 
@@ -672,11 +717,13 @@ function wireChannelPicker() {
       const slug = c.orgName && match.includes('org') && !match.includes('orgName') ? ` <span class="mono">${hl(c.org, words)}</span>` : '';
       const id = match.length === 1 && match[0] === 'channelId' ? ` · id <span class="mono">${hl(c.channelId, words)}</span>` : '';
       const here = c[target] === value;
+      // Adding a team to a channel another team holds shares it; one the admin team holds moves.
+      const shares = target === 'team' && !here && !isHolding(c.team) && !isHolding(value);
       return `<div class="row pickrow${i === at ? ' on' : ''}" data-i="${i}">
         <span class="name"><span class="ch">${channelName(c, words)}</span>
           <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
           · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
-        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}`}
+        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
     }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
     picks.hidden = false;
@@ -697,6 +744,7 @@ function wireChannelPicker() {
       words = q.toLowerCase().split(/\s+/).filter(Boolean);
       const seen = new Set();
       list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target])
+        .filter((c) => target !== 'team' || !(c.sharedWith || []).includes(value))
         .filter((c) => !seen.has(c.channelId) && seen.add(c.channelId));
       at = 0;
       render();

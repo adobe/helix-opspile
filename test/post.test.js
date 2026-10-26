@@ -54,7 +54,7 @@ function env() {
     MS_CLIENT_SECRET: 'msecret',
   };
 }
-const inTeam = (t) => t === 'helix';
+const inTeam = (t) => [].concat(t).includes('helix');
 
 // Made-up accounts: two Slack people (one a bot) and one Teams person, all in D1 already.
 function withAccounts(e) {

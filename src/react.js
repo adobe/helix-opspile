@@ -15,6 +15,7 @@ import { isStaffDomain } from './lookup.js';
 import { processReaction } from './normalizer.js';
 import { personalToken } from './post.js';
 import { isResolvedEmoji, RESOLVED_EMOJI } from './resolve.js';
+import { teamsOf } from './shares.js';
 
 /**
  * Reacting from the inbox, as the person (their own Slack or Microsoft token, see post.js),
@@ -182,7 +183,7 @@ export async function react(env, me, request, inTeam) {
     thread: key, id, emoji, remove,
   } = request || {};
   const t = key && await env.DB.prepare(`${THREAD} WHERE t.thread = ?`).bind(key).first();
-  if (!t || !inTeam(t.team)) {
+  if (!t || !inTeam(await teamsOf(env, t))) {
     return json({ error: 'not found' }, 404);
   }
   const msg = await env.DB.prepare('SELECT id FROM messages WHERE thread = ? AND id = ? AND deleted = 0')
@@ -229,7 +230,7 @@ export async function resolve(env, me, request, inTeam) {
     WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC`).bind(key, key).all()
     : { results: [] };
   const members = results || [];
-  if (!members.length || !inTeam(members[0].team)) {
+  if (!members.length || !inTeam(await teamsOf(env, members[0]))) {
     return json({ error: 'not found' }, 404);
   }
   const { tok, response } = await tokenFor(env, me, members[0]);

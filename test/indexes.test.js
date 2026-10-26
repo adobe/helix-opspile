@@ -36,7 +36,10 @@ async function plans(fn) {
   };
   await fn({ DB, CHANNELS: fakeBucket() });
   return asked.map((sql) => {
-    const args = Array((sql.match(/\?/g) || []).length).fill('[]');
+    // `?` and `?N` parameters: the highest number, and one more for every plain `?`.
+    const numbered = (sql.match(/\?\d+/g) || []).map((p) => Number(p.slice(1)));
+    const plain = (sql.match(/\?(?!\d)/g) || []).length;
+    const args = Array(Math.max(0, ...numbered) + plain).fill('[]');
     return {
       sql: sql.replace(/\s+/g, ' ').slice(0, 80),
       plan: DB.sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map((r) => r.detail),
@@ -53,6 +56,13 @@ describe('inbox queries', () => {
 
   it('search identities and messages by index when loading the inbox', async () => {
     assert.deepEqual(scans(await plans((env) => inbox(env, me, 'helix'))), []);
+  });
+
+  it('search threads by team, or by the channels shared with it, when loading the inbox', async () => {
+    // `team = ? OR <shared channel>` must stay a multi-index OR (migration 0024).
+    const threadScans = (await plans((env) => inbox(env, me, 'helix')))
+      .filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d)));
+    assert.deepEqual(threadScans, []);
   });
 
   it('search identities and messages by index when opening a thread', async () => {

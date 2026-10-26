@@ -67,6 +67,16 @@ so are the overrides for vendor channels, alert channels and irregular names. Ch
 no rule matches are filed under `_unassigned`. A **manual assignment** of one channel is a
 rule too: its `channel_id`, priority 10.
 
+**Shared channels.** A channel can be in several teams' inboxes, but it is filed under one team,
+its first: the rules pick it, and its folders, thread rows (`threads.team`), knowledge base and
+agents are that team's. The other teams follow it through `channel_teams` (source, channel id,
+team): the channel's threads are in their inboxes, and their members read, reply, react, resolve
+and draft there; read state in a thread is that of the team it is looked at from. Adding a team
+to a channel moves the channel only for its first team, when the admin team (or nobody) holds
+it; added to a channel another team holds, the new team shares it and nothing moves. Handing a
+channel back to the admin team is always a move. The shares are configuration, like the rules,
+so a replay of pile 1 keeps them.
+
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
 URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
 one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
@@ -75,8 +85,8 @@ the agents show the name and the type.
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
-team, a Slack Connect team), manual assignments of channels to a team or an org, and each
-org's name, icon and type. A team's page suggests channels for it among the ones the admin team
+team, a Slack Connect team), manual assignments of channels to a team or an org, the channels
+shared with more teams, and each org's name, icon and type. A team's page suggests channels for it among the ones the admin team
 holds (the rule of last resort files every channel no other rule claims there): the ones where
 the team's members post, react or are members (listed from Slack, or from the Teams team, into
 `channel_members`), ranked tf-idf style so that someone active in most of the admin team's
@@ -266,6 +276,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
   them back to D1 in batches.
+  New messages, reactions and drafts are announced in the room of every team whose inbox
+  has the thread (a shared channel's are in several).
 - The index is derived: a `messages` row per pile-2 file, and a `threads` row recomputed from
   its messages on every write (last activity by a person, last speaker and whether they are
   staff, title, message count), so it is the same in any replay order. Alert threads use the
@@ -423,7 +435,8 @@ make Clef call it resolved.
 A reply can wait as a **draft**: **Save draft** appears above Send, next to Resolve, when the
 pointer rests on Send for a second (or Send is pressed for a second on touch), and ⌘S / Ctrl+S
 in the reply box does the same. An inbox entry carries **at most one draft**, and it is
-shared: everyone in the team that owns the channel sees it, and can change, send or discard it.
+shared: everyone in the teams that follow the channel (the one it is filed under, and those it is
+shared with) sees it, and can change, send or discard it.
 Admins, who can open any thread, see its draft but change only their own teams' drafts.
 
 - Drafts live in D1 (`drafts`), keyed by the inbox entry (a re-threaded group's first thread).
@@ -434,10 +447,10 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   and a draft that changed meanwhile is not overwritten: the colleague's draft is shown, with
   an offer to overwrite it. A discard does the same.
 - Sending a reply written from the draft uses it up (unless it changed since). Saves and
-  discards are fanned out over the team's room, so every open inbox follows at once; a reply
-  box that still holds the draft unchanged follows the draft, one with your own changes keeps
-  them (and offers to load the draft instead). What you type and do not save stays with its
-  thread in the tab.
+  discards are fanned out over the rooms of every team that follows the channel, so every
+  open inbox follows at once; a reply box that still holds the draft unchanged follows the
+  draft, one with your own changes keeps them (and offers to load the draft instead). What
+  you type and do not save stays with its thread in the tab.
 - In the inbox, an entry with a draft shows **✎ Draft**, and the **Draft** card filters by
   drafts saved last by you, by a colleague, or none. A draft does not change the status pile.
 

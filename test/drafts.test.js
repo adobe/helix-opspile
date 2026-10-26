@@ -128,6 +128,22 @@ describe('shared drafts', () => {
     assert.equal((await draftOf(e, ADA)).body, 'two');
   });
 
+  it('is shared with the teams a channel is shared with, and tells all their rooms', async () => {
+    const e = env();
+    assert.equal((await call(e, EVE, 'PUT', '/api/draft', { thread: ROOT, text: 'x', base: null })).status, 404);
+    e.DB.sqlite.exec(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('slack', 'C1', 'other', '2026-10-21T10:00:00Z')`);
+    const res = await call(e, EVE, 'PUT', '/api/draft', { thread: ROOT, text: 'From the other team', base: null });
+    assert.equal(res.status, 200);
+    assert.deepEqual(e.notified.map((n) => n.team).sort(), ['helix', 'other']);
+    assert.equal((await draftOf(e, ADA)).body, 'From the other team');
+    // A read goes to the room of the inbox it was read in.
+    e.notified.length = 0;
+    const read = await call(e, EVE, 'POST', '/api/read', { thread: ROOT, at: '2026-10-21T10:00:00Z', team: 'other' });
+    assert.equal(read.status, 204);
+    assert.deepEqual(e.notified.map((n) => n.team), ['other']);
+  });
+
   it('discards a draft', async () => {
     const e = env();
     const d = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;

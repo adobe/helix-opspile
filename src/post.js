@@ -12,6 +12,7 @@
 
 import { json } from './http.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
+import { teamsOf } from './shares.js';
 
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
@@ -391,7 +392,7 @@ async function knownMentions(env, t, ids) {
  */
 export async function mentionable(env, key, q, inTeam) {
   const t = key && await target(env, key);
-  if (!t || !inTeam(t.team)) {
+  if (!t || !inTeam(await teamsOf(env, t))) {
     return json({ error: 'not found' }, 404);
   }
   const like = String(q || '').trim().slice(0, 60).replace(/[\\%_]/g, '\\$&');
@@ -440,7 +441,7 @@ export async function post(env, me, request, inTeam) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
   const t = key && await target(env, key);
-  if (!t || !inTeam(t.team)) {
+  if (!t || !inTeam(await teamsOf(env, t))) {
     return json({ error: 'not found' }, 404);
   }
   if (!isStaffDomain(env, me.email)) {

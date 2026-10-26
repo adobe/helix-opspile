@@ -31,6 +31,9 @@ import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
+import {
+  memberOf, sharedWith, teamsOf, viewTeam,
+} from './shares.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 import { Timing, withTiming } from './timing.js';
 
@@ -162,7 +165,8 @@ export async function viewer(request, env, options) {
   return me;
 }
 
-const inTeam = (me, team) => me.teams.some((t) => t.slug === team);
+/** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
+const inTeam = (me, teams) => memberOf(me)(teams);
 
 async function members(env, team) {
   const { results } = await env.DB.prepare(`SELECT p.id, p.name FROM team_members m
@@ -255,15 +259,16 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
   // thread (title, link) and its five most recent members (activity, read state).
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
       COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
-    FROM threads WHERE team = ? AND kind != 'ignore'
+    -- The team's own channels, and the channels shared with it (migration 0024).
+    FROM threads WHERE (team = ?1 OR ${sharedWith('threads', '?1')}) AND kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
       AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
         WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
     GROUP BY g
-    HAVING ? IS NULL OR latest < ? OR (latest = ? AND g < ?)
-    ORDER BY latest DESC, g DESC LIMIT ?`)
-    .bind(team, beforeAt, beforeAt, beforeAt, beforeG, size + 1).all();
+    HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
+    ORDER BY latest DESC, g DESC LIMIT ?4`)
+    .bind(team, beforeAt, beforeG, size + 1).all();
   // One more than the page says whether there is another.
   const more = (groups || []).length > size;
   if (more) {
@@ -281,10 +286,10 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
         FROM threads t
-        WHERE t.team = ? AND t.kind != 'ignore'
-          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?))) r
-    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?))`)
-    .bind(team, groupKeys, groupKeys).all();
+        WHERE (t.team = ?1 OR ${sharedWith('t', '?1')}) AND t.kind != 'ignore'
+          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
+    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
+    .bind(team, groupKeys).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
     return {
@@ -414,14 +419,18 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
  * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
  * every member's messages in order. Each message carries its platform `thread`.
  */
-export async function thread(env, me, key) {
+export async function thread(env, me, key, wanted = null) {
   // The thread and the threads re-threaded into it, in one round trip.
   const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
     WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
   const row = (memberRows || []).find((m) => m.thread === key);
-  if (!row || !(inTeam(me, row.team) || isAdmin(me))) {
+  // Every team whose inbox has it: the one it is filed under, and those its channel is shared
+  // with. Read state is the team's the viewer looks at it from (`wanted`, if it is one).
+  const teams = row ? await teamsOf(env, row) : [];
+  if (!row || !(inTeam(me, teams) || isAdmin(me))) {
     return null;
   }
+  const readers = viewTeam(me, teams, wanted);
   const group = memberRows;
   const keys = JSON.stringify(group.map((m) => m.thread));
   // The latest member's label speaks for the group.
@@ -449,7 +458,7 @@ export async function thread(env, me, key) {
       WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all(),
     env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
       FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
-      WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(row.team, keys).all(),
+      WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(readers, keys).all(),
     env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(labelKey).first(),
     isAdmin(me) ? env.DB.prepare(`SELECT r.question, r.model_value, r.value,
         r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
@@ -503,6 +512,7 @@ export async function thread(env, me, key) {
   return {
     thread: {
       ...row,
+      teams,
       ...orgFields(rowOrgs, row.org),
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
       label_thread: labelKey,
@@ -661,7 +671,7 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
     }));
   }
   if (url.pathname === '/api/thread') {
-    const result = await thread(env, me, url.searchParams.get('thread'));
+    const result = await thread(env, me, url.searchParams.get('thread'), team);
     return result ? json(result) : json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/media') {
@@ -698,13 +708,15 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
     return json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
-    const { thread: key, at } = await request.json().catch(() => ({}));
-    const row = key && await env.DB.prepare('SELECT team FROM threads WHERE thread = ?')
+    const { thread: key, at, team: from } = await request.json().catch(() => ({}));
+    const row = key && await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
       .bind(key).first();
-    if (!row || !inTeam(me, row.team) || typeof at !== 'string') {
+    const teams = await teamsOf(env, row);
+    if (!row || !inTeam(me, teams) || typeof at !== 'string') {
       return json({ error: 'not found' }, 404);
     }
-    await room(env, row.team).fetch('https://room/read', {
+    // The room of the inbox it was read in, which fans it out there.
+    await room(env, viewTeam(me, teams, from)).fetch('https://room/read', {
       method: 'POST',
       body: JSON.stringify({ person: me.id, thread: key, at }),
     });

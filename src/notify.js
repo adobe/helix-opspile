@@ -11,10 +11,15 @@
  */
 
 /**
- * Tells the team's room (a Durable Object) about a change, so connected inboxes update.
- * Best effort: the index in D1 is the record, the room only fans out.
+ * Tells the team's room (a Durable Object) about a change, so connected inboxes update; with
+ * a list of teams (a shared channel's), each of their rooms. Best effort: the index in D1 is
+ * the record, the room only fans out.
  */
 export async function notifyRoom(env, team, event) {
+  if (Array.isArray(team)) {
+    await Promise.all([...new Set(team)].map((t) => notifyRoom(env, t, event)));
+    return;
+  }
   if (!env.ROOMS || !team) {
     return;
   }

@@ -24,6 +24,7 @@ import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { refile } from './refile.js';
 import { notifyRoom } from './notify.js';
+import { teamsOf } from './shares.js';
 import { classify } from './rules.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
@@ -109,16 +110,18 @@ export async function processReaction(env, key, r) {
     at: r.at,
     removed: r.removed,
   });
-  const row = await env.DB.prepare('SELECT team, kind FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT team, kind, source, channel_id FROM threads WHERE thread = ?')
     .bind(msg.thread).first();
+  // Every team whose inbox has the thread: a shared channel's too.
+  const rooms = env.ROOMS ? await teamsOf(env, row) : [];
   const person = r.removed ? null : await personOf(env, r.source, r.tenant, r.userId);
   if (person) {
     await advanceWatermark(env.DB, person, msg.thread, msg.at, 'react');
-    await notifyRoom(env, row && row.team, {
+    await notifyRoom(env, rooms, {
       type: 'read', person, thread: msg.thread, at: msg.at,
     });
   }
-  await notifyRoom(env, row && row.team, { type: 'thread', thread: msg.thread });
+  await notifyRoom(env, rooms, { type: 'thread', thread: msg.thread });
   // The models see reactions (a customer's ✅ confirms a fix): label the thread again.
   if (row && row.kind === 'channel' && env.AI && env.NORMALIZE) {
     await env.NORMALIZE.send({ label: msg.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
@@ -330,7 +333,10 @@ export async function processKey(env, key, cache = {}) {
   if (written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId)) {
     await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
-  await notifyRoom(env, cls.team, { type: 'thread', thread: message.thread });
+  const rooms = env.ROOMS ? await teamsOf(env, {
+    team: cls.team, source: message.source, channel_id: message.channelId,
+  }) : [];
+  await notifyRoom(env, rooms, { type: 'thread', thread: message.thread });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
   };
