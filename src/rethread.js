@@ -17,7 +17,8 @@ import { sha256 } from './raw.js';
 /**
  * Re-threading. When a root message arrives, the most similar earlier roots in the same
  * channel are found by vector search (Workers AI embeddings in Vectorize). A near-identical
- * one is a match outright; otherwise Clef chooses between the candidates and "a new topic".
+ * one is a match outright; otherwise Clef chooses between the candidates (in conversations,
+ * always including the channel's previous root from the last hour) and "a new topic".
  * A match sets `logicalThread` on the new thread, pointing at the earliest thread of the
  * group, so repeated alerts and follow-ups fold into one inbox entry.
  */
@@ -33,6 +34,12 @@ export const MIN_CANDIDATE = 0.82;
 export const MIN_CANDIDATE_CONVERSATION = 0.6;
 /** A second root by the same person this soon after their first continues it. */
 export const BURST_MS = 10 * 60 * 1000;
+/**
+ * In conversations, the channel's previous root from this recently is always a candidate,
+ * however differently it is worded: answers, nudges and escalations posted as new messages
+ * ("this is a blocker, please help") share few words with what they follow up.
+ */
+export const RECENT_MS = 60 * 60 * 1000;
 /** Clef must be at least this sure that the new root continues a candidate. */
 export const MIN_CLEF = 0.7;
 const MAX_TEXT = 1500;
@@ -90,11 +97,34 @@ async function embed(env, text) {
   return res.data[0];
 }
 
-/** Clef: does the new root continue one of the candidates? */
+/** How long before the new root a candidate was posted, in words. */
+export function ago(ms) {
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 120) {
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
+export const CLEF_INSTRUCTIONS = 'This message was posted as a new thread instead of a reply. '
+  + 'Is it part of the conversation of one of the earlier threads, or a new topic? '
+  + 'It is part of an earlier conversation when it repeats the same issue or alert, answers or '
+  + 'reacts to the earlier message, or follows it up: adds details, asks again, escalates, or '
+  + 'presses for an answer, even without naming the issue again. A message that names no issue '
+  + 'of its own belongs to the most recent earlier thread. It is a new topic when it raises a '
+  + 'different question or issue.';
+
+/**
+ * Clef: does the new root continue one of the candidates? Candidates (`{ thread, group, text,
+ * ago }`) of the same group share their probability, so a group that is offered twice (its
+ * most similar root and its latest) is not split in two.
+ */
 export async function askClef(env, text, candidates) {
-  const criteria = { new: 'A different issue or a new topic' };
+  const criteria = { new: 'A different question, issue or topic' };
   candidates.forEach((c, i) => {
-    criteria[`c${i}`] = `The same issue as this earlier thread: ${c.text.slice(0, SNIPPET)}`;
+    const when = c.ago ? `, posted ${c.ago} before` : '';
+    criteria[`c${i}`] = `Continues this earlier thread${when}: ${c.text.slice(0, SNIPPET)}`;
   });
   const res = await env.AI.run(CLEF, {
     model: 'clef',
@@ -102,18 +132,32 @@ export async function askClef(env, text, candidates) {
     questions: {
       continues: {
         type: 'choice',
-        instructions: 'This message was posted as a new thread. Is it about the same issue as one of the earlier threads (a repeat of the same alert, or a follow-up), or a new topic?',
+        instructions: CLEF_INSTRUCTIONS,
         criteria,
       },
     },
   });
   const a = res.answers && res.answers.continues;
-  if (!a || a.choice === 'new') {
-    return null;
+  if (!a || !a.choice) {
+    return { p: 0 };
   }
-  const i = Number(a.choice.slice(1));
-  const p = a.probabilities?.[a.choice] ?? a.confidence ?? 0;
-  return p >= MIN_CLEF && candidates[i] ? { candidate: candidates[i], p } : null;
+  const probabilities = a.probabilities || { [a.choice]: a.confidence ?? 0 };
+  const groups = new Map();
+  candidates.forEach((c, i) => {
+    const g = c.group || c.thread;
+    groups.set(g, (groups.get(g) || 0) + (probabilities[`c${i}`] || 0));
+  });
+  let best = null;
+  for (const [group, p] of groups) {
+    if (!best || p > best.p) {
+      best = { group, p };
+    }
+  }
+  if (!best || best.p < MIN_CLEF) {
+    return { p: best ? best.p : 0 };
+  }
+  const candidate = candidates.find((c) => (c.group || c.thread) === best.group);
+  return { candidate, p: best.p };
 }
 
 /**
@@ -158,10 +202,11 @@ export async function rethread(env, key, { force = false } = {}) {
   // A burst: the channel's previous root is by the same person, minutes earlier. People
   // split one request over several messages instead of replying to themselves.
   // Only people in conversations: a bot posts many different alerts within minutes.
-  const rootAuthor = thread.kind === 'channel' && await env.DB.prepare(`SELECT author_key
+  const conversation = thread.kind === 'channel';
+  const rootAuthor = conversation && await env.DB.prepare(`SELECT author_key
     FROM messages WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
   const author = rootAuthor && rootAuthor.author_key;
-  const previous = author && await env.DB.prepare(`SELECT t.thread, m.author_key FROM threads t
+  const previous = conversation && await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
     JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at < ? AND t.root_at >= ? ORDER BY t.root_at DESC LIMIT 1`)
@@ -171,9 +216,10 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) - RECENT_MS).toISOString(),
     ).first();
-  const burst = previous && previous.author_key === author ? previous : null;
+  const burst = previous && author && previous.author_key === author
+    && Date.parse(thread.root_at) - Date.parse(previous.root_at) <= BURST_MS ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -189,30 +235,43 @@ export async function rethread(env, key, { force = false } = {}) {
   const earlier = (found.matches || [])
     .filter((m) => m.metadata && m.metadata.thread !== key && m.metadata.at < at
       && m.metadata.at >= at - WINDOW_DAYS * 86400
-      && m.score >= (thread.kind === 'channel' ? MIN_CANDIDATE_CONVERSATION : MIN_CANDIDATE))
+      && m.score >= (conversation ? MIN_CANDIDATE_CONVERSATION : MIN_CANDIDATE))
     .sort((a, b) => b.score - a.score);
 
   let match = null;
+  let asked = null;
   if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (twin) {
     match = { thread: twin.thread, via: 'skeleton', p: 1 };
   } else if (earlier.length && earlier[0].score >= AUTO_MATCH) {
     match = { thread: earlier[0].metadata.thread, via: 'vector', p: earlier[0].score };
-  } else if (earlier.length) {
-    const candidates = [];
+  } else if (earlier.length || previous) {
+    const rows = [];
     for (const m of earlier.slice(0, 4)) {
       // eslint-disable-next-line no-await-in-loop
-      const row = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(m.metadata.thread).first();
+      rows.push(await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(m.metadata.thread).first());
+    }
+    // The conversation's latest root, however it is worded (see RECENT_MS).
+    if (previous && !rows.some((r) => r && r.thread === previous.thread)) {
+      rows.push(previous);
+    }
+    const candidates = [];
+    for (const row of rows) {
       // eslint-disable-next-line no-await-in-loop
       const body = row && await rootBody(env, row);
-      if (body) {
-        candidates.push({ thread: row.thread, text: skeleton(body.parsed.body) });
+      if (body && !body.parsed.meta.deletedAt) {
+        candidates.push({
+          thread: row.thread,
+          group: row.logical_thread || row.thread,
+          text: skeleton(body.parsed.body),
+          ago: ago(Date.parse(thread.root_at) - Date.parse(row.root_at)),
+        });
       }
     }
-    const chosen = candidates.length ? await askClef(env, text, candidates) : null;
-    if (chosen) {
-      match = { thread: chosen.candidate.thread, via: 'clef', p: chosen.p };
+    asked = candidates.length ? await askClef(env, text, candidates) : null;
+    if (asked && asked.candidate) {
+      match = { thread: asked.candidate.thread, via: 'clef', p: asked.p };
     }
   }
 
@@ -306,6 +365,10 @@ export async function rethread(env, key, { force = false } = {}) {
     await env.NORMALIZE.send({ label: logical || key });
   }
   return {
-    result: logical ? 'rethreaded' : 'new-topic', via: match ? match.via : null, p: match ? match.p : null,
+    result: logical ? 'rethreaded' : 'new-topic',
+    via: match ? match.via : null,
+    p: match ? match.p : null,
+    // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
+    ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
   };
 }
