@@ -36,7 +36,9 @@ still answer.
 | `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign` (POST `{ target, source, channelId, value, move? }`: a team added to a channel the admin team or nobody holds gets it filed under it; added to a channel another team holds, it is shared with it instead, answered as `shared`, and nothing moves; `move: true`, or the admin team, moves it), `share` (DELETE `{ source, channelId, team }`: the team stops following a channel shared with it), `channels?q=` (every word in the channel's name, Teams team name, org slug or name, or id; the answer says which `match`ed), `orgs`, `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies), and `classify` (POST `{ limit? }`: Clef classifies up to 25 of the admin team's channels now). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. For the admin team, `team?slug=` also answers with `suggestions`: the admin team's channels where the team's members post, react or are members, and the ones Clef gives the team (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-channel-folders)). |
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team, and team managers for their teams' knowledge bases: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
-| `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, headers?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. Header values are never returned, only their names; adding or changing a server connects to it and lists its tools. |
+| `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, headers?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. Header values are never returned, only their names; adding or changing a server connects to it and lists its tools. The answer also lists the **global** servers (`globals`): whether each is set up, its tools, and its switches for the knowledge base's team and channels. |
+| `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `check { server }` connects to it and lists its tools again. |
+| `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
@@ -54,7 +56,7 @@ still answer.
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, or `kb:<team>:<org>`), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs, thread-agent pokes and re-filing after a rule change (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
-| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
+| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Checks the global MCP servers once a day (the browser in a box of its own) and keeps the tools they list for the agents. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -92,6 +94,8 @@ Nothing below is committed; set it on the Worker.
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
+| `BROWSER` | Browser Run | The browser of the global `browser` MCP server: one Browser Run session per browser box connection |
+| `BrowserBox` | Durable Object with a container | One per thread agent that uses the global `browser` server, and `opspile-check` for the checks: the container application `<worker>-browser-box`, started from the Cloudflare-managed Node image (nothing to build). Not a binding: the Worker reaches it through its own exports |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
@@ -174,6 +178,27 @@ tools. An agent gets the servers of its thread's team and customer, and calls th
 code mode scripts (`await tools.mcp__<name>__<tool>(args)`); see ARCHITECTURE, "Thread agents".
 Servers that need an interactive OAuth sign-in are not supported yet; use one that takes a
 token in a header.
+
+**Global MCP servers.** Two servers are built in, set up once for every team, and off until
+the admin team or a team's managers turn them on, for the team (in the team's knowledge base,
+**MCP servers**) or for one channel (**Per channel**; a channel's switch wins over its team's):
+
+- **`browser`**, [Cloudflare Browser Run](https://developers.cloudflare.com/browser-run/cdp/mcp-clients/)
+  through [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp): each
+  thread agent gets a browser box of its own, a container with the pinned chrome-devtools-mcp
+  whose browser is a Browser Run session of the `BROWSER` binding. No API token: the box's
+  CDP connection goes through the Worker. Nothing to set up beyond the deploy.
+- **`github`**, [GitHub's MCP server](https://github.com/github/github-mcp-server), read-only
+  (`/mcp/readonly`, lockdown mode), as the opspile **GitHub App**: it reads exactly the
+  repositories the app is installed on. To set it up, a member of the admin team opens
+  **MCP servers** of any team's knowledge base, fills in the GitHub organization that should
+  own the app (or nothing, for their own account) and **Create on GitHub**; GitHub asks to
+  confirm, opspile keeps the app and sends them on to install it, on all of an account's
+  repositories or a selection. **Install elsewhere or change repositories** changes that
+  later. Installed on several accounts, the server is there once per account
+  (`github_<account>`). The app only asks for read access; it needs no webhook.
+
+See ARCHITECTURE, "Global MCP servers".
 
 ### Rules and replay
 
