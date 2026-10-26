@@ -49,7 +49,7 @@ import { parse } from '../src/channels.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { inboxPage as withEmoji } from '../src/page.js';
-import { partnerOf, relationOf } from '../src/profiles.js';
+import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
 import { createAdmin } from './dev-ui-admin.mjs';
@@ -388,6 +388,11 @@ function thread(key) {
     }],
     messages,
     profiles: profiles(messages.map((m) => m.authorKey)),
+    // As src/profiles.js's mentionKinds: who the people the messages mention are.
+    mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
+      .map((name) => [name, [...store.people.values()].find((p) => p.name === name)])
+      .filter(([, p]) => p)
+      .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,

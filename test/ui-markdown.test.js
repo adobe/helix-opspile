@@ -106,6 +106,20 @@ describe('ui markdown', () => {
     assert.equal(mentionPattern([]), null);
   });
 
+  it('tells mentions of Adobe people from those of customers and partners', () => {
+    const kinds = { 'ada lovelace': 'adobe', "grace o'hara": 'customer', someone: 'partner' };
+    const out = render("@Ada Lovelace, @Grace O'Hara, @Someone and @Nobody", {
+      ...opts, kindOf: (name) => kinds[name.toLowerCase()],
+    });
+    assert.equal(
+      out,
+      '<p><span class="mention adobe" title="Adobe">@Ada Lovelace</span>, '
+        + '<span class="mention external customer" title="Customer, not Adobe">@Grace O\'Hara</span>, '
+        + '<span class="mention external partner" title="Partner, not Adobe">@Someone</span> and '
+        + '<span class="mention">@Nobody</span></p>',
+    );
+  });
+
   it('renders tables and task lists', () => {
     assert.equal(
       md('| a | b |\n|---|---|\n| 1 | 2 |'),

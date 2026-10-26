@@ -13,7 +13,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { inbox } from '../src/api.js';
-import { partnerOf, profiles, relationOf } from '../src/profiles.js';
+import {
+  mentionCandidates, mentionKinds, partnerOf, profiles, relationOf,
+} from '../src/profiles.js';
 import { indexMessage } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -100,5 +102,29 @@ describe('profiles', () => {
     assert.deepEqual(threads[0].participants.map((p) => p.key), ['slack:E1:U2', 'slack:E1:U1']);
     assert.deepEqual(Object.keys(cards).sort(), ['slack:E1:U1', 'slack:E1:U2']);
     assert.equal(cards['slack:E1:U2'].relation, 'partner');
+  });
+
+  it('tells who the names a thread mentions are', async () => {
+    const DB = fresh();
+    DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, person,
+        fetched_at) VALUES
+      ('slack', 'E1', 'U3', 'person', 'Cy Young', 'cy@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U4', 'person', 'Dee Same', 'dee@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U5', 'person', 'Dee Same', 'dee@staff.example', NULL, '2026-10-21'),
+      ('teams', 'T9', 'g-9', 'person', 'Eve Elsewhere', 'eve@acme.example', NULL, '2026-10-21')`);
+    const kinds = await mentionKinds({ ...env, DB }, { source: 'slack', tenant: 'E1', threads: ['t1'] }, [
+      '@Ada can you look? cc @Pat, @Cy Young and @Alerts',
+      '@Dee Same and @Eve Elsewhere and @Young, Cy `@nobody`',
+    ]);
+    assert.deepEqual(kinds, {
+      Ada: 'adobe', Pat: 'partner', 'Cy Young': 'customer', Alerts: 'bot',
+    });
+    assert.deepEqual(await mentionKinds({ ...env, DB }, { source: 'slack', tenant: 'E1' }, ['no one']), {});
+  });
+
+  it('finds the names after each @', () => {
+    assert.deepEqual(mentionCandidates(['hi @Ada Lovelace, see', 'a@b.example @Young, Cy.']), [
+      'Ada', 'Ada Lovelace', 'Ada Lovelace, see', 'see Ada Lovelace', 'Young', 'Young, Cy', 'Cy Young',
+    ]);
   });
 });
