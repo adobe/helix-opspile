@@ -408,7 +408,15 @@
   .sys { text-align: center; color: var(--faint); font-size: 12px; margin: 8px 0; }
   /* The thread agent's latest turn, after the last message: on the Adobe side, outlined, as it
      is not a message anyone posted. Solid and tinted while it works. */
-  .msg.agent .bubble { background: transparent; color: var(--ink); border: 1.5px dashed color-mix(in srgb, var(--me) 70%, transparent); }
+  .msg.agent .bubble { background: transparent; color: var(--ink); border: 1.5px dashed color-mix(in srgb, var(--me) 70%, transparent);
+    border-radius: 18px; position: relative; }
+  /* A thought bubble's trail, dotted: the larger circle flush with the bubble's right edge, the
+     smaller one further down, towards the avatar. */
+  .msg.agent .col { margin-bottom: 30px; }
+  .msg.agent .bubble::before, .msg.agent .bubble::after { content: ''; position: absolute; box-sizing: border-box;
+    border-radius: 50%; border: 1.5px dotted; border-color: inherit; background: inherit; }
+  .msg.agent .bubble::before { width: 16px; height: 16px; right: -1.5px; bottom: -19px; }
+  .msg.agent .bubble::after { width: 9px; height: 9px; right: -5px; bottom: -31px; }
   .msg.agent .bubble a { color: var(--link); }
   .msg.agent .bubble code { background: var(--them-code); }
   .msg.agent.working .bubble { border-style: solid; border-color: color-mix(in srgb, var(--me) 45%, transparent);
