@@ -31,7 +31,7 @@ registerHooks({
     ? { url: 'data:text/javascript,export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }', shortCircuit: true }
     : next(specifier, context)),
 });
-const { DiscordGateway, replyTarget } = await import('../src/gateway.js');
+const { DiscordPoller, replyTarget } = await import('../src/poller.js');
 
 // Made-up ids and names only.
 const G = '100000000000000001';
@@ -39,7 +39,6 @@ const CH = '200000000000000002';
 const FORUM = '200000000000000003';
 const ROOT = '1300000000000000010';
 const REPLY = '1300000000000000011';
-const REPLY2 = '1300000000000000012';
 const TH = '1300000000000000020';
 const ADA = '400000000000000001';
 const CY = '400000000000000002';
@@ -70,13 +69,15 @@ describe('discord snowflakes', () => {
 });
 
 describe('discordKey', () => {
-  it('files an envelope under the channel and day, the same event under the same key', async () => {
+  it('files an envelope under the channel and day, the same state under the same key', async () => {
     const d = msg(ROOT);
     const day = new Date(snowflakeMs(ROOT)).toISOString().slice(0, 10).replace(/-/g, '/');
-    assert.equal(
-      await discordKey({ t: 'MESSAGE_CREATE', guild: G, d }),
-      `discord/${G}/${CH}/${day}/${ROOT}-create.json`,
-    );
+    const key = await discordKey({ t: 'MESSAGE_CREATE', guild: G, d });
+    assert.match(key, new RegExp(`^discord/${G}/${CH}/${day}/${ROOT}-[0-9a-f]{16}\\.json$`));
+    assert.equal(key, await discordKey({
+      t: 'MESSAGE_CREATE', via: 'history', guild: G, d,
+    }));
+    assert.notEqual(key, await discordKey({ t: 'MESSAGE_CREATE', guild: G, d: { ...d, content: 'edited' } }));
     // A thread's messages are filed under its parent channel.
     const thread = {
       id: TH, parent_id: FORUM, name: 'Help', type: 11,
@@ -84,9 +85,6 @@ describe('discordKey', () => {
     assert.match(await discordKey({
       t: 'MESSAGE_CREATE', guild: G, d: msg(TH, { channel_id: TH }), thread,
     }), new RegExp(`^discord/${G}/${FORUM}/`));
-    const update = { t: 'MESSAGE_UPDATE', guild: G, d: { ...d, content: 'edited' } };
-    assert.equal(await discordKey(update), await discordKey({ ...update }));
-    assert.notEqual(await discordKey(update), await discordKey({ ...update, d: { ...d, content: 'again' } }));
     assert.match(await discordKey({ t: 'MESSAGE_DELETE', guild: G, d: { id: ROOT, channel_id: CH } }), /-delete\.json$/);
   });
 });
@@ -166,45 +164,25 @@ describe('normalizeDiscord', () => {
     assert.equal(op.message.authorRef.bot, true);
   });
 
-  it('reads reactions, deletions and renames', () => {
-    const thread = {
-      id: TH, parent_id: FORUM, name: 'x', type: 11,
-    };
-    const r = normalizeDiscord('k', {
-      t: 'MESSAGE_REACTION_ADD',
-      guild: G,
-      d: {
-        user_id: ADA, channel_id: TH, message_id: TH, emoji: { name: '✅', id: null },
-      },
-      thread,
-      at: '2026-10-22T00:00:00.000Z',
-    });
-    assert.deepEqual(r.reaction, {
-      removed: false, emoji: '✅', source: 'discord', tenant: G, channelId: FORUM, id: TH, userId: ADA, at: '2026-10-22T00:00:00.000Z',
-    });
-    const custom = normalizeDiscord('k', {
-      t: 'MESSAGE_REACTION_REMOVE',
-      guild: G,
-      d: {
-        user_id: ADA, channel_id: CH, message_id: ROOT, emoji: { name: 'party', id: '9' },
-      },
-    });
-    assert.deepEqual([custom.reaction.emoji, custom.reaction.removed], [':party:', true]);
+  it('reads deletions, and reactions with the time they were first seen', () => {
     const del = normalizeDiscord('k', {
       t: 'MESSAGE_DELETE', guild: G, d: { id: REPLY, channel_id: CH }, root: ROOT, at: '2026-10-22T00:00:00.000Z',
     });
-    assert.deepEqual([del.op, del.message.thread, del.message.deletedAt], ['delete', `discord:${G}:${CH}:${ROOT}`, '2026-10-22T00:00:00.000Z']);
-    const ch = normalizeDiscord('k', { t: 'CHANNEL_UPDATE', guild: G, d: { id: CH, name: 'aem-acme' } });
-    assert.deepEqual(ch.channel, {
-      source: 'discord', tenant: G, channelId: CH, name: 'aem-acme',
-    });
-  });
-
-  it('turns history reactors into reaction rows', () => {
+    assert.deepEqual(
+      [del.op, del.message.thread, del.message.deletedAt],
+      ['delete', `discord:${G}:${CH}:${ROOT}`, '2026-10-22T00:00:00.000Z'],
+    );
     const op = normalizeDiscord('k', {
-      t: 'MESSAGE_CREATE', via: 'history', guild: G, d: msg(ROOT), reactions: [{ emoji: '✅', users: [ADA, CY] }],
+      t: 'MESSAGE_CREATE',
+      via: 'history',
+      guild: G,
+      d: msg(ROOT),
+      reactions: [{ emoji: '✅', users: [ADA, CY], at: { [ADA]: '2026-10-22T00:00:00.000Z', [CY]: null } }],
     });
-    assert.deepEqual(op.message.reactions, [{ emoji: '✅', userId: ADA }, { emoji: '✅', userId: CY }]);
+    assert.deepEqual(op.message.reactions, [
+      { emoji: '✅', userId: ADA, at: '2026-10-22T00:00:00.000Z' }, { emoji: '✅', userId: CY, at: undefined },
+    ]);
+    assert.deepEqual(op.message.reactors, [ADA, CY]);
   });
 });
 
@@ -353,26 +331,45 @@ function fakeCtx() {
       setAlarm: async (t) => {
         alarm = t;
       },
+      deleteAlarm: async () => {
+        alarm = null;
+      },
     },
     waitUntil: (p) => pending.push(p),
   };
 }
 
-describe('DiscordGateway', () => {
+describe('DiscordPoller', () => {
   const realFetch = globalThis.fetch;
+  // A server in memory, with messages from the last hour.
+  const base = BigInt(snowflakeAt(Date.now() - 60 * 60 * 1000));
+  const id = (n) => String(base + BigInt(n) * 4194304000n);
+  const [M1, M2, M3, T1, M4] = [1, 2, 3, 4, 5].map(id);
+  let server;
   let api;
+  const ofChannel = (c) => server.messages.filter((m) => m.channel_id === c);
+  const last = (c) => ofChannel(c).map((m) => m.id).sort().pop() || null;
   beforeEach(() => {
+    server = {
+      messages: [
+        msg(M1),
+        msg(M2, { type: 19, message_reference: { message_id: M1, channel_id: CH } }),
+      ],
+      threads: [],
+      reactors: {},
+    };
     api = discordApiFake([
-      [/^\/channels\/(\d+)$/, (m) => (m[1] === TH ? {
-        id: TH, parent_id: CH, name: 'A thread', type: 11,
-      } : { id: m[1], type: 0 })],
-      [/^\/guilds\/\d+\/channels$/, [{ id: CH, type: 0, last_message_id: REPLY }, { id: FORUM, type: 15 }]],
-      [/^\/guilds\/\d+\/threads\/active$/, { threads: [] }],
+      [/^\/guilds\/\d+\/channels$/, () => [
+        { id: CH, type: 0, last_message_id: last(CH) }, { id: FORUM, type: 15 },
+      ]],
+      [/^\/guilds\/\d+\/threads\/active$/, () => ({
+        threads: server.threads.map((t) => ({ ...t, last_message_id: last(t.id) })),
+      })],
       [/^\/channels\/\d+\/threads\/archived\/public$/, { threads: [], has_more: false }],
-      [/^\/channels\/(\d+)\/messages$/, (m, u) => (m[1] === CH && u.searchParams.get('after') !== REPLY
-        ? [msg(REPLY, { type: 19, message_reference: { message_id: ROOT, channel_id: CH }, reactions: [{ emoji: { name: '👀' }, count: 1 }] }), msg(ROOT)]
-        : [])],
-      [/^\/channels\/\d+\/messages\/\d+\/reactions\/.+$/, [{ id: ADA }]],
+      [/^\/channels\/(\d+)\/messages$/, (m, u) => ofChannel(m[1])
+        .filter((x) => BigInt(x.id) > BigInt(u.searchParams.get('after'))).reverse()],
+      [/^\/channels\/\d+\/messages\/(\d+)\/reactions\/.+$/, (m) => (server.reactors[m[1]] || []).map((u) => ({ id: u }))],
+      [/^\/channels\/(\d+)$/, (m) => ({ id: m[1], type: 0 })],
     ]);
     globalThis.fetch = api.fetch;
   });
@@ -380,19 +377,17 @@ describe('DiscordGateway', () => {
     globalThis.fetch = realFetch;
   });
 
-  function gateway() {
+  function poller() {
     const ctx = fakeCtx();
     const stored = [];
     const env = {
       DISCORD_GUILDS: G,
       DISCORD_BOT_TOKEN: 'made-up',
-      // The made-up messages are from 2024.
-      DISCORD_HISTORY_DAYS: '10000',
       RAW: { put: async (key, body) => stored.push({ key, envelope: JSON.parse(body) }) },
       NORMALIZE: { send: async () => {} },
       DB: d1(),
     };
-    return { gw: new DiscordGateway(ctx, env), ctx, stored };
+    return { p: new DiscordPoller(ctx, env), ctx, stored };
   }
 
   it('knows which messages are inline replies', () => {
@@ -403,49 +398,62 @@ describe('DiscordGateway', () => {
     assert.equal(replyTarget(msg(REPLY, { message_reference: { message_id: ROOT } })), null);
   });
 
-  it('stores messages with their thread and conversation root, reactions with a time', async () => {
-    const { gw, stored, ctx } = gateway();
-    await gw.dispatch('GUILD_CREATE', { id: G, channels: [{ id: CH, type: 0 }], threads: [] });
-    await gw.dispatch('MESSAGE_CREATE', { ...msg(ROOT), guild_id: G });
-    await gw.dispatch('MESSAGE_CREATE', {
-      ...msg(REPLY, { type: 19, message_reference: { message_id: ROOT, channel_id: CH } }),
-      guild_id: G,
+  it('reads history once, then only what is new: two requests when nothing happened', async () => {
+    const { p, stored } = poller();
+    const first = await quiet(() => p.poll());
+    assert.equal(first.messages, 2);
+    assert.deepEqual(stored.map((s) => [s.envelope.d.id, s.envelope.root]), [[M1, M1], [M2, M1]]);
+    const before = api.calls.length;
+    await quiet(() => p.poll());
+    assert.deepEqual(api.calls.slice(before), [
+      `GET /guilds/${G}/channels`, `GET /guilds/${G}/threads/active`,
+    ]);
+    // A reply to the reply, and a thread started from it: one conversation.
+    const toM2 = { message_id: M2, channel_id: CH };
+    server.messages.push(msg(M3, { type: 19, message_reference: toM2 }));
+    server.threads.push({
+      id: M3, parent_id: CH, name: 'Follow-up', type: 11,
     });
-    // A reply to the reply is in the same conversation.
-    await gw.dispatch('MESSAGE_CREATE', {
-      ...msg(REPLY2, { type: 19, message_reference: { message_id: REPLY, channel_id: CH } }),
-      guild_id: G,
-    });
-    // A thread nobody announced is looked up once.
-    await gw.dispatch('MESSAGE_CREATE', { ...msg('1300000000000000030', { channel_id: TH }), guild_id: G });
-    await gw.dispatch('MESSAGE_REACTION_ADD', {
-      user_id: ADA, channel_id: CH, message_id: ROOT, guild_id: G, emoji: { name: '✅' },
-    });
-    await gw.dispatch('MESSAGE_DELETE', { id: REPLY2, channel_id: CH, guild_id: G });
-    // Other servers are none of opspile's business.
-    await gw.dispatch('MESSAGE_CREATE', { ...msg('1300000000000000040'), guild_id: '999' });
-    assert.deepEqual(stored.map((s) => s.envelope.root), [ROOT, ROOT, ROOT, TH, undefined, ROOT]);
-    assert.deepEqual(stored[3].envelope.thread, {
-      id: TH, parent_id: CH, name: 'A thread', type: 11,
-    });
-    assert.match(stored[3].key, new RegExp(`^discord/${G}/${CH}/`));
-    assert.ok(stored[4].envelope.at);
-    assert.equal(ctx.data.get(`cursor:${CH}`), REPLY2);
-    assert.equal(api.calls.filter((c) => c === `GET /channels/${TH}`).length, 1);
+    server.messages.push(msg(M4, { channel_id: M3 }));
+    const third = await quiet(() => p.poll());
+    assert.equal(third.messages, 2);
+    const where = ({ envelope: e }) => [e.d.id, e.root, e.thread && e.thread.id];
+    assert.deepEqual(stored.slice(2).map(where), [
+      [M3, M1, undefined], [M4, M1, M3],
+    ]);
+    assert.ok(!stored.some((s) => s.envelope.d.id === T1));
   });
 
-  it('catches up from history after a new session, once per message', async () => {
-    const { gw, stored, ctx } = gateway();
-    const r = await quiet(() => gw.catchup(G));
-    assert.deepEqual([r.channels, r.messages], [2, 2]);
-    assert.deepEqual(stored.map((s) => [s.envelope.d.id, s.envelope.via, s.envelope.root]), [
-      [ROOT, 'history', ROOT], [REPLY, 'history', ROOT],
-    ]);
-    assert.deepEqual(stored[1].envelope.reactions, [{ emoji: '👀', users: [ADA] }]);
-    assert.equal(ctx.data.get(`cursor:${CH}`), REPLY);
-    // Nothing new since: no message fetches.
-    const before = api.calls.length;
-    await quiet(() => gw.catchup(G));
-    assert.ok(!api.calls.slice(before).some((c) => c.startsWith(`GET /channels/${CH}/messages`)));
+  it('finds edits, reactions and deletions when it reads the last day again', async () => {
+    const { p, stored } = poller();
+    await quiet(() => p.poll());
+    const n = stored.length;
+    await quiet(() => p.poll({ recheck: true }));
+    assert.equal(stored.length, n, 'nothing changed, nothing stored');
+    server.messages[0] = { ...server.messages[0], reactions: [{ emoji: { name: '✅' }, count: 1 }] };
+    server.reactors[M1] = [ADA];
+    server.messages[1] = { ...server.messages[1], content: 'fixed typo', edited_timestamp: new Date().toISOString() };
+    const r = await quiet(() => p.poll({ recheck: true }));
+    assert.equal(r.changed, 2);
+    const [reacted, edited] = stored.slice(n).map((s) => s.envelope);
+    assert.deepEqual([reacted.d.id, reacted.reactions[0].emoji, reacted.reactions[0].users], [M1, '✅', [ADA]]);
+    assert.ok(reacted.reactions[0].at[ADA], 'a new reaction is timed');
+    assert.deepEqual([edited.d.id, edited.reactions], [M2, undefined]);
+    // The ✅ keeps its time when someone else reacts; the reply is deleted.
+    const firstSeen = reacted.reactions[0].at[ADA];
+    server.messages[0] = { ...server.messages[0], reactions: [{ emoji: { name: '✅' }, count: 2 }] };
+    server.reactors[M1] = [ADA, CY];
+    server.messages.splice(1, 1);
+    await quiet(() => p.poll({ recheck: true }));
+    const [again, gone] = stored.slice(n + 2).map((s) => s.envelope);
+    assert.equal(again.reactions[0].at[ADA], firstSeen);
+    assert.deepEqual([gone.t, gone.d.id, gone.root], ['MESSAGE_DELETE', M2, M1]);
+  });
+
+  it('keeps its alarm set while Discord is on', async () => {
+    const { p, ctx } = poller();
+    const r = await p.ensure();
+    assert.equal(r.state, 'on');
+    assert.ok(await ctx.storage.getAlarm());
   });
 });

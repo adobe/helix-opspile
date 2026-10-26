@@ -15,21 +15,23 @@ import {
 } from './raw.js';
 
 /**
- * Discord: the REST API (bot token), snowflakes, and the pile-1 objects the gateway
- * (src/gateway.js) and the history fetches write.
+ * Discord: the REST API (bot token), snowflakes, and the pile-1 objects the poller
+ * (src/poller.js) and thread backfills write.
  *
- * A pile-1 object is an envelope around what Discord delivered:
+ * A pile-1 object is an envelope around what Discord's REST API answered:
  *
  * ```
- * { t: 'MESSAGE_CREATE', via: 'gateway' | 'history', guild: '<id>', d: { …as delivered… },
- *   thread?: { id, parent_id, name, type }, root?: '<message id>', reactions?: [{ emoji, users }] }
+ * { t: 'MESSAGE_CREATE' | 'MESSAGE_DELETE', via: 'history', guild: '<id>',
+ *   d: { …the message as Discord sent it… }, thread?: { id, parent_id, name, type },
+ *   root?: '<message id>', reactions?: [{ emoji, users, at: { <user>: <time> } }], at? }
  * ```
  *
- * `d` is exactly what the gateway or REST API sent. The rest is what the ingester knew when
- * it stored the event and Discord does not say in it: the thread a message was posted in
- * (Discord names only the thread's channel id), the root of an inline reply's conversation,
- * and who reacted to a message fetched from history (REST gives counts only). Storing it
- * keeps pile 1 self-contained, so a replay needs no Discord calls to file a message.
+ * `d` is exactly what Discord sent. The rest is what the poller knew when it stored the
+ * message and Discord does not say in it: the thread a message was posted in (Discord names
+ * only the thread's channel id), the root of an inline reply's conversation, who reacted
+ * (messages carry counts only) and since when the poller has seen each reaction, and when it
+ * found a message gone. Storing it keeps pile 1 self-contained, so a replay needs no Discord
+ * calls to file a message.
  */
 
 const API = 'https://discord.com/api/v10';
@@ -183,24 +185,17 @@ export const threadInfo = (ch) => (ch && isThread(ch.type) ? {
 
 /**
  * Pile-1 key of an envelope:
- * `discord/<guild>/<channel>/<yyyy>/<mm>/<dd>/<message id>-<what>.json`, filed under the
- * channel (a thread's parent) and the day of the message. A message's create, every
- * distinct update and its deletion each get their own object; the same event stored
- * twice (a gateway resume, a history fetch of an unchanged message) shares a key.
+ * `discord/<guild>/<channel>/<yyyy>/<mm>/<dd>/<message id>-<hash>.json`, filed under the
+ * channel (a thread's parent) and the day of the message. Every distinct state of a message
+ * (an edit, other reactions) gets its own object, keyed by the envelope's hash, so the same
+ * state read twice shares a key; a deletion is `<message id>-delete.json`.
  */
 export async function discordKey(envelope) {
   const { t, d = {} } = envelope;
   const channel = (envelope.thread && envelope.thread.parent_id) || d.channel_id;
-  const id = d.message_id || d.id || '0';
-  let what;
-  if (t === 'MESSAGE_CREATE' && envelope.via !== 'history') {
-    what = 'create';
-  } else if (t === 'MESSAGE_DELETE') {
-    what = 'delete';
-  } else {
-    const hash = (await sha256(JSON.stringify({ ...envelope, via: undefined }))).slice(0, 16);
-    what = `${String(t || 'event').toLowerCase().replace(/^message_/, '')}-${hash}`;
-  }
+  const id = d.id || '0';
+  const what = t === 'MESSAGE_DELETE' ? 'delete'
+    : (await sha256(JSON.stringify({ ...envelope, via: undefined }))).slice(0, 16);
   const day = /^\d+$/.test(String(id)) ? new Date(snowflakeMs(id)) : new Date();
   return ['discord', segment(envelope.guild), segment(channel), dayPath(day), `${segment(id)}-${what}.json`]
     .join('/');
@@ -209,7 +204,7 @@ export async function discordKey(envelope) {
 /** Stores one envelope in pile 1 (and queues it for normalization). */
 export async function putDiscord(env, envelope) {
   return putRaw(env, await discordKey(envelope), JSON.stringify(envelope), {
-    source: 'discord', via: envelope.via || 'gateway',
+    source: 'discord', via: envelope.via || 'history',
   });
 }
 

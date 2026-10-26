@@ -37,8 +37,8 @@ import { teamsNotify } from './teams.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
 
-/** The one Discord gateway object (src/gateway.js). */
-const gateway = (env) => env.DISCORD.get(env.DISCORD.idFromName('gateway'));
+/** The one Discord poller object (src/poller.js). */
+const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
 
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
@@ -85,16 +85,12 @@ export default {
       }
     }
     if (pathname === '/diag/discord') {
-      // The Discord gateway: GET says how it is; POST connects now, POST ?catchup=1 also
-      // fetches what was posted since the last stored message.
+      // The Discord poller: GET says how the last poll went; POST polls now (and reads the
+      // last day again for edits, deletions and reactions).
       if (!authorizedDiag(request, env) || !env.DISCORD) {
         return text('forbidden\n', 403);
       }
-      let op = 'status';
-      if (request.method === 'POST') {
-        op = url.searchParams.get('catchup') ? 'catchup' : 'ensure';
-      }
-      return gateway(env).fetch(`https://gateway/${op}`);
+      return poller(env).fetch(`https://poller/${request.method === 'POST' ? 'poll' : 'status'}`);
     }
     if (pathname === '/diag/agent') {
       // One agent, by its name (an inbox entry key, or kb:<team>:<org>): GET says what it is
@@ -193,8 +189,8 @@ export default {
       .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
     if (env.DISCORD && discordEnabled(env)) {
-      // The gateway's own alarm keeps it connected; this restarts it after a deploy reset it.
-      ctx.waitUntil(gateway(env).fetch('https://gateway/ensure').then((r) => r.json())
+      // The poller's own alarm keeps it polling; this starts it, and restarts a stopped one.
+      ctx.waitUntil(poller(env).fetch('https://poller/ensure').then((r) => r.json())
         .then((r) => console.log(JSON.stringify({ route: 'cron', discord: r.state })))
         .catch((e) => console.error(JSON.stringify({ route: 'cron', discord: 'error', error: e.message }))));
     }
@@ -206,4 +202,4 @@ export default {
 
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
-export { DiscordGateway } from './gateway.js';
+export { DiscordPoller } from './poller.js';

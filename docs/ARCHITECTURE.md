@@ -19,7 +19,7 @@ Bedrock, reached through AI Gateway.
 flowchart LR
   S[Slack Events API] --> R
   T[Microsoft Graph<br/>change notifications] --> R
-  D[Discord gateway] --> R
+  D[Discord REST API<br/>polled every minute] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
   C[(2. channel folders<br/>R2, one file per message)] --> I
@@ -51,15 +51,14 @@ are removed before an event is stored.
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
   fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
   `resource` names the message; the message's metadata names the notification.
-- **Discord** has no webhooks for messages: one Durable Object (`DiscordGateway`) holds the
-  bot's gateway WebSocket and stores each message create, every distinct update, each deletion
-  and each reaction as an envelope `{ t, via, guild, d, thread?, root?, at? }`. `d` is what
-  Discord sent; around it is what only the ingester knew at the time: the thread a message was
+- **Discord** is polled (see [Ingestion](#ingestion)): one Durable Object (`DiscordPoller`)
+  stores each state of a message it reads (new, edited, other reactions) and each deletion it
+  finds as an envelope `{ t, via, guild, d, thread?, root?, reactions?, at? }`. `d` is what
+  Discord sent; around it is what only the poller knew at the time: the thread a message was
   posted in (Discord names just the thread's channel id), the conversation an inline reply
-  belongs to, when a reaction or deletion arrived (Discord gives no time), and who reacted to
-  a message read from history. Keys are `<message id>-create`, `-delete`, or the event type
-  and a hash of the envelope, so the same event stored twice (a resumed session, a history
-  read of an unchanged message) shares a key.
+  belongs to, who reacted (messages carry counts only) and since when the poller has seen each
+  reaction, and when it found a message gone. Keys are `<message id>-<hash of the envelope>`
+  and `<message id>-delete`, so the same state read twice shares a key.
 - Backfill pages from the history APIs land here too, marked `via: backfill` (Discord's:
   `via: history`).
 
@@ -634,14 +633,19 @@ Two new apps:
   only, never replies.
 
 - A **Discord application** with a bot in each server opspile reads (`DISCORD_GUILDS`),
-  permissions *View Channels* and *Read Message History*, intents `GUILDS`, `GUILD_MESSAGES`,
-  `GUILD_MESSAGE_REACTIONS` and the privileged `MESSAGE_CONTENT`; it identifies as invisible.
-  The gateway object's alarm checks the connection every minute (the cron pokes it too, so a
-  deploy, which resets the object, is back within a minute). A dropped connection resumes
-  and Discord replays what was missed; a new session catches up from the REST API instead:
-  every text and announcement channel's and every thread's (active, or archived within the
-  window) messages after the last one stored, `DISCORD_HISTORY_DAYS` back the first time. The
-  object stores each thread's parent, each reply's root and the last message id per channel.
+  permissions *View Channels* and *Read Message History* and the privileged *Message Content*
+  intent, which REST reads need as well. Discord delivers messages only over its gateway
+  WebSocket, which would keep a Durable Object in memory, and billed, around the clock; a
+  support server gets a few messages a day, so opspile **polls** instead. The poller object's
+  alarm asks every minute for each server's channels and active threads, which name their
+  latest message, and reads the messages after the last one stored where there are newer
+  ones: two requests when nothing happened. An archived thread that gets a message is active
+  again, so archived threads are read only on the first poll, `DISCORD_HISTORY_DAYS` back.
+  Every fifth poll it reads the conversations active in the last day again and compares them
+  with what it saw: an edit or other reactions are stored as a new state of the message (a
+  reaction timed when it was first seen), a message no longer there as a deletion. The object
+  stores each thread's parent, each reply's root, the last message id per channel and thread,
+  and its view of the last day's messages; the cron pokes it, so a stopped alarm restarts.
 
 ## Open questions
 

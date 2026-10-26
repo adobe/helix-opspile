@@ -59,6 +59,7 @@ jobs:
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
       DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}
       DISCORD_HISTORY_DAYS: ${{ secrets.DISCORD_HISTORY_DAYS }}
+      DISCORD_POLL_SECONDS: ${{ secrets.DISCORD_POLL_SECONDS }}
       DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v6

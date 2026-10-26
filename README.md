@@ -6,8 +6,8 @@ Teams and Discord channel it is responsible for, with per-person and per-team re
 Status: **all four piles live.** Signed Slack events are stored in R2 and queued for
 normalization; Teams: a cron keeps one tenant-wide Graph subscription alive, and its
 notifications and the messages they name are stored the same way; Discord: a Durable Object
-holds the bot's gateway connection and stores every message, edit, deletion and reaction of
-the servers it reads (pile 1). A queue consumer
+polls the servers it reads every minute and stores their new messages, and every few minutes
+the last day's edits, deletions and reactions (pile 1). A queue consumer
 turns every raw object into one markdown file per message (pile 2), filed by the channel rules
 in D1, and labels, re-threads and titles the threads with Workers AI. The inbox (pile 4) shows
 them per team with read state, status piles, filters, replies, reactions, ✅ to resolve and
@@ -51,10 +51,10 @@ One Cloudflare Worker, deployed as `helix-opspile-prod` and `helix-opspile-stage
 | `/.well-known/oauth-*`, `/oauth/authorize`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET /api/oauth/consent/…`, `POST /api/oauth/authorize` | OAuth for MCP clients. |
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. Only in their teams. See "Thread agents". |
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, or `kb:<team>:<org>`), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
-| `GET`, `POST /diag/discord` | The Discord gateway, guarded by `x-opspile-diag`: `GET` says whether it is connected (and why not, e.g. a missing intent); `POST` connects now; `POST ?catchup=1` also fetches every channel's and thread's messages since the last one stored. |
+| `GET`, `POST /diag/discord` | The Discord poller, guarded by `x-opspile-diag`: `GET` says when it polls next and how the last poll went (an error, e.g. a missing permission, included); `POST` polls now, and reads the last day again for edits, deletions and reactions. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests, label jobs, thread-agent pokes and re-filing after a rule change (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
-| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord gateway, which reconnects within a minute after a deploy. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
+| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord poller, which keeps polling on its own alarm. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -89,16 +89,17 @@ Nothing below is committed; set it on the Worker.
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
 | `BEDROCK_API_KEY` | secret | Amazon Bedrock API key (bearer token). Required when `AGENT_MODEL` is set |
 | `AI_GATEWAY_TOKEN` | secret | Optional: a token for an authenticated gateway, sent as `cf-aig-authorization`; set `AI_GATEWAY_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
-| `DISCORD_GUILDS` | var | Optional, comma-separated: the Discord servers (guild ids) to read. With it (and `DISCORD_BOT_TOKEN`), the `DISCORD` object keeps the bot connected; see "Discord" below |
+| `DISCORD_GUILDS` | var | Optional, comma-separated: the Discord servers (guild ids) to read. With it (and `DISCORD_BOT_TOKEN`), the `DISCORD` object polls them; see "Discord" below |
 | `DISCORD_BOT_TOKEN` | secret | The opspile Discord app's bot token. Required when `DISCORD_GUILDS` is set |
 | `DISCORD_STAFF_ROLES` | var | Optional, comma-separated role ids: members with one of them count as staff (Discord shares no email, so the mail domain cannot say) |
-| `DISCORD_HISTORY_DAYS` | var | Optional: how many days back the first catch-up reads, default 30 |
+| `DISCORD_HISTORY_DAYS` | var | Optional: how many days back the first poll reads, default 30 |
+| `DISCORD_POLL_SECONDS` | var | Optional: how often the poller asks Discord for new messages, default 60 (at least 15) |
 | `DISCORD_CLIENT_ID` | var | Optional: the Discord app's client id, so people can connect their Discord account (scope `identify`) and their posts and reactions there count as theirs |
 | `DISCORD_CLIENT_SECRET` | secret | The Discord app's client secret. Required when `DISCORD_CLIENT_ID` is set |
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
-| `DISCORD` | Durable Object | `DiscordGateway`, one (`gateway`): the bot's WebSocket to Discord, and what it remembers (each thread's parent channel, each inline reply's conversation, the last message stored per channel) |
+| `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
@@ -232,13 +233,14 @@ A Discord application reads the servers in `DISCORD_GUILDS` through its bot, rea
 
 1. Create the application in the [Developer Portal](https://discord.com/developers/applications);
    under **Bot**, turn on the **Message Content** intent (privileged; no review below 100 servers)
-   and turn off **Public Bot**. Set the bot's token as `DISCORD_BOT_TOKEN`
-   (`npx wrangler secret put DISCORD_BOT_TOKEN --name helix-opspile-prod`).
+   and turn off **Public Bot** (first set **Installation › Install Link** to *None*). Set the
+   bot's token as `DISCORD_BOT_TOKEN` (`cf workers secrets update DISCORD_BOT_TOKEN --worker
+   helix-opspile-prod --type secret_text --text …`).
 2. Add the bot to each server with the permissions *View Channels* and *Read Message History*
    (`https://discord.com/oauth2/authorize?client_id=<app id>&scope=bot&permissions=66560&guild_id=<guild id>`).
    It sees the channels those permissions open to it; private channels need a role.
 3. Export `DISCORD_GUILDS` (and for CI, add it as a repository secret), and deploy. The cron
-   starts the gateway; `POST /diag/discord` does it at once. The first connection reads
+   starts the poller; `POST /diag/discord` polls at once. The first poll reads
    `DISCORD_HISTORY_DAYS` of history.
 4. Optionally, `DISCORD_STAFF_ROLES` names the server roles of Adobe people, and with
    `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` (OAuth2 redirect
@@ -247,6 +249,12 @@ A Discord application reads the servers in `DISCORD_GUILDS` through its bot, rea
 Discord lets only bots post and react through its API, and opspile acts as the person or not at
 all: Discord threads have no reply box, reactions or ✅ in the inbox, only a link to reply in
 Discord. Rules match the channel's `name`, and `group_name` is the server's name.
+
+Discord has no webhooks for messages, only a gateway WebSocket, which would hold a Durable Object
+in memory (billed by wall-clock time) around the clock. A support server gets a few messages a
+day, so opspile polls instead: when nothing happened, a poll is two requests and a few hundred
+milliseconds of the object's time. New messages show within a minute, edits, deletions and
+reactions within about five.
 
 ### Iterate on the inbox UI
 

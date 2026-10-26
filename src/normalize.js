@@ -280,29 +280,6 @@ export function normalizeDiscord(key, envelope) {
   const thread = envelope.thread || null;
   const channelId = thread ? thread.parent_id : d.channel_id;
 
-  if (t === 'CHANNEL_CREATE' || t === 'CHANNEL_UPDATE') {
-    return {
-      op: 'channel',
-      channel: {
-        source: 'discord', tenant: guild, channelId: d.id, name: d.name,
-      },
-    };
-  }
-  if (t === 'MESSAGE_REACTION_ADD' || t === 'MESSAGE_REACTION_REMOVE') {
-    return {
-      op: 'reaction',
-      reaction: {
-        removed: t === 'MESSAGE_REACTION_REMOVE',
-        emoji: d.emoji && d.emoji.id ? `:${d.emoji.name}:` : (d.emoji && d.emoji.name) || '',
-        source: 'discord',
-        tenant: guild,
-        channelId,
-        id: d.message_id,
-        userId: d.user_id,
-        at: envelope.at,
-      },
-    };
-  }
   const rootId = envelope.root || (thread && thread.id) || d.id;
   const base = {
     source: 'discord',
@@ -355,7 +332,7 @@ export function normalizeDiscord(key, envelope) {
   const subject = (thread && thread.id === d.id && thread.name) || (d.thread && d.thread.name);
   const reactions = Array.isArray(envelope.reactions)
     ? envelope.reactions.flatMap((r) => (r.users || [])
-      .map((userId) => ({ emoji: r.emoji, userId })))
+      .map((userId) => ({ emoji: r.emoji, userId, at: (r.at && r.at[userId]) || undefined })))
     : undefined;
   return {
     op: 'upsert',
@@ -369,6 +346,8 @@ export function normalizeDiscord(key, envelope) {
       format: 'discord',
       text: [d.content || '', embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n'),
       reactions,
+      // Whoever reacted has read the thread up to here.
+      reactors: reactions ? [...new Set(reactions.map((r) => r.userId))] : undefined,
       mentionIds: [...new Set((d.mentions || []).map((u) => u && u.id).filter(Boolean))],
     },
   };
