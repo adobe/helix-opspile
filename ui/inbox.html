@@ -352,14 +352,9 @@
   dialog.lightbox .bar a:hover, dialog.lightbox .bar button:hover { background: rgba(255,255,255,.15); }
   body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   .bubble .mention { font-weight: 600; }
-  /* Mentions by who is mentioned: Adobe people in a quiet tint, everyone else outside Adobe
-     (customers, partners) in their card's colour, so a reply that pulls them in is seen. */
-  .bubble .mention.adobe, .bubble .mention.external, .bubble .mention.bot { padding: 0 4px; border-radius: 4px; white-space: nowrap; }
-  .bubble .mention.adobe { background: color-mix(in srgb, var(--me) 22%, transparent); }
-  .msg.adobe .bubble .mention.adobe { background: rgba(255,255,255,.2); }
-  .bubble .mention.external { color: #fff; background: #c2410c; }
-  .bubble .mention.partner { background: #7c3aed; }
-  .bubble .mention.bot { background: color-mix(in srgb, var(--faint) 30%, transparent); }
+  /* Mentions of Adobe people in Adobe red, so they stand out; everyone else's (customers,
+     partners, bots, unknown names) stay in the bubble's own colour. */
+  .bubble .mention.adobe { padding: 0 4px; border-radius: 4px; white-space: nowrap; color: #fff; background: #eb1000; }
   .msg.deleted .bubble { font-style: italic; opacity: .6; }
   .msg .meta { font-size: 11px; color: var(--faint); margin: 3px 12px 0; min-height: 15px; }
   .msg .meta a { visibility: hidden; }
