@@ -22,6 +22,7 @@ import {
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { opspileExtension, staffExtension } from './tools.js';
+import { latestTurn } from './turn.js';
 
 /**
  * One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
@@ -271,12 +272,16 @@ export class ThreadAgent extends Agent {
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
     const catalog = await this.servers.current();
+    const pending = await this.harness.pending();
+    const busy = pending.some((p) => p.status !== 'parked');
+    const turn = latestTurn(await this.harness.messages().catch(() => []), { busy });
     return {
       name: this.name,
       model: this.env.AGENT_MODEL || null,
       problem: modelProblem(this.env),
       mark: (await this.ctx.storage.get('mark')) || null,
-      pending: await this.harness.pending(),
+      pending,
+      turn,
       mcp: catalog.servers.map((s) => ({
         name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
       })),

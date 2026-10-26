@@ -46,7 +46,7 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   knowledge bases and GitHub mirrors), `kbwrite.js`, `okf.js` and `memfs.js` (OKF writes with
   isomorphic-git in memory), `mcp.js` and `mcpclient.js` (the team's and customer's MCP
   servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
-  SDK)
+  SDK), `turn.js` (the latest turn the inbox shows under the thread)
 - `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org,
   and the global ones' switches per team and channel
 - `src/agent/globals.js` — the global MCP servers (`browser`, `github`), their switches and

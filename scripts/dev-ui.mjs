@@ -586,6 +586,32 @@ async function api(req, res, url) {
     const result = thread(url.searchParams.get('thread'));
     return result ? json(res, result) : json(res, { error: 'not found' }, 404);
   }
+  if (url.pathname === '/api/agent' && req.method === 'GET') {
+    // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
+    // for a few seconds after the thread is first asked about, then leaves a note.
+    const entry = store.threads.get(url.searchParams.get('thread'));
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    if (entry.row.channel_id !== 'C0ACMEAEM') {
+      return json(res, { enabled: false });
+    }
+    entry.agentAsked ??= Date.now();
+    const startedAt = new Date(entry.agentAsked).toISOString();
+    const turn = Date.now() - entry.agentAsked < 8000
+      ? {
+        state: 'working', text: 'Checking a web page', startedAt, endedAt: null,
+      }
+      : {
+        state: 'done',
+        startedAt,
+        endedAt: new Date(entry.agentAsked + 8000).toISOString(),
+        text: 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
+          + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
+          + '- Filed *cdn-503-after-config-change* in the ACME knowledge base',
+      };
+    return json(res, { enabled: true, turn });
+  }
   if (url.pathname === '/api/mentionable') {
     // As D1 would answer: known people, those who posted in the thread first, then staff.
     const entry = store.threads.get(url.searchParams.get('thread'));
