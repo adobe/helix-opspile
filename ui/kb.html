@@ -665,10 +665,13 @@ function githubSetup(g) {
       <button class="primary"${gh.configured ? '' : ' disabled title="TOKEN_KEY and PUBLIC_ORIGIN must be set"'}>Create on GitHub</button>
     </form>`;
   }
-  const where = gh.installations.map((i) => `${esc(i.account)} (${i.selection === 'all' ? 'all repositories' : 'selected repositories'}${i.suspended ? ', suspended' : ''})`).join(', ');
+  const rows = gh.installations.map((i) => `<div class="row2"><span title="${esc(i.approved ? `Allowed by ${i.approvedBy}, ${ago(i.approvedAt)}` : 'Installed, but agents do not read it until it is allowed')}">${esc(i.account)}
+      · ${i.selection === 'all' ? 'all repositories' : 'selected repositories'}${i.suspended ? ' · suspended' : ''}${i.approved ? '' : ' · <b>waiting to be allowed</b>'}</span>
+      <button type="button" data-ghinst="${esc(i.id)}" data-allow="${i.approved ? '' : '1'}"${i.approved ? ' class="danger"' : ' class="primary"'}>${i.approved ? 'Revoke' : 'Allow'}</button></div>`).join('');
   return `<div class="setup"><span>GitHub App <a href="${esc(gh.app.htmlUrl)}" target="_blank" rel="noopener">${esc(gh.app.slug)}</a>
-    ${gh.app.owner ? `of ${esc(gh.app.owner)}` : ''} · ${where ? `installed on ${where}` : 'not installed anywhere yet'}</span>
-    <button type="button" data-href="${esc(gh.app.installUrl)}">${where ? 'Install elsewhere or change repositories' : 'Install on repositories'}</button></div>`;
+    ${gh.app.owner ? `of ${esc(gh.app.owner)}` : ''} · ${gh.installations.length ? 'anyone can install it; agents read only the installations allowed here' : 'not installed anywhere yet'}</span>
+    <button type="button" data-href="${esc(gh.app.installUrl)}">${gh.installations.length ? 'Install elsewhere or change repositories' : 'Install on repositories'}</button></div>
+    ${rows ? `<div class="per">${rows}</div>` : ''}`;
 }
 
 function perChannel(g) {
@@ -891,6 +894,27 @@ function bindGlobals() {
       const failed = body.checked.filter((x) => x.error);
       renderMcp(failed.length ? { kind: 'warn', text: `${g.title} could not be reached: ${failed.map((x) => x.error).join('; ')}` }
         : { kind: 'ok', text: `${g.title}: ${body.checked.map((x) => `${x.tools} tools on mcp__${x.name}`).join(', ')}.` });
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-ghinst]')) {
+    el.onclick = async () => {
+      const g = find('github');
+      const allow = Boolean(el.dataset.allow);
+      const inst = g.github.installations.find((i) => String(i.id) === el.dataset.ghinst);
+      const yes = await ask(
+        allow ? `Allow the installation on ${inst.account}?` : `Revoke the installation on ${inst.account}?`,
+        allow ? `Agents of the teams and channels where GitHub is on can then read the repositories it is installed on (${inst.selection === 'all' ? 'all of them' : 'a selection'}).`
+          : 'Agents stop reading its repositories with their next message. The app stays installed on GitHub.',
+        allow ? 'Allow' : 'Revoke',
+      );
+      if (!yes) return;
+      const { ok, body } = await call('/api/kb/github/installation', { method: 'PUT', body: JSON.stringify({ id: inst.id, approved: allow }) });
+      if (stale()) return;
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'That did not work.' }); return; }
+      await loadMcp(repo);
+      if (stale()) return;
+      renderFiles();
+      renderMcp({ kind: 'ok', text: allow ? `Agents can read what the app is installed on in ${inst.account}. Check lists the tools.` : `Agents no longer read ${inst.account}.` });
     };
   }
   for (const el of $('editor').querySelectorAll('[data-href]')) {

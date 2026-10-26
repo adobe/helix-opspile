@@ -10,7 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
-import { currentApp, installations, installationToken } from '../github.js';
+import {
+  approved, currentApp, installationsWithApprovals, installationToken,
+} from '../github.js';
 
 /**
  * Global MCP servers: set up once for the whole deployment, not per team or customer, and
@@ -21,8 +23,8 @@ import { currentApp, installations, installationToken } from '../github.js';
  *   box of its own (src/agent/browser.js): a container running chrome-devtools-mcp, whose
  *   browser is a Browser Run session reached through the Worker's BROWSER binding.
  * - `github`: GitHub's MCP server, read-only, as the opspile GitHub App (src/github.js), on
- *   the repositories it is installed on. One server per installation: `github`, or
- *   `github_<account>` when the app is installed on several accounts.
+ *   the repositories it is installed on, for each installation the admin team allowed. One
+ *   server per allowed installation: `github`, or `github_<account>` when there are several.
  *
  * A server's agents see it as `mcp__<name>`, like the team's and the customer's servers
  * (src/agent/mcp.js); its id there is `global:<key>`.
@@ -83,14 +85,21 @@ export async function instancesOf(env, server) {
     if (!app) {
       return { instances: [], problem: 'There is no GitHub App yet: the admin team creates it.' };
     }
-    let list;
+    let all;
     try {
-      list = (await installations(env, app)).filter((i) => !i.suspended);
+      all = (await installationsWithApprovals(env, app)).filter((i) => !i.suspended);
     } catch (e) {
       return { instances: [], problem: `GitHub did not list the app's installations: ${e.message}` };
     }
-    if (!list.length) {
+    const list = all.filter((i) => i.approved);
+    if (!all.length) {
       return { instances: [], problem: `The GitHub App ${app.slug} is not installed on any repository yet.` };
+    }
+    if (!list.length) {
+      return {
+        instances: [],
+        problem: `The GitHub App ${app.slug} is installed on ${all.map((i) => i.account).join(', ')}, but the admin team has not allowed any installation yet.`,
+      };
     }
     return {
       instances: list.map((i) => ({
@@ -182,7 +191,7 @@ export async function globalConnection(env, id, { agent } = {}) {
   const m = /^github:(\d+)$/.exec(key);
   if (m) {
     const app = await currentApp(env);
-    if (!app) {
+    if (!app || !await approved(env, app, Number(m[1]))) {
       return null;
     }
     const { token, expiresAt } = await installationToken(env, app, Number(m[1]));

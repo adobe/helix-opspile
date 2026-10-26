@@ -40,7 +40,7 @@ still answer.
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, headers?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. Header values are never returned, only their names; adding or changing a server connects to it and lists its tools. The answer also lists the **global** servers (`globals`): whether each is set up, its tools, and its switches for the knowledge base's team and channels. |
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `check { server }` connects to it and lists its tools again. |
-| `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. |
+| `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. `PUT /api/kb/github/installation { id, approved }` allows an installation (agents read only allowed ones) or revokes it. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
@@ -205,9 +205,12 @@ the admin team or a team's managers turn them on, for the team (in the team's kn
   **MCP servers** of any team's knowledge base, fills in the GitHub organization that should
   own the app (or nothing, for their own account) and **Create on GitHub**; GitHub asks to
   confirm, opspile keeps the app and sends them on to install it, on all of an account's
-  repositories or a selection. **Install elsewhere or change repositories** changes that
-  later. Installed on several accounts, the server is there once per account
-  (`github_<account>`). The app only asks for read access; it needs no webhook.
+  repositories or a selection. The app is public, so it can be installed on any account
+  (customers' organizations too), and so anyone can install it: an installation counts only
+  once the admin team **Allow**s it in the same place (and **Revoke** takes it back).
+  **Install elsewhere or change repositories** changes where it is installed. With several
+  allowed installations, the server is there once per account (`github_<account>`). The app
+  only asks for read access; it needs no webhook.
 
 See ARCHITECTURE, "Global MCP servers".
 
