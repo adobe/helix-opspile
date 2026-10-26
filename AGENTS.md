@@ -4,7 +4,7 @@ Guidance for coding agents working on helix-opspile.
 
 ## What this is
 
-An ops inbox fed from Slack and Microsoft Teams, running on Cloudflare (Workers, R2,
+An ops inbox fed from Slack, Microsoft Teams and Discord, running on Cloudflare (Workers, R2,
 Queues, D1/Durable Objects). Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before
 changing anything: it defines the four piles and the on-disk layout of pile 2.
 
@@ -25,6 +25,9 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/index.js` — router
 - `src/slack.js` — Slack Events API endpoint
 - `src/teams.js` — Graph validation endpoint, token and client helpers
+- `src/discord.js` — Discord REST helpers, snowflakes and pile-1 envelopes; `src/gateway.js` —
+  the `DiscordGateway` Durable Object that holds the bot's gateway connection and catches up
+  from history; `src/platforms.js` — platform names
 - `src/bots.js` — the bots installed in each Teams team (cron), so replies can mention them
 - `src/diag.js` — guarded `/diag/teams` self-test
 - `src/drafts.js` — shared drafts: one unsent reply per thread, seen by the channel's teams

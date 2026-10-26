@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
 import { isStaffDomain, loadRules, toChannel } from './lookup.js';
@@ -174,8 +175,8 @@ async function ruleFrom(env, body) {
   if (!FIELDS.includes(field)) {
     return { error: `field is one of ${FIELDS.join(', ')}` };
   }
-  if (source && !['slack', 'teams'].includes(source)) {
-    return { error: 'source is slack, teams or empty (both)' };
+  if (source && !PLATFORMS.includes(source)) {
+    return { error: `source is ${PLATFORMS.join(', ')} or empty (all)` };
   }
   if (!pattern) {
     return { error: 'give a pattern (a regular expression, e.g. ^aem-)' };

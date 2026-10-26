@@ -154,3 +154,47 @@ export function htmlToMarkdown(html) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** A Discord `<t:…>` timestamp as text: date and time in UTC. */
+function discordTime(seconds, style) {
+  const d = new Date(Number(seconds) * 1000);
+  if (Number.isNaN(d.getTime())) {
+    return seconds;
+  }
+  const date = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  return /^[dD]$/.test(style || '') ? date : `${date} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
+}
+
+/**
+ * Discord message content to markdown. Discord writes markdown already; what is left are its
+ * tokens: user, role and channel mentions, custom emoji, timestamps, and `-#` small text.
+ * Code keeps what was typed.
+ *
+ * @param {string} text
+ * @param {{ user?: (id: string) => string|undefined, role?: (id: string) => string|undefined,
+ *   channel?: (id: string) => string|undefined }} names
+ */
+export function discordToMarkdown(text, names = {}) {
+  if (!text) {
+    return '';
+  }
+  const user = names.user || (() => undefined);
+  const role = names.role || (() => undefined);
+  const channel = names.channel || (() => undefined);
+  return String(text).split(/(```[\s\S]*?```|`[^`\n]+`)/).map((part, i) => {
+    if (i % 2 === 1) {
+      return part;
+    }
+    return part
+      .replace(/<@!?(\d+)>/g, (_, id) => `@${user(id) || 'unknown'}`)
+      .replace(/<@&(\d+)>/g, (_, id) => `@${role(id) || 'role'}`)
+      .replace(/<#(\d+)>/g, (_, id) => `#${channel(id) || 'channel'}`)
+      .replace(/<a?:(\w+):\d+>/g, ':$1:')
+      .replace(/<t:(-?\d+)(?::([tTdDfFR]))?>/g, (_, s, style) => discordTime(s, style))
+      .replace(/<\/([\w -]+):\d+>/g, '/$1')
+      .replace(/^-# /gm, '');
+  }).join('')
+    .trim();
+}

@@ -119,6 +119,10 @@ const CHANNELS = {
   edgeQ: {
     source: 'slack', channelId: 'C0EDGEQ01', name: 'edge-questions', org: 'opspile', team: 'edge',
   },
+  // A community server: a forum where every post is a thread.
+  forum: {
+    source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge',
+  },
 };
 
 // ---- a prod-sized inbox (`--big`), for performance work --------------------------------
@@ -293,18 +297,28 @@ export function createStore(now = Date.now(), { big = false } = {}) {
 
   function newId(source, ms) {
     seq += 1;
+    if (source === 'discord') {
+      // A snowflake: ms since Discord's epoch, shifted by 22 bits.
+      return String((BigInt(ms) - 1420070400000n) * 4194304n + BigInt(seq));
+    }
     return source === 'slack'
       ? `${Math.floor(ms / 1000)}.${String(seq).padStart(6, '0')}`
       : String(ms + seq);
   }
 
   function threadKey(ch, rootId) {
+    if (ch.source === 'discord') {
+      return `discord:${TENANT}:${ch.channelId}:${rootId}`;
+    }
     return ch.source === 'slack'
       ? `slack:${TENANT}:${ch.channelId}:${rootId}`
       : `teams:${TENANT}:${ch.teamId}:${ch.channelId}:${rootId}`;
   }
 
   function permalink(ch, id) {
+    if (ch.source === 'discord') {
+      return `https://discord.example.com/channels/${TENANT}/${ch.channelId}/${id}`;
+    }
     return ch.source === 'slack'
       ? `https://slack.example.com/archives/${ch.channelId}/p${id.replace('.', '')}`
       : `https://teams.example.com/l/message/${ch.channelId}/${id}`;
@@ -553,6 +567,18 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
       ['mei', 65, 'Reproduced on two regions, attaching the headers.'],
     ],
+  });
+
+  seed({
+    ch: CHANNELS.forum,
+    messages: [
+      ['jonas', 95, 'Preview fails with "no such site" when the content source has another org name.', { subject: 'Can a content source map to a site with a different org?' }],
+      ['lena', 80, 'It can: the site config names the content source. Which org do you have?'],
+      ['jonas', 30, 'Ours is `initech`, the site is in `initech-web`.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.2,
+    },
   });
 
   seed({

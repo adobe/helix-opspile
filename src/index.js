@@ -20,6 +20,7 @@ import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
 import { diagTeams } from './diag.js';
+import { discordEnabled } from './discord.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { pwa } from './pwa.js';
@@ -35,6 +36,9 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
+
+/** The one Discord gateway object (src/gateway.js). */
+const gateway = (env) => env.DISCORD.get(env.DISCORD.idFromName('gateway'));
 
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
@@ -79,6 +83,18 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (pathname === '/diag/discord') {
+      // The Discord gateway: GET says how it is; POST connects now, POST ?catchup=1 also
+      // fetches what was posted since the last stored message.
+      if (!authorizedDiag(request, env) || !env.DISCORD) {
+        return text('forbidden\n', 403);
+      }
+      let op = 'status';
+      if (request.method === 'POST') {
+        op = url.searchParams.get('catchup') ? 'catchup' : 'ensure';
+      }
+      return gateway(env).fetch(`https://gateway/${op}`);
     }
     if (pathname === '/diag/agent') {
       // One agent, by its name (an inbox entry key, or kb:<team>:<org>): GET says what it is
@@ -176,6 +192,12 @@ export default {
     ctx.waitUntil(syncInstalledBots(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
+    if (env.DISCORD && discordEnabled(env)) {
+      // The gateway's own alarm keeps it connected; this restarts it after a deploy reset it.
+      ctx.waitUntil(gateway(env).fetch('https://gateway/ensure').then((r) => r.json())
+        .then((r) => console.log(JSON.stringify({ route: 'cron', discord: r.state })))
+        .catch((e) => console.error(JSON.stringify({ route: 'cron', discord: 'error', error: e.message }))));
+    }
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
@@ -184,3 +206,4 @@ export default {
 
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
+export { DiscordGateway } from './gateway.js';

@@ -150,6 +150,7 @@
   .c-gold { background: var(--gold) !important; } .c-brown { background: var(--brown) !important; }
   .c-crimson { background: var(--crimson) !important; } .c-msteams { background: var(--teams) !important; }
   .c-slack { background: linear-gradient(#36c5f0 25%, #2eb67d 0 50%, #ecb22e 0 75%, #e01e5a 0) !important; }
+  .c-discord { background: #5865f2 !important; }
   /* A group inside a card (the Customer card's org types, the Resolved card's drafts). */
   .fg { margin: 6px 4px 2px 28px; font-size: 11px; color: var(--faint); text-transform: uppercase;
     letter-spacing: .04em; }
@@ -642,7 +643,10 @@ function dayLabel(iso) {
   if (!days.has(day)) days.set(day, LONG_DAY(d));
   return days.get(day);
 }
-const platform = (t) => (t.source === 'slack' ? 'Slack' : 'Teams');
+const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord' };
+const platform = (t) => PLATFORM[t.source] || 'Teams';
+// The account a person connects for a platform.
+const accountOf = (p) => (p === 'teams' ? 'Microsoft' : PLATFORM[p] || p);
 const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
 const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
   : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`);
@@ -708,7 +712,7 @@ function cardHtml(p, ctx) {
   const role = [p.title, p.company].filter(Boolean).join(' · ');
   const rel = p.relation || 'customer';
   const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
-  const where = p.platform === 'slack' ? 'Slack account' : p.platform === 'teams' ? 'Teams account' : '';
+  const where = PLATFORM[p.platform] ? `${PLATFORM[p.platform]} account` : '';
   const rows = [];
   const ico = (d) => (d ? `<img src="${esc(favicon(d))}" alt="" loading="lazy" onerror="this.remove()">` : '');
   if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
@@ -877,7 +881,7 @@ function setMentionNames(names) {
   if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
   mentionSet = mentionSets.get(source);
 }
-const proxied = (u) => (/^https:\/\/(files\.slack\.com|graph\.microsoft\.com)\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
+const proxied = (u) => (/^https:\/\/(files\.slack\.com\/|graph\.microsoft\.com\/|(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/)/.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
 // Rendered once per text and set of known names: opening a thread again, or a live update,
 // renders only the messages that are new or changed.
 const rendered = new Map();
@@ -1119,8 +1123,8 @@ const FACETS = [
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
     label: { conversation: 'Conversations', alert: 'Alerts' }, color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
-  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams'],
-    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams' }) },
+  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
+    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
 ];
 const facetValues = (f, t) => {
   const v = f.value(t);
@@ -1490,7 +1494,9 @@ function reviewPanel(thread, model, reviews) {
     <div class="apply"><button class="send" data-apply="1" ${n ? '' : 'disabled'}>Apply ${n || ''} ${n === 1 ? 'correction' : 'corrections'}</button>
       <button data-confirm="1" title="Clef got everything right">All correct</button></div></div>`;
 }
-const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system';
+// Discord lets only bots react through its API: reactions there are made in Discord.
+const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system'
+  && m.source !== 'discord';
 
 /** What the ✅ says, for the thread header's second line. */
 function resolveNote(r) {
@@ -1503,7 +1509,7 @@ function resolveNote(r) {
 /** The ✅ button: resolve, or take your ✅ off again. */
 function resolveButton(thread, r) {
   // Without the first message there is nothing to put the ✅ on.
-  if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r)) return '';
+  if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r) || thread.source === 'discord') return '';
   const mine = r?.state === 'resolved' && r.mine;
   return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
 }
@@ -1538,7 +1544,7 @@ function message(m, prev, fresh) {
     <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${m.editedAt || m.permalink || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${m.source === 'slack' ? 'Slack' : 'Teams'} ↗</a>` : ''}</div>` : ''}
+      ${m.editedAt || m.permalink || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${PLATFORM[m.source] || 'Teams'} ↗</a>` : ''}</div>` : ''}
     </div></div>`;
 }
 
@@ -1553,7 +1559,14 @@ const TOUCH_ONLY = matchMedia('(any-hover: none)');
 function composer(thread, draft, resolve = '') {
   if (state.data?.me?.readonly) return `<div class="composer">${draftLine(draft)}<span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
   const p = thread.source;
-  const name = p === 'slack' ? 'Slack' : 'Microsoft';
+  const name = accountOf(p);
+  if (p === 'discord') {
+    // Discord lets only bots post through its API, and opspile posts as the person or not at
+    // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
+    const connect = state.me.connectable?.discord && !state.me.connected?.discord
+      ? ` <a href="/api/auth/discord/start">Connect your Discord account</a> so opspile knows which posts are yours.` : '';
+    return `<div class="composer">${draftLine(draft)}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${connect}</span></div>`;
+  }
   if (!state.me.connected?.[p]) {
     return `<div class="composer">${draftLine(draft)}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
   }
@@ -2423,7 +2436,8 @@ async function start() {
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);
-  if (q.get('connected')) toast(`Connected your ${q.get('connected') === 'slack' ? 'Slack' : 'Microsoft'} account. Replies are sent as you.`);
+  if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
+    : `Connected your ${accountOf(q.get('connected'))} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
   const initial = fromUrl();
   // The thread the URL opens is open from the start: settling the URL keeps it, and opening it
@@ -2603,7 +2617,7 @@ const FILTER_ARGS = {
   status: 'status', type: 'type', platform: 'platform', resolved: 'resolved', waiting_on: 'next', urgency: 'urgency', kind: 'kind', customer: 'customer', draft: 'draft',
 };
 const FILTER_VALUES = {
-  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams'], resolved: ['open', 'resolved'],
+  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord'], resolved: ['open', 'resolved'],
   waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_EMOJI),
   draft: ['mine', 'team', 'none'],
 };
@@ -2646,7 +2660,8 @@ async function showThread(key) {
 function replyBlocked(data) {
   if (state.data?.me?.readonly) return READONLY;
   const p = data.thread.source;
-  if (!state.me.connected?.[p]) return `The user has not connected their ${p === 'slack' ? 'Slack' : 'Microsoft'} account, so opspile cannot post as them. Ask them to use the connect link in the reply box.`;
+  if (p === 'discord') return 'opspile cannot reply on Discord (only bots can post through its API). The user replies in Discord itself; the thread has a link to it.';
+  if (!state.me.connected?.[p]) return `The user has not connected their ${accountOf(p)} account, so opspile cannot post as them. Ask them to use the connect link in the reply box.`;
   if (!$('reply')) return 'The reply box is not available for this thread.';
   return null;
 }

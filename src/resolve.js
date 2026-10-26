@@ -54,7 +54,7 @@ export const signalOf = (emoji) => SIGNAL_OF.get(String(emoji || '').replace(/::
  */
 export async function signalFacts(env, keys) {
   const { results } = await env.DB.prepare(`SELECT r.thread, r.emoji, r.at, i.person,
-      COALESCE(p.staff, 0) AS staff, i.email
+      MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, i.email
     FROM reactions r
     LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person
@@ -88,7 +88,7 @@ export async function resolutionFacts(env, keys) {
   const [{ results: checks }, { results: customer }] = await Promise.all([
     env.DB.prepare(`SELECT r.thread, r.user_key,
       COALESCE(r.at, t.root_at) AS at, COALESCE(p.name, i.name) AS name, i.person,
-      p.staff, i.email
+      MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, i.email
     FROM reactions r JOIN threads t ON t.thread = r.thread
     LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person

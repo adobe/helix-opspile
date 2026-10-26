@@ -121,6 +121,10 @@ async function tokenFor(env, me, t) {
   if (!isStaffDomain(env, me.email)) {
     return { response: json({ error: 'only staff can react' }, 403) };
   }
+  if (t.source === 'discord') {
+    // Discord lets only bots react through its API, and opspile acts as the person or not at all.
+    return { response: json({ error: 'react in Discord: opspile cannot react there as you' }, 409) };
+  }
   const tok = await personalToken(env, me.id, t.source);
   if (!tok) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';

@@ -55,6 +55,11 @@ jobs:
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
+      # Discord (optional; off while DISCORD_GUILDS is empty).
+      DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
+      DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}
+      DISCORD_HISTORY_DAYS: ${{ secrets.DISCORD_HISTORY_DAYS }}
+      DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

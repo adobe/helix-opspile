@@ -474,8 +474,8 @@ function agentsTag() {
   return on ? `<span class="tag agent">on in ${on} of ${of} channel${of === 1 ? '' : 's'}</span>` : '<span class="tag missing">off</span>';
 }
 
-const SOURCES = { slack: 'Slack', teams: 'Teams' };
-const channelName = (c) => (c.source === 'slack' ? `#${c.name || c.channelId}`
+const SOURCES = { slack: 'Slack', teams: 'Teams', discord: 'Discord' };
+const channelName = (c) => (c.source !== 'teams' ? `#${c.name || c.channelId}`
   : [c.groupName, c.name].filter(Boolean).join(' › ') || c.channelId);
 
 function ago(at) {

@@ -22,10 +22,13 @@ import { teamsOf } from './shares.js';
  * Slack: user scopes `chat:write` and `reactions:write`. Teams: delegated
  * `ChannelMessage.Send`, which covers replies and setReaction/unsetReaction on channel
  * messages (+ offline_access for a refresh token), redeemed server-side with the Entra app's
- * secret.
+ * secret. Discord: `identify` only, to link the account to the person (see DISCORD_SCOPE).
  */
 
 export const SLACK_SCOPE = 'chat:write,reactions:write';
+// Discord: only who the person is (their user id), so their posts and reactions count as
+// theirs. Discord lets only bots post through its API, so opspile does not reply there.
+const DISCORD_SCOPE = 'identify';
 const TEAMS_SCOPE = 'offline_access https://graph.microsoft.com/ChannelMessage.Send https://graph.microsoft.com/User.Read';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_TEXT = 8000;
@@ -118,6 +121,7 @@ export async function reactable(env, person) {
   return {
     slack: by.has('slack') && by.get('slack').split(/[\s,]+/).includes('reactions:write'),
     teams: by.has('teams'),
+    discord: false,
   };
 }
 
@@ -125,7 +129,7 @@ export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
   const set = new Set((results || []).map((r) => r.platform));
-  return { slack: set.has('slack'), teams: set.has('teams') };
+  return { slack: set.has('slack'), teams: set.has('teams'), discord: set.has('discord') };
 }
 
 /** GET /api/auth/<platform>/start: off to the platform's consent screen. */
@@ -138,6 +142,16 @@ export async function startAuth(env, me, platform) {
       client_id: env.SLACK_CLIENT_ID,
       user_scope: SLACK_SCOPE,
       redirect_uri: redirectUri(env, 'slack'),
+      state,
+    });
+  } else if (platform === 'discord') {
+    url = new URL('https://discord.com/oauth2/authorize');
+    url.search = new URLSearchParams({
+      client_id: env.DISCORD_CLIENT_ID,
+      response_type: 'code',
+      redirect_uri: redirectUri(env, 'discord'),
+      scope: DISCORD_SCOPE,
+      prompt: 'none',
       state,
     });
   } else {
@@ -228,6 +242,64 @@ async function teamsCallback(env, me, code) {
   });
 }
 
+/**
+ * Links a Discord account to the person: its identity in every guild opspile reads, and the
+ * messages it already posted (their author is now known to be this person).
+ */
+export async function linkDiscord(env, me, userId) {
+  const guilds = String(env.DISCORD_GUILDS || '').split(',').map((g) => g.trim()).filter(Boolean);
+  const taken = await env.DB.prepare(`SELECT person FROM identities WHERE source = 'discord'
+    AND user_id = ? AND person IS NOT NULL AND person != ? LIMIT 1`).bind(userId, me.id).first();
+  if (taken) {
+    throw new Error('that Discord account belongs to someone else');
+  }
+  const person = await env.DB.prepare('SELECT staff FROM people WHERE id = ?').bind(me.id).first();
+  for (const guild of guilds) {
+    // A new row is stale at once, so the next lookup fills in the name and avatar.
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, person, fetched_at)
+        VALUES ('discord', ?, ?, 'person', ?, ?)
+      ON CONFLICT (source, tenant, user_id) DO UPDATE SET person = excluded.person`)
+      .bind(guild, userId, me.id, new Date(0).toISOString()).run();
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare(`UPDATE messages SET person = ?, staff = MAX(staff, ?)
+      WHERE author_key = ?`).bind(me.id, person && person.staff ? 1 : 0, `discord:${guild}:${userId}`).run();
+  }
+}
+
+async function discordCallback(env, me, code) {
+  const res = await fetch('https://discord.com/api/v10/oauth2/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.DISCORD_CLIENT_ID,
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri(env, 'discord'),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.access_token) {
+    throw new Error(`discord: ${data.error || res.status}`);
+  }
+  const who = await (await fetch('https://discord.com/api/v10/users/@me', {
+    headers: { authorization: `Bearer ${data.access_token}` },
+  })).json();
+  if (!who || !who.id) {
+    throw new Error('discord: no account');
+  }
+  await linkDiscord(env, me, who.id);
+  await saveToken(env, me.id, 'discord', {
+    userId: who.id,
+    access: data.access_token,
+    expiresIn: data.expires_in,
+    scope: data.scope,
+  });
+}
+
+const CALLBACK = { slack: slackCallback, teams: teamsCallback, discord: discordCallback };
+
 /** GET /api/auth/<platform>/callback: store the token, back to the inbox. */
 export async function finishAuth(env, me, platform, url) {
   const back = new URL(`${origin(env)}/inbox`);
@@ -239,7 +311,7 @@ export async function finishAuth(env, me, platform, url) {
       throw new Error('sign-in expired, please try again');
     }
     const code = url.searchParams.get('code');
-    await (platform === 'slack' ? slackCallback(env, me, code) : teamsCallback(env, me, code));
+    await CALLBACK[platform](env, me, code);
     back.searchParams.set('connected', platform);
   } catch (e) {
     back.searchParams.set('connect_error', e.message.slice(0, 200));
@@ -408,7 +480,7 @@ export async function mentionable(env, key, q, inTeam) {
     id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
   }));
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.avatar,
-      COALESCE(p.staff, 0) AS staff, EXISTS (SELECT 1 FROM messages m
+      MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, EXISTS (SELECT 1 FROM messages m
         WHERE m.thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)
         AND m.author_key = i.source || ':' || i.tenant || ':' || i.user_id) AS here
     ${ACCOUNTS} AND (? = '' OR ${NAME} LIKE ? || '%' ESCAPE '\\'
@@ -446,6 +518,9 @@ export async function post(env, me, request, inTeam) {
   }
   if (!isStaffDomain(env, me.email)) {
     return json({ error: 'only staff can reply' }, 403);
+  }
+  if (t.source === 'discord') {
+    return json({ error: 'reply in Discord: opspile cannot post there as you' }, 409);
   }
   const { token } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
@@ -489,6 +564,12 @@ export async function post(env, me, request, inTeam) {
 }
 
 export async function disconnect(env, me, platform) {
+  if (platform === 'discord') {
+    // The link was the point of connecting; it goes with the token.
+    await env.DB.prepare(`UPDATE identities SET person = NULL WHERE source = 'discord'
+      AND person = ? AND user_id IN (SELECT user_id FROM user_tokens
+        WHERE person = ? AND platform = 'discord')`).bind(me.id, me.id).run();
+  }
   await env.DB.prepare('DELETE FROM user_tokens WHERE person = ? AND platform = ?')
     .bind(me.id, platform).run();
   return json({ ok: true });

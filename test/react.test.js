@@ -230,7 +230,7 @@ describe('reacting and resolving as the person', () => {
 
   it('asks to connect Slack again when the token cannot react yet', async () => {
     const e = await connect(env(), 'slack', 'chat:write');
-    assert.deepEqual(await reactable(e, 1), { slack: false, teams: false });
+    assert.deepEqual(await reactable(e, 1), { slack: false, teams: false, discord: false });
     const res = await react(e, ME, { thread: SLACK, id: '1.2', emoji: 'eyes' }, inTeam);
     assert.equal(res.status, 409);
     assert.equal((await res.json()).reconnect, 'slack');

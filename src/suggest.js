@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { platformName } from './platforms.js';
 import { cachedGraph } from './graph.js';
 import { CLEF, TECH } from './label.js';
 import {
@@ -59,14 +60,14 @@ const prefixOf = (pattern) => {
   return m ? m[1].replace(/\\(.)/g, '$1') : null;
 };
 const FIELD = {
-  name: 'channel name', group_name: 'Teams team name', connected: 'Slack Connect team',
+  name: 'channel name', group_name: 'Teams team or Discord server name', connected: 'Slack Connect team',
 };
 
 /** A rule in words, for Clef: "channel name starts with aem-". */
 function ruleText(r) {
   const prefix = prefixOf(r.pattern);
   const what = prefix !== null ? `starts with ${prefix}` : `matches /${r.pattern}/`;
-  return `${FIELD[r.field] || r.field} ${what}${r.source ? ` (${r.source === 'slack' ? 'Slack' : 'Teams'} only)` : ''}`;
+  return `${FIELD[r.field] || r.field} ${what}${r.source ? ` (${platformName(r.source)} only)` : ''}`;
 }
 
 // ---- who is in a channel ------------------------------------------------------------------
@@ -126,6 +127,9 @@ export async function refreshMembers(env, ch, deps = {}, now = Date.now()) {
         const i = known.get(m.userId);
         return i ? { ...m, name: i.name, email: i.email } : m;
       });
+    } else if (ch.source !== 'teams') {
+      // Discord lists a server's members only with a privileged intent opspile does not ask for.
+      throw new Error(`members are not listed on ${platformName(ch.source)}`);
     } else {
       if (!ch.group_id) {
         throw new Error('no Teams team id');
@@ -230,8 +234,14 @@ const person = (p) => `${p.name || p.email || 'someone'}${p.teams.length ? ` (${
 /** The channel as text for Clef. */
 export function channelState(f) {
   const lines = [];
-  const platform = f.source === 'slack' ? 'Slack' : 'Microsoft Teams';
-  lines.push(f.source === 'slack' ? `Channel: #${f.name || '?'} on Slack` : `Channel: "${f.name || '?'}" in the Microsoft Teams team "${f.groupName || '?'}"`);
+  const platform = platformName(f.source);
+  if (f.source === 'teams') {
+    lines.push(`Channel: "${f.name || '?'}" in the Microsoft Teams team "${f.groupName || '?'}"`);
+  } else if (f.source === 'discord') {
+    lines.push(`Channel: #${f.name || '?'} in the Discord server "${f.groupName || '?'}"`);
+  } else {
+    lines.push(`Channel: #${f.name || '?'} on Slack`);
+  }
   if (f.shared) {
     lines.push(f.source === 'slack' ? `Slack Connect: shared with ${f.connected || 'an'} other organization${f.connected === 1 ? '' : 's'}` : 'Shared channel');
   }

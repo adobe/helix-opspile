@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { discordApi, discordAvatar, staffRolesOf } from './discord.js';
 import { cachedGraph } from './graph.js';
 import { sha256 } from './raw.js';
 
@@ -84,6 +85,25 @@ async function fetchTeamsChannel(env, teamId, channelId) {
   };
 }
 
+/** Guild names, per isolate: every Discord channel lookup names its guild. */
+const guildNames = new Map();
+
+async function fetchDiscordChannel(env, guild, channelId) {
+  const ch = await discordApi(env, `/channels/${channelId}`);
+  if (!guildNames.has(guild)) {
+    const g = await discordApi(env, `/guilds/${guild}`, { allow: [403, 404] });
+    guildNames.set(guild, (g && g.name) || null);
+  }
+  return {
+    name: ch.name,
+    group_id: guild,
+    group_name: guildNames.get(guild),
+    shared: 0,
+    connected: '[]',
+    topic: ch.topic || null,
+  };
+}
+
 export function toChannel(row, source, channelId) {
   return {
     source,
@@ -110,9 +130,14 @@ export async function getChannel(env, {
     return toChannel(row, source, channelId);
   }
   try {
-    const f = source === 'slack'
-      ? await fetchSlackChannel(env, channelId)
-      : await fetchTeamsChannel(env, groupId || (row && row.group_id), channelId);
+    let f;
+    if (source === 'slack') {
+      f = await fetchSlackChannel(env, channelId);
+    } else if (source === 'discord') {
+      f = await fetchDiscordChannel(env, tenant, channelId);
+    } else {
+      f = await fetchTeamsChannel(env, groupId || (row && row.group_id), channelId);
+    }
     await env.DB.prepare(`INSERT INTO channels
       (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, fetched_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -219,8 +244,30 @@ async function fetchTeamsUser(env, userId, fallbackName) {
 }
 
 /**
+ * A Discord account as a member of the guild: their server nickname and avatar, and whether
+ * one of their roles is in DISCORD_STAFF_ROLES. Discord shares no email with bots, so the
+ * account is linked to a person only when they connect it in the inbox (src/post.js).
+ */
+async function fetchDiscordUser(env, guild, userId, fallbackName) {
+  const member = await discordApi(env, `/guilds/${guild}/members/${userId}`, { allow: [404] });
+  const user = (member && member.user)
+    || await discordApi(env, `/users/${userId}`, { allow: [404] }) || { id: userId };
+  const staffRoles = staffRolesOf(env);
+  return {
+    kind: user.bot ? 'bot' : 'person',
+    name: (member && member.nick) || user.global_name || user.username || fallbackName || null,
+    email: null,
+    home: null,
+    avatar: discordAvatar(user, guild, member),
+    title: null,
+    company: null,
+    staff: Boolean(member && (member.roles || []).some((r) => staffRoles.has(r))),
+  };
+}
+
+/**
  * The identity behind an authorRef, from D1 or the platform, linked to a person by
- * email when one is known.
+ * email when one is known (on Discord: by the person connecting the account).
  */
 export async function getIdentity(env, ref, now = Date.now()) {
   const row = await env.DB.prepare(`SELECT i.*, p.staff AS person_staff, p.name AS person_name
@@ -233,9 +280,13 @@ export async function getIdentity(env, ref, now = Date.now()) {
   }
   let f;
   try {
-    f = ref.source === 'slack'
-      ? await fetchSlackUser(env, ref.userId)
-      : await fetchTeamsUser(env, ref.userId, ref.name);
+    if (ref.source === 'slack') {
+      f = await fetchSlackUser(env, ref.userId);
+    } else if (ref.source === 'discord') {
+      f = await fetchDiscordUser(env, ref.tenant, ref.userId, ref.name);
+    } else {
+      f = await fetchTeamsUser(env, ref.userId, ref.name);
+    }
   } catch (e) {
     console.warn(JSON.stringify({
       route: 'normalize', lookup: 'user', source: ref.source, error: e.message,
@@ -250,17 +301,22 @@ export async function getIdentity(env, ref, now = Date.now()) {
     await env.DB.prepare(`INSERT INTO people (email, name, staff) VALUES (?, ?, 1)
       ON CONFLICT (email) DO UPDATE SET staff = 1`).bind(f.email, f.name).run();
   }
-  const person = f.email
+  let person = f.email
     ? await env.DB.prepare('SELECT id, staff, name FROM people WHERE email = ?').bind(f.email).first()
     : null;
+  if (!person && ref.source === 'discord' && row && row.person) {
+    // Linked when the person connected the account: Discord itself never says who it is.
+    person = await env.DB.prepare('SELECT id, staff, name FROM people WHERE id = ?').bind(row.person).first();
+  }
   const home = f.home || ref.home || null;
   await env.DB.prepare(`INSERT INTO identities
-    (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company,
+     staff)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
       person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
-      title = excluded.title, company = excluded.company`)
+      title = excluded.title, company = excluded.company, staff = excluded.staff`)
     .bind(
       ref.source,
       ref.tenant,
@@ -274,10 +330,12 @@ export async function getIdentity(env, ref, now = Date.now()) {
       f.avatar || '',
       f.title || null,
       f.company || null,
+      f.staff ? 1 : null,
     )
     .run();
   return {
     ...f,
+    staff: f.staff ? 1 : null,
     avatar: f.avatar || '',
     home,
     person: person ? person.id : null,
@@ -293,7 +351,8 @@ export async function getIdentity(env, ref, now = Date.now()) {
  */
 export function toAuthor(env, identity) {
   const domain = domainOf(identity.email);
-  const staff = Boolean(identity.person_staff) || isStaffDomain(env, identity.email);
+  const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
+    || isStaffDomain(env, identity.email);
   return {
     kind: identity.kind || 'person',
     name: identity.person_name || identity.name || null,
