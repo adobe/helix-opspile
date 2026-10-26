@@ -19,7 +19,7 @@ import { api } from '../src/api.js';
 import { refreshGlobalTools } from '../src/mcpadmin.js';
 import { AgentMcp, CATALOG_TTL_MS, mcpSection } from '../src/agent/mcp.js';
 import { serversFor, serverWithHeaders } from '../src/agent/mcpclient.js';
-import { GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
 import {
   appJwt, appManifest, forgetGithub, manifestAction, pkcs8Pem,
 } from '../src/github.js';
@@ -47,26 +47,36 @@ const asMe = (p, roles = {}) => ({ ...p, teams: p.teams.map((slug) => ({ slug, r
 const admin = asMe(ADA);
 const manager = asMe(BO, { helix: 'manager' });
 
-// The browser box's chrome-devtools-mcp, and GitHub's MCP server, in memory.
-const BOX = fakeMcpServers([{
-  url: 'https://box.test/mcp',
-  name: 'chrome_devtools',
+// Cloudflare's Browser Run MCP server, and GitHub's MCP server, in memory.
+const BROWSER_TOKEN = 'made-up-browser-run-token';
+const BROWSER_MCP = fakeMcpServers([{
+  url: BROWSER_MCP_URL,
+  name: 'cloudflare-browser-mcp-server',
+  token: BROWSER_TOKEN,
   tools: [
     {
-      name: 'list_pages',
-      description: 'List the pages',
-      inputSchema: { type: 'object', properties: {} },
+      name: 'get_url_markdown',
+      description: 'Fetches the webpage content and converts it into Markdown format',
+      inputSchema: { type: 'object', properties: { url: { type: 'string' } } },
       readOnly: true,
-      run: () => '## Pages\n1: about:blank [selected]',
+      run: ({ url }) => `# ${url}\n\nHello.`,
     },
     {
-      name: 'navigate_page',
-      description: 'Go to a URL',
-      inputSchema: { type: 'object', properties: { pageId: { type: 'number' }, url: { type: 'string' } } },
-      run: ({ url }) => `Successfully navigated to ${url}.`,
+      name: 'get_url_screenshot',
+      description: 'Captures a screenshot of the webpage',
+      inputSchema: { type: 'object', properties: { url: { type: 'string' } } },
+      readOnly: true,
+      run: () => ({ content: [{ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }] }),
+    },
+    {
+      name: 'kill_browser_session',
+      description: 'Closes a Browser Run session',
+      inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } } },
+      run: () => 'killed',
     },
   ],
 }]);
+let browserRequests = 0;
 const GITHUB_MCP = fakeMcpServers([{
   url: GITHUB_MCP_URL,
   name: 'github',
@@ -79,23 +89,6 @@ const GITHUB_MCP = fakeMcpServers([{
     run: ({ repo, path }) => `${repo}/${path}: hello`,
   }],
 }]);
-
-/** The browser boxes: one per agent name, all answered by BOX. */
-function boxes() {
-  const used = [];
-  return {
-    used,
-    getByName(name) {
-      return {
-        fetch: (request) => {
-          used.push(name);
-          assert.equal(new URL(request.url).pathname, '/mcp');
-          return BOX.fetch(new Request('https://box.test/mcp', request));
-        },
-      };
-    },
-  };
-}
 
 /** GitHub's REST API, as far as the app needs it. */
 const GITHUB = {
@@ -149,6 +142,10 @@ before(() => {
     if (request.url.startsWith('https://api.github.com/')) {
       return githubApi(request);
     }
+    if (BROWSER_MCP.handles(request.url)) {
+      browserRequests += 1;
+      return BROWSER_MCP.fetch(request);
+    }
     if (GITHUB_MCP.handles(request.url)) {
       GITHUB.mcpHeaders.push(Object.fromEntries(request.headers));
       return GITHUB_MCP.fetch(request);
@@ -182,13 +179,11 @@ function env({ browser = true } = {}) {
   thread.run('slack:E1:C1:1.0', 'C1', 'acme', 'helix', 'aem-acme');
   thread.run('slack:E1:C2:1.0', 'C2', 'acme', 'helix', 'aem-acme-alerts');
   thread.run('slack:E1:C3:1.0', 'C3', 'initech', 'edge', 'aem-initech');
-  const box = boxes();
   return {
     DB,
     TOKEN_KEY: KEY,
     PUBLIC_ORIGIN: 'https://opspile.example',
-    ...(browser ? { BROWSER: {}, BROWSER_BOXES: box } : {}),
-    box,
+    ...(browser ? { BROWSER_RUN_TOKEN: BROWSER_TOKEN } : {}),
   };
 }
 
@@ -292,9 +287,8 @@ describe('global MCP servers in the knowledge-base editor', () => {
     const asAdmin = await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix');
     assert.equal(asAdmin.body.globals[1].github.app, null);
     assert.equal((await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-org-acme')).body.globals[0].team, null);
-    assert.equal(env({ browser: false }).BROWSER, undefined);
     const noBrowser = await call(env({ browser: false }), admin, 'GET', '/api/kb/mcp?repo=kb-team-helix');
-    assert.match(noBrowser.body.globals[0].problem, /BROWSER/);
+    assert.match(noBrowser.body.globals[0].problem, /BROWSER_RUN_TOKEN/);
   });
 
   it('switch per team and per channel, for the admin team and the team\'s managers', async () => {
@@ -333,15 +327,14 @@ describe('global MCP servers in the knowledge-base editor', () => {
     assert.deepEqual(await names({ team: 'helix', channelId: 'C2' }), ['global:browser']);
   });
 
-  it('checks the browser in a box of its own, and keeps the tools for the agents', async () => {
+  it('checks the browser, and keeps the tools for the agents but the session ones', async () => {
     const e = env();
     const checked = await call(e, manager, 'POST', '/api/kb/mcp/global/check', { server: 'browser', repo: 'kb-team-helix' });
     assert.equal(checked.status, 200, JSON.stringify(checked.body));
     assert.deepEqual(checked.body.checked, [{
-      name: 'browser', tools: 2, error: null, server: { name: 'chrome_devtools', version: '1.0.0' },
+      name: 'browser', tools: 3, error: null, server: { name: 'cloudflare-browser-mcp-server', version: '1.0.0' },
     }]);
-    assert.deepEqual(checked.body.global.instances[0].tools.map((t) => t.name), ['list_pages', 'navigate_page']);
-    assert.ok(e.box.used.every((n) => n === 'opspile-check'));
+    assert.deepEqual(checked.body.global.instances[0].tools.map((t) => t.name), ['get_url_markdown', 'get_url_screenshot']);
     assert.equal((await call(e, manager, 'POST', '/api/kb/mcp/global/check', { server: 'github' })).status, 409);
   });
 });
@@ -351,7 +344,7 @@ describe('global MCP servers in the cron', () => {
     const e = env();
     await withApp(e, { allowed: true });
     const first = await quiet(() => refreshGlobalTools(e));
-    assert.deepEqual(first, { browser: ['browser: 2 tools'], github: ['github: 1 tools'] });
+    assert.deepEqual(first, { browser: ['browser: 3 tools'], github: ['github: 1 tools'] });
     assert.deepEqual(await refreshGlobalTools(e), {}, 'fresh: nothing to do');
     const later = await refreshGlobalTools(e, { now: Date.now() + 2 * 86400_000 });
     assert.deepEqual(Object.keys(later), ['browser', 'github']);
@@ -359,25 +352,26 @@ describe('global MCP servers in the cron', () => {
 });
 
 describe('global MCP servers in thread agents', () => {
-  it('drive the agent\'s own browser box, from the tools the check found', async () => {
+  it('read web pages through Browser Run, from the tools the check found', async () => {
     const e = env();
     await call(e, admin, 'POST', '/api/kb/mcp/global/check', { server: 'browser' });
     await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'browser', team: 'helix', enabled: true });
-    e.box.used.length = 0;
-    const mcp = new AgentMcp(e, memoryStorage(), { agent: () => 'slack:E1:C1:1.0' });
+    browserRequests = 0;
+    const mcp = new AgentMcp(e, memoryStorage());
     const { changed, catalog } = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' });
     assert.equal(changed, true);
-    assert.equal(e.box.used.length, 0, 'no box started only to list the tools');
+    assert.equal(browserRequests, 0, 'not asked only to list the tools');
     const [server] = catalog.servers;
     assert.equal(server.scope, 'global');
     assert.equal(server.ns, 'browser');
-    assert.match(server.instructions, /list_pages first/);
+    assert.deepEqual(server.tools.map((t) => t.name), ['get_url_markdown', 'get_url_screenshot']);
+    assert.match(server.instructions, /loads the page anew/);
     assert.match(mcpSection(catalog), /mcp__browser \(global, opspile's own\)/);
     assert.match(mcpSection(catalog), /never type customer data into a website/);
+    assert.ok(!JSON.stringify(catalog).includes(BROWSER_TOKEN), 'no token in the catalog');
 
-    const res = await mcp.call(server, 'navigate_page', { pageId: 1, url: 'https://www.acme.example/' });
-    assert.match(res.content[0].text, /navigated to https:\/\/www\.acme\.example\//);
-    assert.ok(e.box.used.length > 0 && e.box.used.every((n) => n === 'slack:E1:C1:1.0'), 'its own box');
+    const res = await mcp.call(server, 'get_url_markdown', { url: 'https://www.acme.example/' });
+    assert.equal(res.content[0].text, '# https://www.acme.example/\n\nHello.');
 
     // Turned off for the channel: the next catalog has no browser.
     await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'browser', channel: 'C1', enabled: false });

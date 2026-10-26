@@ -548,45 +548,19 @@ the admin team or a team's managers turn one on, for an ops team or for a single
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
 and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
-tools are those the last check found (`mcp_global_tools`), so an agent does not start a
-browser or mint a token just to list them; the editor's **Check** and the cron, once a day,
+tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
+server or mint a token just to list them; the editor's **Check** and the cron, once a day,
 ask again. The prompt says that these are opspile's own, and that customer data does not go
 into websites or URLs that are not the customer's or Adobe's.
 
-**`browser`: Cloudflare Browser Run through Chrome DevTools MCP.** Browser Run's
-[setup for MCP clients](https://developers.cloudflare.com/browser-run/cdp/mcp-clients/) runs
-`chrome-devtools-mcp --wsEndpoint=wss://…/browser-run/devtools/browser` with an API token on a
-desktop. A Worker cannot run it, so each agent gets a **browser box** (`src/agent/browser.js`):
-a Durable Object with a container, named like the agent, so threads never share a browser.
-
-```mermaid
-flowchart LR
-  A[ThreadAgent<br/>MCP client] -- Streamable HTTP --> B[BrowserBox<br/>Durable Object]
-  B -- :8080 --> P[container program<br/>HTTP ↔ stdio]
-  P -- stdio --> C[chrome-devtools-mcp]
-  C -- "ws://browser-run.internal" --> O[BrowserBoxCdp<br/>outbound handler]
-  O -- BROWSER binding --> R[Browser Run<br/>session]
-```
-
-- The container is the Cloudflare-managed Node image (`cloudflare/debian-trixie`), so there is
-  no image to build; it starts with `node -e` and the program in `src/agent/boxprogram.js`.
-  That program fetches the pinned chrome-devtools-mcp tarball, checks it against its sha512,
-  unpacks it, runs it on stdio and serves it as Streamable HTTP: one JSON answer per POST,
-  `server/discover` declined (so the client falls back to `initialize`), the first
-  `initialize` remembered for later connections, ids rewritten so two connections never
-  collide, and the server's own requests (roots, sampling) declined. When chrome-devtools-mcp
-  exits, so does the program, and the next request starts the box again.
-- The container has **no Internet**. Two outbound handlers are all it can reach: the npm
-  registry's one tarball URL (`BrowserBoxRegistry`, fetched over HTTPS by the Worker), and
-  `ws://browser-run.internal/` (`BrowserBoxCdp`), which opens a Browser Run session with the
-  Worker's `BROWSER` binding and pipes CDP through it, closing the session when the socket
-  closes. No API token exists anywhere; pages are loaded by Browser Run, not by the box.
-- chrome-devtools-mcp runs without usage statistics, CrUX lookups or `file:` navigations, and
-  redacts sensitive network headers. Its browser is fresh, signed in nowhere.
-- A box stops ten minutes after its last request (`setInactivityTimeout`), and its browser
-  session with it. A cold box answers within a few seconds. Boxes cannot be bound by name (a
-  container's class must be the Worker's own), so the Worker and the agents reach the
-  `BrowserBox` namespace through `exports` of `cloudflare:workers`.
+**`browser`: Cloudflare Browser Run.** Cloudflare's own hosted
+[Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering)
+(`https://browser.mcp.cloudflare.com/mcp`), with an account API token that may only use Browser
+Run (`BROWSER_RUN_TOKEN`, *Browser Run Write*; account-scoped, so the server finds the account
+itself). Its tools load a page in Browser Run's Chrome and return it as markdown or HTML, a
+screenshot, a PDF, its links, elements by CSS selector or JSON extracted from it, or crawl a
+site. Each call loads the page anew, signed in nowhere: there is no session to click through.
+The tools that list and kill the account's browser sessions are left out of what agents get.
 
 **`github`: GitHub's MCP server, read-only, as the opspile GitHub App.** The server is GitHub's
 hosted one, at `https://api.githubcopilot.com/mcp/readonly` with `X-MCP-Readonly` and

@@ -43,13 +43,10 @@ export async function serversFor(env, { team, org, channelId }) {
   return [...(results || []), ...await globalServersFor(env, { team, channelId })];
 }
 
-/**
- * One server with its request headers, unsealed; null when it is gone or disabled. A global
- * server (`global:<key>`) is connected as `agent`, whose browser box it uses.
- */
-export async function serverWithHeaders(env, id, { agent } = {}) {
+/** One server with its request headers, unsealed; null when it is gone or disabled. */
+export async function serverWithHeaders(env, id) {
   if (String(id).startsWith('global:')) {
-    return globalConnection(env, id, { agent });
+    return globalConnection(env, id);
   }
   const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, updated_at
     FROM mcp_servers WHERE id = ? AND enabled = 1`).bind(id).first();
@@ -85,13 +82,13 @@ function noStream(fetchFn) {
   };
 }
 
-/** A connected client for `{ url, headers, fetch? }`: a server's own fetch wins. */
+/** A connected client for `{ url, headers }`. */
 export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}) {
   const client = new Client(CLIENT_INFO, {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-    fetch: noStream(server.fetch || fetchFn),
+    fetch: noStream(fetchFn),
     requestInit: { headers: server.headers || {} },
   });
   await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connecting to ${server.name || server.url}`);

@@ -60,7 +60,7 @@ export class ThreadAgent extends Agent {
   constructor(ctx, env) {
     super(ctx, env);
     this.registry = createRegistry();
-    this.mcp = new AgentMcp(env, ctx.storage, { agent: () => this.name });
+    this.mcp = new AgentMcp(env, ctx.storage);
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();

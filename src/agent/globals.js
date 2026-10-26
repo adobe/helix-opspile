@@ -19,9 +19,10 @@ import {
  * turned on for an ops team or a single channel (`mcp_global_switches`; a channel's switch
  * wins over its team's, and both are off until someone turns them on).
  *
- * - `browser`: Cloudflare Browser Run through Chrome DevTools MCP. Each agent gets a browser
- *   box of its own (src/agent/browser.js): a container running chrome-devtools-mcp, whose
- *   browser is a Browser Run session reached through the Worker's BROWSER binding.
+ * - `browser`: Cloudflare's hosted Browser Run MCP server, with an API token of the account
+ *   (BROWSER_RUN_TOKEN, Browser Run Write only): fetch pages as markdown or HTML, screenshots,
+ *   PDFs, links, elements by selector, JSON extraction, crawls. Each call loads the page anew;
+ *   there is no browser to click around in.
  * - `github`: GitHub's MCP server, read-only, as the opspile GitHub App (src/github.js), on
  *   the repositories it is installed on, for each installation the admin team allowed. One
  *   server per allowed installation: `github`, or `github_<account>` when there are several.
@@ -30,6 +31,7 @@ import {
  * (src/agent/mcp.js); its id there is `global:<key>`.
  */
 
+export const BROWSER_MCP_URL = 'https://browser.mcp.cloudflare.com/mcp';
 export const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/readonly';
 const GITHUB_TOOLSETS = 'context,repos,issues,pull_requests,actions,discussions';
 
@@ -37,12 +39,14 @@ export const GLOBAL_SERVERS = [
   {
     server: 'browser',
     title: 'Cloudflare Browser Run',
-    description: 'A Chrome browser in Cloudflare Browser Run, driven through Chrome DevTools MCP:'
-      + ' open pages, read their accessibility snapshot, take screenshots, check console'
-      + ' messages and network requests, and record performance traces',
-    instructions: 'Every thread has a browser of its own; it is not signed in anywhere and'
-      + ' forgets everything after ten idle minutes. Most tools take a pageId: call list_pages'
-      + ' first, then navigate_page, then take_snapshot to find the uid of an element.',
+    description: 'Cloudflare Browser Run\'s MCP server: load a web page in a real Chrome and get'
+      + ' it as markdown or HTML, a screenshot or a PDF, its links, elements by CSS selector, or'
+      + ' JSON extracted from it; or crawl a site',
+    instructions: 'Each call loads the page anew, in a browser signed in nowhere: there is no'
+      + ' session to click through. get_url_markdown is the cheapest way to read a page;'
+      + ' start_crawl is for whole sites (then get_crawl_result).',
+    // The account's own sessions are not the agents' business.
+    exclude: ['list_browser_sessions', 'kill_browser_session'],
   },
   {
     server: 'github',
@@ -57,15 +61,6 @@ export const GLOBAL_SERVERS = [
 const BY_NAME = new Map(GLOBAL_SERVERS.map((g) => [g.server, g]));
 export const isGlobalServer = (server) => BY_NAME.has(String(server));
 
-let boxNamespace = () => null;
-
-/** Where the browser boxes live: the Worker's own `BrowserBox` namespace (set in src/index.js). */
-export function useBoxes(namespace) {
-  boxNamespace = typeof namespace === 'function' ? namespace : () => namespace;
-}
-
-const boxes = (env) => env.BROWSER_BOXES || boxNamespace();
-
 /** `github_<account>`, as a script can name it. */
 const githubName = (account) => `github_${String(account).toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
 
@@ -75,8 +70,8 @@ const githubName = (account) => `github_${String(account).toLowerCase().replace(
  */
 export async function instancesOf(env, server) {
   if (server === 'browser') {
-    if (!env.BROWSER || !boxes(env)) {
-      return { instances: [], problem: 'Browser Run is not bound to this deployment (BROWSER).' };
+    if (!env.BROWSER_RUN_TOKEN) {
+      return { instances: [], problem: 'BROWSER_RUN_TOKEN is not set in this deployment.' };
     }
     return { instances: [{ key: 'browser', name: 'browser' }], problem: null };
   }
@@ -170,23 +165,17 @@ export async function globalServersFor(env, target) {
 
 /**
  * A global server to connect to, by its id (`global:<key>`): `{ id, name, url, headers,
- * fetch?, expiresAt? }`, null when it is gone. `agent` names the browser box: one per agent.
+ * expiresAt? }`, null when it is gone.
  */
-export async function globalConnection(env, id, { agent } = {}) {
+export async function globalConnection(env, id) {
   const key = String(id).replace(/^global:/, '');
   if (key === 'browser') {
-    const ns = boxes(env);
-    if (!env.BROWSER || !ns) {
-      return null;
-    }
-    const box = ns.getByName(agent || 'opspile-check');
-    return {
+    return env.BROWSER_RUN_TOKEN ? {
       id,
       name: 'browser',
-      url: 'http://box/mcp',
-      headers: {},
-      fetch: (input, init) => box.fetch(new Request(input, init)),
-    };
+      url: BROWSER_MCP_URL,
+      headers: { Authorization: `Bearer ${env.BROWSER_RUN_TOKEN}` },
+    } : null;
   }
   const m = /^github:(\d+)$/.exec(key);
   if (m) {
@@ -248,3 +237,9 @@ export async function storeTools(env, key, res) {
 
 /** The definition of a global server. */
 export const globalServer = (server) => BY_NAME.get(String(server)) || null;
+
+/** The tools of a global server agents may call: all but those it excludes. */
+export function usableTools(server, tools) {
+  const exclude = new Set((globalServer(server) || {}).exclude || []);
+  return (tools || []).filter((t) => !exclude.has(t.name));
+}
