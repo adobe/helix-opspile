@@ -17,7 +17,7 @@ import {
 } from 'node:test';
 import { api } from '../src/api.js';
 import { refreshGlobalTools } from '../src/mcpadmin.js';
-import { AgentMcp, mcpSection } from '../src/agent/mcp.js';
+import { AgentMcp, CATALOG_TTL_MS, mcpSection } from '../src/agent/mcp.js';
 import { serversFor, serverWithHeaders } from '../src/agent/mcpclient.js';
 import { GITHUB_MCP_URL } from '../src/agent/globals.js';
 import {
@@ -162,6 +162,7 @@ after(() => {
 beforeEach(() => {
   forgetGithub();
   GITHUB.requests.length = 0;
+  GITHUB.installations = GITHUB.installations.slice(0, 1);
   GITHUB.mcpHeaders.length = 0;
 });
 
@@ -216,10 +217,14 @@ function memoryStorage() {
 }
 
 /** The GitHub App, as the manifest flow would have stored it. */
-async function withApp(e) {
+async function withApp(e, { allowed = false } = {}) {
   e.DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, client_id, private_key, created_at)
     VALUES (777, 'opspile-test', 'opspile test', 'acme-labs', 'Iv1.madeup', ?, '2026-10-25T00:00:00Z')`)
     .run(await seal(e, pkcs8Pem(PKCS1)));
+  if (allowed) {
+    e.DB.sqlite.exec(`INSERT INTO github_installations (id, app_id, account, approved_by, approved_at)
+      VALUES (41, 777, 'acme-labs', 'ada@staff.example', '2026-10-25T00:00:00Z')`);
+  }
 }
 
 describe('the GitHub App', () => {
@@ -239,7 +244,7 @@ describe('the GitHub App', () => {
     const m = appManifest({ PUBLIC_ORIGIN: 'https://opspile.example/' });
     assert.ok(Object.values(m.default_permissions).every((p) => p === 'read'));
     assert.equal(m.redirect_url, 'https://opspile.example/api/kb/github/created');
-    assert.equal(m.public, false);
+    assert.equal(m.public, true, 'installable anywhere; opspile allows installations itself');
     assert.equal(m.hook_attributes.active, false);
     assert.ok(m.name.length <= 34);
     assert.equal(manifestAction('', 's'), 'https://github.com/settings/apps/new?state=s');
@@ -344,7 +349,7 @@ describe('global MCP servers in the knowledge-base editor', () => {
 describe('global MCP servers in the cron', () => {
   it('checks each one once a day', async () => {
     const e = env();
-    await withApp(e);
+    await withApp(e, { allowed: true });
     const first = await quiet(() => refreshGlobalTools(e));
     assert.deepEqual(first, { browser: ['browser: 2 tools'], github: ['github: 1 tools'] });
     assert.deepEqual(await refreshGlobalTools(e), {}, 'fresh: nothing to do');
@@ -385,6 +390,21 @@ describe('global MCP servers in thread agents', () => {
     const e = env();
     await withApp(e);
     await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'github', team: 'helix', enabled: true });
+    // Installed, but not allowed yet: no server, and no token.
+    const waiting = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
+    assert.equal(waiting.available, false);
+    assert.match(waiting.problem, /installed on acme-labs, but the admin team has not allowed/);
+    assert.equal(waiting.github.installations[0].approved, false);
+    assert.equal(await serverWithHeaders(e, 'global:github:41'), null);
+    assert.deepEqual(await serversFor(e, { team: 'helix', channelId: 'C1' }), []);
+    const allow = (me, body) => call(e, me, 'PUT', '/api/kb/github/installation', body);
+    assert.equal((await allow(manager, { id: 41, approved: true })).status, 403);
+    assert.equal((await allow(admin, { id: 99, approved: true })).status, 404);
+    assert.equal((await allow(admin, { id: 41, approved: 'yes' })).status, 400);
+    const allowed = await allow(admin, { id: 41, approved: true });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.body.installations[0].approvedBy, 'ada@staff.example');
+
     const listed = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
     assert.equal(listed.available, true);
     assert.deepEqual(listed.instances.map((i) => [i.key, i.name, i.account]), [['github:41', 'github', 'acme-labs']]);
@@ -412,11 +432,17 @@ describe('global MCP servers in thread agents', () => {
     await mcp.call(catalog.servers[0], 'get_file_contents', { owner: 'acme-labs', repo: 'site', path: 'a' });
     assert.equal(GITHUB.requests.filter((r) => r.endsWith('/access_tokens')).length, minted + 1);
 
-    // Installed on a second account: one server each, named by the account.
+    // Installed on a second account: nothing until it is allowed, then one server each.
     GITHUB.installations = [...GITHUB.installations, { id: 42, account: { login: 'Initech' }, repository_selection: 'all' }];
     forgetGithub();
+    const stranger = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' }, Date.now() + CATALOG_TTL_MS + 1);
+    assert.deepEqual(stranger.catalog.servers.map((s) => s.ns), ['github']);
+    await allow(admin, { id: 42, approved: true });
     const two = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' });
     assert.deepEqual(two.catalog.servers.map((s) => s.ns), ['github_acme_labs', 'github_initech']);
-    GITHUB.installations = GITHUB.installations.slice(0, 1);
+    // Revoked: gone again.
+    await allow(admin, { id: 42, approved: false });
+    const back = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' });
+    assert.deepEqual(back.catalog.servers.map((s) => s.ns), ['github']);
   });
 });

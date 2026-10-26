@@ -579,7 +579,9 @@ hosted one, at `https://api.githubcopilot.com/mcp/readonly` with `X-MCP-Readonly
 from strangers that nobody screened). It authenticates with **installation tokens** of the
 opspile GitHub App (`src/github.js`), so it reads exactly the repositories the app is
 installed on, all of an account's or a selection, and nothing else; the app asks for read
-permissions only. The admin team creates the app from the editor with GitHub's manifest flow:
+permissions only. The app is public, so that customers' organizations can install it too;
+since anyone can, an installation is used only after the admin team allowed it in the editor
+(`github_installations`), and a revoked one gets no more tokens. The admin team creates the app from the editor with GitHub's manifest flow:
 the page posts the manifest to GitHub, GitHub asks to confirm and sends them back with a code
 (and a state opspile signed for them), and opspile trades the code for the app and its private
 key, which stays in D1 (`github_apps`), sealed with `TOKEN_KEY`; then GitHub's installation

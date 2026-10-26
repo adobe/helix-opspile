@@ -15,7 +15,8 @@ import {
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
-  appManifest, createApp, currentApp, forgetGithub, installations, manifestAction, shownApp,
+  appManifest, approveInstallation, createApp, currentApp, forgetGithub, installationsWithApprovals,
+  manifestAction, shownApp,
 } from './github.js';
 import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
@@ -255,7 +256,7 @@ async function globalsView(env, me, owner, only) {
       const app = await currentApp(env).catch(() => null);
       view.github = {
         app: shownApp(app),
-        installations: app ? await installations(env, app).catch(() => []) : [],
+        installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
         configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
       };
     }
@@ -420,6 +421,36 @@ async function githubManifest(env, me, body) {
   return json({ action, manifest: JSON.stringify(appManifest(env, { name: body.name })) });
 }
 
+/**
+ * PUT /api/kb/github/installation `{ id, approved }`: allows an installation of the app, so
+ * that agents read its repositories, or no longer allows it. For the admin team.
+ */
+async function githubInstallation(env, me, body) {
+  if (!isAdmin(me)) {
+    return json({ error: 'the admin team allows installations' }, 403);
+  }
+  if (typeof body.approved !== 'boolean' || !Number(body.id)) {
+    return bad('give an installation id and approved: true or false');
+  }
+  const app = await currentApp(env);
+  if (!app) {
+    return json({ error: 'there is no GitHub App yet' }, 409);
+  }
+  forgetGithub();
+  const by = me.email || String(me.id);
+  const done = await approveInstallation(env, app, body.id, body.approved, by);
+  if (!done) {
+    return json({ error: 'the app has no such installation' }, 404);
+  }
+  console.log(JSON.stringify({
+    route: 'kb',
+    github: body.approved ? 'installation allowed' : 'installation revoked',
+    installation: done.id,
+    by: me.id,
+  }));
+  return json({ ok: true, installations: await installationsWithApprovals(env, app) });
+}
+
 /** GET /api/kb/github/created?code&state: GitHub created the app; keep it, then install it. */
 async function githubCreated(env, me, url) {
   if (!isAdmin(me)) {
@@ -570,6 +601,7 @@ export async function mcpAdmin(request, env, url, me) {
     case 'POST /api/kb/mcp/global/check': return checkGlobal(env, me, body);
     case 'POST /api/kb/github/manifest': return githubManifest(env, me, body);
     case 'GET /api/kb/github/created': return githubCreated(env, me, url);
+    case 'PUT /api/kb/github/installation': return githubInstallation(env, me, body);
     case 'GET /api/kb/mcp': return list(env, me, url.searchParams.get('repo'));
     case 'POST /api/kb/mcp': return create(env, me, body);
     case 'PUT /api/kb/mcp': return update(env, me, body);

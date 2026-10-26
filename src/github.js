@@ -16,6 +16,10 @@ import { seal, unseal } from './post.js';
  * The GitHub App of the global `github` MCP server (src/agent/globals.js): read-only, and
  * installed on the repositories (all of an account's, or a selection) it may read.
  *
+ * The app is public, so that it can be installed on any account's repositories (customers'
+ * organizations too); anyone can install it, so agents only read an installation the admin
+ * team allowed in the editor (`github_installations`).
+ *
  * The admin team creates it from the knowledge-base editor with GitHub's manifest flow: the
  * page posts `appManifest()` to GitHub, GitHub asks the admin to confirm and sends them back
  * with a code, and `createApp()` trades the code for the app's id and private key, which is
@@ -62,7 +66,8 @@ export function appManifest(env, { name } = {}) {
     redirect_url: `${base}/api/kb/github/created`,
     setup_url: `${base}/inbox/kb?github=installed`,
     setup_on_update: true,
-    public: false,
+    // Installable on any account; opspile uses only the installations the admin team allows.
+    public: true,
     hook_attributes: { url: `${base}/github/hook`, active: false },
     default_permissions: APP_PERMISSIONS,
     default_events: [],
@@ -253,6 +258,50 @@ export async function installations(env, app, now = Date.now()) {
     }));
   installationCache.set(app.id, { at: now, list });
   return list;
+}
+
+/**
+ * The app's installations with whether the admin team allowed each (`approved`, `approvedBy`,
+ * `approvedAt`), the allowed first.
+ */
+export async function installationsWithApprovals(env, app, now = Date.now()) {
+  const list = await installations(env, app, now);
+  const { results } = await env.DB.prepare(`SELECT id, approved_by, approved_at
+    FROM github_installations WHERE app_id = ?`).bind(app.id).all();
+  const ok = new Map((results || []).map((r) => [Number(r.id), r]));
+  return list.map((i) => {
+    const r = ok.get(Number(i.id));
+    return {
+      ...i,
+      approved: Boolean(r),
+      approvedBy: r ? r.approved_by : null,
+      approvedAt: r ? r.approved_at : null,
+    };
+  }).sort((a, b) => Number(b.approved) - Number(a.approved) || a.account.localeCompare(b.account));
+}
+
+/** Whether the admin team allowed installation `id` of `app`. */
+export async function approved(env, app, id) {
+  return Boolean(await env.DB.prepare('SELECT 1 FROM github_installations WHERE id = ? AND app_id = ?')
+    .bind(Number(id), app.id).first());
+}
+
+/** Allows (or no longer allows) an installation of the app; it must be one of its own. */
+export async function approveInstallation(env, app, id, allow, by) {
+  const found = (await installations(env, app)).find((i) => Number(i.id) === Number(id));
+  if (!found && allow) {
+    return null;
+  }
+  if (allow) {
+    await env.DB.prepare(`INSERT INTO github_installations (id, app_id, account, approved_by,
+        approved_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET app_id = excluded.app_id, account = excluded.account,
+        approved_by = excluded.approved_by, approved_at = excluded.approved_at`)
+      .bind(Number(id), app.id, found.account, by, new Date().toISOString()).run();
+  } else {
+    await env.DB.prepare('DELETE FROM github_installations WHERE id = ?').bind(Number(id)).run();
+  }
+  return found || { id: Number(id) };
 }
 
 /** An installation token: `{ token, expiresAt }` (ms), reused until shortly before it expires. */

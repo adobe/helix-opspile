@@ -114,6 +114,8 @@ function githubApi(request) {
   if (pathname === '/app/installations') {
     return Response.json([{
       id: 4242, account: { login: 'acme-labs', type: 'Organization' }, repository_selection: 'selected', html_url: 'https://github.com/organizations/acme-labs/settings/installations/4242',
+    }, {
+      id: 4343, account: { login: 'someone-else', type: 'User' }, repository_selection: 'all',
     }]);
   }
   if (/\/access_tokens$/.test(pathname)) {
@@ -403,7 +405,10 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, html_url, client_id, private_key,
         created_by, created_at) VALUES (1, 'opspile-preview', 'opspile preview', 'acme-labs',
         'https://github.com/apps/opspile-preview', 'Iv1.preview', ?, 'dev', '2026-10-20T09:00:00Z')`).run(key);
-    // Turned on for the platform team, and off in one of its channels, already.
+    // Allowed on acme-labs; someone-else installed it too, and waits to be allowed.
+    DB.sqlite.exec(`INSERT INTO github_installations (id, app_id, account, approved_by, approved_at)
+      VALUES (4242, 1, 'acme-labs', 'dana@example.com', '2026-10-21T09:00:00Z')`);
+    // Turned on for the platform team already.
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   });
