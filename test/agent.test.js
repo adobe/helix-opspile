@@ -533,3 +533,12 @@ describe('thread agents', () => {
     assert.deepEqual(row, { body: 'Hi Cy, we are looking at the purge times.', email: 'agent@opspile.invalid' });
   });
 });
+
+describe('the ThreadAgent class', () => {
+  it('leaves the Agents SDK its own this.mcp', async () => {
+    // The SDK keeps its MCP client manager in `this.mcp` and calls it (listPrompts) at start.
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /this\.mcp\s*=|this\.mcp\./);
+  });
+});
