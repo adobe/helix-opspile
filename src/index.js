@@ -208,3 +208,5 @@ export default {
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
+// The way back from an agent's shell (a Dynamic Worker) to its files (src/agent/computer.js).
+export { WorkspaceServiceProxy } from '@cloudflare/computer';

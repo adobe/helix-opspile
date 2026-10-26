@@ -94,7 +94,7 @@ function shown(row) {
 const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && managesTeam(me, slug));
 
 /** The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null. */
-async function ownerOf(env, me, repo) {
+export async function ownerOf(env, me, repo) {
   const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
     .bind(String(repo)).first();
   return base && mayManage(me, base.kind, base.slug) ? { scope: base.kind, slug: base.slug } : null;
@@ -263,7 +263,7 @@ async function globalsView(env, me, owner, only) {
 }
 
 /** The team a channel is filed under (its latest thread's), and its kind; null if unknown. */
-async function channelOwner(env, channel) {
+export async function channelOwner(env, channel) {
   return env.DB.prepare(`SELECT team, kind FROM threads WHERE channel_id = ?
     ORDER BY COALESCE(last_at, any_at) DESC LIMIT 1`).bind(channel).first();
 }

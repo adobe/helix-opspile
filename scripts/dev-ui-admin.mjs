@@ -398,6 +398,9 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     PUBLIC_ORIGIN: 'http://localhost:8788',
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
+    // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader.
+    SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
+    LOADER: {},
   };
   const githubApp = NO_GITHUB ? Promise.resolve() : seal(env, pkcs8Pem(PREVIEW_KEY)).then((key) => {
     DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, html_url, client_id, private_key,
@@ -410,6 +413,9 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   });
+  // The computer is on for the platform team already.
+  DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at)
+    VALUES ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
   if (manager) {
     DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");

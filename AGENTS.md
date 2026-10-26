@@ -41,12 +41,15 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   (including each knowledge base's `systemprompt.md` for the agents, and the per-channel switch
   of the thread agents, `src/agent/enabled.js`)
 - `src/agent/` — thread agents: `agent.js` (the `ThreadAgent` Durable Object, Pi via
-  `PiHarness`), `tools.js` (its prompt and tools), `deliver.js` (what it is told, Clef's
+  `PiHarness`), `tools.js` (its prompt and tools), `agenttools.js` (the tools that are off until
+  a team or channel turns them on: `post_message`, in `posting.js`, and the `computer`, pi's
+  bash on Cloudflare Computer, in `computer.js`), `deliver.js` (what it is told, Clef's
   prompt-injection check), `model.js` (Bedrock through AI Gateway), `repos.js` (reading
   knowledge bases and GitHub mirrors), `kbwrite.js`, `okf.js` and `memfs.js` (OKF writes with
   isomorphic-git in memory), `mcp.js` and `mcpclient.js` (the team's and customer's MCP
   servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
   SDK), `turn.js` (the latest turn the inbox shows under the thread)
+- `src/tooladmin.js` — the switches of the agents' tools in the knowledge-base editor
 - `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org,
   and the global ones' switches per team and channel
 - `src/agent/globals.js` — the global MCP servers (`browser`, `github`), their switches and

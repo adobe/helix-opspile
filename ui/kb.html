@@ -174,6 +174,7 @@
   .ch.global .per .row2 { display: flex; gap: 10px; align-items: center; padding: 4px 0 4px 14px; font-size: 13px; }
   .ch.global .per .row2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ch.global .per select { font-size: 12px; }
+  .ch.global .per .na { color: var(--faint); font-style: normal; font-size: 12px; }
   .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px;
     margin-top: 4px; }
   .ch.global .setup input { width: 200px; }
@@ -250,7 +251,7 @@ const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file', back: null,
-  channels: null, configured: true, mcp: null, globals: null,
+  channels: null, configured: true, mcp: null, globals: null, tools: null,
 };
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
@@ -360,7 +361,7 @@ function toUrl(mode = 'push') {
   const q = new URLSearchParams();
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
-  if (['history', 'agents', 'mcp'].includes(state.view)) q.set('view', state.view);
+  if (['history', 'agents', 'mcp', 'tools'].includes(state.view)) q.set('view', state.view);
   if (state.back) q.set('back', state.back);
   const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
@@ -411,10 +412,12 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.channels = null;
   state.mcp = null;
   state.globals = null;
+  state.tools = null;
   const [{ ok, body }] = await Promise.all([
     call(`/api/kb/files?repo=${encodeURIComponent(repo)}`),
     loadChannels(repo),
     loadMcp(repo),
+    loadTools(repo),
   ]);
   if (state.repo !== repo) return true;
   if (!ok) {
@@ -429,6 +432,7 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   if (state.view === 'history') showHistory({ force: true, nav });
   else if (state.view === 'agents') showAgents({ force: true, nav });
   else if (state.view === 'mcp') showMcp({ force: true, nav });
+  else if (state.view === 'tools') showTools({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
   return true;
 }
@@ -455,6 +459,8 @@ function renderFiles() {
       <span>Thread agents</span>${agentsTag()}</div>
     <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="MCP servers its agents can call from code mode">
       <span>MCP servers</span>${mcpTag()}</div>
+    <div class="row${state.view === 'tools' ? ' on' : ''}" id="toolsView" title="Tools its agents get only where they are turned on: posting, a computer">
+      <span>Agent tools</span>${toolsTag()}</div>
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
@@ -466,6 +472,7 @@ function renderFiles() {
   $('history').onclick = () => showHistory();
   $('agents').onclick = () => showAgents();
   $('mcp').onclick = () => showMcp();
+  $('toolsView').onclick = () => showTools();
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -644,6 +651,150 @@ function mcpRow(s) {
     <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
     <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents'}" data-server="${s.id}"></button>
   </div>`;
+}
+
+// ---- agent tools --------------------------------------------------------------------------
+//
+// Tools the thread agents get only where they are turned on (src/agent/agenttools.js), over
+// /api/kb/tools (src/tooladmin.js): post_message, and the computer (pi's bash tool on
+// Cloudflare Computer). For a team, or one channel; a channel's switch wins over its team's.
+
+/** The agent tools of this knowledge base's team or customer; null when unknown. */
+async function loadTools(repo) {
+  const { ok, body } = await call(`/api/kb/tools?repo=${encodeURIComponent(repo)}`);
+  if (state.repo !== repo) return;
+  state.tools = ok ? body.tools : null;
+}
+
+const toolOn = (t) => Boolean((t.team && t.team.enabled) || Object.values(t.channels).some((c) => c.enabled));
+
+/** "post_message, bash", or "off", next to "Agent tools". */
+function toolsTag() {
+  if (!state.tools) return '<span class="tag missing">unknown</span>';
+  const on = state.tools.filter(toolOn);
+  return on.length ? `<span class="tag agent">${esc(on.map((t) => t.names.join(', ')).join(', '))}</span>` : '<span class="tag missing">off</span>';
+}
+
+async function showTools({ force = false, nav = 'push' } = {}) {
+  if (!force && state.file && !(await leave())) return false;
+  state.view = 'tools';
+  state.file = null;
+  state.editing = null;
+  renderFiles();
+  toUrl(nav);
+  renderTools();
+  return true;
+}
+
+/** The per-channel switches of a tool; channels on a platform it does not work on are left off. */
+function toolPerChannel(t) {
+  const b = base();
+  const list = (state.channels || []).filter((c) => c.kind === 'channel');
+  if (!list.length) return '';
+  const set = list.filter((c) => t.channels[c.channelId]).length;
+  const team = t.team ? (t.team.enabled ? 'on' : 'off') : null;
+  const rows = list.map((c) => {
+    const works = !t.platforms || t.platforms.includes(c.source);
+    const sw = t.channels[c.channelId];
+    const value = sw ? (sw.enabled ? 'on' : 'off') : '';
+    const title = !works ? `Not on ${SOURCES[c.source] || c.source}` : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
+    return `<div class="row2"><span title="${esc(title)}">${esc(channelName(c))}${b.kind === 'org' ? ` · ${esc(c.teamName)}` : ''}${works ? '' : ` <i class="na">not on ${esc(SOURCES[c.source] || c.source)}</i>`}</span>
+      <select data-tch="${esc(t.tool)}" data-channel="${esc(c.channelId)}" aria-label="${esc(t.title)} in ${esc(channelName(c))}"${c.may && works ? '' : ' disabled'}>
+        <option value=""${value === '' ? ' selected' : ''}>As its team${team ? ` (${team})` : ''}</option>
+        <option value="on"${value === 'on' ? ' selected' : ''}>On</option>
+        <option value="off"${value === 'off' ? ' selected' : ''}>Off</option>
+      </select></div>`;
+  }).join('');
+  return `<details class="per"${state.openTool === t.tool ? ' open' : ''} data-tper="${esc(t.tool)}"><summary>Per channel${set ? ` (${set} set)` : ''}</summary>${rows}</details>`;
+}
+
+function toolRow(t) {
+  const b = base();
+  const on = Boolean(t.team && t.team.enabled);
+  const by = t.team && t.team.by ? `Turned ${on ? 'on' : 'off'} for ${esc(b.name)} by ${esc(t.team.by)}, ${esc(ago(t.team.at))}` : '';
+  const platforms = t.platforms ? `<span class="src">${esc(t.platforms.map((p) => SOURCES[p] || p).join(', '))} only</span>` : '';
+  const sw = t.team ? `<span class="state${on ? ' on' : ''}">${on ? 'On' : 'Off'}</span>
+    <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(t.title)} for ${esc(b.name)}"
+      title="${on ? `Agents of ${esc(b.name)} have it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`}" data-tteam="${esc(t.tool)}"></button>` : '';
+  return `<div class="ch global">
+    <div class="who">
+      <div class="nm">${esc(t.title)}<span class="src mono">${esc(t.names.join(', '))}</span>${platforms}${t.problem ? '<span class="src err">not set up</span>' : ''}</div>
+      <div class="sub">${esc(t.description)}</div>
+      ${t.note ? `<div class="sub">${esc(t.note)}</div>` : ''}
+      ${t.problem ? `<div class="sub err">${esc(t.problem)}</div>` : ''}
+      ${by ? `<div class="sub by">${by}</div>` : ''}
+    </div>
+    ${sw}
+    ${toolPerChannel(t)}
+  </div>`;
+}
+
+const TOOL_CONFIRM = {
+  post_message: {
+    on: (where) => `From their next message, the agents of ${where} can post replies in their threads themselves, as the opspile app, without a person reading them first. They still keep drafts for anything a person should review.`,
+    off: (where) => `Agents of ${where} only keep drafts again, from their next message.`,
+  },
+  computer: {
+    on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer, no network).`,
+    off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
+  },
+};
+
+function renderTools(note) {
+  const b = base();
+  const list = state.tools;
+  const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
+  const explain = b.kind === 'team'
+    ? `Tools the thread agents get only where they are turned on: for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). The admin team and the managers of ${b.name} switch them.`
+    : `Tools the thread agents get only where they are turned on: for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Agent tools for ${esc(whose)}</span></div>
+    <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
+    : state.configured ? esc(explain) : 'Agents are not configured in this deployment: tools take effect once they are.'}</div>
+    <div class="channels">${list ? list.map(toolRow).join('') : '<div class="empty">Could not list the agent tools.</div>'}</div>`;
+  if (!list) return;
+  const repo = state.repo;
+  const find = (tool) => state.tools.find((t) => t.tool === tool);
+  const stale = () => state.repo !== repo || state.view !== 'tools';
+  for (const el of $('editor').querySelectorAll('[data-tper]')) {
+    el.addEventListener('toggle', () => { state.openTool = el.open ? el.dataset.tper : null; });
+  }
+  for (const el of $('editor').querySelectorAll('[data-tteam]')) {
+    el.onclick = async () => {
+      const t = find(el.dataset.tteam);
+      const on = !(t.team && t.team.enabled);
+      const yes = await ask(
+        on ? `Turn on ${t.title} for ${b.name}?` : `Turn off ${t.title} for ${b.name}?`,
+        `${TOOL_CONFIRM[t.tool][on ? 'on' : 'off'](`every channel of ${b.name}`)} Channels switched on their own keep their switch.`,
+        on ? 'Turn on' : 'Turn off',
+      );
+      if (!yes) return;
+      const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: t.tool, team: b.slug, enabled: on }) });
+      if (stale()) return;
+      if (!ok) { renderTools({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      t.team = body.switch;
+      renderFiles();
+      renderTools({ kind: 'ok', text: `${t.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-tch]')) {
+    el.onchange = async () => {
+      const t = find(el.dataset.tch);
+      const c = state.channels.find((x) => x.channelId === el.dataset.channel);
+      const enabled = el.value === '' ? null : el.value === 'on';
+      if (enabled && !(await ask(`Turn on ${t.title} in ${channelName(c)}?`, TOOL_CONFIRM[t.tool].on(channelName(c)), 'Turn on'))) {
+        renderTools();
+        return;
+      }
+      const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: t.tool, channel: c.channelId, enabled }) });
+      if (stale()) return;
+      if (!ok) { renderTools({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      if (body.switch) t.channels[c.channelId] = body.switch;
+      else delete t.channels[c.channelId];
+      state.openTool = t.tool;
+      renderFiles();
+      renderTools({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
+    };
+  }
 }
 
 // ---- global MCP servers ---------------------------------------------------------------
@@ -1221,7 +1372,7 @@ document.querySelector('main').addEventListener('click', (e) => {
 window.addEventListener('popstate', async () => {
   const q = new URLSearchParams(location.search);
   const repo = q.get('repo');
-  const view = ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : 'file';
+  const view = ['history', 'agents', 'mcp', 'tools'].includes(q.get('view')) ? q.get('view') : 'file';
   const path = q.get('path') || SYSTEM_PROMPT;
   let moved;
   if (!repo || !state.bases.some((b) => b.repo === repo)) {
@@ -1242,6 +1393,8 @@ window.addEventListener('popstate', async () => {
     moved = state.view === 'agents' || await showAgents({ nav: 'replace' });
   } else if (view === 'mcp') {
     moved = state.view === 'mcp' || await showMcp({ nav: 'replace' });
+  } else if (view === 'tools') {
+    moved = state.view === 'tools' || await showTools({ nav: 'replace' });
   } else {
     moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
   }
@@ -1277,11 +1430,11 @@ window.addEventListener('popstate', async () => {
   if (pick) {
     await openRepo(pick.repo, {
       path: exact ? q.get('path') || undefined : undefined,
-      view: exact && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined,
+      view: exact && ['history', 'agents', 'mcp', 'tools'].includes(q.get('view')) ? q.get('view') : undefined,
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')))) showPane('editor');
+    if (exact && (q.get('path') || ['history', 'agents', 'tools'].includes(q.get('view')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');

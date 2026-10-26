@@ -15,13 +15,18 @@ import { createRegistry, Harness } from '@earendil-works/pi-durable';
 import { Agent } from 'agents';
 import { PiHarness } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
+import { Workspace } from '@cloudflare/computer';
+import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
+import jqModules from '@cloudflare/computer/shell/jq';
 import { entryOf } from '../drafts.js';
 import {
   agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
+import { toolsFor } from './agenttools.js';
+import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
-import { opspileExtension, staffExtension } from './tools.js';
+import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import { latestTurn } from './turn.js';
 
 /**
@@ -39,6 +44,11 @@ import { latestTurn } from './turn.js';
  * The scripts run on this object's thread (`createInlineCodemodeSandbox`): one object per
  * thread, so a script that computes holds up only its own agent, and only up to the
  * interrupt budget.
+ *
+ * Tools the team turns on (src/agent/agenttools.js): `post_message`, and `computer`, pi's bash
+ * tool on Cloudflare Computer, whose Workspace lives in this object's SQLite (src/agent/
+ * computer.js). Its shell, in a Dynamic Worker, reaches the files back through
+ * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that).
  */
 
 export const IDLE_SECONDS = 24 * 60 * 60;
@@ -46,6 +56,9 @@ const TARGET_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
 const SCRIPT_INTERRUPT_BUDGET = 50_000;
+
+// The platform ids of the agent's latest posts: they come back as messages, which it is not told.
+const MAX_POSTED = 50;
 
 const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
   + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
@@ -73,16 +86,22 @@ export class ThreadAgent extends Agent {
           hasThread: !this.name.startsWith('kb:'),
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),
+          posted: (id) => this.posted(id),
         };
-        // In this order, which is the system prompt's: opspile, code mode, the MCP servers,
-        // and the staff's instructions last. A reinstall replaces an extension in place.
+        this.agentContext = agent;
+        // In this order, which is the system prompt's: opspile, the tools the team turned on,
+        // code mode, the MCP servers, and the staff's instructions last. A reinstall replaces
+        // an extension in place.
         this.registry.install(opspileExtension(agent));
+        this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
         this.mcpInstalled = true;
         return Harness.open(storage, {
           models,
           registry: this.registry,
+          // The bash tool's environment: the computer, while it is on.
+          env: () => (this.tools && this.tools.includes('computer') ? this.computer() : undefined),
           onWake,
           settings: {
             retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000 },
@@ -128,6 +147,83 @@ export class ThreadAgent extends Agent {
     } catch (e) {
       console.log(JSON.stringify({ route: 'agent', mcp: 'sync failed', error: e.message }));
     }
+  }
+
+  /** The switchable tools last installed (src/agent/agenttools.js), from storage at first. */
+  async currentTools() {
+    this.tools ??= (await this.ctx.storage.get('tools')) || [];
+    return this.tools;
+  }
+
+  /**
+   * Before the agent is told something: are its switchable tools still the ones turned on? A
+   * change is installed at once when Pi is open, else when it opens. A failure keeps them.
+   */
+  async syncTools() {
+    try {
+      const before = await this.currentTools();
+      const now = await toolsFor(this.env, await this.target());
+      if (now.join(',') === before.join(',')) {
+        return;
+      }
+      this.tools = now;
+      await this.ctx.storage.put('tools', now);
+      if (this.agentContext) {
+        this.registry.install(agentToolsExtension(this.agentContext, now));
+      }
+      console.log(JSON.stringify({ route: 'agent', tools: now }));
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', tools: 'sync failed', error: e.message }));
+    }
+  }
+
+  /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
+  computer() {
+    this.computerEnv ??= computerEnv(async () => {
+      const ws = this.workspace();
+      await ws.ready();
+      if (!this.computerReady) {
+        await ws.fs.mkdir(COMPUTER_CWD, { recursive: true });
+        this.computerReady = true;
+      }
+      return ws;
+    });
+    return this.computerEnv;
+  }
+
+  /** The Workspace of the computer: files in this object's SQLite, a shell in a Dynamic Worker. */
+  workspace() {
+    this.ws ??= new Workspace({
+      storage: this.ctx.storage,
+      backends: [
+        new WorkerShellBackend({
+          id: 'shell',
+          loader: this.env.LOADER,
+          workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
+          ctx: this.ctx,
+          commands: [jqModules],
+          egress: { mode: 'none' },
+        }),
+      ],
+    });
+    return this.ws;
+  }
+
+  /** For the shell in the Dynamic Worker (through WorkspaceServiceProxy): the files. */
+  async __getWorkspaceStub() {
+    const ws = this.workspace();
+    await ws.ready();
+    return ws.stub();
+  }
+
+  /** Remembers a message the agent posted, so that it is not told about it. */
+  async posted(id) {
+    if (!id) {
+      return;
+    }
+    const list = (await this.ctx.storage.get('posted')) || [];
+    await this.ctx.storage.put('posted', [...list.filter((x) => x !== String(id)), String(id)]
+      .slice(-MAX_POSTED));
   }
 
   /** What this agent works on: the inbox entry, its team and customer. Cached briefly. */
@@ -204,13 +300,21 @@ export class ThreadAgent extends Agent {
     }
     const entry = await entryMessages(this.env, t.key);
     const mark = await this.ctx.storage.get('mark');
-    const fresh = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
-    if (!fresh.length) {
+    const unseen = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
+    // Its own posts (post_message) come back as messages; it is not told about them.
+    const own = new Set((await this.ctx.storage.get('posted')) || []);
+    const fresh = unseen.filter((m) => !own.has(String(m.id)));
+    if (!unseen.length) {
       return { result: 'unchanged' };
     }
+    const last = markOf(unseen[unseen.length - 1]);
+    if (!fresh.length) {
+      await this.ctx.storage.put('mark', last);
+      return { result: 'unchanged', own: unseen.length };
+    }
     const verdicts = await this.verdicts(fresh);
-    const last = markOf(fresh[fresh.length - 1]);
     const input = deliveryText(entry, fresh, verdicts, { first: !mark });
+    await this.syncTools();
     await this.syncMcp();
     const receipt = await this.harness.submit(input, {
       operationId: `messages:${last}`,
@@ -246,6 +350,7 @@ export class ThreadAgent extends Agent {
       return;
     }
     await this.ctx.storage.delete('idle');
+    await this.syncTools();
     await this.syncMcp();
     await this.harness.submit(IDLE_PROMPT, { operationId: `idle:${mark}`, whenBusy: 'followUp' });
   }
@@ -261,6 +366,7 @@ export class ThreadAgent extends Agent {
       + ` extending existing concepts where they fit, with ${by} as the source`
       + ` (author: human:${by}). Do not change the draft because of it unless it changes what`
       + ` the customer should be told.\n\n<staff-note>\n${text}\n</staff-note>`;
+    await this.syncTools();
     await this.syncMcp();
     const receipt = await this.harness.submit(note, {
       operationId: `seed:${(await sha256(`${by}\n${text}`)).slice(0, 32)}`,
@@ -282,6 +388,7 @@ export class ThreadAgent extends Agent {
       mark: (await this.ctx.storage.get('mark')) || null,
       pending,
       turn,
+      tools: await this.currentTools(),
       mcp: catalog.servers.map((s) => ({
         name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
       })),

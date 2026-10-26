@@ -440,9 +440,9 @@ async function kbApi(req, res, url) {
   // A manager edits their teams' knowledge bases only, as in src/kbadmin.js.
   const allowed = (repo) => !MANAGER || repo === 'kb-team-edge';
   const body = req.method === 'GET' ? {} : await readJson(req);
-  // The list (with its agent counts), the channels and their agents, and the agents' MCP
-  // servers: src/kbadmin.js itself.
-  if (['/api/kb', '/api/kb/channels', '/api/kb/agent'].includes(url.pathname)
+  // The list (with its agent counts), the channels and their agents, the agents' MCP servers
+  // and their switchable tools: src/kbadmin.js itself.
+  if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools'].includes(url.pathname)
     || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')) {
     const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);
     const out = await r.json();
