@@ -60,7 +60,9 @@ export class ThreadAgent extends Agent {
   constructor(ctx, env) {
     super(ctx, env);
     this.registry = createRegistry();
-    this.mcp = new AgentMcp(env, ctx.storage);
+    // Not `this.mcp`: the Agents SDK's own MCP client manager lives there, and the SDK calls it
+    // (listPrompts, listTools) when the agent starts.
+    this.servers = new AgentMcp(env, ctx.storage);
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
@@ -74,7 +76,7 @@ export class ThreadAgent extends Agent {
         // In this order, which is the system prompt's: opspile, code mode, the MCP servers,
         // and the staff's instructions last. A reinstall replaces an extension in place.
         this.registry.install(opspileExtension(agent));
-        this.installMcp(await this.mcp.current());
+        this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
         this.mcpInstalled = true;
         return Harness.open(storage, {
@@ -99,7 +101,7 @@ export class ThreadAgent extends Agent {
       interruptBudget: SCRIPT_INTERRUPT_BUDGET,
     });
     this.registry.install(codemodeExtension(catalog, this.sandbox));
-    this.registry.install(mcpExtension(catalog, (...args) => this.mcp.call(...args)));
+    this.registry.install(mcpExtension(catalog, (...args) => this.servers.call(...args)));
   }
 
   /**
@@ -109,7 +111,7 @@ export class ThreadAgent extends Agent {
    */
   async syncMcp() {
     try {
-      const { changed, catalog } = await this.mcp.refresh(await this.target());
+      const { changed, catalog } = await this.servers.refresh(await this.target());
       if (changed && this.mcpInstalled) {
         this.installMcp(catalog);
       }
@@ -268,7 +270,7 @@ export class ThreadAgent extends Agent {
 
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
-    const catalog = await this.mcp.current();
+    const catalog = await this.servers.current();
     return {
       name: this.name,
       model: this.env.AGENT_MODEL || null,
