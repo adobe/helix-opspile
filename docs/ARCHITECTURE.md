@@ -98,12 +98,14 @@ and whether it is a conversation, an alert feed or not worth following. Clef is 
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
 looks again when the channel has new activity, the ops teams change, or the label is a week old.
-Every rule change is tried first: the page lists the channels it
-would move and asks. Applied, each moved channel is **re-filed** by a `refile` job on the
+Every rule change applies at once (the page names the channels it
+moved; the API still answers `dryRun` with what a change would move), and the page sends its
+changes one after the other, so many can be made in a row. Applied, each moved channel is **re-filed** by a `refile` job on the
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
 thread rows take the new org, team and kind, and the new org and team get their knowledge
-bases. A large channel moves a few hundred files per job.
+bases. A job starts from where each thread is filed in D1, not where it was when the job was
+queued, so several changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
 **Team managers.** A member of a team can be its **manager**: they get the admin pages and
 the knowledge-base editor for that team only, where they add and remove members, promote
