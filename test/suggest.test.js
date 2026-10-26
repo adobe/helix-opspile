@@ -167,7 +167,7 @@ describe('channel suggestions', () => {
     // and members, and `none`.
     const { questions, state } = e.AI.calls.find((c) => /globex/.test(c.body.state)).body;
     assert.deepEqual(Object.keys(questions.team.criteria), ['edge', 'helix', NONE]);
-    assert.match(questions.team.criteria.edge, /Teams team name starts with ex- \(Teams only\).*ex-acme \/ Main.*Bo, Cy/);
+    assert.match(questions.team.criteria.edge, /Teams team or Discord server name starts with ex- \(Microsoft Teams only\).*ex-acme \/ Main.*Bo, Cy/);
     assert.match(state, /Adobe people who posted: Bo \(Edge ops\), 2 messages/);
     assert.match(state, /Adobe staff in the channel: Cy \(Edge ops\)/);
     assert.deepEqual(e.DB.rows("SELECT user_id, email, name FROM channel_members WHERE channel_id = 'C3' ORDER BY user_id"), [

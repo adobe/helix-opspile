@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { accountName, PLATFORMS, platformName } from './platforms.js';
 import { seedAgent } from './agent/stub.js';
 import { inbox, thread as loadThread } from './api.js';
 import {
@@ -52,7 +53,7 @@ const resolvedOf = (t) => {
   return Boolean(t.label && t.label.resolved_p != null && t.label.resolved_p >= 0.5);
 };
 const latest = (t) => String(t.last_at || t.any_at || '');
-const platformOf = (t) => (t.source === 'slack' ? 'slack' : 'teams');
+const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
 
 /** A response from the API helpers, as `{ data }` or `{ error }`. */
 async function fromResponse(res) {
@@ -63,7 +64,7 @@ async function fromResponse(res) {
   let hint = '';
   if (body.connect || body.reconnect) {
     const p = body.connect || body.reconnect;
-    hint = ` The user has to connect their ${p === 'slack' ? 'Slack' : 'Microsoft'} account in the opspile inbox first.`;
+    hint = ` The user has to connect their ${accountName(p)} account in the opspile inbox first.`;
   }
   if (res.status === 404) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads (and a `message` from get_thread).' };
@@ -129,7 +130,7 @@ async function listThreads(env, me, args) {
   const bad = checkValues('waiting_on', f.waiting_on, WAITING)
     || checkValues('urgency', f.urgency, URGENCY)
     || checkValues('kind', f.kind, KINDS)
-    || checkValues('platform', f.platform, ['slack', 'teams'])
+    || checkValues('platform', f.platform, PLATFORMS)
     || checkValues('type', f.type, ['conversation', 'alert']);
   if (bad) {
     return bad;
@@ -314,7 +315,7 @@ async function reply(env, me, args, ctx) {
     }
     mentions.push({ id: exact.id, name: exact.name });
   }
-  const where = `${platformOf(t.thread) === 'slack' ? 'Slack' : 'Teams'} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
+  const where = `${platformName(platformOf(t.thread))} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
   const asked = await confirmReply(env, me, args, ctx, where);
   if (asked) {
     return asked;
@@ -406,7 +407,7 @@ export const TOOLS = [
         kind: TEXT_ITEMS(KINDS),
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
-        platform: TEXT_ITEMS(['slack', 'teams']),
+        platform: TEXT_ITEMS(PLATFORMS),
         customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as list_threads shows them; case does not matter' },
         unread_only: { type: 'boolean', description: 'Only threads with messages the viewer has not read' },
         mentions_me: { type: 'boolean', description: 'Only threads that mention the viewer' },

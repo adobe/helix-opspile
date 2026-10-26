@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { platformName } from './platforms.js';
 import { parse } from './channels.js';
 import { ruleFacts } from './facts.js';
 import { isStaffDomain } from './lookup.js';
@@ -163,7 +164,7 @@ export function stateOf(thread, messages, reactions = new Map()) {
     ? [live[0], ...live.slice(-(MAX_MESSAGES - 1))]
     : live;
   const header = [
-    `Channel: ${thread.channel_name || thread.channel_id} on ${thread.source === 'slack' ? 'Slack' : 'Microsoft Teams'}`,
+    `Channel: ${thread.channel_name || thread.channel_id} on ${platformName(thread.source)}`,
     `Customer: ${thread.org}`,
     thread.root_at ? null : 'The first message of this thread is missing.',
   ].filter(Boolean).join('\n');
@@ -187,7 +188,7 @@ export async function threadMessages(env, thread) {
 /** The reactions in a thread, by message id, and the time of the latest one. */
 async function threadReactions(env, key) {
   const { results } = await env.DB.prepare(`SELECT r.message, r.emoji, r.at,
-      COALESCE(p.name, i.name) AS name, COALESCE(p.staff, 0) AS staff, i.email
+      COALESCE(p.name, i.name) AS name, MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, i.email
     FROM reactions r
     LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
     LEFT JOIN people p ON p.id = i.person

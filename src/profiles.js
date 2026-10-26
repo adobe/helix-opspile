@@ -72,7 +72,8 @@ export async function profiles(env, keys) {
       SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS t,
         json_extract(value, '$[2]') AS u FROM json_each(?))
     SELECT i.source, i.tenant, i.user_id, i.kind, COALESCE(p.name, i.name) AS name, i.avatar,
-      i.email, i.title, i.company, i.person, COALESCE(p.staff, 0) AS staff
+      i.email, i.title, i.company, i.person,
+      MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
     FROM k JOIN identities i ON i.source = k.s AND i.tenant = k.t AND i.user_id = k.u
     LEFT JOIN people p ON p.id = i.person`).bind(JSON.stringify(wanted.map(splitKey))).all(),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),

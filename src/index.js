@@ -22,6 +22,7 @@ import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
 import { diagTeams } from './diag.js';
+import { discordEnabled } from './discord.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { pwa } from './pwa.js';
@@ -38,6 +39,9 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
+
+/** The one Discord poller object (src/poller.js). */
+const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
 
 // The agents' browser boxes (src/agent/browser.js): this Worker's own Durable Object class,
 // reached through its exports (a container's class cannot be bound by name).
@@ -86,6 +90,14 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (pathname === '/diag/discord') {
+      // The Discord poller: GET says how the last poll went; POST polls now (and reads the
+      // last day again for edits, deletions and reactions).
+      if (!authorizedDiag(request, env) || !env.DISCORD) {
+        return text('forbidden\n', 403);
+      }
+      return poller(env).fetch(`https://poller/${request.method === 'POST' ? 'poll' : 'status'}`);
     }
     if (pathname === '/diag/agent') {
       // One agent, by its name (an inbox entry key, or kb:<team>:<org>): GET says what it is
@@ -184,6 +196,12 @@ export default {
     ctx.waitUntil(syncInstalledBots(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
+    if (env.DISCORD && discordEnabled(env)) {
+      // The poller's own alarm keeps it polling; this starts it, and restarts a stopped one.
+      ctx.waitUntil(poller(env).fetch('https://poller/ensure').then((r) => r.json())
+        .then((r) => console.log(JSON.stringify({ route: 'cron', discord: r.state })))
+        .catch((e) => console.error(JSON.stringify({ route: 'cron', discord: 'error', error: e.message }))));
+    }
     ctx.waitUntil(refreshGlobalTools(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));
@@ -195,4 +213,5 @@ export default {
 
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
+export { DiscordPoller } from './poller.js';
 export { BrowserBox, BrowserBoxCdp, BrowserBoxRegistry } from './agent/browser.js';

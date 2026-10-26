@@ -1,7 +1,7 @@
 # helix-opspile architecture
 
 opspile is a unified inbox for an ops team. It ingests every channel the team works in on
-**Slack** and **Microsoft Teams**, keeps the threads in **Cloudflare R2**, and tracks read/unread
+**Slack**, **Microsoft Teams** and **Discord**, keeps the threads in **Cloudflare R2**, and tracks read/unread
 state per person and per team, so that you can see which threads somebody else has already
 seen and you have not.
 
@@ -19,6 +19,7 @@ Bedrock, reached through AI Gateway.
 flowchart LR
   S[Slack Events API] --> R
   T[Microsoft Graph<br/>change notifications] --> R
+  D[Discord REST API<br/>polled every minute] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
   C[(2. channel folders<br/>R2, one file per message)] --> I
@@ -27,7 +28,7 @@ flowchart LR
   UI -- read events --> I
 ```
 
-Each pile is derived from the one before it. Pile 2 never talks to Slack or Teams directly,
+Each pile is derived from the one before it. Pile 2 never talks to the platforms directly,
 so it, and everything after it, can be rebuilt by replaying pile 1.
 
 ### 1. Raw events
@@ -50,7 +51,16 @@ are removed before an event is stored.
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
   fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
   `resource` names the message; the message's metadata names the notification.
-- Backfill pages from the history APIs land here too, marked `via: backfill`.
+- **Discord** is polled (see [Ingestion](#ingestion)): one Durable Object (`DiscordPoller`)
+  stores each state of a message it reads (new, edited, other reactions) and each deletion it
+  finds as an envelope `{ t, via, guild, d, thread?, root?, reactions?, at? }`. `d` is what
+  Discord sent; around it is what only the poller knew at the time: the thread a message was
+  posted in (Discord names just the thread's channel id), the conversation an inline reply
+  belongs to, who reacted (messages carry counts only) and since when the poller has seen each
+  reaction, and when it found a message gone. Keys are `<message id>-<hash of the envelope>`
+  and `<message id>-delete`, so the same state read twice shares a key.
+- Backfill pages from the history APIs land here too, marked `via: backfill` (Discord's:
+  `via: history`).
 
 ### 2. Channel folders
 
@@ -149,6 +159,7 @@ The message body, as markdown.
 ```
 thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
              teams:<tenantId>:<teamId>:<channelId>:<rootMessageId>
+             discord:<guildId>:<channelId>:<rootMessageId>
 ```
 
 - New messages are new objects, so concurrent replies never contend for the same file.
@@ -394,6 +405,10 @@ email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed wh
 A reply goes to the latest platform thread of an inbox entry and comes back through the
 normal ingestion path, like any other message.
 
+Discord threads are read-only in the inbox: Discord lets only bots post and react through its
+API, and opspile acts as the person or not at all. They have a link to reply in Discord, no
+reply box, reactions or ✅; Discord's own ✅ by staff still resolves them.
+
 **Mentions.** `@` in a reply suggests the people opspile knows on the thread's platform, and
 on Teams also the bots of the thread's Teams team (`bot_teams` in D1): the bots installed there,
 which the cron lists from Graph (`installedApps`) for every Teams team with a channel in D1, and
@@ -616,6 +631,10 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
 
 - On **Slack**, bot posts carry `bot_id` and no `user`, and Slack Connect marks people from
   another workspace with `user_team`.
+- On **Discord**, bots carry `author.bot`, webhooks `webhook_id`. Discord shares no email
+  with bots, so a member is staff when they have one of the `DISCORD_STAFF_ROLES`
+  (`identities.staff`), or when they connected the account in the inbox (OAuth `identify`),
+  which links it to their person: their posts move their watermark and count as theirs.
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
   derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
@@ -653,6 +672,15 @@ These were measured against the live APIs during exploration.
   new activity cannot be detected by polling roots.
 - **Bots edit their own messages later**, for example to add a ticket link, which is why edits
   never make a thread unread.
+- **Discord is two-level in another way.** A channel's messages are flat, and a *thread* is
+  a channel of its own (`channel_id` is the thread's id, its `parent_id` the channel). A thread
+  started from a message has that message's id, and a forum post's first message has the
+  post's id, so the thread id is the root message id: a thread's messages are filed under its
+  parent channel and the thread id, next to the message it started from. People also answer
+  with an inline reply (type 19, `message_reference`) instead of a thread; that reply joins
+  the conversation of the message it answers, and a thread started from such a reply joins it
+  too. Message ids are snowflakes (ms since 2015 shifted by 22 bits), unique across Discord.
+  Joins, pins, boosts and "started a thread" notices are not stored in pile 2.
 - **Alert channels** consist entirely of bot posts without replies. They are filed as
   `kind: alert` and counted, rather than shown as individual unread threads.
 
@@ -671,6 +699,21 @@ Two new apps:
   creating the subscription needed no protected-API approval (measured 2026-10-20).
   Polling is not an alternative: `/messages/delta` and `/messages` return root messages
   only, never replies.
+
+- A **Discord application** with a bot in each server opspile reads (`DISCORD_GUILDS`),
+  permissions *View Channels* and *Read Message History* and the privileged *Message Content*
+  intent, which REST reads need as well. Discord delivers messages only over its gateway
+  WebSocket, which would keep a Durable Object in memory, and billed, around the clock; a
+  support server gets a few messages a day, so opspile **polls** instead. The poller object's
+  alarm asks every minute for each server's channels and active threads, which name their
+  latest message, and reads the messages after the last one stored where there are newer
+  ones: two requests when nothing happened. An archived thread that gets a message is active
+  again, so archived threads are read only on the first poll, `DISCORD_HISTORY_DAYS` back.
+  Every fifth poll it reads the conversations active in the last day again and compares them
+  with what it saw: an edit or other reactions are stored as a new state of the message (a
+  reaction timed when it was first seen), a message no longer there as a deletion. The object
+  stores each thread's parent, each reply's root, the last message id per channel and thread,
+  and its view of the last day's messages; the cron pokes it, so a stopped alarm restarts.
 
 ## Open questions
 

@@ -212,7 +212,7 @@ describe('connecting and posting', () => {
     const state = await makeState(e, 1, 'slack');
     const back = await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${state}`));
     assert.equal(back.headers.get('location'), 'https://opspile.test/inbox?connected=slack');
-    assert.deepEqual(await connections(e, 1), { slack: true, teams: false });
+    assert.deepEqual(await connections(e, 1), { slack: true, teams: false, discord: false });
     assert.doesNotMatch(JSON.stringify(e.DB.rows('SELECT * FROM user_tokens')), /xoxp-ada/);
 
     const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'On it.' }, inTeam);
@@ -245,7 +245,7 @@ describe('connecting and posting', () => {
     const state = await makeState(e, 1, 'slack');
     const back = await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${state}`));
     assert.match(back.headers.get('location'), /connect_error=that\+Slack\+account\+belongs\+to\+someone\+else/);
-    assert.deepEqual(await connections(e, 1), { slack: false, teams: false });
+    assert.deepEqual(await connections(e, 1), { slack: false, teams: false, discord: false });
   });
 
   it('connects Microsoft and replies in a Teams thread as the person', async () => {
@@ -286,5 +286,54 @@ describe('connecting and posting', () => {
     assert.equal((await post(e, outsider, { thread: 'slack:E1:C1:1.1', text: 'x' }, inTeam)).status, 403);
     assert.equal((await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'x' }, () => false)).status, 404);
     assert.equal((await post(e, ME, { thread: 'slack:E1:C1:1.1', text: '' }, inTeam)).status, 400);
+  });
+});
+
+describe('Discord accounts', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  const G = '100000000000000001';
+  const U = '400000000000000001';
+  function discordEnv() {
+    const e = env();
+    Object.assign(e, {
+      DISCORD_GUILDS: G, DISCORD_CLIENT_ID: 'dcid', DISCORD_CLIENT_SECRET: 'dsecret', DISCORD_BOT_TOKEN: 'made-up',
+    });
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, any_at, updated_at) VALUES (?, 'discord', ?, '2', '3', 'acme', 'helix', 'd/',
+      '2026-10-21T10:00:00Z', '2026-10-21T10:00:00Z')`).run(`discord:${G}:2:3`, G);
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key,
+      counted) VALUES ('discord', ?, '2', '3', ?, '2026-10-21T10:00:00Z', ?, 1)`)
+      .run(G, `discord:${G}:2:3`, `discord:${G}:${U}`);
+    return e;
+  }
+
+  it('links the account to the person: identity and earlier posts', async () => {
+    const e = discordEnv();
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/oauth2/token')) {
+        return Response.json({ access_token: 'dat', expires_in: 604800, scope: 'identify' });
+      }
+      if (String(url).endsWith('/users/@me')) {
+        return Response.json({ id: U, username: 'ada' });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+    const state = await makeState(e, 1, 'discord');
+    const res = await finishAuth(e, ME, 'discord', new URL(`https://x/cb?code=c&state=${encodeURIComponent(state)}`));
+    assert.match(res.headers.get('location'), /connected=discord/);
+    assert.deepEqual(await connections(e, 1), { slack: false, teams: false, discord: true });
+    const [identity] = e.DB.rows(`SELECT person FROM identities WHERE source = 'discord' AND user_id = '${U}'`);
+    assert.equal(identity.person, 1);
+    const [m] = e.DB.rows("SELECT person, staff FROM messages WHERE source = 'discord'");
+    assert.deepEqual([m.person, m.staff], [1, 1]);
+  });
+
+  it('does not reply on Discord', async () => {
+    const res = await post(discordEnv(), ME, { thread: `discord:${G}:2:3`, text: 'hi' }, inTeam);
+    assert.equal(res.status, 409);
+    assert.match((await res.json()).error, /reply in Discord/);
   });
 });

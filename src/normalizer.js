@@ -20,7 +20,8 @@ import { rethread } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
-import { htmlToMarkdown, slackToMarkdown } from './markdown.js';
+import { discordApi } from './discord.js';
+import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
@@ -130,9 +131,45 @@ export async function processReaction(env, key, r) {
   return { key, result: r.removed ? 'reaction-removed' : 'reaction' };
 }
 
+/** Role names per guild, per isolate, for `<@&id>` mentions. */
+const discordRoles = new Map();
+
+async function discordMarkdown(env, message) {
+  const text = message.text || '';
+  const users = new Map();
+  for (const id of [...new Set([...text.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))].slice(0, MAX_MENTIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    const identity = await getIdentity(env, { source: 'discord', tenant: message.tenant, userId: id });
+    users.set(id, identity.person_name || identity.name);
+  }
+  if (/<@&\d+>/.test(text) && !discordRoles.has(message.tenant)) {
+    try {
+      const roles = await discordApi(env, `/guilds/${message.tenant}/roles`);
+      discordRoles.set(message.tenant, new Map(roles.map((r) => [r.id, r.name])));
+    } catch {
+      discordRoles.set(message.tenant, new Map());
+    }
+  }
+  const channels = new Map();
+  for (const id of [...new Set([...text.matchAll(/<#(\d+)>/g)].map((m) => m[1]))].slice(0, MAX_MENTIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    const row = await env.DB.prepare(`SELECT name FROM channels
+      WHERE source = 'discord' AND tenant = ? AND channel_id = ?`).bind(message.tenant, id).first();
+    channels.set(id, row && row.name);
+  }
+  return discordToMarkdown(text, {
+    user: (id) => users.get(id),
+    role: (id) => (discordRoles.get(message.tenant) || new Map()).get(id),
+    channel: (id) => channels.get(id),
+  });
+}
+
 async function toMarkdown(env, message) {
   if (message.format === 'html') {
     return htmlToMarkdown(message.text);
+  }
+  if (message.format === 'discord') {
+    return discordMarkdown(env, message);
   }
   if (message.format !== 'mrkdwn') {
     return message.text;

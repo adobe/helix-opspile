@@ -23,6 +23,7 @@
  * in the platform's format (`text` + `format`), converted later once mentions are known.
  */
 
+import { snowflakeMs } from './discord.js';
 import { mdLink, sizeTitle } from './markdown.js';
 
 /** Slack subtypes that are ordinary messages from a person or a bot. */
@@ -215,6 +216,143 @@ export function normalizeSlack(key, delivered) {
 /** Teams `lastModifiedDateTime` as a sortable version string. */
 export const teamsVersion = (date) => String(Date.parse(date) || 0).padStart(15, '0');
 
+/** Discord message types that are conversation: default, reply, slash and context commands. */
+const DISCORD_CONTENT = new Set([0, 19, 20, 23]);
+
+/** A Discord message's version: its edit (or creation) time, sortable like Teams'. */
+export const discordVersion = (d) => teamsVersion(d.edited_timestamp || d.timestamp);
+
+const discordImage = (a) => /^image\//.test(a.content_type || '')
+  || (!a.content_type && /\.(png|jpe?g|gif|webp)$/i.test(a.filename || ''));
+
+function discordAttachments(attachments) {
+  const ok = (attachments || []).filter((a) => a && a.url);
+  const images = ok.filter(discordImage)
+    .map((a) => mdLink(a.description || a.filename || 'image', a.url, true, sizeTitle(a.width, a.height)));
+  const links = ok.filter((a) => !discordImage(a))
+    .map((a) => `- ${mdLink(a.filename || 'file', a.url)}`);
+  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Rich embeds (what bots and webhooks post) as markdown: title, text, fields, footer. Link
+ * previews Discord adds to people's messages are left out; the link is in the text.
+ */
+export function discordEmbeds(embeds) {
+  const out = [];
+  for (const e of (embeds || []).filter((x) => x && (x.type || 'rich') === 'rich')) {
+    const parts = [];
+    if (e.author && e.author.name) {
+      parts.push(`*${e.author.name}*`);
+    }
+    if (e.title) {
+      parts.push(`**${e.url ? mdLink(e.title, e.url) : e.title}**`);
+    }
+    if (e.description) {
+      parts.push(e.description);
+    }
+    if (Array.isArray(e.fields) && e.fields.length) {
+      parts.push(e.fields.map((f) => `**${f.name}:** ${f.value}`).join('\n'));
+    }
+    if (e.image && e.image.url) {
+      parts.push(mdLink('image', e.image.url, true, sizeTitle(e.image.width, e.image.height)));
+    }
+    if (e.footer && e.footer.text) {
+      parts.push(`*${e.footer.text}*`);
+    }
+    out.push(parts.join('\n\n'));
+  }
+  return out.filter(Boolean).join('\n\n---\n\n');
+}
+
+/** The display name of a Discord author: server nickname, global name, user name. */
+export const discordName = (d) => (d.member && d.member.nick)
+  || (d.author && (d.author.global_name || d.author.username)) || null;
+
+/**
+ * A Discord envelope (src/discord.js) to a pile-2 operation. Messages in a thread belong to
+ * the thread's parent channel, under the thread's id (which is the id of the message the
+ * thread was started from, or of a forum post's first message); an inline reply belongs to
+ * the conversation of the message it replies to (`root`, set when it was stored).
+ */
+export function normalizeDiscord(key, envelope) {
+  const { t, d = {}, guild } = envelope;
+  const thread = envelope.thread || null;
+  const channelId = thread ? thread.parent_id : d.channel_id;
+
+  const rootId = envelope.root || (thread && thread.id) || d.id;
+  const base = {
+    source: 'discord',
+    tenant: guild,
+    channelId,
+    rootId,
+    id: d.id,
+    thread: `discord:${guild}:${channelId}:${rootId}`,
+    permalink: d.channel_id && d.id ? `https://discord.com/channels/${guild}/${d.channel_id}/${d.id}` : undefined,
+    raw: key,
+  };
+  if (t === 'MESSAGE_DELETE') {
+    return {
+      op: 'delete',
+      message: {
+        ...base,
+        at: d.id ? new Date(snowflakeMs(d.id)).toISOString() : undefined,
+        // A deletion carries no time; it is newer than any version of the message.
+        version: '9'.repeat(15),
+        deletedAt: envelope.at || new Date(0).toISOString(),
+        authorRef: { kind: 'system', name: 'Discord' },
+        format: 'discord',
+        text: '',
+      },
+    };
+  }
+  if (t !== 'MESSAGE_CREATE' && t !== 'MESSAGE_UPDATE') {
+    return { op: 'skip', reason: t || 'unknown' };
+  }
+  if (!DISCORD_CONTENT.has(Number(d.type || 0))) {
+    // Joins, pins, boosts, "started a thread" and a thread's copy of its starter message.
+    return { op: 'skip', reason: `type ${d.type}` };
+  }
+  const author = d.author || {};
+  let authorRef;
+  if (d.webhook_id) {
+    authorRef = { kind: 'bot', name: author.username || 'webhook' };
+  } else {
+    authorRef = {
+      source: 'discord',
+      tenant: guild,
+      userId: author.id,
+      name: discordName(d),
+      bot: Boolean(author.bot),
+    };
+  }
+  const files = discordAttachments(d.attachments);
+  const embeds = discordEmbeds(d.embeds);
+  // A forum post's title is its thread's name; a thread started from a message names it too.
+  const subject = (thread && thread.id === d.id && thread.name) || (d.thread && d.thread.name);
+  const reactions = Array.isArray(envelope.reactions)
+    ? envelope.reactions.flatMap((r) => (r.users || [])
+      .map((userId) => ({ emoji: r.emoji, userId, at: (r.at && r.at[userId]) || undefined })))
+    : undefined;
+  return {
+    op: 'upsert',
+    message: {
+      ...base,
+      at: d.timestamp ? new Date(d.timestamp).toISOString() : undefined,
+      editedAt: d.edited_timestamp ? new Date(d.edited_timestamp).toISOString() : undefined,
+      version: discordVersion(d),
+      authorRef,
+      subject: subject || undefined,
+      format: 'discord',
+      text: [d.content || '', embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n'),
+      reactions,
+      // Whoever reacted has read the thread up to here.
+      reactors: reactions ? [...new Set(reactions.map((r) => r.userId))] : undefined,
+      mentionIds: [...new Set((d.mentions || []).map((u) => u && u.id).filter(Boolean))],
+    },
+  };
+}
+
 export function normalizeTeams(key, msg) {
   const [, tenant] = key.split('/');
   if (key.split('/').pop().startsWith('notification-')) {
@@ -301,6 +439,9 @@ export function normalize(key, json) {
   }
   if (source === 'teams') {
     return normalizeTeams(key, json);
+  }
+  if (source === 'discord') {
+    return normalizeDiscord(key, json);
   }
   return { op: 'skip', reason: `unknown source ${source}` };
 }

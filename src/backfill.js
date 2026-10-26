@@ -10,6 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
+import {
+  discordApi, messagesAfter, putDiscord, reactionsOf, threadInfo,
+} from './discord.js';
 import { cachedGraph } from './graph.js';
 import {
   dayPath, messageKey, putRaw, segment,
@@ -120,6 +123,39 @@ export async function backfillTeams(env, {
 }
 
 /**
+ * A Discord conversation: its root message in the channel, and the thread started from it
+ * (or the forum post), each stored as a history envelope under the requested root.
+ */
+async function backfillDiscord(env, { tenant: guild, channelId, rootId }) {
+  const envelopes = [];
+  const root = await discordApi(env, `/channels/${channelId}/messages/${rootId}`, { allow: [403, 404] });
+  if (root) {
+    envelopes.push({
+      t: 'MESSAGE_CREATE', via: 'history', guild, d: root, root: rootId,
+    });
+  }
+  const thread = threadInfo(await discordApi(env, `/channels/${rootId}`, { allow: [403, 404] }));
+  if (thread) {
+    for (const d of await messagesAfter(env, thread.id, '0', MAX_PAGES * 100)) {
+      envelopes.push({
+        t: 'MESSAGE_CREATE', via: 'history', guild, d, thread, root: rootId,
+      });
+    }
+  }
+  for (const e of envelopes) {
+    if (e.d.reactions && e.d.reactions.length) {
+      // eslint-disable-next-line no-await-in-loop
+      e.reactions = await reactionsOf(env, e.d.channel_id, e.d);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await putDiscord(env, e);
+  }
+  return envelopes.length;
+}
+
+const BACKFILL = { slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord };
+
+/**
  * Runs one backfill request from the queue. Platform errors are recorded on the request
  * rather than retried forever (for example, the bot is not in the channel).
  */
@@ -127,7 +163,7 @@ export async function runBackfill(env, request) {
   let count = 0;
   let error = null;
   try {
-    count = request.source === 'slack' ? await backfillSlack(env, request) : await backfillTeams(env, request);
+    count = await (BACKFILL[request.source] || backfillTeams)(env, request);
   } catch (e) {
     error = e.message;
   }

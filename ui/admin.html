@@ -255,7 +255,7 @@ const ago = (at) => {
   return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 60 ? `${Math.round(d)} days ago` : new Date(at).toLocaleDateString();
 };
 const FIELD_LABEL = {
-  name: 'Channel name', group_name: 'Teams team name', connected: 'Slack Connect team id', channel_id: 'Channel id',
+  name: 'Channel name', group_name: 'Teams team or Discord server name', connected: 'Slack Connect team id', channel_id: 'Channel id',
 };
 const UNASSIGNED = '_unassigned';
 
@@ -668,7 +668,7 @@ function channelName(c, words) {
 /** A channel's name as text, for the status line. */
 const plainName = (c) => (c.source === 'teams'
   ? `${c.groupName ? `${c.groupName} › ` : ''}${c.name || c.channelId}` : `#${c.name || c.channelId}`);
-const platform = (c) => (c.source === 'teams' ? 'Teams' : `Slack${c.shared ? ' Connect' : ''}`);
+const platform = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
 const pct = (p) => `${Math.round((p || 0) * 100)}%`;
 /** Clef's pick for a channel, as a tag. */
 function clefTag(clef, here) {
@@ -1117,7 +1117,7 @@ function ruleForm(r = {}) {
     <select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
     <select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select>
     <input id="rPattern" class="grow mono" placeholder="aem-" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required>
-    <select id="rSource"><option value="">Slack and Teams</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option></select>
+    <select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option></select>
     <input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" style="width:80px" title="Priority: the lowest matching rule wins">
     <input id="rNote" placeholder="Note" value="${esc(r.note || '')}">
     <button class="primary">${r.id ? 'Save rule' : 'Add rule'}</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}

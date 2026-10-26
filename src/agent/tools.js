@@ -12,6 +12,7 @@
 
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable';
 import { Type } from 'typebox';
+import { platformName } from '../platforms.js';
 import { draftOf, draftsFor, saveDraft } from '../drafts.js';
 import { entryMessages, formatMessage } from './deliver.js';
 import { writeKnowledge } from './kbwrite.js';
@@ -110,7 +111,7 @@ export function opspileExtension(ctx) {
       if (t.key) {
         lines.push(
           `Thread: ${t.key}`,
-          `Channel: ${t.channelName || 'unknown'} on ${t.source === 'teams' ? 'Microsoft Teams' : 'Slack'}`,
+          `Channel: ${t.channelName || 'unknown'} on ${platformName(t.source)}`,
         );
         if (t.permalink) {
           lines.push(`First message: ${t.permalink}`);

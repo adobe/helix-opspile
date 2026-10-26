@@ -17,6 +17,7 @@ import { agentStatus, seedAgent } from './agent/stub.js';
 import {
   discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
+import { refreshAttachment } from './discord.js';
 import { cachedGraph } from './graph.js';
 import {
   connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
@@ -538,11 +539,13 @@ export async function thread(env, me, key, wanted = null) {
 }
 
 const MEDIA_MAX = 10 * 1024 * 1024;
+const DISCORD_MEDIA = /^(cdn\.discordapp\.com|media\.discordapp\.net)$/;
 
 /**
  * Images from messages, fetched with the platform's credentials: Slack files need the bot
- * token, Teams inline images (hostedContents) a Graph token. Only those two kinds of URL
- * are fetched, and only images are passed on.
+ * token, Teams inline images (hostedContents) a Graph token, and Discord attachment links
+ * expire (the bot token refreshes them). Only those kinds of URL are fetched, and only
+ * images are passed on.
  */
 export async function media(env, target) {
   let u;
@@ -554,6 +557,13 @@ export async function media(env, target) {
   let res;
   if (u.protocol === 'https:' && u.hostname === 'files.slack.com') {
     res = await fetch(u, { headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } });
+  } else if (u.protocol === 'https:' && DISCORD_MEDIA.test(u.hostname)
+    && u.pathname.startsWith('/attachments/') && env.DISCORD_BOT_TOKEN) {
+    // Discord signs attachment links for a day (`ex` is when, in hex seconds): an older
+    // link is refreshed with the bot token first.
+    const expires = parseInt(u.searchParams.get('ex') || '0', 16) * 1000;
+    res = await fetch(expires > Date.now() + 60000 ? u.toString()
+      : await refreshAttachment(env, u.toString()));
   } else if (u.protocol === 'https:' && u.hostname === 'graph.microsoft.com'
     && /^\/v1\.0\/(teams|chats)\/.+\/hostedContents\/[^/]+\/\$value$/.test(u.pathname)) {
     const graph = await cachedGraph(env);
@@ -595,6 +605,8 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
       ...me,
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
+      // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
+      connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
@@ -610,7 +622,7 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
       JOIN team_members m ON m.person = p.id ORDER BY p.name`).all();
     return json({ people: results || [] });
   }
-  const auth = /^\/api\/auth\/(slack|teams)(\/start|\/callback)?$/.exec(url.pathname);
+  const auth = /^\/api\/auth\/(slack|teams|discord)(\/start|\/callback)?$/.exec(url.pathname);
   if (auth) {
     const [, platform, step] = auth;
     if (step === '/start') {

@@ -56,6 +56,16 @@ const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_I
 // opened there are redirected, and Graph subscriptions still pointing there are removed.
 const MOVE_VARS = ['RETIRED_ORIGINS'] as const;
 
+// Discord, optional: DISCORD_GUILDS (comma-separated server ids) turns the poller on, with the
+// secret DISCORD_BOT_TOKEN. DISCORD_STAFF_ROLES: role ids whose members count as staff;
+// DISCORD_HISTORY_DAYS: how far back the first poll reads (default 30); DISCORD_POLL_SECONDS:
+// how often it polls (default 60). DISCORD_CLIENT_ID
+// and the secret DISCORD_CLIENT_SECRET let people connect their Discord account.
+const DISCORD_VARS = [
+  'DISCORD_GUILDS', 'DISCORD_STAFF_ROLES', 'DISCORD_HISTORY_DAYS', 'DISCORD_POLL_SECONDS',
+  'DISCORD_CLIENT_ID',
+] as const;
+
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',
@@ -71,6 +81,9 @@ const SECRETS = [
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
+  // Discord: the bot's token where the poller is on, the app's secret where people connect.
+  ...(process.env.DISCORD_GUILDS ? ['DISCORD_BOT_TOKEN'] : []),
+  ...(process.env.DISCORD_CLIENT_ID ? ['DISCORD_CLIENT_SECRET'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -125,7 +138,8 @@ function vars(deployed: boolean) {
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
-    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS].filter((name) => values[name])
+    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS, ...DISCORD_VARS]
+      .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
 }
@@ -157,6 +171,7 @@ export default defineConfig(({ mode }) => {
       exports: {
         TeamRoom: workerExports.durableObject({ storage: 'sqlite' }),
         ThreadAgent: workerExports.durableObject({ storage: 'sqlite' }),
+        DiscordPoller: workerExports.durableObject({ storage: 'sqlite' }),
         // One per thread agent that uses the global browser MCP server; reached through
         // ctx.exports, since a container's class cannot be bound by name.
         BrowserBox: workerExports.durableObject({ storage: 'sqlite', container: box }),
@@ -171,6 +186,8 @@ export default defineConfig(({ mode }) => {
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
         // One Durable Object per inbox entry: its thread agent.
         AGENTS: bindings.durableObject({ worker: name, exportName: 'ThreadAgent' }),
+        // The Discord poller: one object reads the servers' new messages every minute.
+        DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
         // Cloudflare Browser Run: the browser of the global browser MCP server's boxes.
         BROWSER: bindings.browser(),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
