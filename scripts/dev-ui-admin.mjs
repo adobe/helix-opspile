@@ -401,6 +401,10 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
     LOADER: {},
+    TEAMS_APP_ID: 'made-up-catalog-id',
+    MS_CLIENT_ID: 'made-up-app-id',
+    MS_CLIENT_SECRET: 'made-up-secret',
+    MS_TENANT_ID: 'made-up-tenant',
   };
   const githubApp = NO_GITHUB ? Promise.resolve() : seal(env, pkcs8Pem(PREVIEW_KEY)).then((key) => {
     DB.sqlite.prepare(`INSERT INTO github_apps (id, slug, name, owner, html_url, client_id, private_key,

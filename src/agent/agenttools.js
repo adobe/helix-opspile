@@ -11,6 +11,7 @@
  */
 
 import { discordEnabled } from '../discord.js';
+import { teamsBotEnabled } from '../teamsbot.js';
 
 /**
  * Tools of the thread agents that are off until someone turns them on: for an ops team, or
@@ -19,11 +20,11 @@ import { discordEnabled } from '../discord.js';
  * (src/agent/globals.js), but these are the agent's own tools, not reached through code mode.
  *
  * - `post_message`: the agent posts a reply in its thread right away, as the opspile app (the
- *   Slack bot, the Discord bot), next to `update_draft`. Microsoft Graph has no way for an app
- *   to post to a Teams channel, so Teams threads do not get it.
+ *   Slack bot, the Teams bot, the Discord bot), next to `update_draft`. A platform whose bot is
+ *   not set up in this deployment does not get it.
  * - `computer`: pi's `bash` tool, run on Cloudflare Computer (src/agent/computer.js): a
  *   just-bash shell in a Dynamic Worker over a filesystem in the agent's own Durable Object,
- *   so each thread keeps its files from one turn to the next. No network.
+ *   so each thread keeps its files from one turn to the next, with network access and curl.
  */
 
 export const AGENT_TOOLS = [
@@ -33,10 +34,10 @@ export const AGENT_TOOLS = [
     names: ['post_message'],
     description: 'The agent posts its reply in the thread right away, as the opspile app,'
       + ' instead of only keeping the draft a person sends',
-    note: 'Slack and Discord threads only: Microsoft Graph cannot post to a Teams channel as an'
-      + ' app. The opspile Slack app needs the chat:write bot scope, the Discord bot the Send'
-      + ' Messages and Send Messages in Threads permissions.',
-    platforms: ['slack', 'discord'],
+    note: 'As the opspile bot of each platform: the Slack app (bot scope chat:write), the Teams'
+      + ' bot (installed in a team on its first post there), the Discord bot (Send Messages,'
+      + ' Send Messages in Threads).',
+    platforms: ['slack', 'teams', 'discord'],
   },
   {
     tool: 'computer',
@@ -44,31 +45,45 @@ export const AGENT_TOOLS = [
     names: ['bash'],
     description: 'A bash shell for the agent on Cloudflare Computer: just-bash in a Dynamic'
       + ' Worker, over a working directory of its own per thread that keeps its files. cat, grep,'
-      + ' sed, awk, jq, sort, find and the like; no network, no npm, node or python',
-    note: null,
+      + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python',
+    note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
+      + ' leave opspile through it.',
     platforms: null,
   },
 ];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((t) => [t.tool, t]));
+
+/** Whether a platform's opspile bot is set up in this deployment. */
+const BOTS = {
+  slack: (env) => Boolean(env.SLACK_BOT_TOKEN),
+  teams: teamsBotEnabled,
+  discord: discordEnabled,
+};
 export const isAgentTool = (tool) => BY_NAME.has(String(tool));
 export const agentTool = (tool) => BY_NAME.get(String(tool)) || null;
 
+/** The platforms a tool works on in this deployment, or null for all of them. */
+export function platformsOf(env, tool) {
+  const t = agentTool(tool);
+  return t && t.platforms ? t.platforms.filter((p) => BOTS[p](env)) : null;
+}
+
+/** Whether a tool works on a platform (a thread's `source`) in this deployment. */
+export function onPlatform(env, tool, source) {
+  const platforms = platformsOf(env, tool);
+  return Boolean(agentTool(tool)) && (!platforms || platforms.includes(source));
+}
+
 /** Why a tool cannot work in this deployment, or null. */
 export function toolProblem(env, tool) {
-  if (tool === 'post_message' && !env.SLACK_BOT_TOKEN && !discordEnabled(env)) {
-    return 'Neither the Slack bot token nor the Discord bot is set up in this deployment.';
+  if (tool === 'post_message' && !platformsOf(env, tool).length) {
+    return 'No opspile bot (Slack, Teams or Discord) is set up in this deployment.';
   }
   if (tool === 'computer' && !env.LOADER) {
     return 'The Worker Loader binding (LOADER) is missing in this deployment.';
   }
   return null;
-}
-
-/** Whether a tool works on a platform (a thread's `source`). */
-export function onPlatform(tool, source) {
-  const t = agentTool(tool);
-  return Boolean(t) && (!t.platforms || t.platforms.includes(source));
 }
 
 /** The switch rows of a team and a channel, by tool: `{ team, channel }`, each a row or null. */
@@ -99,7 +114,7 @@ export async function toolsFor(env, target) {
   }
   const switches = await toolSwitches(env, target);
   return AGENT_TOOLS.filter((t) => switchedOn(switches.get(t.tool))
-    && !toolProblem(env, t.tool) && onPlatform(t.tool, target.source))
+    && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source))
     .map((t) => t.tool).sort();
 }
 

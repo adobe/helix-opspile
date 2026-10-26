@@ -11,7 +11,7 @@
  */
 
 import {
-  AGENT_TOOLS, isAgentTool, setToolSwitch, toolProblem,
+  AGENT_TOOLS, isAgentTool, platformsOf, setToolSwitch, toolProblem,
 } from './agent/agenttools.js';
 import { json } from './http.js';
 import { channelOwner, ownerOf } from './mcpadmin.js';
@@ -53,7 +53,7 @@ async function list(env, me, repo) {
       description: t.description,
       note: t.note,
       names: t.names,
-      platforms: t.platforms,
+      platforms: platformsOf(env, t.tool),
       problem: toolProblem(env, t.tool),
       team: owner.scope === 'team'
         ? shownSwitch(rows.find((r) => r.tool === t.tool && r.scope === 'team')) || { enabled: false }

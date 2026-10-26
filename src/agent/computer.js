@@ -18,8 +18,9 @@ import {
  * The agent's computer (its `computer` tool): pi's own `bash` tool, run on Cloudflare
  * Computer (@cloudflare/computer). The ThreadAgent object holds a Workspace, a filesystem in
  * its own SQLite, with a WorkerShellBackend: just-bash in a Dynamic Worker (env.LOADER) that
- * reads and writes that filesystem over RPC, without network. Each thread keeps its files
- * from one turn to the next, under COMPUTER_CWD.
+ * reads and writes that filesystem over RPC, with jq and curl, and the Dynamic Worker's own
+ * network access (egress `direct`, no filter). Each thread keeps its files from one turn to
+ * the next, under COMPUTER_CWD.
  *
  * This file is the bridge: an ExecutionEnv for pi-durable whose `exec` runs a command on the
  * workspace. pi's file tools (read, write, edit) are not installed, so the rest of the

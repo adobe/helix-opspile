@@ -620,7 +620,7 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 Two tools are off until the admin team or a team's managers turn them on, as the global MCP
 servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
-over its team's), in the knowledge-base editor (**Agent tools**, `src/agent/agenttools.js`).
+over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
 tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
 right after opspile's own), which a change replaces in place. Each comes with a section of the
@@ -630,8 +630,16 @@ system prompt on how to use it.
 away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot
 token (`chat.postMessage` in the thread), on Discord with the bot, in the Discord thread when
 the conversation is one and as an inline reply to its first message otherwise, with mentions
-switched off. Microsoft Graph has no way for an app to post to a Teams channel (only people,
-or a Bot Framework bot, can), so Teams threads do not get the tool. The prompt asks the agent
+switched off. On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
+post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is
+installed in. The bot is the opspile Entra app itself, single tenant, registered as an Azure
+Bot with the Teams channel, and packaged as a notification-only Teams app in the org catalog
+(`TEAMS_APP_ID`). A post replies in the channel thread (`<channel id>;messageid=<root id>`)
+with a Bot Framework token of the app; when the bot is not in the team yet, opspile installs
+the app there through Graph (`TeamsAppInstallation.ReadWriteSelfForTeam.All`, which lets the
+app install only itself) and posts again. Its messaging endpoint (`/teams/bot`) answers every
+activity and keeps nothing: opspile reads Teams through Graph. A platform whose bot is not set
+up does not get the tool. The prompt asks the agent
 to post only what the team would send as it is, and to keep anything uncertain or sensitive in
 the draft. A post may name the draft version it sends, which uses the draft up. The reply comes
 back through the platform's events like any message; the agent keeps the ids of its latest
@@ -644,7 +652,10 @@ last from one turn to the next, and nobody else's. Commands run in a `WorkerShel
 [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
 binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
 Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
-grep, sed, awk, sort, find, jq…), no network (egress `none`), and no npm, node or python. The
+grep, sed, awk, sort, find, jq…) and `curl`, with the Dynamic Worker's own network access
+(egress `direct`, no filter), and no npm, node or python. What curl fetches is untrusted, like
+customer messages; nothing stops an agent from sending what it read, so the prompt says not to
+send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
 

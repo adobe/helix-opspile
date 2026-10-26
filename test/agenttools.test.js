@@ -39,6 +39,9 @@ const manager = { ...BO, teams: [{ slug: 'helix', role: 'manager' }] };
 const outsider = { ...BO, teams: [{ slug: 'edge', role: 'manager' }] };
 
 const SLACK = 'slack:E1:C1:1792584000.000100';
+const TEAMS_BOT = {
+  TEAMS_APP_ID: 'catalog-app-1', MS_CLIENT_ID: 'app-1', MS_CLIENT_SECRET: 'made-up-secret', MS_TENANT_ID: 'TN1',
+};
 const TEAMS = 'teams:TN1:G1:19:abc@thread.tacv2:1792584000000';
 const DISCORD = 'discord:900:910:920';
 
@@ -55,6 +58,8 @@ function env(extra = {}) {
   thread(SLACK, 'slack', 'E1', 'C1', '1792584000.000100');
   thread(TEAMS, 'teams', 'TN1', '19:abc@thread.tacv2', '1792584000000');
   thread(DISCORD, 'discord', '900', '910', '920');
+  DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, fetched_at)
+    VALUES ('teams', 'TN1', '19:abc@thread.tacv2', 'acme', 'G1', '2026-10-21T10:00:00Z')`).run();
   DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
     ('kb-team-helix', 'team', 'helix', 'x', '2026-10-20T09:00:00Z'),
     ('kb-org-acme', 'org', 'acme', 'x', '2026-10-20T09:00:00Z')`);
@@ -103,9 +108,11 @@ describe('agent tools', () => {
     assert.equal(res.body.switch, null);
     assert.deepEqual(await toolsFor(e, slack), ['computer', 'post_message']);
 
-    // Teams threads cannot post; a deployment without a Worker Loader has no computer.
+    // Teams threads post only where the Teams bot is set up; no Worker Loader, no computer.
     await call(e, admin, 'PUT', '/api/kb/tools', { tool: 'post_message', team: 'helix', enabled: true });
-    assert.deepEqual(await toolsFor(e, target(TEAMS, 'teams', '19:abc@thread.tacv2')), ['computer']);
+    const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
+    assert.deepEqual(await toolsFor(e, teams), ['computer']);
+    assert.deepEqual(await toolsFor({ ...e, ...TEAMS_BOT }, teams), ['computer', 'post_message']);
     assert.deepEqual(await toolsFor({ ...e, LOADER: undefined }, slack), ['post_message']);
     // An agent without a thread (filing seeded knowledge) gets none.
     assert.deepEqual(await toolsFor(e, { ...slack, key: null }), []);
@@ -190,8 +197,46 @@ describe('posting as the opspile app', () => {
     });
   });
 
-  it('cannot post to Teams, nor too much', async () => {
-    assert.match((await postAsApp(env(), TEAMS, 'Hi')).error, /cannot post to Teams/);
+  it('replies in the Teams thread as the bot, installing it in the team first if need be', async () => {
+    const calls = [];
+    let installed = false;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = new URL(url);
+      calls.push(`${init.method || 'GET'} ${u.host}${decodeURIComponent(u.pathname)}`);
+      if (u.pathname.endsWith('/oauth2/v2.0/token')) {
+        const scope = new URLSearchParams(init.body).get('scope');
+        // Graph's token is a JWT opspile reads the roles of.
+        const jwt = `x.${btoa(JSON.stringify({ roles: [] }))}.x`;
+        return Response.json({ access_token: scope.includes('graph') ? jwt : `token-for-${scope}`, expires_in: 3600 });
+      }
+      if (u.host === 'smba.trafficmanager.net') {
+        assert.equal(init.headers.authorization, 'Bearer token-for-https://api.botframework.com/.default');
+        if (!installed) {
+          return Response.json({ error: { code: 'BotNotInConversationRoster' } }, { status: 403 });
+        }
+        sent.push({ url: String(url), body: JSON.parse(init.body) });
+        return Response.json({ id: '1792584999000' }, { status: 201 });
+      }
+      if (u.pathname === '/v1.0/teams/G1/installedApps') {
+        assert.equal(JSON.parse(init.body)['teamsApp@odata.bind'], 'https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/catalog-app-1');
+        installed = true;
+        return new Response(null, { status: 201 });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+    const e = env(TEAMS_BOT);
+    const res = await postAsApp(e, TEAMS, 'Purges take **5 minutes**.', { sleep: async () => {} });
+    assert.deepEqual(res, { ok: true, platform: 'teams', id: '1792584999000' });
+    assert.deepEqual(calls.filter((c) => !c.includes('/token')), [
+      'POST smba.trafficmanager.net/teams/v3/conversations/19:abc@thread.tacv2;messageid=1792584000000/activities',
+      'POST graph.microsoft.com/v1.0/teams/G1/installedApps',
+      'POST smba.trafficmanager.net/teams/v3/conversations/19:abc@thread.tacv2;messageid=1792584000000/activities',
+    ]);
+    assert.deepEqual(sent[0].body, { type: 'message', text: 'Purges take **5 minutes**.', textFormat: 'markdown' });
+  });
+
+  it('cannot post to Teams without the bot, nor too much', async () => {
+    assert.match((await postAsApp(env(), TEAMS, 'Hi')).error, /Teams bot is not set up/);
     assert.match((await postAsApp(env(), DISCORD, 'x'.repeat(2001))).error, /up to 2000/);
     assert.equal(sent.length, 0);
   });

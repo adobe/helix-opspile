@@ -35,6 +35,7 @@ import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
+import { teamsBot } from './teamsbot.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
 
@@ -74,6 +75,10 @@ export default {
     }
     if (request.method === 'POST' && (pathname === '/teams/notify' || pathname === '/teams/lifecycle')) {
       return teamsNotify(request, url, env, ctx);
+    }
+    if (request.method === 'POST' && pathname === '/teams/bot') {
+      // The opspile bot's messaging endpoint (src/teamsbot.js): notification-only.
+      return teamsBot();
     }
     if (pathname === '/diag/teams') {
       if (!authorizedDiag(request, env)) {

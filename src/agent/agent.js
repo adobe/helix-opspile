@@ -17,6 +17,7 @@ import { PiHarness } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
 import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
+import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import { entryOf } from '../drafts.js';
 import {
@@ -191,7 +192,10 @@ export class ThreadAgent extends Agent {
     return this.computerEnv;
   }
 
-  /** The Workspace of the computer: files in this object's SQLite, a shell in a Dynamic Worker. */
+  /**
+   * The Workspace of the computer: files in this object's SQLite, a shell in a Dynamic Worker
+   * that reaches the internet (curl) without a filter.
+   */
   workspace() {
     this.ws ??= new Workspace({
       storage: this.ctx.storage,
@@ -201,8 +205,8 @@ export class ThreadAgent extends Agent {
           loader: this.env.LOADER,
           workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
           ctx: this.ctx,
-          commands: [jqModules],
-          egress: { mode: 'none' },
+          commands: [jqModules, curlModules],
+          egress: { mode: 'direct' },
         }),
       ],
     });

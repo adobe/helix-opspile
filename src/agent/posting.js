@@ -12,6 +12,7 @@
 
 import { discordApi, discordEnabled } from '../discord.js';
 import { slackText, target as replyTarget } from '../post.js';
+import { postToTeams } from '../teamsbot.js';
 
 /**
  * Posting by a thread agent (its `post_message` tool, when it is on): a reply in the latest
@@ -21,17 +22,18 @@ import { slackText, target as replyTarget } from '../post.js';
  * - Slack: `chat.postMessage` with the bot token (bot scope `chat:write`), in the thread.
  * - Discord: the bot (Send Messages, Send Messages in Threads), in the Discord thread when the
  *   conversation is one, else as an inline reply to its first message. No pings.
- * - Teams: not possible; Microsoft Graph lets no app post to a channel.
+ * - Teams: the opspile bot (src/teamsbot.js), a Bot Framework bot, in the channel thread;
+ *   Microsoft Graph lets no app post to a channel.
  *
  * The reply then arrives like any other message, through the platform's events.
  */
 
-export const MAX_POST = { slack: 8000, discord: 2000 };
+export const MAX_POST = { slack: 8000, discord: 2000, teams: 8000 };
 
 /**
  * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`.
  */
-export async function postAsApp(env, key, text) {
+export async function postAsApp(env, key, text, options = {}) {
   const body = String(text || '').trim();
   const t = key && await replyTarget(env, key);
   if (!t) {
@@ -86,5 +88,8 @@ export async function postAsApp(env, key, text) {
       return { error: `Discord: ${e.message}` };
     }
   }
-  return { error: 'opspile cannot post to Teams as an app: save a draft for the team instead' };
+  if (t.source === 'teams') {
+    return postToTeams(env, t, body, options);
+  }
+  return { error: `opspile cannot post to ${t.source}` };
 }

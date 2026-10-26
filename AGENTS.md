@@ -50,6 +50,8 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
   SDK), `turn.js` (the latest turn the inbox shows under the thread)
 - `src/tooladmin.js` — the switches of the agents' tools in the knowledge-base editor
+- `src/teamsbot.js` — the opspile Teams bot (Bot Framework), how agents post in Teams;
+  `scripts/teams-app.mjs` builds its Teams app package
 - `src/mcpadmin.js` — the agents' MCP servers in the knowledge-base editor, per team and per org,
   and the global ones' switches per team and channel
 - `src/agent/globals.js` — the global MCP servers (`browser`, `github`), their switches and

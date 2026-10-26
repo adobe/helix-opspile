@@ -361,7 +361,7 @@ function toUrl(mode = 'push') {
   const q = new URLSearchParams();
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
-  if (['history', 'agents', 'mcp', 'tools'].includes(state.view)) q.set('view', state.view);
+  if (['history', 'agents', 'mcp'].includes(state.view)) q.set('view', state.view);
   if (state.back) q.set('back', state.back);
   const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
@@ -432,7 +432,6 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   if (state.view === 'history') showHistory({ force: true, nav });
   else if (state.view === 'agents') showAgents({ force: true, nav });
   else if (state.view === 'mcp') showMcp({ force: true, nav });
-  else if (state.view === 'tools') showTools({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
   return true;
 }
@@ -457,10 +456,8 @@ function renderFiles() {
       <span>${SYSTEM_PROMPT}</span><span class="tag${state.hasSystemPrompt ? '' : ' missing'}">${state.hasSystemPrompt ? 'agent instructions' : 'not written yet'}</span></div>
     <div class="row${state.view === 'agents' ? ' on' : ''}" id="agents" title="Which of its channels have thread agents">
       <span>Thread agents</span>${agentsTag()}</div>
-    <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="MCP servers its agents can call from code mode">
-      <span>MCP servers</span>${mcpTag()}</div>
-    <div class="row${state.view === 'tools' ? ' on' : ''}" id="toolsView" title="Tools its agents get only where they are turned on: posting, a computer">
-      <span>Agent tools</span>${toolsTag()}</div>
+    <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="Tools its agents get where they are turned on, and MCP servers they call from code mode">
+      <span>Tools and MCP servers</span>${toolsTag()}${mcpTag()}</div>
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
@@ -472,7 +469,6 @@ function renderFiles() {
   $('history').onclick = () => showHistory();
   $('agents').onclick = () => showAgents();
   $('mcp').onclick = () => showMcp();
-  $('toolsView').onclick = () => showTools();
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -658,6 +654,7 @@ function mcpRow(s) {
 // Tools the thread agents get only where they are turned on (src/agent/agenttools.js), over
 // /api/kb/tools (src/tooladmin.js): post_message, and the computer (pi's bash tool on
 // Cloudflare Computer). For a team, or one channel; a channel's switch wins over its team's.
+// They are the first group of the tools and MCP servers page (renderMcp).
 
 /** The agent tools of this knowledge base's team or customer; null when unknown. */
 async function loadTools(repo) {
@@ -668,22 +665,10 @@ async function loadTools(repo) {
 
 const toolOn = (t) => Boolean((t.team && t.team.enabled) || Object.values(t.channels).some((c) => c.enabled));
 
-/** "post_message, bash", or "off", next to "Agent tools". */
+/** "2 tools" next to "Tools and MCP servers", when any is on; their names on hover. */
 function toolsTag() {
-  if (!state.tools) return '<span class="tag missing">unknown</span>';
-  const on = state.tools.filter(toolOn);
-  return on.length ? `<span class="tag agent">${esc(on.map((t) => t.names.join(', ')).join(', '))}</span>` : '<span class="tag missing">off</span>';
-}
-
-async function showTools({ force = false, nav = 'push' } = {}) {
-  if (!force && state.file && !(await leave())) return false;
-  state.view = 'tools';
-  state.file = null;
-  state.editing = null;
-  renderFiles();
-  toUrl(nav);
-  renderTools();
-  return true;
+  const on = (state.tools || []).filter(toolOn);
+  return on.length ? `<span class="tag agent" title="${esc(on.map((t) => t.names.join(', ')).join(', '))}">${on.length} tool${on.length === 1 ? '' : 's'}</span>` : '';
 }
 
 /** The per-channel switches of a tool; channels on a platform it does not work on are left off. */
@@ -735,26 +720,27 @@ const TOOL_CONFIRM = {
     off: (where) => `Agents of ${where} only keep drafts again, from their next message.`,
   },
   computer: {
-    on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer, no network).`,
+    on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer), and curl, which reaches the internet without a filter.`,
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
   },
 };
 
-function renderTools(note) {
+/** The built-in tools, as the first group of the tools and MCP servers page. */
+function toolsSection() {
   const b = base();
-  const list = state.tools;
-  const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
-  const explain = b.kind === 'team'
-    ? `Tools the thread agents get only where they are turned on: for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). The admin team and the managers of ${b.name} switch them.`
-    : `Tools the thread agents get only where they are turned on: for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
-  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Agent tools for ${esc(whose)}</span></div>
-    <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
-    : state.configured ? esc(explain) : 'Agents are not configured in this deployment: tools take effect once they are.'}</div>
-    <div class="channels">${list ? list.map(toolRow).join('') : '<div class="empty">Could not list the agent tools.</div>'}</div>`;
-  if (!list) return;
+  if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
+  const note = b.kind === 'team' ? `opspile's own tools: off until they are turned on for every channel of ${b.name}, or for one of its channels (a channel's own switch wins).`
+    : `opspile's own tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+  return `<h3 class="group">Tools</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
+}
+
+/** The handlers of the built-in tools' switches. */
+function bindTools() {
+  const b = base();
+  if (!state.tools) return;
   const repo = state.repo;
   const find = (tool) => state.tools.find((t) => t.tool === tool);
-  const stale = () => state.repo !== repo || state.view !== 'tools';
+  const stale = () => state.repo !== repo || state.view !== 'mcp';
   for (const el of $('editor').querySelectorAll('[data-tper]')) {
     el.addEventListener('toggle', () => { state.openTool = el.open ? el.dataset.tper : null; });
   }
@@ -770,10 +756,10 @@ function renderTools(note) {
       if (!yes) return;
       const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: t.tool, team: b.slug, enabled: on }) });
       if (stale()) return;
-      if (!ok) { renderTools({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       t.team = body.switch;
       renderFiles();
-      renderTools({ kind: 'ok', text: `${t.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
+      renderMcp({ kind: 'ok', text: `${t.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
     };
   }
   for (const el of $('editor').querySelectorAll('[data-tch]')) {
@@ -782,17 +768,17 @@ function renderTools(note) {
       const c = state.channels.find((x) => x.channelId === el.dataset.channel);
       const enabled = el.value === '' ? null : el.value === 'on';
       if (enabled && !(await ask(`Turn on ${t.title} in ${channelName(c)}?`, TOOL_CONFIRM[t.tool].on(channelName(c)), 'Turn on'))) {
-        renderTools();
+        renderMcp();
         return;
       }
       const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: t.tool, channel: c.channelId, enabled }) });
       if (stale()) return;
-      if (!ok) { renderTools({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       if (body.switch) t.channels[c.channelId] = body.switch;
       else delete t.channels[c.channelId];
       state.openTool = t.tool;
       renderFiles();
-      renderTools({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
+      renderMcp({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
 }
@@ -894,21 +880,22 @@ function renderMcp(note) {
   const b = base();
   const list = state.mcp;
   const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
-  const explain = `The thread agents of these threads can call these servers' tools from code mode scripts, as
-    tools.mcp__<name>__<tool>; only what a script outputs reaches the model. Adding or changing a server connects to it and
-    lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them.`;
+  const explain = `What the thread agents of these threads can do beyond reading and drafting: opspile's own tools, which
+    they call directly, and MCP servers, whose tools they call from code mode scripts, as tools.mcp__<name>__<tool> (only what
+    a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
   const globalNote = b.kind === 'team' ? `opspile's own, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
     : `opspile's own, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
-  $('editor').innerHTML = `<div class="bar"><span class="title">MCP servers for ${esc(whose)}</span></div>
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
     : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
-    <div class="channels">${globals.length ? `<h3 class="group">Global servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
+    <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}
     ${list ? mcpForm(editing || {}) : ''}</div>`;
+  bindTools();
   bindGlobals();
   if (!list) return;
   const find = (id) => list.find((x) => String(x.id) === String(id));
@@ -1372,7 +1359,7 @@ document.querySelector('main').addEventListener('click', (e) => {
 window.addEventListener('popstate', async () => {
   const q = new URLSearchParams(location.search);
   const repo = q.get('repo');
-  const view = ['history', 'agents', 'mcp', 'tools'].includes(q.get('view')) ? q.get('view') : 'file';
+  const view = ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : 'file';
   const path = q.get('path') || SYSTEM_PROMPT;
   let moved;
   if (!repo || !state.bases.some((b) => b.repo === repo)) {
@@ -1393,8 +1380,6 @@ window.addEventListener('popstate', async () => {
     moved = state.view === 'agents' || await showAgents({ nav: 'replace' });
   } else if (view === 'mcp') {
     moved = state.view === 'mcp' || await showMcp({ nav: 'replace' });
-  } else if (view === 'tools') {
-    moved = state.view === 'tools' || await showTools({ nav: 'replace' });
   } else {
     moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
   }
@@ -1430,11 +1415,11 @@ window.addEventListener('popstate', async () => {
   if (pick) {
     await openRepo(pick.repo, {
       path: exact ? q.get('path') || undefined : undefined,
-      view: exact && ['history', 'agents', 'mcp', 'tools'].includes(q.get('view')) ? q.get('view') : undefined,
+      view: exact && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined,
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if (exact && (q.get('path') || ['history', 'agents', 'tools'].includes(q.get('view')))) showPane('editor');
+    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');
