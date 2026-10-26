@@ -10,11 +10,13 @@
  * governing permissions and limitations under the License.
  */
 
+import { exports as workerExports } from 'cloudflare:workers';
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
+import { useBoxes } from './agent/globals.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
@@ -25,6 +27,7 @@ import { ICONS } from './icons.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { mcp } from './mcp.js';
+import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import { inboxPage } from './page.js';
@@ -35,6 +38,10 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
+
+// The agents' browser boxes (src/agent/browser.js): this Worker's own Durable Object class,
+// reached through its exports (a container's class cannot be bound by name).
+useBoxes(() => (workerExports && workerExports.BrowserBox) || null);
 
 function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
@@ -158,8 +165,9 @@ export default {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
- * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, and classify a
- * batch of the admin team's channels for the channel suggestions.
+ * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
+ * MCP servers' tools once a day, and classify a batch of the admin team's channels for the
+ * channel suggestions.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -176,6 +184,9 @@ export default {
     ctx.waitUntil(syncInstalledBots(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', bots: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', bots: 'error', error: e.message }))));
+    ctx.waitUntil(refreshGlobalTools(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
@@ -184,3 +195,4 @@ export default {
 
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
+export { BrowserBox, BrowserBoxCdp, BrowserBoxRegistry } from './agent/browser.js';
