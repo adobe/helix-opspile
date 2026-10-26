@@ -27,7 +27,7 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
-import { profiles, relationOf } from './profiles.js';
+import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
@@ -510,6 +510,13 @@ export async function thread(env, me, key, wanted = null) {
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const label = effectiveLabel(model, model ? reviewed : []);
+  const [cards, mentioned] = await Promise.all([
+    profiles(env, messages.map((m) => m.authorKey)),
+    // Who the people the messages mention are: Adobe, a partner or the customer.
+    mentionKinds(env, {
+      source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
+    }, messages.filter((m) => !m.deletedAt).map((m) => m.body)),
+  ]);
   return {
     thread: {
       ...row,
@@ -527,7 +534,8 @@ export async function thread(env, me, key, wanted = null) {
       logical_via: m.logical_via,
     })),
     messages,
-    profiles: await profiles(env, messages.map((m) => m.authorKey)),
+    profiles: cards,
+    mentioned,
     watermarks: marks || [],
     label,
     model,

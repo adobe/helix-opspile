@@ -20,6 +20,7 @@
     --me: #2f7cf6; --me-ink: #fff; --me-link: #fff;
     --them: #2b3037; --them-ink: #e8eaed; --them-code: rgba(0,0,0,.25);
     --pane: #0f1114;
+    --mention-adobe: #ff8a80;
     --code: #0b0d10;
     --head: 50px;
     font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
@@ -33,6 +34,7 @@
       --sel: #dde9fb; --purple: #8250df; --them: #e1e5ea; --them-ink: #1d2025; --code: #f3f4f6;
       /* A white pane, so customer bubbles stand out (1.27:1) as Adobe's blue ones do. */
       --pane: #fff; --them-code: rgba(0,0,0,.08); --them-link: #0a4fa8;
+      --mention-adobe: #b30b00;
     }
   }
   * { box-sizing: border-box; }
@@ -352,6 +354,12 @@
   dialog.lightbox .bar a:hover, dialog.lightbox .bar button:hover { background: rgba(255,255,255,.15); }
   body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   .bubble .mention { font-weight: 600; }
+  /* Mentions of Adobe people in red, so they stand out; everyone else's (customers, partners,
+     bots, unknown names) stay in the bubble's own colour. On grey bubbles the red is a shade
+     with 4.5:1 contrast in either theme; no red reads on Adobe's blue, so there it is a pill
+     in Adobe red with white text (4.6:1). */
+  .bubble .mention.adobe { color: var(--mention-adobe); white-space: nowrap; }
+  .msg.adobe .bubble .mention.adobe { padding: 0 4px; border-radius: 4px; color: #fff; background: #eb1000; }
   .msg.deleted .bubble { font-style: italic; opacity: .6; }
   .msg .meta { font-size: 11px; color: var(--faint); margin: 3px 12px 0; min-height: 15px; }
   .msg .meta a { visibility: hidden; }
@@ -884,14 +892,28 @@ const SIGNAL_HINT = {
 // Markdown: micromark, with chat's line breaks, mentions and emoji (src/ui-markdown.js, put
 // into the page as `Markdown`). Images from Slack and Teams go through the inbox's media
 // proxy, which adds the platform's credentials.
-// Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention.
+// Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention,
+// and who they are (Adobe, partner, customer, bot), so mentions of people outside Adobe stand
+// out. Teams mentions some people as "@Last, First": that form is known too.
 let mentionNames = null;
+let mentionKinds = new Map();
+const mentionKindOf = (name) => mentionKinds.get(String(name).toLowerCase());
 // Each distinct set of names gets a short id, for the cache of rendered messages below.
 let mentionSet = '';
 const mentionSets = new Map();
-function setMentionNames(names) {
+function setMentionNames(names, kinds = new Map()) {
   mentionNames = Markdown.mentionPattern(names);
-  const source = mentionNames ? mentionNames.source : '';
+  mentionKinds = new Map();
+  for (const [name, kind] of kinds) {
+    const parts = String(name).trim().split(/\s+/);
+    const forms = parts.length < 2 ? [name] : [name, `${parts[parts.length - 1]}, ${parts[0]}`];
+    for (const f of forms) {
+      const k = f.toLowerCase();
+      // A name that stands for people of different kinds says nothing.
+      mentionKinds.set(k, mentionKinds.has(k) && mentionKinds.get(k) !== kind ? undefined : kind);
+    }
+  }
+  const source = `${mentionNames ? mentionNames.source : ''}\u0000${[...mentionKinds].join(';')}`;
   if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
   mentionSet = mentionSets.get(source);
 }
@@ -904,7 +926,7 @@ function md(src) {
   const k = `${mentionSet}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
-    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied });
+    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied, kindOf: mentionKindOf });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
     rendered.delete(k);
@@ -1757,11 +1779,23 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const shown = [...messages, ...state.sending.map((p) => ({
     ...p, author: { kind: 'person', name: state.me.name, staff: true }, pending: true,
   }))];
+  // Who they are: the server's answer for the names the messages mention, then what the
+  // thread's authors, the inbox's people and the picked mentions say.
+  const kinds = new Map(Object.entries(data.mentioned || {}));
+  const known = (name, kind) => { if (name && kind && !kinds.has(name)) kinds.set(name, kind); };
+  for (const m of shown) {
+    const a = m.author || {};
+    if (a.kind === 'system') continue;
+    known(a.name, state.profiles.get(m.authorKey)?.relation || (a.kind === 'bot' ? 'bot' : (a.staff ? 'adobe' : 'customer')));
+  }
+  for (const p of Object.values(state.data?.people || {})) known(p.name, p.relation || (p.staff ? 'adobe' : null));
+  for (const p of mention.picked.get(key)?.values() || []) known(p.name, p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
   setMentionNames([
     ...shown.map((m) => m.author?.name),
     ...Object.values(state.data?.people || {}).map((p) => p.name),
     ...mention.names,
-  ]);
+    ...kinds.keys(),
+  ], kinds);
   // The feed, one element per item; `enter` marks the messages that just arrived.
   const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before opspile started listening.</div>' }];
   let prev = null;

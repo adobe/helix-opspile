@@ -111,6 +111,17 @@ export function mentionPattern(names) {
     : null;
 }
 
+/** The classes and hints of mentions, by who the person is. */
+const MENTION_KINDS = {
+  adobe: { cls: 'adobe', title: 'Adobe' },
+  partner: { cls: 'external partner', title: 'Partner, not Adobe' },
+  customer: { cls: 'external customer', title: 'Customer, not Adobe' },
+  bot: { cls: 'bot', title: 'Bot' },
+};
+const decode = (s) => s.replace(/&(amp|lt|gt|quot|#x27|#39);/g, (_, e) => ({
+  amp: '&', lt: '<', gt: '>', quot: '"', '#x27': "'", '#39': "'",
+}[e]));
+
 /** `@Name` of someone the thread does not know: one to three words. */
 const MENTION = /(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu;
 /** `:name:` with an optional `::skin-tone-N`. */
@@ -156,8 +167,18 @@ function image(tag, proxy) {
  * @param {RegExp|null} [options.mentions] from mentionPattern()
  * @param {(name: string) => string|undefined} [options.emoji] the character for an emoji name
  * @param {(url: string) => string} [options.proxy] the address to load an image from
+ * @param {(name: string) => string|undefined} [options.kindOf] who a mentioned name is
+ *   (`adobe`, `partner`, `customer`, `bot`): a class on the mention, and a hint
  */
-export function render(src, { mentions = null, emoji = () => undefined, proxy = (u) => u } = {}) {
+export function render(src, {
+  mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
+} = {}) {
+  const mark = (_, before, at) => {
+    const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
+    return kind
+      ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
+      : `${before}<span class="mention">${at}</span>`;
+  };
   const html = micromark(repair(String(src || '').replaceAll(BREAK, '')), OPTIONS)
     .replace(BLOCK_END, '$1\n')
     .replaceAll(BREAK, '<br />\n');
@@ -180,10 +201,10 @@ export function render(src, { mentions = null, emoji = () => undefined, proxy = 
     }
     let text = part;
     if (mentions) {
-      text = text.replace(mentions, '$1<span class="mention">$2</span>');
+      text = text.replace(mentions, mark);
     }
     return text
-      .replace(MENTION, '$1<span class="mention">$2</span>')
+      .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
   }).join('').trim();
 }

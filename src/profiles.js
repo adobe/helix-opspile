@@ -110,3 +110,84 @@ export async function profiles(env, keys) {
     }];
   }));
 }
+
+const MAX_MENTION_NAMES = 200;
+// `@` and up to four words after it (a word may end in `,`, for Teams' `@Last, First`).
+const AT_NAME = /(?:^|[^\p{L}\p{N}_@])@([\p{L}][\p{L}\p{N}.'-]*,?(?: [\p{L}][\p{L}\p{N}.'-]*,?){0,3})/gu;
+
+/**
+ * The names `@` mentions in these texts may stand for: one to four words after each `@`,
+ * without trailing punctuation, and `Last, First` turned round. Markdown code is not told
+ * apart: a name that matches nobody costs nothing.
+ */
+export function mentionCandidates(texts) {
+  const out = new Set();
+  for (const text of texts) {
+    for (const [, run] of String(text || '').matchAll(AT_NAME)) {
+      const words = run.split(' ');
+      for (let n = 1; n <= words.length; n += 1) {
+        const name = words.slice(0, n).join(' ').replace(/[.,'-]+$/, '');
+        if (name) {
+          out.add(name);
+          const swapped = /^([^,]+), (\S+)$/.exec(name);
+          if (swapped) {
+            out.add(`${swapped[2]} ${swapped[1]}`);
+          }
+        }
+        if (out.size >= MAX_MENTION_NAMES) {
+          return [...out];
+        }
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Who the people the texts `@` mention are to us, by the name they go by: `{ [name]:
+ * 'adobe'|'partner'|'customer'|'bot' }`. A name is looked up among the platform accounts of
+ * the thread's workspace (Slack) or tenant (Teams, Discord) and among people, and among those
+ * the thread's messages mention (D1's `mentions`). A name that stands for people of different
+ * kinds is left out, as is everything else unknown. Emails stay here.
+ *
+ * @param {object} env bindings
+ * @param {{ source: string, tenant: string, threads: string[] }} where the thread
+ * @param {string[]} texts the messages' markdown
+ */
+export async function mentionKinds(env, { source, tenant, threads }, texts) {
+  const names = mentionCandidates(texts);
+  if (!names.length) {
+    return {};
+  }
+  const list = JSON.stringify(names);
+  const [{ results: accounts }, { results: people }, { results: partnerRows }] = await Promise.all([
+    env.DB.prepare(`SELECT i.kind, COALESCE(p.name, i.name) AS name, i.name AS handle,
+        COALESCE(p.email, i.email) AS email,
+        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
+      FROM identities i LEFT JOIN people p ON p.id = i.person
+      WHERE i.source = ? AND i.tenant = ? AND i.kind != 'system'
+        AND i.name IN (SELECT value FROM json_each(?))`)
+      .bind(source, tenant, list).all(),
+    env.DB.prepare(`SELECT 'person' AS kind, name, email, staff FROM people
+      WHERE name IN (SELECT value FROM json_each(?))
+      UNION SELECT 'person', p.name, p.email, p.staff
+      FROM mentions n JOIN people p ON p.id = n.person
+      WHERE n.thread IN (SELECT value FROM json_each(?))`)
+      .bind(list, JSON.stringify(threads || [])).all(),
+    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+  ]);
+  const partners = new Map((partnerRows || [])
+    .map((r) => [String(r.domain).toLowerCase(), r.name]));
+  const kinds = new Map();
+  for (const r of [...(accounts || []), ...(people || [])]) {
+    const relation = relationOf(env, r, partners);
+    // The account's name only where it is not the person's, written differently.
+    const handle = r.handle && r.handle.toLowerCase() !== String(r.name).toLowerCase()
+      ? r.handle : null;
+    for (const name of [r.name, handle].filter(Boolean)) {
+      const seen = kinds.get(name);
+      kinds.set(name, seen === undefined || seen === relation ? relation : null);
+    }
+  }
+  return Object.fromEntries([...kinds].filter(([, relation]) => relation));
+}

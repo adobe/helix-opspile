@@ -472,10 +472,11 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ch: CHANNELS.aemAcme,
     messages: [
       ['sam', 340, 'Our preview site is returning 503s since this morning\'s deploy.'],
-      ['priya', 332, 'Thanks for flagging. Which paths are affected?'],
+      ['priya', 332, 'Thanks for flagging. @Sam Reyes, which paths are affected?'],
       ['sam', 330, '/en/* and /de/*. Same deploy as the 14:00 cache flush.', { editedAgo: 329 }],
-      ['ravi', 20, 'We implement this site for them; happy to share the deploy logs.'],
-      ['sam', 12, 'Can someone take a look? We are blocked on it.'],
+      ['priya', 300, '@Lena Berg can you check the flush job? cc @Tom Okafor'],
+      ['ravi', 20, 'We implement this site for them; happy to share the deploy logs with @Priya Nair.'],
+      ['sam', 12, 'Can someone take a look? We are blocked on it. cc @Ravi Kumar'],
     ],
     reads: { priya: 332 },
     label: {
