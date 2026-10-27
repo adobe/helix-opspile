@@ -19,7 +19,8 @@ import { postToTeams } from '../teamsbot.js';
  * platform thread of its inbox entry, as the opspile app, never as a person. People reply as
  * themselves (src/post.js); the agent's replies say by their author that they are the app's.
  *
- * - Slack: `chat.postMessage` with the bot token (bot scope `chat:write`), in the thread.
+ * - Slack: `chat.postMessage` with the bot token (bot scope `chat:write`), in the thread, the
+ *   Markdown in a `markdown` block.
  * - Discord: the bot (Send Messages, Send Messages in Threads), in the Discord thread when the
  *   conversation is one, else as an inline reply to its first message. No pings.
  * - Teams: the opspile bot (src/teamsbot.js), a Bot Framework bot, in the channel thread;
@@ -55,7 +56,14 @@ export async function postAsApp(env, key, text, options = {}) {
         authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
         'content-type': 'application/json; charset=utf-8',
       },
-      body: JSON.stringify({ channel: t.channel_id, thread_ts: t.root_id, text: slackText(body) }),
+      // The Markdown as a `markdown` block, which Slack renders itself (lists, headings, tables);
+      // `text` in mrkdwn for notifications, and for opspile, which files messages by their text.
+      body: JSON.stringify({
+        channel: t.channel_id,
+        thread_ts: t.root_id,
+        text: slackText(body),
+        blocks: [{ type: 'markdown', text: body }],
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {

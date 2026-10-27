@@ -93,6 +93,7 @@ describe('mentions', () => {
   it('writes Slack mentions as <@id> and escapes the rest', () => {
     assert.equal(slackText('@Ada see a<b & c>d', [ada]), '<@U1> see a&lt;b &amp; c&gt;d');
     assert.equal(slackText('<@U9> by hand', []), '&lt;@U9&gt; by hand');
+    assert.equal(slackText('**@Ada**, see `a<b`', [ada]), '*<@U1>*, see `a&lt;b`');
   });
 
   it('writes Teams mentions as <at> with a mention entry each', () => {

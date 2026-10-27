@@ -12,6 +12,7 @@
 
 import { json } from './http.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
+import { markdownToMrkdwn } from './markdown.js';
 import { teamsOf } from './shares.js';
 
 /**
@@ -351,8 +352,6 @@ export async function personalToken(env, person, platform) {
 const htmlEscape = (s) => s.replace(/[&<>"]/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
 }[c]));
-// Slack wants exactly these three escaped in `text`; everything else is sent as written.
-const slackEscape = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const MAX_MENTIONS = 20;
@@ -383,10 +382,16 @@ export function splitMentions(body, mentions) {
   return parts.filter((p) => p !== '');
 }
 
-/** Slack `text`: mentions as `<@U…>`, so the person is notified. */
+/**
+ * Slack `text` from a Markdown reply: in mrkdwn (src/markdown.js), mentions as `<@U…>`, so
+ * the person is notified.
+ */
 export function slackText(body, mentions = []) {
-  return splitMentions(body, mentions)
-    .map((p) => (typeof p === 'string' ? slackEscape(p) : `<@${p.id}>`)).join('');
+  const ids = [];
+  const marked = splitMentions(body, mentions)
+    .map((p) => (typeof p === 'string' ? p.replace(/\uE003/g, '') : `\uE003${ids.push(p.id) - 1}\uE003`))
+    .join('');
+  return markdownToMrkdwn(marked).replace(/\uE003(\d+)\uE003/g, (_, i) => `<@${ids[Number(i)]}>`);
 }
 
 /**

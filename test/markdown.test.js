@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  htmlToMarkdown, mdLink, mdUrl, slackToMarkdown,
+  htmlToMarkdown, markdownToMrkdwn, mdLink, mdUrl, slackToMarkdown,
 } from '../src/markdown.js';
 
 describe('mdLink', () => {
@@ -112,5 +112,34 @@ describe('image sizes', () => {
     assert.match(md, /!\[image\]\(https:\/\/graph\.example\/hc\/1\/\$value "250x140"\)/);
     assert.match(htmlToMarkdown('<img src="https://graph.example/x" style="width:300px;height:200px">'), /"300x200"\)/);
     assert.doesNotMatch(htmlToMarkdown('<img src="https://graph.example/x">'), /"\d+x\d+"/);
+  });
+});
+
+describe('markdownToMrkdwn', () => {
+  it('writes emphasis, links, headings and lists as Slack shows them', () => {
+    assert.equal(
+      markdownToMrkdwn('**bold**, *it*, __also bold__, ***both*** and ~~gone~~ but 2*3*4 and snake_case'),
+      '*bold*, _it_, *also bold*, *_both_* and ~gone~ but 2*3*4 and snake_case',
+    );
+    assert.equal(
+      markdownToMrkdwn('[docs](https://example.com/a?b=1&c=2), [](https://example.org) and <https://example.net>'),
+      '<https://example.com/a?b=1&amp;c=2|docs>, <https://example.org> and <https://example.net>',
+    );
+    assert.equal(markdownToMrkdwn('## Next **steps** ##'), '*Next steps*');
+    assert.equal(
+      markdownToMrkdwn('- **one**: first\n  * two\n+ [ ] open\n- [x] done\n1. numbered'),
+      '• *one*: first\n  • two\n• ☐ open\n• ☑ done\n1. numbered',
+    );
+    assert.equal(markdownToMrkdwn('> quoted **text**\n\n---'), '> quoted *text*\n\n──────────');
+  });
+
+  it('keeps code as code and escapes what Slack would read as markup', () => {
+    assert.equal(markdownToMrkdwn('a<b & c>d, `x **y** <z>`'), 'a&lt;b &amp; c&gt;d, `x **y** &lt;z&gt;`');
+    assert.equal(
+      markdownToMrkdwn('```js\nif (a < b) { **x** }\n```\nafter **that**'),
+      '```\nif (a &lt; b) { **x** }\n```\nafter *that*',
+    );
+    // An unclosed fence still ends the code block.
+    assert.equal(markdownToMrkdwn('```\nopen'), '```\nopen\n```');
   });
 });

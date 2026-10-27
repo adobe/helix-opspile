@@ -69,6 +69,8 @@
   nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
+  nav.pages .count { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px;
+    border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650; line-height: 1; }
   nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
@@ -373,9 +375,6 @@
   .msg.adobe .bubble .mention.adobe { padding: 0 4px; border-radius: 4px; color: #fff; background: #eb1000; }
   .msg.deleted .bubble { font-style: italic; opacity: .6; }
   .msg .meta { font-size: 11px; color: var(--faint); margin: 3px 12px 0; min-height: 15px; }
-  .msg .meta a { visibility: hidden; }
-  .msg:hover .meta a { visibility: visible; }
-  .msg .meta a { color: inherit; }
   .rx { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 6px 0; }
   .rx span, .rx button { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
   .rx button.mine { background: var(--sel); border-color: var(--accent); }
@@ -524,7 +523,6 @@
     .ph .close { width: 40px; height: 40px; }
     .msg .meta { margin-top: 5px; min-height: 22px; }
     .msg .meta .react { padding: 2px 10px; font-size: 12px; }
-    .msg .meta a { display: inline-block; padding: 2px 0; }
     .msg .quick, .picker, .rx { zoom: 1.2; }
     .draftbar button, .rv button { padding: 3px 11px; }
     .composer button.send { padding: 9px 20px; }
@@ -599,6 +597,8 @@
   @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
     #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
   }
+  /* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
+  main.instant #threads, main.instant #pane, main.instant.reading #pane { transition: none; }
 </style>
 </head>
 <body>
@@ -1599,7 +1599,7 @@ function message(m, prev, fresh) {
     <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${m.editedAt || m.permalink || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited ' : ''}${m.permalink ? `<a href="${esc(m.permalink)}" target="_blank" rel="noopener">open in ${PLATFORM[m.source] || 'Teams'} ↗</a>` : ''}</div>` : ''}
+      ${m.editedAt || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited' : ''}</div>` : ''}
     </div></div>`;
 }
 
@@ -1686,8 +1686,8 @@ function composer(thread, draft, resolve = '') {
   }
   return `<div class="composer"><div class="draftbar" id="draftbar" hidden></div><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="Reply in ${platform(thread)} as ${esc(state.me.name || '')}… (@ to mention${TOUCH_ONLY.matches ? '' : ', Enter to send, Shift+Enter for a new line, ⌘S to save as draft'})"></textarea>
-    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send" title="Enter to send. Keep the pointer here (or press and hold) to save a draft${resolve ? ' or resolve with ✅' : ''}">Send</button></span></div>`;
+      placeholder="Reply in thread"></textarea>
+    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span></div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -2679,7 +2679,10 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
-  window.addEventListener('popstate', async () => {
+  window.addEventListener('popstate', async (e) => {
+    // Safari's edge swipe has already slid the list or the thread into view: no second slide.
+    const main = document.querySelector('main');
+    main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const team = state.team;
     const { open, review } = fromUrl();
     renderUser();
@@ -2690,6 +2693,9 @@ async function start() {
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     syncPages();
+    // The styles are applied without transitions before they come back.
+    main.getBoundingClientRect();
+    main.classList.remove('instant');
   });
   if (state.me.admin) {
     const sel = $('as');
@@ -2727,6 +2733,15 @@ async function start() {
   if (state.me.admin || state.me.manages?.length) {
     $('pages').hidden = false;
     $('inbox').onclick = (e) => e.preventDefault();
+    // Channels team managers asked for, waiting for the admin team: their number on Admin.
+    if (state.me.admin && !state.as) {
+      get('/api/admin/requests?count=1').then(({ open }) => {
+        if (!open) return;
+        $('adminPage').insertAdjacentHTML('beforeend', `<span class="count">${Number(open)}</span>`);
+        $('adminPage').title = `${open} channel request${open === 1 ? '' : 's'} from team managers to confirm or decline`;
+        $('adminPage').href = '/inbox/admin?tab=requests';
+      }).catch(() => {});
+    }
     // Fresh at the moment it is used (the open thread's customer may have loaded since).
     for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }

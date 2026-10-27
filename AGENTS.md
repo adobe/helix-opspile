@@ -35,13 +35,15 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   others' inboxes too (`channel_teams`)
 - `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts
 - `src/admin.js` and `ui/admin.html` — the admin team's pages for teams, members, rules and
-  orgs at `/inbox/admin` (team managers: their teams' members); `src/refile.js` moves channels a rule change re-files;
+  orgs at `/inbox/admin` (team managers: their teams' members, and requests for channels,
+  `src/requests.js`, which the admin team confirms or declines); `src/refile.js` moves channels a rule change re-files;
   `src/suggest.js` suggests the admin team's channels to the teams (members' activity, Clef per channel, cron)
 - `src/kbadmin.js` and `ui/kb.html` — the admin team's knowledge-base editor at `/inbox/kb`
   (including each knowledge base's `systemprompt.md` for the agents, and the per-channel switch
   of the thread agents, `src/agent/enabled.js`)
 - `src/agent/` — thread agents: `agent.js` (the `ThreadAgent` Durable Object, Pi via
-  `PiHarness`), `tools.js` (its prompt and tools), `agenttools.js` (the tools that are off until
+  `PiHarness`), `tools.js` (its prompt and tools), `history.js` (the other threads of its
+  channel, which it may list and read), `agenttools.js` (the tools that are off until
   a team or channel turns them on: `post_message`, in `posting.js`, and the `computer`, pi's
   bash on Cloudflare Computer, in `computer.js`), `deliver.js` (what it is told, Clef's
   prompt-injection check), `model.js` (Bedrock through AI Gateway), `repos.js` (reading
