@@ -85,6 +85,7 @@
   header nav.tabs a { display: flex; align-items: center; height: 30px; color: var(--mute); text-decoration: none; padding: 0 11px;
     border-radius: 7px; }
   header nav.tabs a:hover { color: var(--ink); background: var(--hover); }
+  header nav.tabs a[hidden] { display: none; }
   header nav.tabs a[aria-current="page"] { color: var(--ink); background: var(--sel); }
   main { flex: 1; display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; }
@@ -144,8 +145,19 @@
   .tag.clef.yes { color: var(--green); border-color: var(--green); }
   .person { display: inline-block; margin: 1px 8px 1px 0; white-space: nowrap; }
   .empty { color: var(--mute); padding: 20px 4px; }
+  /* Channel assignment requests: how many are open, and what came of each. */
+  .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px;
+    border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650; line-height: 1; }
+  .count[hidden] { display: none; }
+  .tag.open { color: var(--yellow); border-color: var(--yellow); }
+  .tag.confirmed { color: var(--green); border-color: var(--green); }
+  .tag.declined { color: var(--red); border-color: var(--red); }
+  .note { white-space: pre-wrap; overflow-wrap: break-word; }
+  #requestsTable td.note { min-width: 160px; }
+  .preview { margin: 0 0 4px; }
+  .preview ul { margin: 6px 0 0; padding-left: 20px; }
   .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
-  #membersTable, #rulesTable, #channelsTable { overflow-x: auto; }
+  #membersTable, #rulesTable, #channelsTable, #requestsTable { overflow-x: auto; }
 
   /*
    * Narrower screens. Under 1100px the list gets narrower. Under 700px (phones, a folded iPhone
@@ -183,6 +195,8 @@
     .title input.big { flex: 1 1 60%; min-width: 0; font-size: 18px; }
     .card { padding: 10px 12px; }
     .card > table { display: block; overflow-x: auto; }
+    /* Too many columns for a phone: the requests scroll sideways in their card. */
+    #requestsTable table { min-width: 640px; }
     .field { grid-template-columns: 1fr; gap: 4px; }
     .field label { margin-top: 6px; }
     .seg { flex-wrap: wrap; }
@@ -196,6 +210,7 @@
   <nav class="tabs" aria-label="Admin sections">
     <a href="/inbox/admin?tab=teams" data-tab="teams">Teams</a>
     <a href="/inbox/admin?tab=orgs" data-tab="orgs">Customers, partners, vendors</a>
+    <a href="/inbox/admin?tab=requests" data-tab="requests" title="Channels team managers asked for: confirm or decline">Requests<span class="count" id="reqCount" hidden></span></a>
   </nav>
   <span class="spacer"></span>
   <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
@@ -216,7 +231,9 @@
  * The admin team's pages for ops teams (#17) and orgs (#18), over /api/admin (src/admin.js).
  *
  * Team managers (and every member of a self-managed team) see the teams they manage, add and
- * remove members and promote or demote them; the rest is for the admin team.
+ * remove members and promote or demote them, and ask the admin team for channels (a request:
+ * they pick one in the same search the admin team adds channels with). The admin team confirms
+ * or declines the requests under Requests; the rest is for the admin team.
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
@@ -228,6 +245,7 @@
  */
 const state = {
   me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
+  requests: [], openRequests: 0, names: {},
 };
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
@@ -366,7 +384,7 @@ const orgLabel = (slug) => {
 // The admin team holds the channels no other team has (yet); adding a team to one of those
 // moves it, adding a team to any other channel shares it (src/shares.js).
 const isHolding = (slug) => !slug || slug === UNASSIGNED || slug === 'admin';
-const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || slug));
+const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || state.names[slug] || slug));
 
 /** The channels a rule change moved, in a few words. */
 function movesText(moves) {
@@ -390,9 +408,12 @@ async function ruleChange(method, path, body, what = 'Rule change') {
 
 // ---- navigation ---------------------------------------------------------------------------
 
+// What is picked on each tab, in the URL.
+const PARAM = { teams: 'team', orgs: 'org', requests: 'request' };
+const PICK = { teams: 'a team', orgs: 'an org', requests: 'a request' };
 function toUrl() {
   const q = new URLSearchParams({ tab: state.tab });
-  if (state.sel) q.set(state.tab === 'teams' ? 'team' : 'org', state.sel);
+  if (state.sel) q.set(PARAM[state.tab], state.sel);
   history.replaceState(null, '', `/inbox/admin?${q}`);
   // Phones show the list or what is picked in it (see the styles).
   document.body.classList.toggle('picked', Boolean(state.sel));
@@ -404,10 +425,15 @@ function toUrl() {
 
 async function load() {
   // Team managers see their teams only, and no orgs.
-  const [teams, orgs] = await Promise.all([call('/api/admin/teams'),
-    state.me.admin ? call('/api/admin/orgs') : Promise.resolve({ body: {} })]);
+  const [teams, orgs, requests] = await Promise.all([call('/api/admin/teams'),
+    state.me.admin ? call('/api/admin/orgs') : Promise.resolve({ body: {} }),
+    state.me.admin ? call('/api/admin/requests') : Promise.resolve({ body: {} })]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   state.teams = teams.body.teams;
+  state.names = teams.body.names || {};
+  state.requests = requests.body.requests || [];
+  state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
+  renderCount();
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
@@ -497,6 +523,18 @@ function drawList() {
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
+  } else if (state.tab === 'requests') {
+    const match = (r) => !f || `${plainName(r.channel)} ${r.channel.channelId} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`
+      .toLowerCase().includes(f);
+    const row = (r) => `<div class="row${String(state.sel) === String(r.id) ? ' on' : ''}" data-sel="${r.id}">
+        <span class="name">${channelName(r.channel)} <span class="sub">→ ${esc(teamLabel(r.team))}</span></span>
+        ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
+    const open = state.requests.filter((r) => r.status === 'open' && match(r));
+    const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
+    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter requests" value="${esc(state.filter)}">
+      <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
+      ${decided.length ? `<h2>Decided</h2>${decided.map(row).join('')}` : ''}
+      <p class="hint">Team managers ask for channels on their team's page. Confirming one assigns the channel to the team, as adding it on the team's page does.</p>`;
   } else {
     const rows = state.orgs.filter((o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f)).map((o) => `
       <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
@@ -532,7 +570,9 @@ function select(sel) {
   state.sel = sel;
   toUrl();
   renderList();
-  if (state.tab === 'teams') showTeam(sel); else showOrg(sel);
+  if (state.tab === 'teams') showTeam(sel);
+  else if (state.tab === 'requests') showRequest(sel);
+  else showOrg(sel);
 }
 
 /** Back to the list (phones), its filter as it was. */
@@ -540,9 +580,9 @@ function unselect() {
   state.sel = null;
   toUrl();
   renderList();
-  $('detail').innerHTML = `<div class="empty">Pick ${state.tab === 'teams' ? 'a team' : 'an org'}.</div>`;
+  $('detail').innerHTML = `<div class="empty">Pick ${PICK[state.tab]}.</div>`;
 }
-const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab === 'teams' ? 'teams' : 'orgs'}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
+const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
 
 function switchTab(tab) {
   state.tab = tab;
@@ -550,7 +590,7 @@ function switchTab(tab) {
   state.filter = '';
   toUrl();
   renderList();
-  $('detail').innerHTML = `<div class="empty">Pick ${tab === 'teams' ? 'a team' : 'an org'}.</div>`;
+  $('detail').innerHTML = `<div class="empty">Pick ${PICK[tab]}.</div>`;
 }
 
 // ---- view state ---------------------------------------------------------------------------
@@ -696,6 +736,13 @@ function placePicks(input, picks) {
 
 /** The channels card: a table (redrawn on its own) and a picker that assigns one here. */
 function channelsCard(target) {
+  // A team manager asks the admin team for a channel instead (a request).
+  if (!state.me.admin) {
+    return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
+    <div class="form picker"><input id="pick" class="grow" placeholder="Ask for a channel: search by channel, Teams team, customer or id" autocomplete="off" aria-label="Ask for a channel"><div class="picks" id="picks" hidden></div></div>
+    <div id="askSlot"></div>
+    <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows under Requests. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
+  }
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><input id="pick" class="grow" placeholder="${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}: search by channel, Teams team, customer, team or id" autocomplete="off" aria-label="${target === 'team' ? 'Add a channel' : 'Assign a channel'}"><div class="picks" id="picks" hidden></div></div>
     <p class="hint">${target === 'team'
@@ -739,6 +786,10 @@ function assignHere(c, value = state.view.value) {
       row.shared = row.shared ?? c.shared;
       row.latest = row.latest || c.latest || null;
       row.orgName = row.orgName || c.orgName || null;
+    }
+    // A request for it is answered by this (src/requests.js `settleRequests`).
+    if (target === 'team' && state.requests.some((x) => x.status === 'open' && x.team === value && x.channel.channelId === channelId)) {
+      refreshRequests();
     }
     // Already here by rule: no move, but now by hand. A channel the API did not move
     // (no threads yet) shows up once something is filed.
@@ -843,11 +894,14 @@ function wireChannelPicker() {
   let words = [];
   const input = $('pick');
   const picks = $('picks');
+  // The admin team assigns the channel; a team manager asks for it.
+  const asks = !state.me.admin;
+  const pending = (c) => asks && (state.view.requests || []).some((x) => x.status === 'open' && x.channel.channelId === c.channelId);
   const pickIt = async (c) => {
     picks.hidden = true;
     input.value = '';
     list = [];
-    await assignHere(c);
+    if (asks) askFor(c); else await assignHere(c);
   };
   const render = () => {
     picks.innerHTML = list.map((c, i) => {
@@ -863,7 +917,7 @@ function wireChannelPicker() {
         <span class="name"><span class="ch">${channelName(c, words)}</span>
           <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
           · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
-        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
+        <span class="where">${pending(c) ? '<span class="tag open" title="Asked for already: waiting for the admin team">requested</span><br>' : ''}${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
     }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
     picks.hidden = false;
@@ -884,7 +938,8 @@ function wireChannelPicker() {
       // Not the separators (`›`, `>`, `/`) of a name typed as it is shown.
       words = q.toLowerCase().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
       const seen = new Set();
-      list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target])
+      // A manager asks only for channels that are not in the team's inbox yet.
+      list = (r.body.channels || []).filter((c) => (asks ? c.team !== value : c[target] !== value || !c.manual[target]))
         .filter((c) => target !== 'team' || !(c.sharedWith || []).includes(value))
         .filter((c) => !seen.has(c.channelId) && seen.add(c.channelId));
       at = 0;
@@ -1226,10 +1281,10 @@ async function showTeam(slug) {
   if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
-    team, members, rules, channels, suggestions, coverage,
+    team, members, rules, channels, suggestions, coverage, requests = [],
   } = r.body;
   const v = {
-    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage,
+    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests,
   };
   state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
@@ -1258,14 +1313,17 @@ async function showTeam(slug) {
       <div id="ruleSlot">${ruleForm()}</div>
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
-    ${admin ? channelsCard('team') : '<div class="card"><h2>Channels</h2><div id="channelsTable"></div><p class="hint">The admin team decides which channels a team gets.</p></div>'}
+    ${channelsCard('team')}
+    ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
+      <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
       <p class="hint" style="margin:0 0 8px">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
   showStatus();
   renderChannels();
   if (suggestions) renderSuggestions();
-  if (admin) wireChannelPicker();
+  wireChannelPicker();
+  if ($('requestsTable')) renderRequests();
   if (!real) return;
   renderMembers();
   wireMemberPicker();
@@ -1309,6 +1367,226 @@ async function showTeam(slug) {
       if (state.tab === 'teams' && state.sel === slug) switchTab('teams'); else renderList();
     });
   }
+}
+
+// ---- channel assignment requests ----------------------------------------------------------
+//
+// A team manager asks for a channel on their team's page (`askFor`); the admin team decides
+// under Requests (`showRequest`): Confirm runs the assignment the team's page makes, after its
+// dry run said what it moves; Decline takes a reason. Both pages show what came of each.
+
+const who = (p) => esc((p && (p.name || p.email)) || 'someone');
+const STATUS = {
+  open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn',
+};
+const statusTag = (r) => `<span class="tag ${esc(r.status)}">${esc(STATUS[r.status] || r.status)}</span>`;
+
+/** What came of a request, in a few words: who decided, when, and what it did. */
+function decisionText(r) {
+  const when = r.decidedAt ? ` ${esc(ago(r.decidedAt))}` : '';
+  if (r.status === 'open') return `${statusTag(r)} waiting for the admin team`;
+  if (r.status === 'withdrawn') return `${statusTag(r)} by ${who(r.decidedBy)}${when}`;
+  if (r.status === 'declined') {
+    return `${statusTag(r)} by ${who(r.decidedBy)}${when}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}`;
+  }
+  const did = {
+    moved: `filed under ${esc(teamLabel(r.team))}; its threads are re-filed`,
+    shared: `shared with ${esc(teamLabel(r.team))}; it stays filed under ${esc(teamLabel(r.channel.team))}`,
+    assigned: `assigned to ${esc(teamLabel(r.team))}; nothing to move yet`,
+  }[r.outcome] || '';
+  return `${statusTag(r)} by ${who(r.decidedBy)}${when}${did ? `: ${did}` : ''}`;
+}
+
+/** The number of open requests on the Requests tab. */
+function renderCount() {
+  const el = $('reqCount');
+  el.textContent = String(state.openRequests);
+  el.hidden = !state.me.admin || !state.openRequests;
+  el.closest('a').title = state.openRequests
+    ? `${state.openRequests} channel request${state.openRequests === 1 ? '' : 's'} waiting for a decision` : 'Channels team managers asked for';
+}
+
+/** A request as it is now, everywhere the page shows it (the lists, the open team page). */
+function updateRequest(r) {
+  const was = state.requests.find((x) => x.id === r.id);
+  if (was && was.status === 'open' && r.status !== 'open') state.openRequests = Math.max(0, state.openRequests - 1);
+  if (was) Object.assign(was, r); else if (state.me.admin) state.requests.unshift(r);
+  if (state.view && state.view.requests) {
+    const mine = state.view.requests.find((x) => x.id === r.id);
+    if (mine) Object.assign(mine, r); else if (state.view.value === r.team) state.view.requests.unshift(r);
+  }
+  renderCount();
+}
+
+/** The requests as the API has them now, after a change that may have answered some. */
+async function refreshRequests() {
+  const r = await call('/api/admin/requests');
+  if (!r.ok) return;
+  state.requests = r.body.requests;
+  state.openRequests = r.body.open;
+  renderCount();
+  const v = state.view;
+  if (v && v.requests) {
+    for (const x of v.requests) Object.assign(x, state.requests.find((y) => y.id === x.id) || {});
+    if ($('requestsTable')) renderRequests();
+  }
+  if (state.tab === 'requests') renderList();
+}
+
+/** The team page's requests: what was asked for, by whom, and the answer. */
+function renderRequests() {
+  const v = state.view;
+  const rows = v.requests.map((r) => `<tr><td>${channelName(r.channel)}<div class="sub">${esc(platform(r.channel))} · <span class="mono">${esc(r.channel.channelId)}</span></div></td>
+    <td class="nw">${who(r.requestedBy)}<div class="sub">${esc(ago(r.requestedAt))}</div></td>
+    <td class="note">${esc(r.note || '')}</td>
+    <td>${decisionText(r)}</td>
+    <td class="nw">${r.status !== 'open' ? '' : state.me.admin
+    ? `<button class="link" data-review="${r.id}">review</button>`
+    : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} title="Take the request back">withdraw</button>`}</td></tr>`).join('');
+  $('requestsTable').innerHTML = rows
+    ? `<table><tr><th>Channel</th><th>Asked by</th><th>Note</th><th>Answer</th><th></th></tr>${rows}</table>`
+    : '<div class="empty">Nothing asked for yet. Search for a channel above to ask for it.</div>';
+  for (const b of $('requestsTable').querySelectorAll('[data-review]')) {
+    b.onclick = () => { switchTab('requests'); select(b.dataset.review); };
+  }
+  for (const b of $('requestsTable').querySelectorAll('[data-withdraw]')) {
+    const r = v.requests.find((x) => String(x.id) === b.dataset.withdraw);
+    b.onclick = () => hold(b, `request:${r.id}`, async () => {
+      const res = await call('/api/admin/requests', 'DELETE', { id: r.id, team: r.team });
+      if (res.body.request) updateRequest(res.body.request);
+      if (!res.ok) failed(`Withdraw ${plainName(r.channel)}`, res);
+      else status('ok', `Withdrew the request for ${plainName(r.channel)}.`);
+      if (v === state.view) renderRequests();
+    });
+  }
+}
+
+/**
+ * A team manager picked a channel: a short form to ask the admin team for it, with a note.
+ * Sent, the request shows under Requests as pending.
+ */
+function askFor(c) {
+  const v = state.view;
+  const asked = v.requests.find((x) => x.status === 'open' && x.channel.channelId === c.channelId);
+  if (asked) {
+    status('', `${plainName(c)} is asked for already; it waits for the admin team.`);
+    return;
+  }
+  const shares = !isHolding(c.team);
+  $('askSlot').innerHTML = `<form class="form" id="askForm">
+    <span style="flex-basis:100%">Ask the admin team to add <b>${channelName(c)}</b> to ${esc(teamLabel(v.value))}
+      <span class="sub">(now in ${esc(teamLabel(c.team))}${shares ? '; it would be shared with this team and stay filed there' : ''})</span></span>
+    <input id="askNote" class="grow" maxlength="500" placeholder="Note for the admin team (optional): why this team should have it" aria-label="Note for the admin team">
+    <button class="primary">Send request</button><button type="button" id="askCancel">Cancel</button></form>`;
+  $('askNote').focus();
+  $('askCancel').onclick = () => { $('askSlot').innerHTML = ''; $('pick').focus(); };
+  $('askForm').onsubmit = (e) => {
+    e.preventDefault();
+    const note = $('askNote').value.trim();
+    $('askSlot').innerHTML = '';
+    return once(`ask:${v.value}:${c.channelId}`, async () => {
+      // The same request twice is refused as a duplicate: safe to send again.
+      const res = await call('/api/admin/requests', 'POST', {
+        team: v.value, source: c.source, channelId: c.channelId, note: note || undefined,
+      }, { idempotent: true });
+      if (res.body.request) updateRequest(res.body.request);
+      if (!res.ok) failed(`Ask for ${plainName(c)}`, res);
+      else status('ok', `Asked for ${plainName(c)}; the admin team confirms or declines it.`);
+      if (v === state.view) renderRequests();
+    });
+  };
+}
+
+/** What confirming a request does, from the assignment's dry run. */
+function previewText(r, res) {
+  const name = channelName(r.channel);
+  const team = esc(teamLabel(r.team));
+  if (!res.ok) return `<span class="status err">${esc(res.body.error || `Could not try it (${res.status}).`)}</span>`;
+  const { moves, shared } = res.body;
+  if (shared) {
+    return `Shares ${name} with ${team}: it stays filed under ${esc(teamLabel(shared.from))} (its folders, knowledge base and agents) and is in ${team}'s inbox too. Nothing moves.`;
+  }
+  if (!moves.length) return `Files ${name} under ${team} by hand (a channel-id rule with priority 10). It has no threads here yet, so nothing moves now.`;
+  const items = moves.map((m) => {
+    const threads = m.from.reduce((n, f) => n + f.threads, 0);
+    const from = [...new Set(m.from.map((f) => teamLabel(f.team)))].join(', ');
+    return `<li>${channelName(m.channel)}: ${threads} thread${threads === 1 ? '' : 's'} from ${esc(from)} to ${esc(teamLabel(m.to.team))} / ${esc(orgLabel(m.to.org))}</li>`;
+  }).join('');
+  return `Files ${name} under ${team} by hand (a channel-id rule with priority 10), and re-files:<ul>${items}</ul>`;
+}
+
+/** A request, for the admin team: what is asked, by whom, and Confirm or Decline. */
+function drawRequest(r, preview) {
+  const c = r.channel;
+  const org = c.org && !c.org.startsWith('_') ? (c.orgName || orgLabel(c.org)) : '';
+  const open = r.status === 'open';
+  $('detail').innerHTML = `
+    <div class="title">${backButton()}<h1 style="margin:0;font-size:20px;flex:1">${channelName(c)} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="field">
+      <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
+      <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
+      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
+      ${r.note ? `<label>Note</label><span class="note">${esc(r.note)}</span>` : ''}
+      ${open ? '' : `<label>Answer</label><span>${decisionText(r)}</span>`}
+    </div></div>
+    ${open ? `<div class="card"><h2>Confirming it</h2><div class="preview" id="rqPreview">${preview ? previewText(r, preview) : '<span class="sub">Trying it…</span>'}</div>
+      <div class="form"><button class="primary" id="rqConfirm"${preview && preview.ok ? '' : ' disabled'}${off(`request:${r.id}`)}>Confirm</button></div></div>
+      <div class="card"><h2>Declining it</h2><form class="form" id="rqDeclineForm"><input id="rqReason" class="grow" maxlength="500" placeholder="Reason, for the manager (optional)" aria-label="Reason">
+      <button class="danger" id="rqDecline"${off(`request:${r.id}`)}>Decline</button></form></div>` : ''}`;
+  showStatus();
+  if (!open) return;
+  /** After a decision: the lists, the counts and this page. */
+  const decided = (req) => {
+    updateRequest(req);
+    renderList();
+    if (state.tab === 'requests' && String(state.sel) === String(req.id)) drawRequest(req, preview);
+  };
+  $('rqConfirm').onclick = () => hold($('rqConfirm'), `request:${r.id}`, async () => {
+    const res = await call('/api/admin/requests/confirm', 'POST', { id: r.id });
+    if (!res.ok) {
+      failed(`Confirm ${plainName(c)}`, res);
+      if (res.body.request) decided(res.body.request);
+      return;
+    }
+    applyMoves(res.body.moves, null);
+    if (res.body.shared && res.body.shared.added) {
+      const row = state.teams.find((t) => t.slug === r.team);
+      if (row) row.shared = (row.shared || 0) + 1;
+    }
+    status('ok', res.body.shared
+      ? `Confirmed: ${plainName(c)} is in ${teamLabel(r.team)}'s inbox too, and stays filed under ${teamLabel(res.body.shared.from)}.`
+      : `Confirmed: ${plainName(c)} is filed under ${teamLabel(r.team)}${res.body.moves.length ? '; its threads are re-filed' : ''}.`);
+    decided(res.body.request);
+  });
+  $('rqDeclineForm').onsubmit = (e) => {
+    e.preventDefault();
+    const b = $('rqDecline');
+    hold(b, `request:${r.id}`, async () => {
+      const res = await call('/api/admin/requests/decline', 'POST', { id: r.id, reason: $('rqReason').value.trim() || undefined });
+      if (!res.ok) failed(`Decline ${plainName(c)}`, res);
+      else status('ok', `Declined ${plainName(c)} for ${teamLabel(r.team)}.`);
+      if (res.body.request) decided(res.body.request);
+    });
+  };
+}
+
+async function showRequest(id) {
+  const current = loadingPage();
+  state.view = null;
+  const r = state.requests.find((x) => String(x.id) === String(id));
+  if (!r) { $('detail').innerHTML = '<div class="empty">No such request.</div>'; return; }
+  drawRequest(r, null);
+  if (r.status !== 'open') return;
+  // The assignment's dry run: what confirming moves, or that it shares the channel.
+  const preview = await call('/api/admin/requests/confirm', 'POST', { id: r.id, dryRun: true }, { parallel: true, idempotent: true });
+  if (!current()) return;
+  if (preview.body.request && preview.body.request.status !== 'open') {
+    updateRequest(preview.body.request);
+    renderList();
+  }
+  drawRequest(r, preview);
 }
 
 // ---- orgs ---------------------------------------------------------------------------------
@@ -1401,14 +1679,17 @@ async function showOrg(slug) {
   }
   if (!(await load())) return;
   const q = new URLSearchParams(location.search);
-  state.tab = q.get('tab') === 'orgs' && state.me.admin ? 'orgs' : 'teams';
-  if (!state.me.admin) document.querySelector('nav [data-tab="orgs"]').hidden = true;
+  state.tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
+  if (!state.me.admin) {
+    document.querySelector('nav [data-tab="orgs"]').hidden = true;
+    document.querySelector('nav [data-tab="requests"]').hidden = true;
+  }
   for (const a of document.querySelectorAll('nav [data-tab]')) {
     a.onclick = (e) => { e.preventDefault(); switchTab(a.dataset.tab); };
   }
   $('detail').addEventListener('click', (e) => { if (e.target.closest('[data-back]')) unselect(); });
   switchTab(state.tab);
-  const sel = q.get(state.tab === 'teams' ? 'team' : 'org');
+  const sel = q.get(PARAM[state.tab]);
   if (sel) select(sel);
 })();
 </script>

@@ -190,11 +190,13 @@ describe('admin: team managers', () => {
       }],
       ['POST', '/api/admin/assign', { target: 'team', channelId: 'C3', value: 'helix' }],
       ['GET', '/api/admin/orgs'],
-      ['GET', '/api/admin/channels?q=aem'],
     ]) {
       // eslint-disable-next-line no-await-in-loop
       assert.equal((await as(e, me, method, path, body)).status, 403, `${method} ${path}`);
     }
+    // They search every channel, to ask for one (see the requests below).
+    r = await as(e, me, 'GET', '/api/admin/channels?q=random');
+    assert.deepEqual(r.body.channels.map((c) => [c.channelId, c.team]), [['C3', '_unassigned']]);
     // A plain member has no admin pages at all.
     assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/teams')).status, 403);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 403);
@@ -235,6 +237,135 @@ describe('admin: team managers', () => {
     r = await call(e, ADA, 'GET', '/api/admin/team?slug=edge');
     assert.deepEqual(r.body.members.map((m) => [m.name, m.role]), [[null, 'member'], ['Bo', 'manager'], ['Cy', 'manager']]);
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/members', { team: 'edge', person: 2, role: 'member' })).status, 200);
+  });
+});
+
+describe('admin: channel assignment requests', () => {
+  // Bo manages helix, Cy manages edge; Ada is in the admin team.
+  const CY = {
+    id: 3, email: 'cy@staff.example', name: 'Cy', staff: 1, teams: ['edge'],
+  };
+  const withManagers = () => {
+    const e = env();
+    e.DB.sqlite.exec(`INSERT INTO people (id, email, name, staff) VALUES (3, 'cy@staff.example', 'Cy', 1);
+      INSERT INTO team_members (team, person, role) VALUES ('edge', 3, 'manager');
+      UPDATE team_members SET role = 'manager' WHERE team = 'helix' AND person = 2`);
+    return e;
+  };
+  const bo = { ...asMe(BO), teams: [{ slug: 'helix', role: 'manager' }] };
+  const cy = { ...asMe(CY), teams: [{ slug: 'edge', role: 'manager' }] };
+  async function as(e, who, method, path, body) {
+    const url = new URL(`https://opspile.example${path}`);
+    const request = new Request(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const res = await api(request, e, url, { viewer: who });
+    return { status: res.status, body: await res.json() };
+  }
+  const ask = (e, who, channelId, team, note) => as(e, who, 'POST', '/api/admin/requests', {
+    team, source: 'slack', channelId, note,
+  });
+
+  it('are made by a team\'s managers, for their teams only, once at a time', async () => {
+    const e = withManagers();
+    let r = await ask(e, cy, 'C3', 'edge', 'Our customer');
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.request.status, r.body.request.team, r.body.request.note], ['open', 'edge', 'Our customer']);
+    assert.deepEqual([r.body.request.channel.name, r.body.request.channel.team], ['random', '_unassigned']);
+    assert.equal(r.body.request.requestedBy.email, 'cy@staff.example');
+    // The same one again is the open one; a channel in the team's inbox needs no request.
+    r = await ask(e, cy, 'C3', 'edge');
+    assert.deepEqual([r.status, r.body.request.note], [409, 'Our customer']);
+    assert.equal((await ask(e, bo, 'C1', 'helix')).status, 409);
+    assert.equal((await ask(e, cy, 'C9', 'edge')).status, 404);
+    assert.equal((await ask(e, cy, 'C3', 'nope')).status, 403);
+    // Not for a team they do not manage, and not by a plain member.
+    assert.equal((await ask(e, bo, 'C3', 'edge')).status, 403);
+    assert.equal((await ask(e, cy, 'C3', 'admin')).status, 403);
+    assert.equal((await ask(e, asMe(BO), 'C3', 'helix')).status, 403);
+    // A manager sees their teams' requests; the admin team sees all of them, and the count.
+    await ask(e, bo, 'C3', 'helix');
+    r = await as(e, cy, 'GET', '/api/admin/requests');
+    assert.deepEqual([r.body.requests.map((x) => x.team), r.body.open], [['edge'], 1]);
+    r = await as(e, cy, 'GET', '/api/admin/team?slug=edge');
+    assert.deepEqual(r.body.requests.map((x) => [x.channel.channelId, x.status]), [['C3', 'open']]);
+    r = await call(e, ADA, 'GET', '/api/admin/requests');
+    assert.deepEqual([r.body.requests.map((x) => x.team), r.body.open], [['edge', 'helix'], 2]);
+    assert.deepEqual((await call(e, ADA, 'GET', '/api/admin/requests?count=1')).body, { open: 2 });
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/teams')).body.requests, 2);
+    assert.equal((await as(e, cy, 'GET', '/api/admin/teams')).body.requests, 1);
+
+    // Withdrawn by a manager of its team, and only while it is open.
+    const { id } = (await as(e, bo, 'GET', '/api/admin/requests')).body.requests[0];
+    assert.equal((await as(e, cy, 'DELETE', '/api/admin/requests', { id, team: 'edge' })).status, 403);
+    assert.equal((await as(e, cy, 'DELETE', '/api/admin/requests', { id, team: 'helix' })).status, 403);
+    r = await as(e, bo, 'DELETE', '/api/admin/requests', { id, team: 'helix' });
+    assert.deepEqual([r.status, r.body.request.status], [200, 'withdrawn']);
+    assert.equal((await as(e, bo, 'DELETE', '/api/admin/requests', { id, team: 'helix' })).status, 409);
+  });
+
+  it('are confirmed by the admin team, with the assignment\'s dry run first, or declined', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    // Only the admin team decides; read-only while viewing as someone else.
+    assert.equal((await as(e, cy, 'POST', '/api/admin/requests/confirm', { id })).status, 403);
+    assert.equal((await as(e, cy, 'POST', '/api/admin/requests/decline', { id })).status, 403);
+    assert.equal((await call(e, { ...ADA, readonly: true }, 'POST', '/api/admin/requests/confirm', { id })).status, 403);
+    assert.equal((await as(e, { ...cy, readonly: true }, 'POST', '/api/admin/requests', {
+      team: 'edge', source: 'slack', channelId: 'C1',
+    })).status, 403);
+    assert.equal((await as(e, { ...cy, readonly: true }, 'GET', '/api/admin/requests')).status, 200);
+
+    // The dry run says what would move, and changes nothing.
+    let r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id, dryRun: true });
+    assert.deepEqual(r.body.moves.map((m) => [m.channel.channelId, m.to.team]), [['C3', 'edge']]);
+    assert.equal(r.body.request.status, 'open');
+    assert.equal(e.DB.rows("SELECT * FROM rules WHERE field = 'channel_id'").length, 0);
+    assert.equal(e.queued.length, 0);
+    // Confirmed: the same manual assignment as on the team's page, and who confirmed it.
+    r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id });
+    assert.deepEqual([r.status, r.body.closed, r.body.jobs], [200, true, 1]);
+    const { request } = r.body;
+    assert.deepEqual([request.status, request.outcome, request.decidedBy.email], [
+      'confirmed', 'moved', 'ada@staff.example',
+    ]);
+    assert.deepEqual(e.DB.rows("SELECT value, priority, note FROM rules WHERE field = 'channel_id'"), [
+      { value: 'edge', priority: 10, note: 'manual assignment' },
+    ]);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT team FROM threads WHERE channel_id = 'C3'"), [{ team: 'edge' }]);
+    assert.equal((await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id })).status, 409);
+    assert.equal((await call(e, ADA, 'POST', '/api/admin/requests/decline', { id })).status, 409);
+    assert.equal((await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id: 99 })).status, 404);
+
+    // Declined, with a reason; the manager sees it, and may ask again.
+    const c1 = (await ask(e, cy, 'C1', 'edge', 'We follow it')).body.request;
+    r = await call(e, ADA, 'POST', '/api/admin/requests/decline', { id: c1.id, reason: 'Not yours' });
+    assert.deepEqual([r.body.request.status, r.body.request.reason], ['declined', 'Not yours']);
+    r = await as(e, cy, 'GET', '/api/admin/team?slug=edge');
+    const answer = (x) => [x.channel.channelId, x.status, x.outcome || x.reason];
+    assert.deepEqual(r.body.requests.map(answer), [
+      ['C1', 'declined', 'Not yours'], ['C3', 'confirmed', 'moved'],
+    ]);
+    assert.equal((await as(e, cy, 'GET', '/api/admin/requests')).body.open, 0);
+
+    // A channel another team holds is shared, as an assignment by hand would.
+    const again = (await ask(e, cy, 'C1', 'edge')).body.request;
+    r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id: again.id });
+    assert.deepEqual([r.body.moves, r.body.shared.added, r.body.request.outcome], [[], true, 'shared']);
+    assert.deepEqual(e.DB.rows('SELECT channel_id, team FROM channel_teams'), [{ channel_id: 'C1', team: 'edge' }]);
+  });
+
+  it('are answered when the admin team assigns the channel by hand', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C2', 'edge')).body.request;
+    await call(e, ADA, 'POST', '/api/admin/assign', {
+      target: 'team', channelId: 'C2', source: 'slack', value: 'edge', dryRun: true,
+    });
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/requests?count=1')).body.open, 1);
+    await call(e, ADA, 'POST', '/api/admin/assign', {
+      target: 'team', channelId: 'C2', source: 'slack', value: 'edge',
+    });
+    const r = await as(e, cy, 'GET', '/api/admin/requests');
+    assert.deepEqual(r.body.requests.map((x) => [x.id, x.status, x.outcome]), [[id, 'confirmed', 'shared']]);
   });
 });
 

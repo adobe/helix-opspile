@@ -378,6 +378,18 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+  // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
+  // (confirming moves it), one Platform ops holds (confirming shares it), and one declined.
+  const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, note, status, requested_by,
+      requested_name, requested_at, decided_by, decided_name, decided_at, reason) VALUES
+    ('teams', 'CH-HOOLI', 'edge', 'We run the Hooli launch with their agency; Clef agrees.', 'open',
+      'lena@example.com', 'Lena Berg', ?, NULL, NULL, NULL, NULL),
+    ('slack', 'C0INITECH1', 'edge', 'Their CDN questions end up with us anyway.', 'open',
+      'lena@example.com', 'Lena Berg', ?, NULL, NULL, NULL, NULL),
+    ('slack', 'C0SANDBOX3', 'edge', NULL, 'declined', 'lena@example.com', 'Lena Berg', ?,
+      'priya@example.com', 'Priya Nair', ?, 'A test channel: nothing to follow there.')`)
+    .run(ago(2), ago(0.2), ago(6), ago(5));
 
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.

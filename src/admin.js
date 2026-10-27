@@ -23,6 +23,9 @@ import {
   isHolding, share, sharesByChannel, unshare,
 } from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
+import {
+  closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, settleRequests,
+} from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
 /**
@@ -40,7 +43,9 @@ import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
  *
  * Team managers (migration 0018) use the same API for the teams they manage, and only for
  * their members: they see those teams, add and remove people, and promote or demote them.
- * Everything else is for the admin team.
+ * They also search every channel, and ask the admin team to assign one to their team (a
+ * request, migration 0028, src/requests.js); the admin team confirms the request, which runs
+ * the same assignment it makes by hand, or declines it. Everything else is for the admin team.
  *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
@@ -422,7 +427,7 @@ async function unshareChannel(env, me, body) {
  * channel another team holds is shared with the new team instead, and stays where it is.
  * Handing it to the admin team, or `move`, moves it all the same.
  */
-async function assign(env, me, body, remove) {
+async function assign(env, me, body, remove, { settle = true } = {}) {
   const target = clean(body.target);
   const channelId = clean(body.channelId);
   if (!['team', 'org'].includes(target) || !channelId) {
@@ -436,9 +441,13 @@ async function assign(env, me, body, remove) {
     home = await homeOf(env, current, source, channelId);
     // Handing a channel to the admin team is always a move: it holds what no team has.
     if (!body.move && !isHolding(home.team) && !isHolding(value) && home.team !== value) {
-      return shareChannel(env, me, {
+      const shared = await shareChannel(env, me, {
         source: source || home.source, channelId, team: value,
       }, home.team, body.dryRun);
+      if (settle && shared.ok && !body.dryRun) {
+        await settleRequests(env, me, { channelId, team: value, outcome: 'shared' });
+      }
+      return shared;
     }
   }
   const existing = current.find((r) => r.target === target && isManual(r)
@@ -466,7 +475,98 @@ async function assign(env, me, body, remove) {
   if (target === 'team' && res.ok && !body.dryRun && (source || home.source)) {
     await unshare(env, { source: source || home.source, channelId, team: value });
   }
+  // The open requests for it, if any, are answered with it.
+  if (target === 'team' && settle && res.ok && !body.dryRun) {
+    const outcome = outcomeOf(await res.clone().json());
+    await settleRequests(env, me, { channelId, team: value, outcome });
+  }
   return res;
+}
+
+// ---- assignment requests ----------------------------------------------------------------
+
+/**
+ * GET /api/admin/requests?status=open|decided&count=1: the channel assignment requests, the
+ * open ones first. The admin team sees every team's; a manager those of the teams they manage.
+ * `open` counts the open ones; with `count`, that is all the answer says.
+ */
+async function requestList(env, me, { status, count }) {
+  const teams = isAdmin(me) ? null : managedTeams(me);
+  const open = await openCount(env, teams);
+  if (count) {
+    return json({ open });
+  }
+  return json({
+    requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
+    open,
+  });
+}
+
+/** An open request, or the answer that says why it cannot be decided. */
+async function openRequest(env, id) {
+  const r = await getRequest(env, id);
+  if (!r) {
+    return { error: json({ error: 'no such request' }, 404) };
+  }
+  if (r.status !== 'open') {
+    return { error: json({ error: `this request is ${r.status} already`, request: r }, 409) };
+  }
+  return { request: r };
+}
+
+/**
+ * POST /api/admin/requests/confirm `{ id, dryRun?, move? }`: the admin team grants a request.
+ * It is the manual assignment of `assign`, as if made on the team's page: `dryRun` says what
+ * it would move (or that it would share the channel), and applied, the channel is re-filed or
+ * shared and the request is confirmed, with who confirmed it and what came of it.
+ */
+async function confirmRequest(env, me, body) {
+  const { request, error } = await openRequest(env, body.id);
+  if (error) {
+    return error;
+  }
+  const { channel } = request;
+  const res = await assign(env, me, {
+    target: 'team',
+    source: channel.source,
+    channelId: channel.channelId,
+    value: request.team,
+    move: body.move,
+    dryRun: body.dryRun,
+  }, false, { settle: false });
+  const answer = await res.json();
+  if (!res.ok || body.dryRun) {
+    return json({ ...answer, request }, res.status);
+  }
+  const closed = await closeRequest(env, me, request.id, {
+    status: 'confirmed', outcome: outcomeOf(answer),
+  });
+  return json({ ...answer, ...closed });
+}
+
+/** POST /api/admin/requests/decline `{ id, reason? }`: the admin team turns a request down. */
+async function declineRequest(env, me, body) {
+  const { request, error } = await openRequest(env, body.id);
+  if (error) {
+    return error;
+  }
+  const closed = await closeRequest(env, me, request.id, {
+    status: 'declined', reason: clean(body.reason, 500) || null,
+  });
+  return closed.closed ? json({ ok: true, ...closed }) : json({ error: 'decided meanwhile', ...closed }, 409);
+}
+
+/** DELETE /api/admin/requests `{ id, team }`: a manager takes their team's open request back. */
+async function withdrawRequest(env, me, body) {
+  const { request, error } = await openRequest(env, body.id);
+  if (error) {
+    return error;
+  }
+  if (request.team !== clean(body.team)) {
+    return json({ error: 'this request is for another team' }, 403);
+  }
+  const closed = await closeRequest(env, me, request.id, { status: 'withdrawn' });
+  return closed.closed ? json({ ok: true, ...closed }) : json({ error: 'decided meanwhile', ...closed }, 409);
 }
 
 // ---- teams and members ------------------------------------------------------------------
@@ -485,7 +585,13 @@ async function listTeams(env, me) {
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
   const unassigned = everything ? await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
       COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first() : null;
-  return json({ teams, unassigned, admin: everything });
+  // The open assignment requests: the admin team's to decide, the managers' to wait for.
+  const requests = await openCount(env, everything ? null : managedTeams(me));
+  // Every team's name, for a manager's page to say where a channel is now.
+  const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
+  return json({
+    teams, unassigned, admin: everything, requests, names,
+  });
 }
 
 async function team(env, slug, me) {
@@ -501,6 +607,8 @@ async function team(env, slug, me) {
     rules: rules.filter((r) => r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
     channels: await channelList(env, rules, { team: slug }),
+    // What the team's managers asked the admin team for, and what came of it.
+    requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
     // The admin team decides which channels a team gets: what it might want of the admin
     // team's channels.
     ...(isAdmin(me) && t && slug !== ADMIN_TEAM ? await suggestionsFor(env, slug) : {}),
@@ -788,14 +896,17 @@ export async function admin(request, env, url, me) {
   const body = m === 'GET' ? {} : await request.json().catch(() => ({}));
   const q = (k) => clean(url.searchParams.get(k));
   const route = `${m} ${p.slice('/api/admin/'.length)}`;
-  // Team managers: their teams' members, nothing else.
+  // Team managers: their teams' members, the channel search, and requests for their teams.
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
-  const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members'];
+  const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
+    'GET channels', 'GET requests', 'POST requests', 'DELETE requests'];
+  // Every manager may search channels; the requests they see are their teams' (`requests`).
+  const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
   if (!isAdmin(me)) {
     if (!forManagers.includes(route)) {
       return json({ error: 'for the admin team' }, 403);
     }
-    if (route !== 'GET teams' && !managesTeam(me, teamOf)) {
+    if (!anyTeam.includes(route) && !managesTeam(me, teamOf)) {
       return json({ error: 'you do not manage this team' }, 403);
     }
   }
@@ -817,6 +928,11 @@ export async function admin(request, env, url, me) {
     case 'DELETE assign': return assign(env, me, body, true);
     case 'DELETE share': return unshareChannel(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
+    case 'GET requests': return requestList(env, me, { status: q('status'), count: q('count') });
+    case 'POST requests': return createRequest(env, me, body);
+    case 'DELETE requests': return withdrawRequest(env, me, body);
+    case 'POST requests/confirm': return confirmRequest(env, me, body);
+    case 'POST requests/decline': return declineRequest(env, me, body);
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
