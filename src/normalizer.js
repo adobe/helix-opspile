@@ -23,6 +23,7 @@ import {
 import { discordApi } from './discord.js';
 import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
+import { withSlackFiles } from './slackfiles.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
@@ -260,7 +261,8 @@ export async function processKey(env, key, cache = {}) {
   if (!obj) {
     return { key, result: 'missing' };
   }
-  const op = normalize(key, JSON.parse(await obj.text()));
+  // Slack Connect files arrive as stubs: what files.info says about them, kept in pile 1.
+  const op = normalize(key, await withSlackFiles(env, key, JSON.parse(await obj.text())));
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }

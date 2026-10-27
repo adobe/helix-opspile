@@ -49,6 +49,10 @@ export function slackPermalink(channel, ts, rootId) {
 
 function slackFiles(files) {
   const ok = (files || []).filter((f) => f && (f.permalink || f.name));
+  // A Slack Connect file the app could not look up (files.info): only its kind is known.
+  const unseen = (files || []).filter((f) => f && !(f.permalink || f.name)
+    && f.file_access === 'check_file_info')
+    .map((f) => `- ${f.filetype ? `${String(f.filetype).toUpperCase()} file` : 'A file'} (shared from another workspace; opspile cannot see it)`);
   // Images are shown inline (through the inbox's media proxy); other files are links.
   const images = ok.filter((f) => /^image\//.test(f.mimetype || '') && f.url_private)
     .map((f) => mdLink(
@@ -59,7 +63,7 @@ function slackFiles(files) {
     ));
   const links = ok.filter((f) => !(/^image\//.test(f.mimetype || '') && f.url_private))
     .map((f) => `- ${mdLink(f.title || f.name || 'file', f.permalink)}`);
-  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+  return [images.join('\n'), [...links, ...unseen].join('\n')].filter(Boolean).join('\n\n');
 }
 
 const blockText = (t) => (t && typeof t.text === 'string' ? t.text : '');
@@ -434,6 +438,10 @@ export function normalizeTeams(key, msg) {
 /** Dispatches on the pile-1 key's source. */
 export function normalize(key, json) {
   const source = key.split('/')[0];
+  if (source === 'slack' && json && json.type === 'file_info') {
+    // A kept files.info answer (src/slackfiles.js), not an event.
+    return { op: 'skip', reason: 'file info' };
+  }
   if (source === 'slack') {
     return normalizeSlack(key, json);
   }
