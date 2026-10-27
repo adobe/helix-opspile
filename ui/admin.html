@@ -697,7 +697,7 @@ function placePicks(input, picks) {
 /** The channels card: a table (redrawn on its own) and a picker that assigns one here. */
 function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><input id="pick" class="grow" placeholder="${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}: search by channel, Teams team, customer or id" autocomplete="off" aria-label="${target === 'team' ? 'Add a channel' : 'Assign a channel'}"><div class="picks" id="picks" hidden></div></div>
+    <div class="form picker"><input id="pick" class="grow" placeholder="${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}: search by channel, Teams team, customer, team or id" autocomplete="off" aria-label="${target === 'team' ? 'Add a channel' : 'Assign a channel'}"><div class="picks" id="picks" hidden></div></div>
     <p class="hint">${target === 'team'
     ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
     : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
@@ -828,8 +828,10 @@ function renderChannels() {
 }
 
 /**
- * The picker that assigns a channel here: finds channels by channel name, Teams team name,
- * customer (slug or display name) or id; every word has to match. Each row says where the
+ * The picker that assigns a channel here: finds channels by anything it shows of them (channel
+ * name, Teams team name, both as `team › channel`, platform, customer, the team they are in)
+ * or id; every word has to match, spaces and punctuation aside (`channelMatch` in
+ * src/admin.js). Each row says where the
  * channel is, its customer, where it is filed and how busy it is, with the matches marked.
  * Arrow keys and Enter pick, Escape closes.
  */
@@ -861,7 +863,7 @@ function wireChannelPicker() {
         <span class="name"><span class="ch">${channelName(c, words)}</span>
           <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
           · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
-        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${esc(teamLabel(c.team))}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
+        <span class="where">${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
     }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
     picks.hidden = false;
@@ -879,7 +881,8 @@ function wireChannelPicker() {
     timer = setTimeout(async () => {
       const r = await call(`/api/admin/channels?q=${encodeURIComponent(q)}`);
       if (input.value.trim() !== q) return;
-      words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      // Not the separators (`›`, `>`, `/`) of a name typed as it is shown.
+      words = q.toLowerCase().split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
       const seen = new Set();
       list = (r.body.channels || []).filter((c) => c[target] !== value || !c.manual[target])
         .filter((c) => target !== 'team' || !(c.sharedWith || []).includes(value))
