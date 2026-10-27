@@ -22,6 +22,7 @@ const MAX_TEXT = 1200;
 const DOING = {
   read_thread: 'Reading the thread',
   get_draft: 'Reading the draft',
+  read_file: 'Reading an attached file',
   update_draft: 'Updating the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
 };
