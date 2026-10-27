@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>opspile · agents</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -30,7 +30,17 @@
     }
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; overflow: hidden; }
+  html, body { height: var(--app-height, 100%); overflow: hidden; }
+  /* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
+     indicator and, on the phone's side, under the camera: the sections scroll their ends out
+     from under it, and the page keeps clear of the sides. The insets are 0 everywhere else. */
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+  body { padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  /* With the on-screen keyboard open (see the script at the end), the page follows what is left
+     above it, and the keyboard covers the home indicator. */
+  :root.keyboard { --safe-bottom: 0px; }
+  body { translate: 0 var(--app-top, 0px); }
+  main > section::after { content: ""; display: block; height: var(--safe-bottom); flex: none; }
   body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
   button, input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; }
@@ -1429,6 +1439,23 @@ window.addEventListener('popstate', async () => {
 <script>
 // Installable app (see src/pwa.js): the service worker only answers page loads made offline.
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+// iOS opens its on-screen keyboard over the page and moves the page up, header and all, to show
+// the text field: it scrolls the page and pans what is shown of it (interactive-widget it
+// ignores). While the keyboard is open the page is as tall as what is left above it and follows
+// that, so the header stays on screen; html.keyboard drops the home indicator's inset, which the
+// keyboard covers.
+if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').matches) {
+  const vv = window.visualViewport;
+  const root = document.documentElement;
+  const fit = () => {
+    const open = vv.height < root.clientHeight - 100;
+    root.classList.toggle('keyboard', open);
+    root.style.setProperty('--app-height', open ? `${Math.round(vv.height)}px` : '');
+    root.style.setProperty('--app-top', open ? `${Math.round(vv.pageTop)}px` : '');
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+}
 </script>
 </body>
 </html>

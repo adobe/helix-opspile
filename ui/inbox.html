@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>opspile</title>
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -38,8 +38,18 @@
     }
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  html, body { height: var(--app-height, 100%); overflow: hidden; overscroll-behavior: none; }
   body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
+  /* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
+     indicator and, on the phone's side, under the camera: what sits at those edges moves in by
+     the safe-area insets, which are 0 everywhere else. */
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+  body { padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  /* With the on-screen keyboard open (see the script at the end), the page follows what is left
+     above it, and the keyboard covers the home indicator. */
+  :root.keyboard { --safe-bottom: 0px; }
+  body { translate: 0 var(--app-top, 0px); }
+  #threads { padding-bottom: var(--safe-bottom); }
   button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; cursor: pointer; }
   /* The toolbar: pages and label review on the left; on the right, whoever is signed in, with a
@@ -108,7 +118,7 @@
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 
   /* Filters: one card per facet, as in klickhaus. */
-  #filters { padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 12px; }
+  #filters { padding: 12px 12px calc(12px + var(--safe-bottom)); background: var(--bg); display: flex; flex-direction: column; gap: 12px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 8px; }
   .card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 14px; }
   .card h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
@@ -258,7 +268,7 @@
   .msg.pending .bubble { opacity: .55; }
   .post { display: flex; align-items: center; gap: 8px; color: var(--mute); font-size: 12px; margin: 18px 0 4px; }
   .post::before, .post::after { content: ""; flex: 1; border-top: 1px dashed var(--line); }
-  .composer { flex: none; border-top: 1px solid var(--line); padding: 10px 22px 12px; display: flex; gap: 8px; align-items: flex-end; }
+  .composer { flex: none; border-top: 1px solid var(--line); padding: 10px 22px calc(12px + var(--safe-bottom)); display: flex; gap: 8px; align-items: flex-end; }
   .composer textarea { flex: 1; resize: none; min-height: 38px; max-height: 180px; font: inherit; color: var(--ink);
     background: var(--card); border: 1px solid var(--line); border-radius: 19px; padding: 8px 14px; outline: none; }
   .composer textarea:focus { border-color: var(--accent); }
@@ -280,7 +290,7 @@
   dialog.confirm .bubble { max-height: 40vh; overflow: auto; }
   dialog.confirm .apply { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   dialog.confirm .send { border-radius: 8px; padding: 4px 14px; background: var(--me); color: #fff; border: 0; }
-  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line);
+  .toast { position: fixed; bottom: calc(16px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line);
     border-radius: 10px; padding: 8px 14px; font-size: 13px; z-index: 10; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
   .back { color: var(--link); text-decoration: none; font-size: 12px; white-space: nowrap; }
@@ -341,12 +351,13 @@
   /* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */
   .bubble img.att.sized { height: auto; max-height: none; background: color-mix(in srgb, currentColor 8%, transparent); }
   .bubble img.att:not(.sized) { min-width: 120px; min-height: 90px; }
-  /* Lightbox: an image full screen, dismissed by a click anywhere, the close button or Escape. */
-  dialog.lightbox { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+  /* Lightbox: an image full screen, dismissed by a click anywhere, the close button or Escape.
+     In dvh: 100vh counts the status bar in an app installed on an iPhone. */
+  dialog.lightbox { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
     background: transparent; color: #fff; place-items: center; cursor: zoom-out; overflow: hidden; outline: none; }
   dialog.lightbox[open] { display: grid; }
   dialog.lightbox::backdrop { background: rgba(0,0,0,.88); }
-  dialog.lightbox > img { max-width: calc(100vw - 32px); max-height: calc(100vh - 80px); object-fit: contain;
+  dialog.lightbox > img { max-width: calc(100vw - 32px); max-height: calc(100dvh - 80px); object-fit: contain;
     border-radius: 6px; box-shadow: 0 12px 48px rgba(0,0,0,.5); background: #fff; }
   dialog.lightbox .bar { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; }
   dialog.lightbox .bar a, dialog.lightbox .bar button { color: #fff; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.25);
@@ -522,7 +533,7 @@
   @media (max-width: 1099px) {
     main { grid-template-columns: minmax(300px, 42%) minmax(0, 1fr); }
     #filters { position: fixed; z-index: 30; top: var(--head); bottom: 0; left: 0; width: min(340px, 88vw);
-      margin: 0; padding: 12px 12px 24px 0; background: var(--bg); border-right: 1px solid var(--line);
+      margin: 0; padding: 12px 12px calc(24px + var(--safe-bottom)) env(safe-area-inset-left); background: var(--bg); border-right: 1px solid var(--line);
       pointer-events: auto; overflow-y: auto; overscroll-behavior: contain;
       transform: translateX(-100%); visibility: hidden; transition: transform .22s ease-out, visibility 0s .22s; }
     main.filtering #filters { transform: none; visibility: visible; transition: transform .22s ease-out;
@@ -534,7 +545,7 @@
     #threads { border-left: 0; }
     #threads .count .filt { display: inline-flex; }
     .ph, .feed { padding-left: 16px; padding-right: 16px; }
-    .composer { padding: 10px 16px 12px; }
+    .composer { padding: 10px 16px calc(12px + var(--safe-bottom)); }
     .rv { margin: 10px 16px 0; }
     .mentions { left: 16px; max-width: calc(100% - 32px); }
   }
@@ -574,7 +585,7 @@
     .msg .col { max-width: calc(100% - 38px); }
     .msg .who, .msg .meta { margin-left: 8px; margin-right: 8px; }
     .bubble { padding: 7px 12px; }
-    .composer { padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); gap: 6px; }
+    .composer { padding: 8px 12px calc(8px + var(--safe-bottom)); gap: 6px; }
     .composer textarea { padding: 8px 12px; }
     .composer button.send { padding: 7px 14px; }
     .rv { margin: 8px 12px 0; padding: 8px 10px; }
@@ -3123,6 +3134,23 @@ start();
 <script>
 // Installable app (see src/pwa.js): the service worker only answers page loads made offline.
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+// iOS opens its on-screen keyboard over the page and moves the page up, header and all, to show
+// the text field: it scrolls the page and pans what is shown of it (interactive-widget it
+// ignores). While the keyboard is open the page is as tall as what is left above it and follows
+// that, so the header stays on screen; html.keyboard drops the home indicator's inset, which the
+// keyboard covers.
+if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').matches) {
+  const vv = window.visualViewport;
+  const root = document.documentElement;
+  const fit = () => {
+    const open = vv.height < root.clientHeight - 100;
+    root.classList.toggle('keyboard', open);
+    root.style.setProperty('--app-height', open ? `${Math.round(vv.height)}px` : '');
+    root.style.setProperty('--app-top', open ? `${Math.round(vv.pageTop)}px` : '');
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+}
 </script>
 </body>
 </html>
