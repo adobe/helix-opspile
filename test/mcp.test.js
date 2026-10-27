@@ -134,8 +134,11 @@ describe('mcp transport (2026-07-28)', () => {
 
   it('lists the tools in a fixed order, without their implementation', async () => {
     const { body } = await send(env(), req('tools/list'));
-    assert.deepEqual(body.result.tools.map((t) => t.name), TOOLS.map((t) => t.name));
-    assert.ok(body.result.tools.every((t) => !('run' in t) && t.inputSchema.type === 'object'));
+    const everyones = TOOLS.filter((t) => !t.admin).map((t) => t.name);
+    assert.deepEqual(body.result.tools.map((t) => t.name), everyones);
+    const plain = (t) => !('run' in t) && !('admin' in t) && t.inputSchema.type === 'object';
+    assert.ok(body.result.tools.every(plain));
+    assert.equal(body.result.cacheScope, 'public');
     assert.equal(body.result.resultType, 'complete');
     assert.ok(Number.isInteger(body.result.ttlMs));
   });
@@ -211,7 +214,7 @@ describe('mcp transport (2025 clients)', () => {
     assert.equal(init.body.result.protocolVersion, '2025-06-18');
     assert.equal(init.body.result.serverInfo.name, 'helix-opspile');
     const list = await send(env(), legacy('tools/list', {}, { 'mcp-protocol-version': '2025-06-18' }));
-    assert.equal(list.body.result.tools.length, TOOLS.length);
+    assert.equal(list.body.result.tools.length, TOOLS.filter((t) => !t.admin).length);
     assert.equal(list.body.result.resultType, undefined);
     const ping = await send(env(), legacy('ping', {}));
     assert.deepEqual(ping.body.result, {});
@@ -429,6 +432,94 @@ describe('mcp tools', () => {
     }, { meta, id: 3 }));
     assert.equal(structured(accepted).ok, true);
     assert.equal(calls.length, 1);
+  });
+
+  describe('get_thread_trace (admin team)', () => {
+    const ADMIN = { ...ME, teams: [{ slug: 'admin', name: 'Admin' }] };
+    const STEPS = [
+      { type: 'agent_input', at: '2026-10-21T10:05:10.000Z', text: 'A message posted by Cy…' },
+      {
+        type: 'agent_step',
+        at: '2026-10-21T10:05:11.000Z',
+        thinking: 'Check the site.',
+        calls: [{ id: 'c1', tool: 'codemode', arguments: { code: 'await tools.mcp__browser__get_url_markdown({})' } }],
+        usage: { tokens: 120, cost: 0.01 },
+      },
+      {
+        type: 'tool_result',
+        at: '2026-10-21T10:05:20.000Z',
+        call: 'c1',
+        tool: 'codemode',
+        error: false,
+        text: '503',
+        nested_calls: [{ tool: 'mcp__browser__get_url_markdown', status: 'ok' }],
+      },
+      { type: 'agent_step', at: '2026-10-21T10:00:30.000Z', text: 'Earlier note.' },
+    ];
+    const withAgent = () => {
+      const e = env();
+      const asked = [];
+      e.AGENT_CHANNELS = 'C1';
+      e.AGENTS = {
+        idFromName: (n) => n,
+        get: (name) => ({
+          // eslint-disable-next-line no-underscore-dangle
+          __unsafe_ensureInitialized: async () => {},
+          trace: async (options) => {
+            asked.push({ name, options });
+            return {
+              status: {
+                model: 'm', problem: null, pending: [], turn: { state: 'done', text: 'Earlier note.' }, tools: [], mcp: [],
+              },
+              steps: STEPS,
+              earlier: 0,
+              usage: { tokens: 120, cost: 0.01 },
+            };
+          },
+        }),
+      };
+      e.asked = asked;
+      return e;
+    };
+
+    it('is listed and callable for the admin team only', async () => {
+      const mine = await send(env(), req('tools/list'));
+      assert.ok(!mine.body.result.tools.some((t) => t.name === 'get_thread_trace'));
+      const denied = await callTool(withAgent(), 'get_thread_trace', { thread: SLACK });
+      assert.equal(denied.body.error.code, -32602);
+      const admins = await send(env(), req('tools/list'), ADMIN);
+      const tool = admins.body.result.tools.find((t) => t.name === 'get_thread_trace');
+      assert.ok(tool && !('admin' in tool));
+      assert.equal(admins.body.result.cacheScope, 'private');
+    });
+
+    it('lays the agent\'s steps out between the thread\'s messages, for any thread', async () => {
+      const e = withAgent();
+      const r = await send(e, req('tools/call', { name: 'get_thread_trace', arguments: { thread: SLACK } }), ADMIN);
+      const t = structured(r);
+      assert.equal(t.customer, 'acme');
+      assert.deepEqual(t.timeline.map((x) => x.type), ['message', 'agent_step', 'message', 'agent_input', 'agent_step', 'tool_result']);
+      assert.equal(t.timeline[1].text, 'Earlier note.');
+      assert.equal(t.timeline[4].calls[0].tool, 'codemode');
+      assert.equal(t.timeline[5].nested_calls[0].tool, 'mcp__browser__get_url_markdown');
+      assert.deepEqual([t.agent.enabled, t.agent.model, t.agent.usage.tokens], [true, 'm', 120]);
+      assert.equal(e.asked[0].name, SLACK);
+      assert.equal(e.asked[0].options.chars, 1500);
+    });
+
+    it('pages back with `before`, and says when the channel has no agent', async () => {
+      const e = withAgent();
+      const page = structured(await send(e, req('tools/call', { name: 'get_thread_trace', arguments: { thread: SLACK, limit: 2 } }), ADMIN));
+      assert.deepEqual(page.timeline.map((x) => x.type), ['agent_step', 'tool_result']);
+      assert.equal(page.earlier, 4);
+      const back = structured(await send(e, req('tools/call', {
+        name: 'get_thread_trace', arguments: { thread: SLACK, limit: 2, before: page.next_before },
+      }, { id: 2 }), ADMIN));
+      assert.deepEqual(back.timeline.map((x) => x.type), ['message', 'agent_input']);
+      const none = structured(await send(env(), req('tools/call', { name: 'get_thread_trace', arguments: { thread: SLACK } }), ADMIN));
+      assert.equal(none.agent.enabled, false);
+      assert.deepEqual(none.timeline.map((x) => x.type), ['message', 'message']);
+    });
   });
 
   it('answers an unknown tool with -32602', async () => {

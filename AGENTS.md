@@ -52,7 +52,8 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
   knowledge bases and GitHub mirrors), `kbwrite.js`, `okf.js` and `memfs.js` (OKF writes with
   isomorphic-git in memory), `mcp.js` and `mcpclient.js` (the team's and customer's MCP
   servers, reachable from code mode scripts), `stub.js` (reaching agents without importing the
-  SDK), `turn.js` (the latest turn the inbox shows under the thread)
+  SDK), `turn.js` (the latest turn the inbox shows under the thread), `trace.js` (its transcript
+  as steps, for the admin team's MCP tool `get_thread_trace`)
 - `src/tooladmin.js` — the switches of the agents' tools in the knowledge-base editor
 - `src/teamsbot.js` — the opspile Teams bot (Bot Framework), how agents post in Teams;
   `scripts/teams-app.mjs` builds its Teams app package
