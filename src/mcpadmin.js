@@ -214,8 +214,9 @@ const shownTools = (tools) => (tools || []).map((t) => ({
 /**
  * The global servers as the editor shows them for a knowledge base's team or customer: each
  * with its instances and their last check, the team's switch (a team's knowledge base only),
- * and the switches of the channels the knowledge base learns from. The admin team also gets
- * the GitHub App and where it is installed.
+ * and the switches of the channels the knowledge base learns from. Everyone who sees them gets
+ * the GitHub App's installation link, once there is an app; the admin team also gets where it
+ * is installed, and whether each installation is allowed.
  */
 async function globalsView(env, me, owner, only) {
   const column = owner.scope === 'team' ? 'team' : 'org';
@@ -250,13 +251,19 @@ async function globalsView(env, me, owner, only) {
       channels: Object.fromEntries(rows.filter((r) => r.server === g.server && r.scope === 'channel')
         .map((r) => [r.target, shownSwitch(r)])),
     };
-    if (g.server === 'github' && admin) {
+    if (g.server === 'github') {
       const app = await currentApp(env).catch(() => null);
-      view.github = {
-        app: shownApp(app),
-        installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
-        configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
-      };
+      if (admin) {
+        view.github = {
+          app: shownApp(app),
+          installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
+          configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
+        };
+      } else if (app) {
+        // Team managers install it on their repositories; the admin team then allows that.
+        const { slug, htmlUrl, installUrl } = shownApp(app);
+        view.github = { app: { slug, htmlUrl, installUrl } };
+      }
     }
     return view;
   }));

@@ -178,6 +178,9 @@
   .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px;
     margin-top: 4px; }
   .ch.global .setup input { width: 200px; }
+  .ch.global .setup a.btn { border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; background: var(--card);
+    color: inherit; text-decoration: none; white-space: nowrap; }
+  .ch.global .setup a.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
   .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
 
@@ -791,9 +794,20 @@ function bindTools() {
 
 const toolTags = (tools) => tools.map((t) => `<span class="src" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}">${esc(t.name)}</span>`).join('');
 
+/** The GitHub App's installation page, where its repositories are picked: a link, in a new tab. */
+const installLink = (app, label, primary) => `<a class="btn${primary ? ' primary' : ''}" href="${esc(app.installUrl)}"
+  target="_blank" rel="noopener" title="${esc(app.installUrl)}">${esc(label)} ↗</a>`;
+
 function githubSetup(g) {
   const gh = g.github;
   if (!gh) return '';
+  if (!gh.installations) {
+    // A team manager: installs the app on the repositories; the admin team allows each installation.
+    return `<div class="setup"><span>Agents read the repositories the GitHub App
+      <a href="${esc(gh.app.htmlUrl)}" target="_blank" rel="noopener">${esc(gh.app.slug)}</a> is installed on,
+      once the admin team allows the installation.</span>
+      ${installLink(gh.app, 'Install on repositories', !g.available)}</div>`;
+  }
   if (!gh.app) {
     return `<form class="setup" id="ghCreate" autocomplete="off">
       <span>Create the GitHub App, read-only, on</span>
@@ -807,7 +821,7 @@ function githubSetup(g) {
       <button type="button" data-ghinst="${esc(i.id)}" data-allow="${i.approved ? '' : '1'}"${i.approved ? ' class="danger"' : ' class="primary"'}>${i.approved ? 'Revoke' : 'Allow'}</button></div>`).join('');
   return `<div class="setup"><span>GitHub App <a href="${esc(gh.app.htmlUrl)}" target="_blank" rel="noopener">${esc(gh.app.slug)}</a>
     ${gh.app.owner ? `of ${esc(gh.app.owner)}` : ''} · ${gh.installations.length ? 'anyone can install it; agents read only the installations allowed here' : 'not installed anywhere yet'}</span>
-    <button type="button" data-href="${esc(gh.app.installUrl)}">${gh.installations.length ? 'Install elsewhere or change repositories' : 'Install on repositories'}</button></div>
+    ${installLink(gh.app, gh.installations.length ? 'Install elsewhere or change repositories' : 'Install on repositories', !gh.installations.length)}</div>
     ${rows ? `<div class="per">${rows}</div>` : ''}`;
 }
 
@@ -1054,9 +1068,6 @@ function bindGlobals() {
       renderFiles();
       renderMcp({ kind: 'ok', text: allow ? `Agents can read what the app is installed on in ${inst.account}. Check lists the tools.` : `Agents no longer read ${inst.account}.` });
     };
-  }
-  for (const el of $('editor').querySelectorAll('[data-href]')) {
-    el.onclick = () => window.open(el.dataset.href, '_blank', 'noopener');
   }
   if ($('ghCreate')) {
     $('ghCreate').onsubmit = async (e) => {

@@ -389,6 +389,15 @@ describe('global MCP servers in thread agents', () => {
     assert.equal(waiting.available, false);
     assert.match(waiting.problem, /installed on acme-labs, but the admin team has not allowed/);
     assert.equal(waiting.github.installations[0].approved, false);
+    // Team managers get the installation link, but not where it is installed.
+    const asManager = (await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
+    assert.deepEqual(asManager.github, {
+      app: {
+        slug: 'opspile-test',
+        htmlUrl: asManager.github.app.htmlUrl,
+        installUrl: 'https://github.com/apps/opspile-test/installations/new',
+      },
+    });
     assert.equal(await serverWithHeaders(e, 'global:github:41'), null);
     assert.deepEqual(await serversFor(e, { team: 'helix', channelId: 'C1' }), []);
     const allow = (me, body) => call(e, me, 'PUT', '/api/kb/github/installation', body);
