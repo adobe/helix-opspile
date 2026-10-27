@@ -66,9 +66,12 @@ const DISCORD_VARS = [
   'DISCORD_CLIENT_ID',
 ] as const;
 
+// TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
+// (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
+// Connector to post through, default the public cloud's.
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
-  'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL',
+  'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
 ] as const;
 
 const SECRETS = [
@@ -181,6 +184,8 @@ export default defineConfig(({ mode }) => {
         AGENTS: bindings.durableObject({ worker: name, exportName: 'ThreadAgent' }),
         // The Discord poller: one object reads the servers' new messages every minute.
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
+        // Dynamic Workers: the shells of the agents' computers (the `computer` tool).
+        LOADER: bindings.workerLoader(),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

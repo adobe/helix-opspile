@@ -17,6 +17,7 @@ import { commitLog, listFiles, readText } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
 import { isAdmin, managesTeam } from './review.js';
+import { toolAdmin } from './tooladmin.js';
 
 /**
  * May `me` edit this knowledge base? The admin team edits all of them; a team manager the
@@ -229,6 +230,11 @@ export async function kbAdmin(request, env, url, me) {
   const servers = await mcpAdmin(request, env, url, me);
   if (servers) {
     return servers;
+  }
+  // The agents' tools that are off until switched on (src/tooladmin.js).
+  const tools = await toolAdmin(request, env, url, me);
+  if (tools) {
+    return tools;
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

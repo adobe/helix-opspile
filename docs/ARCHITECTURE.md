@@ -525,7 +525,9 @@ labelled as written by people outside its control.
 | Tool | |
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld |
-| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. This is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
+| `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
@@ -613,6 +615,49 @@ request but keeps **no logs**: prompts carry customer messages, so request loggi
 
 **Replay.** Agents are not part of the replay path. Their output is user state (drafts) or
 pile 3 (git history); replaying pile 1 pokes them, but they find nothing past their watermark.
+
+### Agent tools
+
+Two tools are off until the admin team or a team's managers turn them on, as the global MCP
+servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
+over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
+Before an agent is told anything it reads the switches of its thread's team and channel; the
+tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
+right after opspile's own), which a change replaces in place. Each comes with a section of the
+system prompt on how to use it.
+
+**`post_message`.** The agent posts a reply in the latest platform thread of its entry right
+away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot
+token (`chat.postMessage` in the thread), on Discord with the bot, in the Discord thread when
+the conversation is one and as an inline reply to its first message otherwise, with mentions
+switched off. On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
+post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is
+installed in. The bot is the opspile Entra app itself, single tenant, registered as an Azure
+Bot with the Teams channel, and packaged as a notification-only Teams app in the org catalog
+(`TEAMS_APP_ID`). A post replies in the channel thread (`<channel id>;messageid=<root id>`)
+with a Bot Framework token of the app; when the bot is not in the team yet, opspile installs
+the app there through Graph (`TeamsAppInstallation.ReadWriteSelfForTeam.All`, which lets the
+app install only itself) and posts again. Its messaging endpoint (`/teams/bot`) answers every
+activity and keeps nothing: opspile reads Teams through Graph. A platform whose bot is not set
+up does not get the tool. The prompt asks the agent
+to post only what the team would send as it is, and to keep anything uncertain or sensitive in
+the draft. A post may name the draft version it sends, which uses the draft up. The reply comes
+back through the platform's events like any message; the agent keeps the ids of its latest
+posts and is not told about them, so it never answers itself.
+
+**`computer`.** pi's own `bash` tool, run on [Cloudflare Computer](https://github.com/cloudflare/computer)
+(`@cloudflare/computer`, `src/agent/computer.js`). The ThreadAgent object holds a Workspace: a
+filesystem in its own SQLite, so each thread has a working directory (`/workspace`) whose files
+last from one turn to the next, and nobody else's. Commands run in a `WorkerShellBackend`:
+[just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
+binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
+Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
+grep, sed, awk, sort, find, jq…) and `curl`, with the Dynamic Worker's own network access
+(egress `direct`, no filter), and no npm, node or python. What curl fetches is untrusted, like
+customer messages; nothing stops an agent from sending what it read, so the prompt says not to
+send anything to sites that are not the customer's or Adobe's. The
+bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
+tools are not installed, so the rest of the environment answers `not_supported`.
 
 ## People
 

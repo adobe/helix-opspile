@@ -39,6 +39,8 @@ still answer.
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team, and team managers for their teams' knowledge bases: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, headers?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. Header values are never returned, only their names; adding or changing a server connects to it and lists its tools. The answer also lists the **global** servers (`globals`): whether each is set up, its tools, and its switches for the knowledge base's team and channels. |
+| `POST /teams/bot` | The messaging endpoint of the opspile Teams bot. The bot is notification-only and opspile reads Teams through Graph, so it answers every activity with 200 and keeps nothing. |
+| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers. |
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `check { server }` connects to it and lists its tools again. |
 | `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. `PUT /api/kb/github/installation { id, approved }` allows an installation (agents read only allowed ones) or revokes it. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. A thread also carries `mentioned`: who the people its messages `@`-mention are (Adobe, partner, customer or bot), by name, so the page sets mentions of people outside Adobe apart. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
@@ -67,7 +69,7 @@ Nothing below is committed; set it on the Worker.
 
 | Name | Kind | What |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app |
+| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write` |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
@@ -92,17 +94,20 @@ Nothing below is committed; set it on the Worker.
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
 | `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
+| `TEAMS_APP_ID` | var | Optional: the opspile Teams app's id in the tenant's org catalog. With it, the opspile Teams bot (the Entra app, registered with the Bot Framework) posts the agents' replies in Teams threads (`post_message`); see "The opspile Teams bot" |
+| `TEAMS_BOT_SERVICE_URL` | var | Optional: the Bot Connector the Teams bot posts through, default `https://smba.trafficmanager.net/teams/` |
 | `BROWSER_RUN_TOKEN` | secret | Account API token with *Browser Run Write* only, for the global `browser` MCP server (Cloudflare's hosted Browser Run one). Required when `AGENT_MODEL` is set |
 | `BEDROCK_API_KEY` | secret | Amazon Bedrock API key (bearer token). Required when `AGENT_MODEL` is set |
 | `AI_GATEWAY_TOKEN` | secret | Optional: a token for an authenticated gateway, sent as `cf-aig-authorization`; set `AI_GATEWAY_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
 | `DISCORD_GUILDS` | var | Optional, comma-separated: the Discord servers (guild ids) to read. With it (and `DISCORD_BOT_TOKEN`), the `DISCORD` object polls them; see "Discord" below |
-| `DISCORD_BOT_TOKEN` | secret | The opspile Discord app's bot token. Required when `DISCORD_GUILDS` is set |
+| `DISCORD_BOT_TOKEN` | secret | The opspile Discord app's bot token. Required when `DISCORD_GUILDS` is set. Agents with `post_message` on post with it, which needs the Send Messages and Send Messages in Threads permissions |
 | `DISCORD_STAFF_ROLES` | var | Optional, comma-separated role ids: members with one of them count as staff (Discord shares no email, so the mail domain cannot say) |
 | `DISCORD_HISTORY_DAYS` | var | Optional: how many days back the first poll reads, default 30 |
 | `DISCORD_POLL_SECONDS` | var | Optional: how often the poller asks Discord for new messages, default 60 (at least 15) |
 | `DISCORD_CLIENT_ID` | var | Optional: the Discord app's client id, so people can connect their Discord account (scope `identify`) and their posts and reactions there count as theirs |
 | `DISCORD_CLIENT_SECRET` | secret | The Discord app's client secret. Required when `DISCORD_CLIENT_ID` is set |
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
+| `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool, Cloudflare Computer's just-bash) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
@@ -211,6 +216,38 @@ the admin team or a team's managers turn them on, for the team (in the team's kn
   only asks for read access; it needs no webhook.
 
 See ARCHITECTURE, "Global MCP servers".
+
+**Agent tools.** Two of the agents' tools are off until the admin team or a team's managers
+turn them on, the same way and on the same page (**Tools and MCP servers**, group **Tools**):
+for the team, or for one channel (**Per channel**; a channel's switch wins over its team's):
+
+- **`post_message`**: the agent posts a reply in its thread right away, as the opspile bot of
+  the platform, next to keeping the draft. The Slack app needs the bot scope `chat:write`
+  (reinstall it after adding the scope), the Discord bot the *Send Messages* and *Send
+  Messages in Threads* permissions; Teams needs the opspile Teams bot (below). A platform
+  whose bot is not set up does not get the tool.
+- **`computer`**: pi's `bash` tool, on [Cloudflare Computer](https://github.com/cloudflare/computer):
+  a just-bash shell in a Dynamic Worker (the `LOADER` binding) over a working directory per
+  thread that keeps its files, with `jq` and `curl`. The shell reaches the internet without a
+  filter, so what an agent read can leave through it; the prompt says not to send anything to
+  sites that are not the customer's or Adobe's.
+
+**The opspile Teams bot.** Microsoft Graph lets no app post to a channel; a Bot Framework bot
+can, in the teams it is installed in. The bot is the opspile Entra app itself:
+
+1. Register it with the Bot Framework: an Azure Bot (F0, kind `azurebot`) in any subscription,
+   *Single tenant*, with the existing app (`MS_CLIENT_ID`, tenant `MS_TENANT_ID`), messaging
+   endpoint `<PUBLIC_ORIGIN>/teams/bot`, and the Microsoft Teams channel on.
+2. Add the Graph application permission `TeamsAppInstallation.ReadWriteSelfForTeam.All` to the
+   app, and have an admin grant consent: with it the app installs itself (and only itself) in a
+   team on its first post there.
+3. Build the Teams app package with `node scripts/teams-app.mjs` (from `MS_CLIENT_ID` and
+   `PUBLIC_ORIGIN`; written outside the repo) and have a Teams admin upload it to the org
+   catalog (Teams admin center, **Manage apps**, **Upload new app**).
+4. Set `TEAMS_APP_ID` to the app's id in the catalog (Graph `appCatalogs/teamsApps`, not the
+   manifest id) and deploy.
+
+See ARCHITECTURE, "Agent tools".
 
 ### Rules and replay
 
