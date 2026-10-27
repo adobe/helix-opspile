@@ -28,6 +28,7 @@ import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
+import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
 /**
@@ -377,6 +378,15 @@ export class ThreadAgent extends Agent {
       whenBusy: 'followUp',
     });
     return { ok: true, accepted: receipt.accepted };
+  }
+
+  /**
+   * Its trace, for the admin team: what `status` says, and the steps of its active transcript
+   * (src/agent/trace.js).
+   */
+  async trace(options = {}) {
+    const entries = await this.harness.messages().catch(() => []);
+    return { status: await this.status(), ...traceSteps(entries, options) };
   }
 
   /** What the agent is doing, for the inbox and for checks. */

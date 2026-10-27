@@ -150,7 +150,16 @@ is answered three ways, as in the inbox: `post_draft` saves its shared draft (`P
 `base` names the version it replaces), which the team sees and sends; `post_as_user` posts as
 the person (`POST /api/post`); `post_as_bot` posts as the opspile app (`POST /api/post/app`),
 where the channel lets the app post. Both post tools take the shared draft's version as
-`draft`, which uses it up; `get_thread` shows the draft and `can_post_as_bot`. It speaks MCP `2026-07-28`
+`draft`, which uses it up; `get_thread` shows the draft and `can_post_as_bot`.
+
+The admin team gets more tools, which nobody else sees in `tools/list` (for them it is
+`cacheScope: private`) or can call (an unknown tool):
+
+| Tool | What |
+| --- | --- |
+| `get_thread_trace` | Any thread like `get_thread`, with its agent's work in the same timeline, oldest first: what it was told, what it thought and said, every tool call with its arguments and result, and the calls a code mode script made in turn (MCP servers included); its prompt and tool changes; its model, tools, MCP servers, latest turn and token use. From the agent's transcript since its last reset; `limit`, `before` (paging) and `max_chars`. A channel without agents has no trace (its agent is not started to look). |
+
+It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each
 request's `_meta`, header checks (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), caching
 hints, and plain JSON responses (no SSE, no `subscriptions/listen`). Clients of the 2025
@@ -188,7 +197,8 @@ bases (OKF; see ARCHITECTURE, "Thread agents"). To turn them on:
 GitHub repositories the agents may read are rows in `agent_repos`, data like the rules:
 `INSERT INTO agent_repos (scope, slug, url, note) VALUES ('org', 'acme', 'https://github.com/acme/site', 'their site')`
 (`scope` is `all`, `team` or `org`). The cron mirrors them into Artifacts within 20 minutes.
-`GET /diag/agent?name=<thread key>` shows what an agent is doing (and its MCP servers).
+`GET /diag/agent?name=<thread key>` shows what an agent is doing (and its MCP servers); the
+admin team sees everything it did with the MCP tool `get_thread_trace`.
 
 **MCP servers.** Each ops team and each customer can have MCP servers for its agents, added in
 the knowledge-base editor (`/inbox/kb`, **MCP servers** of the team's or the customer's

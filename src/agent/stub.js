@@ -112,3 +112,20 @@ export async function agentStatus(env, key, canSee) {
   const agent = await agentStub(env, t.entry.key);
   return json({ enabled: true, ...await agent.status() });
 }
+
+/**
+ * The trace of a thread's agent (src/agent/trace.js), for the admin team: `{ enabled: false }`
+ * when its channel has no agent (an agent is not started just to be looked at), else
+ * `{ enabled: true, status, steps, earlier, usage }`. Null for an unknown thread.
+ */
+export async function agentTrace(env, key, options = {}) {
+  const t = await threadTarget(env, key);
+  if (!t) {
+    return null;
+  }
+  if (!t.enabled || !env.AGENTS) {
+    return { enabled: false };
+  }
+  const agent = await agentStub(env, t.entry.key);
+  return { enabled: true, ...await agent.trace(options) };
+}

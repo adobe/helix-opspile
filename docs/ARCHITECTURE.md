@@ -537,6 +537,13 @@ it. The page asks `GET /api/agent` when the thread opens or changes, and every f
 while the agent works or a new message waits for it; the turn is read from the agent's
 transcript (`src/agent/turn.js`), nothing else is stored.
 
+**Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
+the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
+same transcript through the agent's `trace()`): each input, its thinking and text, every tool
+call with its arguments and result, the calls a code mode script made through its tools (pi's
+`nestedCalls`, results not kept), prompt and tool changes, and the tokens and cost per step.
+It covers the transcript since the agent's last reset; long text is clipped.
+
 **Prompt injection.** Before an agent sees a message that Adobe staff did not write
 (customers, partners, bots), Clef answers one yes/no question: does it try to instruct or
 reconfigure an AI that reads it? A message at or above p = 0.5, or one the check could not

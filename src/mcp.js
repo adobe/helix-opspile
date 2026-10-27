@@ -13,7 +13,8 @@
 import { accessEmail } from './access.js';
 import { personById, viewer } from './api.js';
 import { bearerPerson, challenge } from './oauth.js';
-import { TOOLS, toolList } from './mcp-tools.js';
+import { isAdmin } from './review.js';
+import { mayUse, TOOLS, toolList } from './mcp-tools.js';
 
 /**
  * `/mcp`: a Model Context Protocol server over Streamable HTTP, protocol 2026-07-28
@@ -130,7 +131,8 @@ function toolResult({ data, error }) {
 
 async function call(env, me, params, ctx) {
   const tool = TOOLS.find((t) => t.name === (params && params.name));
-  if (!tool) {
+  // The admin team's tools do not exist for anyone else.
+  if (!mayUse(me, tool)) {
     return { error: { code: ERR.invalidParams, message: `Unknown tool: ${params && params.name}. Call tools/list.` } };
   }
   const args = (params && params.arguments) || {};
@@ -180,7 +182,14 @@ async function dispatch(env, me, msg, ctx) {
     case 'ping':
       return ctx.modern ? null : { result: {} };
     case 'tools/list':
-      return { result: { tools: toolList(), ttlMs: LIST_TTL_MS, cacheScope: 'public' } };
+      // The admin team sees more tools: their list is theirs alone.
+      return {
+        result: {
+          tools: toolList(me),
+          ttlMs: LIST_TTL_MS,
+          cacheScope: isAdmin(me) ? 'private' : 'public',
+        },
+      };
     case 'tools/call':
       return call(env, me, params, {
         ...ctx, inputResponses: params.inputResponses, requestState: params.requestState,
