@@ -45,7 +45,13 @@ are removed before an event is stored.
 - The key is derived from the platform's event id, so redelivered events (Slack retries with
   the same `event_id`, Graph may notify twice) overwrite themselves. Ingestion is idempotent.
 - **Slack** delivers edits as `message_changed` (with the full new message), deletions as
-  `message_deleted`, and reactions as separate events. All of them are stored.
+  `message_deleted`, and reactions as separate events. All of them are stored. A file uploaded
+  to a Slack Connect channel arrives as a stub (`file_access: check_file_info`: an id and a file
+  type, no name or link); the normalizer looks it up once with `files.info` and keeps the
+  answer here, next to the channel's events, as `slack/<tenant>/<channel>/files/<file id>.json`
+  (`{ type: 'file_info', file }`, without `shares`, which quotes other channels), so a replay
+  asks Slack nothing. It is not an event and is skipped. A file Slack does not show the app is
+  not kept, and the message says a file of that type is there.
 - **Teams** change notifications usually carry only the resource path. We store the
   notification and the message we then fetch as two objects. Graph notifications have no
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a

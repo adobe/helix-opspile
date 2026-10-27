@@ -86,6 +86,22 @@ describe('processKey', () => {
           ],
         });
       }
+      if (u.pathname === '/api/files.info') {
+        const id = u.searchParams.get('file');
+        return Response.json(id === 'F1' ? {
+          ok: true,
+          file: {
+            id: 'F1',
+            name: 'flow.pdf',
+            title: 'Quiz flow',
+            mimetype: 'application/pdf',
+            filetype: 'pdf',
+            permalink: 'https://example.slack.com/files/U2/F1/flow.pdf',
+            url_private: 'https://files.slack.com/files-pri/T1-F1/flow.pdf',
+            shares: { private: { C9: [{ preview: 'another channel' }] } },
+          },
+        } : { ok: false, error: 'file_not_found' });
+      }
       if (u.pathname === '/api/users.info') {
         const user = USERS[u.searchParams.get('user')];
         return Response.json(user ? { ok: true, user } : { ok: false, error: 'user_not_found' });
@@ -115,6 +131,33 @@ describe('processKey', () => {
     assert.deepEqual(meta.raw, [key]);
     const [who] = e.DB.rows("SELECT title FROM identities WHERE user_id = 'U2'");
     assert.equal(who.title, 'CTO');
+  });
+
+  it('looks up Slack Connect file stubs once, keeps the answer in pile 1, and skips it', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const stub = (id) => ({
+      id, file_access: 'check_file_info', filetype: 'pdf', created: 0, user: '',
+    });
+    const e = env({
+      [key]: event({
+        type: 'message', subtype: 'file_share', channel: 'C1', user: 'U2', ts: '1792584000.000100', text: 'See attached', files: [stub('F1'), stub('F2')],
+      }),
+    });
+    await quiet(() => processKey(e, key));
+    const path = 'channels/acme/helix/slack-C1/1792584000.000100/1792584000.000100.md';
+    const { body } = parse(e.CHANNELS.objects.get(path).body);
+    assert.match(body, /- \[Quiz flow\]\(https:\/\/example\.slack\.com\/files\/U2\/F1\/flow\.pdf\)/);
+    assert.match(body, /- PDF file \(shared from another workspace; opspile cannot see it\)/);
+    const kept = JSON.parse(e.RAW.objects.get('slack/E1/C1/files/F1.json').body);
+    assert.deepEqual([kept.type, kept.file.name, 'shares' in kept.file], ['file_info', 'flow.pdf', false]);
+    // Refused files are not kept, so a later pass asks again.
+    assert.equal(e.RAW.objects.has('slack/E1/C1/files/F2.json'), false);
+    assert.equal(calls.filter((c) => c === '/api/files.info').length, 2);
+    // The kept answer is a pile-1 object a replay lists: it is skipped, and the next pass
+    // uses it instead of asking Slack.
+    assert.equal((await processKey(e, 'slack/E1/C1/files/F1.json')).result, 'skip');
+    await quiet(() => processKey(e, key));
+    assert.equal(calls.filter((c) => c === '/api/files.info').length, 3);
   });
 
   it('creates the knowledge bases of a channel\'s org and team when it is discovered', async () => {

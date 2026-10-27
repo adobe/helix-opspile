@@ -307,7 +307,8 @@ the inbox, the web redirect URI of Access's callback and a client secret held by
 Slack app needs the user scopes `chat:write` and `reactions:write` and the redirect URLs
 `<origin>/api/auth/slack/callback` and Access's callback (Sign in with Slack asks for
 `openid`, `email` and `profile` itself); the bot needs `reactions:read` for the reaction
-events and `files:read` for images. Its Event Subscriptions request URL is
+events and `files:read` for images and for the files shared in Slack Connect channels (their
+events carry only a stub, which opspile looks up with `files.info`). Its Event Subscriptions request URL is
 `<origin>/slack/events`.
 
 ### Discord

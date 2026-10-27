@@ -23,7 +23,8 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 ## Layout
 
 - `src/index.js` — router
-- `src/slack.js` — Slack Events API endpoint
+- `src/slack.js` — Slack Events API endpoint; `src/slackfiles.js` — the files of Slack Connect
+  channels, looked up with `files.info` and kept in pile 1
 - `src/teams.js` — Graph validation endpoint, token and client helpers
 - `src/discord.js` — Discord REST helpers, snowflakes and pile-1 envelopes; `src/poller.js` —
   the `DiscordPoller` Durable Object that polls the servers for new messages, edits, deletions
