@@ -493,3 +493,32 @@ describe('admin: orgs', () => {
     assert.equal((await call(e, ADA, 'GET', '/api/admin/org?slug=nothing')).status, 404);
   });
 });
+
+describe('admin: channel search', () => {
+  const teamsChannel = (e, id, name, group) => e.DB.sqlite.prepare(`INSERT INTO channels
+      (source, tenant, channel_id, name, group_name, fetched_at)
+    VALUES ('teams', 'T1', ?, ?, ?, '2026-10-22T00:00:00Z')`).run(id, name, group);
+  const found = async (e, q) => (await call(e, ADA, 'GET', `/api/admin/channels?q=${encodeURIComponent(q)}`))
+    .body.channels.map((c) => c.channelId);
+
+  it('finds a channel by anything the picker shows of it', async () => {
+    const e = env();
+    teamsChannel(e, '19:a@thread.tacv2', 'Main', 'aem-initech');
+    teamsChannel(e, '19:b@thread.tacv2', 'Main', 'Hooli Support');
+    teamsChannel(e, '19:c@thread.tacv2', 'General', 'aem-initech');
+    // The Teams team, alone or with the channel, as shown or typed loosely.
+    assert.deepEqual(await found(e, 'initech'), ['19:a@thread.tacv2', '19:c@thread.tacv2']);
+    for (const q of ['aem-initech › Main', 'aem-initech > main', 'initech main', 'initech/main', 'aem initech main']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await found(e, q), ['19:a@thread.tacv2'], q);
+    }
+    assert.deepEqual(await found(e, 'hooli-support'), ['19:b@thread.tacv2']);
+    // The whole name as shown comes first.
+    assert.equal((await found(e, 'main'))[0], '19:a@thread.tacv2');
+    // The platform, the team it is filed under (slug or name) and the customer.
+    assert.deepEqual(await found(e, 'teams general'), ['19:c@thread.tacv2']);
+    assert.deepEqual(await found(e, 'helix ops globex'), ['C2']);
+    assert.deepEqual(await found(e, '#aem-acme'), ['C1']);
+    assert.deepEqual(await found(e, 'initech nothing'), []);
+  });
+});
