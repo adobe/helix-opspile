@@ -405,8 +405,8 @@ async function scenario(browser) {
   await step('facet: unpick it', () => page.click('[data-f="customer"] .fr.on'));
   await step('facet: kind', () => page.click('[data-f="kind"] .fr[data-v]'));
   await step('facet: clear kind', () => page.click('[data-f="kind"] .clear'));
-  await step('Smart → Recent', () => page.click('#threads [data-sort]'));
-  await step('Recent → Smart', () => page.click('#threads [data-sort]'));
+  await step('Team → Personal', () => page.click('#threads [data-sort]'));
+  await step('Personal → Team', () => page.click('#threads [data-sort]'));
   await step('unread only on', () => page.click('#threads [data-unread]'));
   await step('unread only off', () => page.click('#threads [data-unread]'));
   await page.evaluate("[...document.querySelectorAll('#pane .msg')].at(-3).classList.add('perf-msg')");

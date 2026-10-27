@@ -322,6 +322,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
+- The thread list has two views. **Team** (the default) puts what needs you most first and
+  has every facet card. **Personal** (`sort=personal`) puts the latest activity first, shows
+  conversations only (no alerts) and keeps only the customer card, on which one customer is
+  picked at a time; filters on the cards it does not show do not apply there, and are kept
+  for the team view. A facet value with threads you have not read has its label in bold, and
+  a thread's "N replies" is bold and blue while it has replies you have not read.
 - The toolbar is the same on the inbox and the admin pages: the pages and label review on the
   left, and on the right whoever is signed in. Their name opens a menu with the team to show
   (the inbox), "View as" (admin team; while it is on, a chip next to the name says whose inbox
@@ -508,10 +514,10 @@ inbox, on any message of the thread:
 
 - **👀 seen**: the person who put it is on it. For them it counts like having posted (higher);
   for the rest of the team, a colleague's 👀 since the customer last wrote puts the thread in
-  "team on it" and halves its smart score, unless it mentions them.
+  "team on it" and halves its score in the team view, unless it mentions them.
 - **🙏 thanks**: after the last message, nothing is pending (`waiting_on` is nobody).
 - **🛟 help**: a colleague asks the team to look: the thread is in "you" for everyone else
-  and its smart score doubles, until it is resolved.
+  and its score in the team view doubles, until it is resolved.
 
 ## Thread agents
 
