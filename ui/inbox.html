@@ -1403,14 +1403,14 @@ function threadRows() {
   else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
   if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
   const mine = personal();
-  const sorter = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`
-    + `<button class="order" data-sort="${mine ? 'team' : 'personal'}" role="switch" aria-checked="${mine}" aria-label="Personal view" title="${mine ? 'Personal: latest activity first, filtered by customer only' : 'Team: what needs you most first, with every filter'}">`
+  const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
+  const sorter = `<button class="order" data-sort="${mine ? 'team' : 'personal'}" role="switch" aria-checked="${mine}" aria-label="Personal view" title="${mine ? 'Personal: latest activity first, filtered by customer only' : 'Team: what needs you most first, with every filter'}">`
     + `<span class="${mine ? '' : 'on'}">Team</span><span class="${mine ? 'on' : ''}">Personal</span></button>`;
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + (state.sel[f.id]?.size || 0), 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const more = state.data.page?.next;
-  const count = `${filt}<span title="${more ? 'Older threads are still loading, or wait at the end of the list' : ''}">${shown.length} of ${state.data.threads.length}${more ? '+' : ''} threads</span><span class="sort">${sorter}</span>`;
+  // Filters (narrow screens) and unread only on the left, the view switch on the right.
+  const count = `${filt}${unread}<span class="sort">${sorter}</span>`;
   const head = box.querySelector('.count');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
