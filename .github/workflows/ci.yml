@@ -54,6 +54,8 @@ jobs:
       ACCESS_POLICY_ID: ${{ secrets.ACCESS_POLICY_ID }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
+      # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
+      TEAMS_APP_ID: ${{ secrets.TEAMS_APP_ID }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
