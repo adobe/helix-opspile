@@ -178,11 +178,16 @@ describe('posting as the opspile app', () => {
   });
 
   it('replies in the Slack thread with the bot token', async () => {
-    const res = await postAsApp(env(), SLACK, 'Purges take *up to* 5 minutes <here>');
+    const md = 'Purges take **up to** 5 minutes <here>, see [the docs](https://docs.example/purge)';
+    const res = await postAsApp(env(), SLACK, md);
     assert.deepEqual(res, { ok: true, platform: 'slack', id: '1792584999.000900' });
     assert.equal(sent[0].auth, 'Bearer xoxb-made-up');
+    // Slack renders the Markdown of a `markdown` block; `text` is mrkdwn, for notifications.
     assert.deepEqual(sent[0].body, {
-      channel: 'C1', thread_ts: '1792584000.000100', text: 'Purges take *up to* 5 minutes &lt;here&gt;',
+      channel: 'C1',
+      thread_ts: '1792584000.000100',
+      text: 'Purges take *up to* 5 minutes &lt;here&gt;, see <https://docs.example/purge|the docs>',
+      blocks: [{ type: 'markdown', text: md }],
     });
   });
 
@@ -330,7 +335,12 @@ describe('the agent\'s switchable tools', () => {
     assert.ok(missing.error);
     assert.match(missing.text, /missing\.txt/);
     assert.match(post.text, /^posted on Slack \(message 1792584999\.000900\)\./);
-    assert.deepEqual(posts, [{ channel: 'C1', thread_ts: '1792584000.000100', text: 'Purges take up to 5 minutes.' }]);
+    assert.deepEqual(posts, [{
+      channel: 'C1',
+      thread_ts: '1792584000.000100',
+      text: 'Purges take up to 5 minutes.',
+      blocks: [{ type: 'markdown', text: 'Purges take up to 5 minutes.' }],
+    }]);
     assert.deepEqual(posted, ['1792584999.000900']);
     assert.equal(ws.runs[0].options.cwd, '/workspace');
   });

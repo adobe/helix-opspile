@@ -198,3 +198,76 @@ export function discordToMarkdown(text, names = {}) {
   }).join('')
     .trim();
 }
+
+// Placeholders while markdownToMrkdwn works: kept spans (code, links), bold markers.
+const KEEP = '\uE002';
+const BOLD = '\uE001';
+const slackEscape = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+// A link label in Slack ends at `|` or `>`; neither may stay in it.
+const slackLabel = (s) => slackEscape(s.replace(/\|/g, '¦'));
+const slackUrl = (s) => s.replace(/[\s<>|]/g, encodeURIComponent).replace(/&/g, '&amp;');
+
+function mrkdwnInline(text, keep) {
+  const kept = (s) => `${KEEP}${keep.push(s) - 1}${KEEP}`;
+  return text
+    // Code spans first: nothing inside them is markup, and Slack shows them as they are.
+    .replace(/(`+)([^`\n]|[^`\n][\s\S]*?[^`\n])\1(?!`)/g, (_, ticks, code) => kept(`\`${slackEscape(code.replace(/`/g, 'ˋ'))}\``))
+    .replace(/!?\[([^\]\n]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g, (_, label, url) => kept(
+      label && label !== url ? `<${slackUrl(url)}|${slackLabel(label)}>` : `<${slackUrl(url)}>`,
+    ))
+    .replace(/<((?:https?|mailto):[^\s>]+)>/g, (_, url) => kept(`<${slackUrl(url)}>`))
+    .replace(/\*\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*\*/g, `${BOLD}_$1_${BOLD}`)
+    .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, `${BOLD}$2${BOLD}`)
+    .replace(/(^|[^\p{L}\p{N}*\\])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\p{L}\p{N}*])/gu, '$1_$2_')
+    .replace(/~~(?=\S)([^~\n]+?)(?<=\S)~~/g, '~$1~')
+    .replace(/\\([\\`*_{}[\]()#+\-.!~|])/g, '$1')
+    .replaceAll(BOLD, '*');
+}
+
+/**
+ * Markdown to Slack mrkdwn, for the `text` of a message: `**bold**` → `*bold*`, `*italic*` →
+ * `_italic_`, `~~struck~~` → `~struck~`, `[label](url)` → `<url|label>`, headings in bold,
+ * bullets as `•`; code stays code, and `&`, `<` and `>` are escaped everywhere else (a `>`
+ * starting a line stays a quote). Tables and the like are kept as text.
+ */
+export function markdownToMrkdwn(md) {
+  const keep = [];
+  const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let fence = null;
+  for (const line of lines) {
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      const closes = open && open[1][0] === fence[0] && open[1].length >= fence.length;
+      if (closes && !line.trim().slice(open[1].length)) {
+        fence = null;
+        out.push('```');
+      } else {
+        out.push(slackEscape(line));
+      }
+    } else if (open) {
+      [, fence] = open;
+      out.push('```');
+    } else {
+      let m = /^ {0,3}(?:[-*_][ \t]*){3,}$/.exec(line);
+      if (m) {
+        out.push('──────────');
+      } else {
+        m = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line);
+        if (m) {
+          out.push(`*${slackEscape(mrkdwnInline(m[1], keep).replace(/\*/g, ''))}*`);
+        } else {
+          m = /^((?:[ \t]*>[ \t]?)*)([ \t]*)(?:([-*+])[ \t]+(?:\[([ xX])\][ \t]+)?)?(.*)$/.exec(line);
+          const quote = m[1] ? '> ' : '';
+          const task = { ' ': '☐ ', x: '☑ ', X: '☑ ' }[m[4]] || '';
+          const bullet = m[3] ? `${m[2]}• ${task}` : m[2];
+          out.push(`${quote}${bullet}${slackEscape(mrkdwnInline(m[5], keep))}`);
+        }
+      }
+    }
+  }
+  if (fence) {
+    out.push('```');
+  }
+  return out.join('\n').replace(new RegExp(`${KEEP}(\\d+)${KEEP}`, 'g'), (_, i) => keep[Number(i)]);
+}
