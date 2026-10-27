@@ -31,6 +31,7 @@ import {
 } from '../src/agent/repos.js';
 import { setAgent } from '../src/agent/enabled.js';
 import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
+import { channelThreads, resolveThread } from '../src/agent/history.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import { opspileExtension, staffExtension } from '../src/agent/tools.js';
 import { processKey } from '../src/normalizer.js';
@@ -531,6 +532,107 @@ describe('thread agents', () => {
     assert.match(refused, /maintained automatically/);
     const [row] = e.DB.rows('SELECT d.body, p.email FROM drafts d JOIN people p ON p.id = d.person');
     assert.deepEqual(row, { body: 'Hi Cy, we are looking at the purge times.', email: 'agent@opspile.invalid' });
+  });
+});
+
+describe('the earlier conversations of the channel', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = async (url) => {
+      const u = new URL(url);
+      if (u.pathname === '/api/conversations.info') {
+        const id = u.searchParams.get('channel');
+        return Response.json({ ok: true, channel: { id, name: `aem-${id === 'C1' ? 'acme' : 'other'}`, context_team_id: 'T1' } });
+      }
+      if (u.pathname === '/api/users.info') {
+        const user = USERS[u.searchParams.get('user')];
+        return Response.json(user ? { ok: true, user } : { ok: false, error: 'user_not_found' });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const EARLIER = [
+    { user: 'U2', ts: '1792500000.000100', text: 'What should we call the inbox?' },
+    {
+      user: 'U1', ts: '1792500060.000200', thread_ts: '1792500000.000100', text: 'Maybe desk',
+    },
+    { user: 'U2', ts: '1792510000.000100', text: 'Purges are slow again' },
+    {
+      subtype: 'channel_join', user: 'U2', ts: '1792520000.000100', text: '<@U2> has joined the channel',
+    },
+  ];
+
+  async function setup() {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, [...EARLIER, ...MESSAGES]));
+    // Another channel's thread, which the agent must not read.
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+        team, kind, path, root_at, last_at, messages, updated_at)
+      VALUES ('slack:E1:C2:1792500000.000100', 'slack', 'E1', 'C2', '1792500000.000100', 'other',
+        'helix', 'channel', 'channels/other/', '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z', 1,
+        '2026-10-20T00:00:00Z')`).run();
+    const target = {
+      key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack',
+    };
+    const agent = {
+      env: e,
+      hasThread: true,
+      target: async () => target,
+      verdicts: async (messages) => new Map(await Promise.all(
+        messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+      )),
+    };
+    const tools = Object.fromEntries(opspileExtension(agent).tools.map((t) => [t.name, t]));
+    const run = async (name, args) => {
+      const res = await tools[name].execute(args, {});
+      return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+    };
+    return { e, run };
+  }
+
+  it('lists the other threads of the channel, latest first, without join messages', async () => {
+    const { e, run } = await setup();
+    const all = await channelThreads(e, THREAD);
+    assert.deepEqual(all.threads.map((t) => t.thread), [
+      'slack:E1:C1:1792510000.000100', 'slack:E1:C1:1792500000.000100',
+    ]);
+    assert.equal(all.more, false);
+    const first = await channelThreads(e, THREAD, { limit: 1 });
+    assert.equal(first.more, true);
+    const next = await channelThreads(e, THREAD, { limit: 1, before: first.threads[0].last_at });
+    assert.deepEqual(next.threads.map((t) => t.thread), ['slack:E1:C1:1792500000.000100']);
+    const found = await channelThreads(e, THREAD, { query: 'CALL the inbox' });
+    assert.deepEqual(found.threads.map((t) => t.thread), ['slack:E1:C1:1792500000.000100']);
+    const listed = await run('list_channel_threads', {});
+    assert.match(listed.text, /^- slack:E1:C1:1792510000\.000100 \| Purges are slow again \| started [^|]+\| last [^|]+\| 1 message \| https:\/\/slack\.com\/archives\/C1\/p1792510000000100\n- slack:E1:C1:1792500000\.000100 \| What should we call the inbox\? \|[^\n]*\| 2 messages \|/);
+    assert.equal((await run('list_channel_threads', { query: 'nothing like it' })).text, 'no thread of your channel matches');
+  });
+
+  it('reads an earlier thread of the channel by key, link or message id, and no other channel\'s', async () => {
+    const { e, run } = await setup();
+    const link = 'https://acme.slack.com/archives/C1/p1792500060000200?thread_ts=1792500000.000100&cid=C1';
+    assert.deepEqual(await resolveThread(e, THREAD, link), { key: 'slack:E1:C1:1792500000.000100' });
+    assert.deepEqual(
+      await resolveThread(e, THREAD, 'https://acme.slack.com/archives/C1/p1792500000000100'),
+      { key: 'slack:E1:C1:1792500000.000100' },
+    );
+    assert.deepEqual(await resolveThread(e, THREAD, '1792510000.000100'), { key: 'slack:E1:C1:1792510000.000100' });
+    assert.match((await resolveThread(e, THREAD, 'slack:E1:C2:1792500000.000100')).error, /another channel/);
+    assert.match((await resolveThread(e, THREAD, 'https://acme.slack.com/archives/C2/p1792500000000100')).error, /another channel/);
+    assert.match((await resolveThread(e, THREAD, 'https://acme.slack.com/archives/C1/p1792400000000100')).error, /no thread of your channel/);
+
+    const read = await run('read_thread', { thread: link });
+    assert.equal(read.error, false);
+    assert.match(read.text, /^Thread slack:E1:C1:1792500000\.000100 of your channel, 2 messages:\n\n/);
+    assert.match(read.text, /What should we call the inbox\?[\s\S]*Maybe desk/);
+    const own = await run('read_thread', {});
+    assert.match(own.text, /CDN purge takes forever/);
+    const refused = await run('read_thread', { thread: 'slack:E1:C2:1792500000.000100' });
+    assert.equal(refused.error, true);
   });
 });
 

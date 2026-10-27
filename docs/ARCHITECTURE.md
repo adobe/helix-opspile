@@ -407,7 +407,8 @@ connects their own Slack account (user scopes `chat:write` and `reactions:write`
 account (delegated `ChannelMessage.Send`, which also allows reactions) once. The account must be theirs (the same person in D1, or the same
 email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
 A reply goes to the latest platform thread of an inbox entry and comes back through the
-normal ingestion path, like any other message.
+normal ingestion path, like any other message. Replies are written in Markdown; on Slack they
+are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`).
 
 Discord threads are read-only in the inbox: Discord lets only bots post and react through its
 API, and opspile acts as the person or not at all. They have a link to reply in Discord, no
@@ -524,7 +525,8 @@ labelled as written by people outside its control.
 
 | Tool | |
 |---|---|
-| `read_thread` | the whole entry, flagged messages withheld |
+| `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
+| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
 | `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
@@ -628,7 +630,8 @@ system prompt on how to use it.
 
 **`post_message`.** The agent posts a reply in the latest platform thread of its entry right
 away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot
-token (`chat.postMessage` in the thread), on Discord with the bot, in the Discord thread when
+token (`chat.postMessage` in the thread, the Markdown in a `markdown` block, which Slack renders
+itself, and `text` in mrkdwn for notifications and for the message file), on Discord with the bot, in the Discord thread when
 the conversation is one and as an inline reply to its first message otherwise, with mentions
 switched off. On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
 post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is
