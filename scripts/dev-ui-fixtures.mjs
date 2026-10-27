@@ -71,6 +71,10 @@ const TEAMS = [
 const BOT = {
   kind: 'bot', name: 'Alertmanager', org: null, staff: false,
 };
+/** The opspile app, which posts what someone sends as it (POST /api/post/app). */
+const APP = {
+  kind: 'bot', name: 'opspile', org: null, staff: false,
+};
 
 /** Channels: where a thread lives. `org` and `team` are what the rules would file it under. */
 const CHANNELS = {
@@ -278,6 +282,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   const author = (key) => {
     if (key === 'bot') {
       return BOT;
+    }
+    if (key === 'app') {
+      return APP;
     }
     const p = byKey.get(key);
     return {

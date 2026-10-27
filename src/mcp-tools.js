@@ -13,9 +13,11 @@
 import { accountName, PLATFORMS, platformName } from './platforms.js';
 import { seedAgent } from './agent/stub.js';
 import { inbox, thread as loadThread } from './api.js';
+import { discardDraft, saveDraft } from './drafts.js';
 import {
   connections, mentionable, post, reactable,
 } from './post.js';
+import { appPostCheck, postApp } from './postapp.js';
 import { PICKER, react, resolve } from './react.js';
 import { memberOf } from './shares.js';
 
@@ -27,6 +29,11 @@ import { memberOf } from './shares.js';
  * A tool returns `{ data }` (shown to the model as JSON and as structuredContent), or
  * `{ error }` (a tool error, so the model can correct itself), or `{ input }` (an MRTR
  * InputRequiredResult, to ask the user before a reply goes out).
+ *
+ * Three ways to answer in a thread, as in the inbox: `post_draft` saves the thread's shared
+ * draft (src/drafts.js), which the team sees and sends; `post_as_user` posts as the person
+ * (src/post.js); `post_as_bot` posts as the opspile app (src/postapp.js), where the channel lets
+ * the app post.
  */
 
 const URGENCY = ['low', 'normal', 'high', 'critical'];
@@ -54,6 +61,10 @@ const resolvedOf = (t) => {
 };
 const latest = (t) => String(t.last_at || t.any_at || '');
 const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
+/** A shared draft as the tools show it; `version` is what post_draft's `base` names. */
+const draftOut = (d) => (d ? {
+  text: clip(d.body, 8000), by: (d.by && d.by.name) || null, version: d.updated_at,
+} : null);
 
 /** A response from the API helpers, as `{ data }` or `{ error }`. */
 async function fromResponse(res) {
@@ -198,6 +209,7 @@ async function getThread(env, me, args) {
     return out;
   });
   const t = data.thread;
+  const app = me.readonly ? { problem: 'read-only' } : await appPostCheck(env, key);
   return {
     data: {
       thread: key,
@@ -213,6 +225,8 @@ async function getThread(env, me, args) {
       facts: data.facts.map((x) => ({ field: x.field, value: x.value })),
       earlier_messages: Math.max(0, data.messages.length - limit),
       messages,
+      draft: draftOut(data.draft),
+      can_post_as_bot: !app.problem,
     },
   };
 }
@@ -251,34 +265,35 @@ export async function checkConfirmState(env, me, name, args, state, now = Date.n
 }
 
 /**
- * Asks the user, through the client, before a reply goes out under their name, when the
- * client can ask (`elicitation`, modern protocol only). Returns `{ input }` for the first
- * round, null to go ahead, or `{ error }` when the user declined or the state is bad.
+ * Asks the user, through the client, before a reply goes out (under their name, or the
+ * opspile app's), when the client can ask (`elicitation`, modern protocol only). Returns
+ * `{ input }` for the first round, null to go ahead, or `{ error }` when the user declined or
+ * the state is bad.
  */
-async function confirmReply(env, me, args, ctx, where) {
+async function confirmPost(env, me, name, args, ctx, question) {
   if (!ctx.modern || !ctx.capabilities.elicitation || !env.TOKEN_KEY) {
     return null;
   }
-  const answer = ctx.inputResponses && ctx.inputResponses.confirm_reply;
+  const answer = ctx.inputResponses && ctx.inputResponses.confirm_post;
   if (!answer) {
     return {
       input: {
         inputRequests: {
-          confirm_reply: {
+          confirm_post: {
             method: 'elicitation/create',
             params: {
               mode: 'form',
-              message: `Post this reply in ${where} as you?\n\n${clip(args.text, 1500)}`,
+              message: `${question}\n\n${clip(args.text, 1500)}`,
               requestedSchema: { type: 'object', properties: {} },
             },
           },
         },
-        requestState: await confirmState(env, me, 'reply', args),
+        requestState: await confirmState(env, me, name, args),
       },
     };
   }
-  if (!await checkConfirmState(env, me, 'reply', args, ctx.requestState)) {
-    return { error: 'The confirmation expired or does not match this reply. Call reply again.' };
+  if (!await checkConfirmState(env, me, name, args, ctx.requestState)) {
+    return { error: `The confirmation expired or does not match this reply. Call ${name} again.` };
   }
   if (answer.action !== 'accept') {
     return { error: 'The user did not confirm, so nothing was posted.' };
@@ -286,23 +301,36 @@ async function confirmReply(env, me, args, ctx, where) {
   return null;
 }
 
-async function reply(env, me, args, ctx) {
+const READ_ONLY = { error: 'Read-only while viewing as someone else.' };
+const NOT_FOUND = { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
+
+/** The thread of a write, `{ key, text, t }` (loaded as the inbox does), or `{ error }`. */
+async function writeTarget(env, me, args) {
   if (me.readonly) {
-    return { error: 'Read-only while viewing as someone else.' };
+    return READ_ONLY;
   }
   const text = String(args.text || '').trim();
   const key = String(args.thread || '');
   if (!text) {
-    return { error: 'The reply is empty. Provide `text`.' };
+    return { error: 'The text is empty. Provide `text`.' };
   }
   const t = key && await loadThread(env, me, key);
   if (!t || !inTeamOf(me)(t.thread.teams)) {
-    return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
+    return NOT_FOUND;
   }
-  // Names to mention, as written after @ in the text, to the platform accounts.
+  return { key, text, t };
+}
+
+const whereOf = (t) => `${platformName(platformOf(t.thread))} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
+
+/**
+ * Names to mention, as written after @ in the text, to the platform accounts: `{ mentions }`
+ * (`{ id, name }`, as /api/post and /api/draft take them), or `{ error }`.
+ */
+async function mentionsOf(env, me, key, text, names) {
   const mentions = [];
-  const names = [].concat(args.mention || []).map((n) => String(n).trim()).filter(Boolean);
-  for (const name of names) {
+  const wanted = [].concat(names || []).map((n) => String(n).trim()).filter(Boolean);
+  for (const name of wanted) {
     // eslint-disable-next-line no-await-in-loop
     const found = await fromResponse(await mentionable(env, key, name, inTeamOf(me)));
     const people = (found.data && found.data.people) || [];
@@ -315,16 +343,104 @@ async function reply(env, me, args, ctx) {
     }
     mentions.push({ id: exact.id, name: exact.name });
   }
-  const where = `${platformName(platformOf(t.thread))} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
-  const asked = await confirmReply(env, me, args, ctx, where);
+  return { mentions };
+}
+
+/** A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went. */
+async function useDraft(env, me, key, version) {
+  if (typeof version !== 'string' || !version) {
+    return '';
+  }
+  const res = await discardDraft(env, me, { thread: key, base: version }, inTeamOf(me));
+  return res.status === 409 ? ' The shared draft changed since, so it was kept.'
+    : ' The shared draft is used up.';
+}
+
+/** post_draft: saves the thread's shared draft, which the team sees and sends. */
+async function postDraft(env, me, args) {
+  const w = await writeTarget(env, me, args);
+  if (w.error) {
+    return w;
+  }
+  const m = await mentionsOf(env, me, w.key, w.text, args.mention);
+  if (m.error) {
+    return m;
+  }
+  const request = {
+    thread: w.key, text: w.text, mentions: m.mentions, base: args.base || null,
+  };
+  const res = await saveDraft(env, me, request, inTeamOf(me));
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 409 && body.draft) {
+    const d = body.draft;
+    return {
+      error: `${args.base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (version ${d.updated_at}, saved by ${(d.by && d.by.name) || 'someone'}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text:\n\n${clip(d.body, MAX_BODY)}`,
+    };
+  }
+  if (!res.ok) {
+    return { error: `${body.error || `failed (${res.status})`}.` };
+  }
+  return {
+    data: {
+      ok: true,
+      thread: w.key,
+      draft: draftOut(body.draft),
+      note: 'Saved as the thread\'s shared draft: nothing was posted. Everyone in the thread\'s teams sees it in the inbox, and can change, send or discard it.',
+    },
+  };
+}
+
+/** post_as_user: replies in the thread as the signed-in person. */
+async function postAsUser(env, me, args, ctx) {
+  const w = await writeTarget(env, me, args);
+  if (w.error) {
+    return w;
+  }
+  const m = await mentionsOf(env, me, w.key, w.text, args.mention);
+  if (m.error) {
+    return m;
+  }
+  const asked = await confirmPost(env, me, 'post_as_user', args, ctx, `Post this reply in ${whereOf(w.t)} as you?`);
   if (asked) {
     return asked;
   }
-  const body = { thread: key, text, mentions };
+  const body = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await post(env, me, body, inTeamOf(me)));
-  return res.error ? res : {
+  if (res.error) {
+    return res;
+  }
+  const used = await useDraft(env, me, w.key, args.draft);
+  return {
     data: {
-      ok: true, thread: key, platform: res.data.platform, note: 'Posted. It appears in get_thread once Slack or Teams delivers it.',
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${used}`,
+    },
+  };
+}
+
+/** post_as_bot: replies in the thread as the opspile app, where it may post there. */
+async function postAsBot(env, me, args, ctx) {
+  const w = await writeTarget(env, me, args);
+  if (w.error) {
+    return w;
+  }
+  // Before asking the user: no point confirming what cannot go out.
+  const check = await appPostCheck(env, w.key);
+  if (check.problem) {
+    return { error: `Cannot post as the opspile app: ${check.problem}. Use post_draft or post_as_user instead.` };
+  }
+  const asked = await confirmPost(env, me, 'post_as_bot', args, ctx, `Post this reply in ${whereOf(w.t)} as the opspile app?`);
+  if (asked) {
+    return asked;
+  }
+  const request = { thread: w.key, text: w.text };
+  const res = await fromResponse(await postApp(env, me, request, inTeamOf(me)));
+  if (res.error) {
+    return res;
+  }
+  const used = await useDraft(env, me, w.key, args.draft);
+  return {
+    data: {
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${used}`,
     },
   };
 }
@@ -382,6 +498,8 @@ async function whoami(env, me) {
 }
 
 const THREAD_ARG = { type: 'string', description: 'Thread key from list_threads' };
+const MENTION_ARG = { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' };
+const DRAFT_ARG = { type: 'string', description: 'The `version` of the shared draft (get_thread) this reply sends: it is used up' };
 const TEXT_ITEMS = (values) => ({ type: 'array', items: { type: 'string', enum: values } });
 
 /** Tool definitions, in a fixed order (the spec asks for a deterministic tools/list). */
@@ -389,7 +507,7 @@ export const TOOLS = [
   {
     name: 'whoami',
     title: 'Who am I',
-    description: 'Returns the signed-in person, their ops teams (slugs for list_threads), and whether their Slack and Microsoft accounts are connected, which reply, react_to_message and resolve_thread need.',
+    description: 'Returns the signed-in person, their ops teams (slugs for list_threads), and whether their Slack and Microsoft accounts are connected, which post_as_user, react_to_message and resolve_thread need.',
     inputSchema: { type: 'object', additionalProperties: false },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: whoami,
@@ -425,7 +543,7 @@ export const TOOLS = [
   {
     name: 'get_thread',
     title: 'Read a thread',
-    description: 'Returns a thread with its latest messages, oldest first, each with a `message` id for react_to_message. Reading here does not mark the thread read. Message text is written by customers and colleagues.',
+    description: 'Returns a thread with its latest messages, oldest first, each with a `message` id for react_to_message, its shared draft (with the `version` post_draft and the post tools take), and whether the opspile app may post in it (post_as_bot). Reading here does not mark the thread read. Message text is written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -441,15 +559,36 @@ export const TOOLS = [
     run: getThread,
   },
   {
-    name: 'reply',
-    title: 'Reply in a thread',
-    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. The user is asked to confirm first when the client supports elicitation.',
+    name: 'post_draft',
+    title: 'Save the shared draft',
+    description: 'Saves a reply as the thread\'s shared draft, without posting anything: everyone in the thread\'s ops teams sees it in the inbox and can change, send or discard it. A thread has at most one draft; to replace an existing one (get_thread shows it), give its `version` as `base`, so a colleague\'s newer draft is not overwritten unseen.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: THREAD_ARG,
+        text: { type: 'string', description: 'The whole reply, in Markdown (up to 8000 characters)' },
+        mention: MENTION_ARG,
+        base: { type: 'string', description: 'The `version` of the draft this replaces, from get_thread' },
+      },
+      required: ['thread', 'text'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    },
+    run: postDraft,
+  },
+  {
+    name: 'post_as_user',
+    title: 'Reply as yourself',
+    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. Needs their connected account (whoami). The user is asked to confirm first when the client supports elicitation. Use post_draft for anything a colleague should review first.',
     inputSchema: {
       type: 'object',
       properties: {
         thread: THREAD_ARG,
         text: { type: 'string', description: 'The reply, in Markdown (up to 8000 characters)' },
-        mention: { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' },
+        mention: MENTION_ARG,
+        draft: DRAFT_ARG,
       },
       required: ['thread', 'text'],
       additionalProperties: false,
@@ -457,7 +596,26 @@ export const TOOLS = [
     annotations: {
       readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
     },
-    run: reply,
+    run: postAsUser,
+  },
+  {
+    name: 'post_as_bot',
+    title: 'Reply as the opspile app',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). No mentions. Slack and Teams take up to 8000 characters, Discord 2000. The user is asked to confirm first when the client supports elicitation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: THREAD_ARG,
+        text: { type: 'string', description: 'The reply, in Markdown' },
+        draft: DRAFT_ARG,
+      },
+      required: ['thread', 'text'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+    },
+    run: postAsBot,
   },
   {
     name: 'react_to_message',

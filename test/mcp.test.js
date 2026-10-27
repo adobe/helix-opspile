@@ -279,23 +279,23 @@ describe('mcp tools', () => {
     assert.equal(res.body.result.isError, true);
   });
 
-  it('reply posts as the person when the client cannot ask the user', async () => {
-    const r = await callTool(await connected(), 'reply', { thread: SLACK, text: 'Looking now' });
+  it('post_as_user posts as the person when the client cannot ask the user', async () => {
+    const r = await callTool(await connected(), 'post_as_user', { thread: SLACK, text: 'Looking now' });
     assert.equal(structured(r).ok, true);
     assert.equal(calls[0].url, 'https://slack.com/api/chat.postMessage');
     assert.equal(calls[0].body.text, 'Looking now');
   });
 
-  it('reply asks the user first (MRTR elicitation), and posts only after they accept', async () => {
+  it('post_as_user asks the user first (MRTR elicitation), and posts only after they accept', async () => {
     const e = await connected();
     const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
     const args = { thread: SLACK, text: 'Looking now' };
-    const first = await callTool(e, 'reply', args, { meta });
+    const first = await callTool(e, 'post_as_user', args, { meta });
     assert.equal(first.body.result.resultType, 'input_required');
-    assert.equal(first.body.result.inputRequests.confirm_reply.method, 'elicitation/create');
+    assert.equal(first.body.result.inputRequests.confirm_post.method, 'elicitation/create');
     assert.equal(calls.length, 0);
     const retry = (answer, state = first.body.result.requestState, a = args) => send(e, req('tools/call', {
-      name: 'reply', arguments: a, inputResponses: { confirm_reply: answer }, requestState: state,
+      name: 'post_as_user', arguments: a, inputResponses: { confirm_post: answer }, requestState: state,
     }, { meta, id: 2 }));
     const declined = await retry({ action: 'decline' });
     assert.match(declined.body.result.content[0].text, /did not confirm/);
@@ -310,31 +310,32 @@ describe('mcp tools', () => {
   it('confirmation state is bound to the person, the call and a deadline', async () => {
     const e = env();
     const args = { thread: SLACK, text: 'x' };
-    const state = await confirmState(e, ME, 'reply', args, 1000);
-    assert.equal(await checkConfirmState(e, ME, 'reply', args, state, 2000), true);
-    assert.equal(await checkConfirmState(e, { ...ME, id: 2 }, 'reply', args, state, 2000), false);
-    assert.equal(await checkConfirmState(e, ME, 'reply', args, state, 1000 + 11 * 60 * 1000), false);
-    assert.equal(await checkConfirmState(e, ME, 'reply', args, `${state}x`, 2000), false);
+    const state = await confirmState(e, ME, 'post_as_user', args, 1000);
+    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 2000), true);
+    assert.equal(await checkConfirmState(e, { ...ME, id: 2 }, 'post_as_user', args, state, 2000), false);
+    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 1000 + 11 * 60 * 1000), false);
+    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, `${state}x`, 2000), false);
   });
 
-  it('reply turns names into mentions, and says when a name is unknown', async () => {
+  it('post_as_user turns names into mentions, and says when a name is unknown', async () => {
     const e = await connected();
-    const ok = await callTool(e, 'reply', { thread: SLACK, text: 'Thanks @Cy', mention: ['Cy'] });
+    const ok = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Thanks @Cy', mention: ['Cy'] });
     assert.equal(structured(ok).ok, true);
     assert.equal(calls[0].body.text, 'Thanks <@U7>');
-    const unknown = await callTool(e, 'reply', { thread: SLACK, text: 'Hi @Bo', mention: ['Bo'] });
+    const unknown = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Hi @Bo', mention: ['Bo'] });
     assert.match(unknown.body.result.content[0].text, /Nobody named "Bo"/);
   });
 
-  it('reply says when the platform account is not connected', async () => {
-    const r = await callTool(env(), 'reply', { thread: SLACK, text: 'Hi' });
+  it('post_as_user says when the platform account is not connected', async () => {
+    const r = await callTool(env(), 'post_as_user', { thread: SLACK, text: 'Hi' });
     assert.equal(r.body.result.isError, true);
     assert.match(r.body.result.content[0].text, /connect your Slack account first.*connect their Slack account/);
   });
 
   it('refuses writes when viewing as someone else', async () => {
     const as = { ...ME, readonly: true };
-    for (const [name, args] of [['reply', { thread: SLACK, text: 'x' }],
+    for (const [name, args] of [['post_as_user', { thread: SLACK, text: 'x' }],
+      ['post_as_bot', { thread: SLACK, text: 'x' }], ['post_draft', { thread: SLACK, text: 'x' }],
       ['react_to_message', { message: `${SLACK}|1.1`, emoji: 'eyes' }], ['resolve_thread', { thread: SLACK }]]) {
       // eslint-disable-next-line no-await-in-loop
       const r = await send(env(), req('tools/call', { name, arguments: args }), as);
@@ -351,6 +352,83 @@ describe('mcp tools', () => {
     assert.equal(structured(ok).ok, true);
     assert.equal(calls.at(-1).url, 'https://slack.com/api/reactions.add');
     assert.deepEqual(calls.at(-1).body, { channel: 'C1', timestamp: '1.2', name: 'eyes' });
+  });
+
+  it('post_draft saves the shared draft, and asks for the version before replacing one', async () => {
+    const e = env();
+    const first = await callTool(e, 'post_draft', { thread: SLACK, text: 'We are on it, @Cy', mention: ['Cy'] });
+    assert.equal(structured(first).ok, true);
+    const { version } = structured(first).draft;
+    assert.equal(structured(first).draft.by, 'Ada');
+    assert.equal(calls.length, 0);
+    const row = e.DB.sqlite.prepare('SELECT body, mentions FROM drafts WHERE thread = ?').get(SLACK);
+    assert.equal(row.body, 'We are on it, @Cy');
+    assert.deepEqual(JSON.parse(row.mentions), [{ id: 'U7', name: 'Cy' }]);
+    const shown = structured(await callTool(e, 'get_thread', { thread: SLACK }));
+    assert.deepEqual(shown.draft, { text: 'We are on it, @Cy', by: 'Ada', version });
+    const blind = await callTool(e, 'post_draft', { thread: SLACK, text: 'Other text' });
+    assert.equal(blind.body.result.isError, true);
+    assert.match(blind.body.result.content[0].text, new RegExp(`already has a shared draft.*base "${version}".*We are on it`, 's'));
+    const replaced = await callTool(e, 'post_draft', { thread: SLACK, text: 'Other text', base: version });
+    assert.equal(structured(replaced).draft.text, 'Other text');
+  });
+
+  it('post_as_user with `draft` uses the shared draft up', async () => {
+    const e = await connected();
+    const saved = structured(await callTool(e, 'post_draft', { thread: SLACK, text: 'Looking now' }));
+    const r = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Looking now', draft: saved.draft.version });
+    assert.match(structured(r).note, /used up/);
+    assert.equal(e.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM drafts').get().n, 0);
+  });
+
+  const appOn = (e, scope = 'team', target = 'helix') => e.DB.sqlite.prepare(`INSERT INTO
+    agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at)
+    VALUES ('post_message', ?, ?, 1, 'Ada', '2026-10-21T10:00:00Z')`).run(scope, target);
+
+  it('post_as_bot posts as the opspile app only where Post messages is on', async () => {
+    const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-test' };
+    const off = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Looking now' });
+    assert.equal(off.body.result.isError, true);
+    assert.match(off.body.result.content[0].text, /Post messages/);
+    assert.equal(structured(await callTool(e, 'get_thread', { thread: SLACK })).can_post_as_bot, false);
+    assert.equal(calls.length, 0);
+    appOn(e);
+    assert.equal(structured(await callTool(e, 'get_thread', { thread: SLACK })).can_post_as_bot, true);
+    const r = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Looking now' });
+    assert.equal(structured(r).ok, true);
+    assert.equal(calls[0].url, 'https://slack.com/api/chat.postMessage');
+    assert.deepEqual([calls[0].body.channel, calls[0].body.thread_ts, calls[0].body.text], ['C1', '1.1', 'Looking now']);
+    // A channel's own switch wins over its team's.
+    e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by,
+      changed_at) VALUES ('post_message', 'channel', 'C1', 0, 'Ada', '2026-10-21T10:00:00Z')`).run();
+    const muted = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Again' });
+    assert.equal(muted.body.result.isError, true);
+    assert.equal(calls.length, 1);
+  });
+
+  it('post_as_bot says when the platform has no opspile bot, and asks the user first', async () => {
+    const plain = env();
+    appOn(plain);
+    const none = await callTool(plain, 'post_as_bot', { thread: SLACK, text: 'Hi' });
+    assert.match(none.body.result.content[0].text, /Slack bot is not set up/);
+    const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-test' };
+    appOn(e);
+    const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
+    const args = { thread: SLACK, text: 'Looking now' };
+    const first = await callTool(e, 'post_as_bot', args, { meta });
+    assert.match(first.body.result.inputRequests.confirm_post.params.message, /as the opspile app/);
+    assert.equal(calls.length, 0);
+    // A confirmation for post_as_user does not pass for post_as_bot.
+    const other = await confirmState(e, ME, 'post_as_user', args);
+    const swapped = await send(e, req('tools/call', {
+      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: other,
+    }, { meta, id: 2 }));
+    assert.match(swapped.body.result.content[0].text, /does not match/);
+    const accepted = await send(e, req('tools/call', {
+      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: first.body.result.requestState,
+    }, { meta, id: 3 }));
+    assert.equal(structured(accepted).ok, true);
+    assert.equal(calls.length, 1);
   });
 
   it('answers an unknown tool with -32602', async () => {

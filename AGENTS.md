@@ -31,6 +31,8 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/bots.js` — the bots installed in each Teams team (cron), so replies can mention them
 - `src/diag.js` — guarded `/diag/teams` self-test
 - `src/drafts.js` — shared drafts: one unsent reply per thread, seen by the channel's teams
+- `src/postapp.js` — a person posting as the opspile app, where the channel's **Post messages**
+  switch lets the app post (`POST /api/post/app`)
 - `src/shares.js` — channels shared by several teams: filed under their first team, in the
   others' inboxes too (`channel_teams`)
 - `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts

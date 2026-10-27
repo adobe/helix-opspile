@@ -22,6 +22,7 @@ import { cachedGraph } from './graph.js';
 import {
   connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
 } from './post.js';
+import { postApp } from './postapp.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
@@ -643,12 +644,16 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
       return disconnect(env, me, platform);
     }
   }
-  if (url.pathname === '/api/post' && request.method === 'POST') {
+  if ((url.pathname === '/api/post' || url.pathname === '/api/post/app')
+    && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const res = await post(env, me, body, (t) => inTeam(me, t));
+    const inMine = (t) => inTeam(me, t);
+    // As the person, or as the opspile app (where it may post in the channel).
+    const res = url.pathname === '/api/post'
+      ? await post(env, me, body, inMine) : await postApp(env, me, body, inMine);
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     if (res.ok && typeof body.draft === 'string') {
-      await discardDraft(env, me, { thread: body.thread, base: body.draft }, (t) => inTeam(me, t));
+      await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine);
     }
     return res;
   }
