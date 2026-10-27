@@ -12,7 +12,9 @@
 
 import { parse, render } from './channels.js';
 import { CLEF } from './label.js';
+import { notifyRoom } from './notify.js';
 import { sha256 } from './raw.js';
+import { teamsOf } from './shares.js';
 
 /**
  * Re-threading. When a root message arrives, the most similar earlier roots in the same
@@ -23,6 +25,8 @@ import { sha256 } from './raw.js';
  * group, so repeated alerts and follow-ups fold into one inbox entry.
  */
 
+/** How long after a root arrives it is re-threaded (its agent waits for that). */
+export const RETHREAD_DELAY_SECONDS = 30;
 export const EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 export const TOP_K = 6;
 export const WINDOW_DAYS = 14;
@@ -353,13 +357,25 @@ export async function rethread(env, key, { force = false } = {}) {
   const { results: moved } = await env.DB.prepare(`SELECT * FROM threads
     WHERE logical_thread IN (SELECT value FROM json_each(?)) OR thread IN (SELECT value FROM json_each(?))`)
     .bind(JSON.stringify(joined), JSON.stringify(joined.slice(1))).all();
+  const folded = new Set(logical && logical !== thread.logical_thread ? [key] : []);
+  joined.slice(1).forEach((t) => folded.add(t));
   for (const t of moved || []) {
     if (t.thread !== group) {
+      if (t.logical_thread !== group) {
+        folded.add(t.thread);
+      }
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').bind(group, t.thread).run();
       // eslint-disable-next-line no-await-in-loop
       await markRootFile(env, t, group);
     }
+  }
+  // Open inboxes show the group now, and a folded thread that is open there becomes its group.
+  if (folded.size || (thread.logical_thread && thread.logical_thread !== logical)) {
+    const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
+    await notifyRoom(env, rooms, {
+      type: 'thread', thread: logical || thread.logical_thread || key, folded: [...folded],
+    });
   }
   if (thread.kind === 'alert' && env.NORMALIZE) {
     await env.NORMALIZE.send({ label: logical || key });

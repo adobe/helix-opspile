@@ -153,6 +153,47 @@ describe('processKey', () => {
     assert.equal(on.queued.filter((q) => q.body.agent).length, 1);
   });
 
+  it('pokes a new root\'s agent after re-threading it, so it is the group\'s', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1792584000.000100', text: 'hello',
+      }),
+    }, {
+      AGENTS: {}, AGENT_CHANNELS: 'C1', VECTORS: {}, AI: {},
+    });
+    await processKey(e, key);
+    const thread = 'slack:E1:C1:1792584000.000100';
+    assert.equal(e.queued.filter((q) => q.body.agent).length, 0);
+    assert.deepEqual(e.queued.filter((q) => q.body.rethread), [{
+      body: { rethread: thread, poke: true }, options: { delaySeconds: 30 },
+    }]);
+    // The re-threading job pokes the agent when it is done (and when it is given up).
+    const job = (body, attempts = 1) => {
+      const m = { body, attempts };
+      m.ack = () => Object.assign(m, { acked: true });
+      m.retry = () => Object.assign(m, { retried: true });
+      return m;
+    };
+    e.queued.length = 0;
+    await quiet(() => consume({ messages: [job({ rethread: 'slack:E1:C1:404.1', poke: true })] }, e));
+    assert.deepEqual(e.queued, [{ body: { agent: 'slack:E1:C1:404.1' }, options: undefined }]);
+    e.queued.length = 0;
+    const failing = {
+      ...e,
+      DB: {
+        prepare() {
+          throw new Error('down');
+        },
+      },
+    };
+    const first = job({ rethread: thread, poke: true });
+    const last = job({ rethread: thread, poke: true }, 6);
+    await quiet(() => consume({ messages: [first, last] }, failing));
+    assert.equal(first.retried && last.retried, true);
+    assert.deepEqual(e.queued, [{ body: { agent: thread }, options: undefined }]);
+  });
+
   it('caches channels and people in D1', async () => {
     const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';
