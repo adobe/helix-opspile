@@ -18,9 +18,10 @@ import { teamsOf } from './shares.js';
 
 /**
  * Re-threading. When a root message arrives, the most similar earlier roots in the same
- * channel are found by vector search (Workers AI embeddings in Vectorize). A near-identical
- * one is a match outright; otherwise Clef chooses between the candidates (in conversations,
- * always including the channel's previous root from the last hour) and "a new topic".
+ * channel are found by vector search (Workers AI embeddings in Vectorize). In alert channels, a
+ * near-identical one is a match outright; otherwise Clef chooses between the candidates and "a
+ * new topic". In conversations, Clef reads the channel's latest conversations and the similar
+ * ones as a transcript and says which one the new root continues, if any.
  * A match sets `logicalThread` on the new thread, pointing at the earliest thread of the
  * group, so repeated alerts and follow-ups fold into one inbox entry.
  */
@@ -30,22 +31,36 @@ export const RETHREAD_DELAY_SECONDS = 30;
 export const EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 export const TOP_K = 6;
 export const WINDOW_DAYS = 14;
-/** At or above this similarity, two roots are the same without asking Clef. */
+/** At or above this similarity, two alerts are the same without asking Clef. */
 export const AUTO_MATCH = 0.97;
 /** Below this similarity, a candidate is not worth asking about. */
 export const MIN_CANDIDATE = 0.82;
 /** In conversations, follow-ups are worded differently: ask Clef about weaker matches. */
 export const MIN_CANDIDATE_CONVERSATION = 0.6;
-/** A second root by the same person this soon after their first continues it. */
-export const BURST_MS = 10 * 60 * 1000;
 /**
- * In conversations, the channel's previous root from this recently is always a candidate,
- * however differently it is worded: answers, nudges and escalations posted as new messages
- * ("this is a blocker, please help") share few words with what they follow up.
+ * A second root by the same person this soon after their first continues it. Later than that,
+ * people as often move on to something else ("the fix is deployed" after "see you on the call"),
+ * which Clef tells apart.
  */
-export const RECENT_MS = 60 * 60 * 1000;
+export const BURST_MS = 3 * 60 * 1000;
+/**
+ * In conversations, the channel's latest conversations active this recently are always
+ * candidates, however differently they are worded: answers, thanks, nudges and escalations
+ * posted as new messages ("this is a blocker, please help", "done, you have access") share few
+ * words with what they follow up, and people answer hours later, or after a weekend.
+ */
+export const RECENT_MS = 3 * 86400 * 1000;
+/** How many of the latest conversations, and how many conversations at most, Clef reads. */
+export const RECENT_CONVERSATIONS = 3;
+export const MAX_CONVERSATIONS = 5;
+/** Of each conversation, Clef reads its first message and its latest ones. */
+const LATEST_MESSAGES = 2;
+const TRANSCRIPT_TEXT = 300;
+const LABELS = 'ABCDEFGHIJ';
 /** Clef must be at least this sure that the new root continues a candidate. */
 export const MIN_CLEF = 0.7;
+/** In conversations, where it reads the transcript and is sure of the right answers. */
+export const MIN_CLEF_CONVERSATION = 0.8;
 const MAX_TEXT = 1500;
 const SNIPPET = 600;
 
@@ -164,6 +179,123 @@ export async function askClef(env, text, candidates) {
   return { candidate, p: best.p };
 }
 
+export const CONVERSATION_INSTRUCTIONS = 'The new message was posted in a chat channel as a '
+  + 'message of its own instead of a reply. Does it continue one of the earlier conversations, or '
+  + 'start a new topic? It continues a conversation when it answers, explains, acknowledges, '
+  + 'thanks or reacts to its messages, repeats the same issue or alert, or follows it up: adds '
+  + 'details, asks again, escalates, or presses for an answer, even without naming the issue '
+  + 'again. A reply that names no issue of its own continues the conversation that was active '
+  + 'last. It is a new topic when it raises a question or issue that none of the conversations is '
+  + 'about, or says that it changes the subject ("in other news", "another question").';
+
+const groupOf = (t) => t.logical_thread || t.thread;
+/** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
+const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
+
+/**
+ * The conversations a new root in a conversation channel may continue: the channel's latest
+ * ones (by their messages before the root) and the groups of the similar earlier roots, each
+ * with its first message and its latest ones before the root, oldest first.
+ */
+async function conversations(env, thread, similar) {
+  const { results: recent } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS grp,
+      MAX(m.at) AS latest FROM messages m JOIN threads t ON t.thread = m.thread
+    WHERE m.source = ? AND m.tenant = ? AND m.channel_id = ? AND m.at < ? AND m.at >= ?
+      AND m.author_key IS NOT NULL AND m.deleted = 0 AND t.thread != ?
+    GROUP BY grp ORDER BY latest DESC LIMIT ?`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      thread.root_at,
+      new Date(Date.parse(thread.root_at) - RECENT_MS).toISOString(),
+      thread.thread,
+      RECENT_CONVERSATIONS + 1,
+    ).all();
+  const groups = (recent || []).map((r) => r.grp).filter((g) => g !== thread.thread)
+    .slice(0, RECENT_CONVERSATIONS);
+  for (const m of similar) {
+    // eslint-disable-next-line no-await-in-loop
+    const row = await env.DB.prepare('SELECT thread, logical_thread FROM threads WHERE thread = ?')
+      .bind(m.metadata.thread).first();
+    const g = row && groupOf(row);
+    if (g && g !== thread.thread && !groups.includes(g)) {
+      groups.push(g);
+    }
+  }
+  const out = [];
+  for (const g of groups.slice(0, MAX_CONVERSATIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    const anchor = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(g).first();
+    // eslint-disable-next-line no-await-in-loop
+    const { results: latest } = await env.DB.prepare(`SELECT m.id, m.at, t.path FROM messages m
+        JOIN threads t ON t.thread = m.thread
+      WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.at < ? AND m.deleted = 0
+        AND m.author_key IS NOT NULL
+      ORDER BY m.at DESC LIMIT ?`).bind(g, g, thread.thread, thread.root_at, LATEST_MESSAGES).all();
+    const picked = [...(latest || [])].reverse();
+    if (anchor && anchor.root_at && anchor.root_at < thread.root_at
+      && !picked.some((m) => m.id === anchor.root_id)) {
+      picked.unshift({ id: anchor.root_id, at: anchor.root_at, path: anchor.path });
+    }
+    const messages = [];
+    for (const m of picked) {
+      // eslint-disable-next-line no-await-in-loop
+      const obj = await env.CHANNELS.get(`${m.path}${m.id}.md`);
+      // eslint-disable-next-line no-await-in-loop
+      const parsed = obj ? parse(await obj.text()) : null;
+      const text = parsed && !parsed.meta.deletedAt && !isSystem(parsed) && skeleton(parsed.body);
+      if (text) {
+        messages.push({ at: m.at, text: text.slice(0, TRANSCRIPT_TEXT) });
+      }
+    }
+    if (messages.length) {
+      out.push({ thread: g, group: g, messages });
+    }
+  }
+  return out;
+}
+
+/**
+ * Clef, in conversations: which of the conversations does the new root continue, if any? It
+ * reads them as the channel's transcript (each message marked with its conversation and how
+ * long before it was posted), which tells answers and thanks apart from new topics far better
+ * than comparing the new root with each conversation on its own.
+ */
+export async function askClefConversation(env, text, at, convs) {
+  const lines = [];
+  convs.forEach((c, i) => c.messages.forEach((m) => lines.push({
+    at: m.at, line: `[${LABELS[i]}, ${ago(at - Date.parse(m.at))} before] ${m.text}`,
+  })));
+  lines.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const state = `Earlier messages in the channel, by conversation:\n${lines.map((l) => l.line).join('\n')}`
+    + `\n\nNew message: ${text}`;
+  const criteria = { new: 'A new topic' };
+  convs.forEach((c, i) => {
+    criteria[`c${i}`] = `Continues conversation ${LABELS[i]} (${c.messages[0].text.slice(0, 80)})`;
+  });
+  const res = await env.AI.run(CLEF, {
+    model: 'clef',
+    state,
+    questions: {
+      continues: { type: 'choice', instructions: CONVERSATION_INSTRUCTIONS, criteria },
+    },
+  });
+  const a = res.answers && res.answers.continues;
+  if (!a || !a.choice) {
+    return { p: 0 };
+  }
+  const probabilities = a.probabilities || { [a.choice]: a.confidence ?? 0 };
+  let best = null;
+  convs.forEach((c, i) => {
+    const p = probabilities[`c${i}`] || 0;
+    if (!best || p > best.p) {
+      best = { candidate: c, p };
+    }
+  });
+  return best && best.p >= MIN_CLEF_CONVERSATION ? best : { p: best ? best.p : 0 };
+}
+
 /**
  * Re-threads one thread by its root. Idempotent: a thread that was decided once is not
  * decided again (pass `force` to redo it).
@@ -180,6 +312,9 @@ export async function rethread(env, key, { force = false } = {}) {
   if (!root || root.parsed.meta.deletedAt) {
     return { result: 'skip', reason: 'root missing or deleted' };
   }
+  if (thread.kind === 'channel' && isSystem(root.parsed)) {
+    return { result: 'skip', reason: 'system message' };
+  }
   const text = skeleton(root.parsed.body || thread.title);
   if (!text) {
     return { result: 'skip', reason: 'empty' };
@@ -190,7 +325,9 @@ export async function rethread(env, key, { force = false } = {}) {
   await env.DB.prepare('UPDATE threads SET skeleton_hash = ? WHERE thread = ?').bind(hash, key).run();
 
   // An exact repeat: the earliest thread in the channel and window with the same skeleton.
-  const twin = await env.DB.prepare(`SELECT thread, logical_thread FROM threads
+  // Only alerts: in conversations, the same words ("thanks!") are often a different talk.
+  const conversation = thread.kind === 'channel';
+  const twin = !conversation && await env.DB.prepare(`SELECT thread, logical_thread FROM threads
     WHERE source = ? AND tenant = ? AND channel_id = ? AND skeleton_hash = ? AND thread != ?
       AND root_at >= ? AND root_at <= ? ORDER BY root_at LIMIT 1`)
     .bind(
@@ -206,11 +343,10 @@ export async function rethread(env, key, { force = false } = {}) {
   // A burst: the channel's previous root is by the same person, minutes earlier. People
   // split one request over several messages instead of replying to themselves.
   // Only people in conversations: a bot posts many different alerts within minutes.
-  const conversation = thread.kind === 'channel';
   const rootAuthor = conversation && await env.DB.prepare(`SELECT author_key
     FROM messages WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
   const author = rootAuthor && rootAuthor.author_key;
-  const previous = conversation && await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
+  const previous = author && await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
     JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at < ? AND t.root_at >= ? ORDER BY t.root_at DESC LIMIT 1`)
@@ -220,10 +356,9 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) - RECENT_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
     ).first();
-  const burst = previous && author && previous.author_key === author
-    && Date.parse(thread.root_at) - Date.parse(previous.root_at) <= BURST_MS ? previous : null;
+  const burst = previous && previous.author_key === author ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -246,22 +381,23 @@ export async function rethread(env, key, { force = false } = {}) {
   let asked = null;
   if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
+  } else if (conversation) {
+    // The channel's latest conversations and the similar ones, read as a transcript.
+    const convs = await conversations(env, thread, earlier.slice(0, 4));
+    asked = convs.length
+      ? await askClefConversation(env, text, Date.parse(thread.root_at), convs) : null;
+    if (asked && asked.candidate) {
+      match = { thread: asked.candidate.thread, via: 'clef', p: asked.p };
+    }
   } else if (twin) {
     match = { thread: twin.thread, via: 'skeleton', p: 1 };
   } else if (earlier.length && earlier[0].score >= AUTO_MATCH) {
     match = { thread: earlier[0].metadata.thread, via: 'vector', p: earlier[0].score };
-  } else if (earlier.length || previous) {
-    const rows = [];
+  } else if (earlier.length) {
+    const candidates = [];
     for (const m of earlier.slice(0, 4)) {
       // eslint-disable-next-line no-await-in-loop
-      rows.push(await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(m.metadata.thread).first());
-    }
-    // The conversation's latest root, however it is worded (see RECENT_MS).
-    if (previous && !rows.some((r) => r && r.thread === previous.thread)) {
-      rows.push(previous);
-    }
-    const candidates = [];
-    for (const row of rows) {
+      const row = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(m.metadata.thread).first();
       // eslint-disable-next-line no-await-in-loop
       const body = row && await rootBody(env, row);
       if (body && !body.parsed.meta.deletedAt) {
@@ -292,12 +428,12 @@ export async function rethread(env, key, { force = false } = {}) {
     .run();
   await markRootFile(env, thread, logical);
 
-  // Replays arrive in any order: near-identical later roots that found nothing earlier
+  // Replays arrive in any order: near-identical later alerts that found nothing earlier
   // (because this one was not indexed yet) join this group now, and so do the threads that
   // had joined them. Every member always points at the group's first thread.
   const group = logical || key;
   const joined = [key];
-  for (const m of found.matches || []) {
+  for (const m of conversation ? [] : found.matches || []) {
     if (m.metadata && m.metadata.thread !== key && m.metadata.at > at
       && m.metadata.at <= at + WINDOW_DAYS * 86400 && m.score >= AUTO_MATCH) {
       // eslint-disable-next-line no-await-in-loop
@@ -313,7 +449,7 @@ export async function rethread(env, key, { force = false } = {}) {
     }
   }
   // Later exact twins join, unless they already belong to a group that starts earlier.
-  const { results: laterTwins } = await env.DB.prepare(`SELECT t.thread, t.logical_thread,
+  const { results: laterTwins } = conversation ? { results: [] } : await env.DB.prepare(`SELECT t.thread, t.logical_thread,
       a.root_at AS anchor_at FROM threads t LEFT JOIN threads a ON a.thread = t.logical_thread
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.skeleton_hash = ? AND t.thread != ?
       AND t.root_at > ? AND t.root_at <= ?`)
