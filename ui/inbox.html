@@ -59,6 +59,8 @@
   nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
     overflow: hidden; }
   nav.pages[hidden] { display: none; }
+  nav.pages .count { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px;
+    border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650; line-height: 1; }
   nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
   nav.pages a + a { border-left: 1px solid var(--line); }
   nav.pages a:hover { color: var(--ink); background: var(--hover); }
@@ -2720,6 +2722,15 @@ async function start() {
   if (state.me.admin || state.me.manages?.length) {
     $('pages').hidden = false;
     $('inbox').onclick = (e) => e.preventDefault();
+    // Channels team managers asked for, waiting for the admin team: their number on Admin.
+    if (state.me.admin && !state.as) {
+      get('/api/admin/requests?count=1').then(({ open }) => {
+        if (!open) return;
+        $('adminPage').insertAdjacentHTML('beforeend', `<span class="count">${Number(open)}</span>`);
+        $('adminPage').title = `${open} channel request${open === 1 ? '' : 's'} from team managers to confirm or decline`;
+        $('adminPage').href = '/inbox/admin?tab=requests';
+      }).catch(() => {});
+    }
     // Fresh at the moment it is used (the open thread's customer may have loaded since).
     for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }

@@ -126,6 +126,20 @@ Turning that off keeps the roles as they are; from then on new members join as m
 managers can be demoted. The role is `team_members.role`, the flag `teams.self_managed`;
 only the admin team sets the flag.
 
+**Channel requests.** A team manager does not assign channels, but asks for them: their team's
+page has the same channel search the admin team adds channels with (every channel, by name,
+Teams team, customer or id), and picking one sends a request, "add this channel to this team",
+with an optional note (`channel_requests`, migration 0028; one open request per channel and
+team). The admin team sees the open ones under **Requests** in the admin pages, their number on
+that tab and on the inbox's Admin switch. Opening one runs the manual assignment as a dry run
+and says what confirming would do: re-file the channel under the team (and which threads move),
+or share it with the team when another team holds it. **Confirm** then makes that assignment,
+exactly as adding the channel on the team's page does, and records who confirmed it and what it
+did; **Decline** takes an optional reason. The manager sees each request on their team's page:
+pending, confirmed (moved or shared), declined with the reason, or withdrawn (they may take an
+open one back). An admin who adds a requested channel to the team directly answers the request
+with it. Nothing is sent by mail or chat.
+
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
