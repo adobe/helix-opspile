@@ -105,6 +105,9 @@ function resources(mode: string | undefined) {
     // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
     // indexes on `channel` and `at`); see README.
     VECTORS: bindings.vectorize({ name: `helix-opspile-roots${suffix}` }),
+    // Every message a person posted in a channel thread, and every such thread as a whole
+    // (src/vectors.js). Created by hand (768 dimensions, cosine, metadata indexes); see README.
+    CONTENT: bindings.vectorize({ name: `helix-opspile-content${suffix}` }),
     // Pile 3: one knowledge-base repo per org and per team (#12). Artifacts creates the
     // namespace with its first repo.
     ARTIFACTS: bindings.artifacts({ namespace: `helix-opspile${suffix}` }),

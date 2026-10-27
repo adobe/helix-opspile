@@ -16,6 +16,7 @@ import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
+import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
 import { rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
@@ -376,6 +377,12 @@ export async function processKey(env, key, cache = {}) {
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
+  // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away.
+  if (cls.kind === 'channel' && (author.kind === 'person' || deleted) && env.CONTENT && env.AI) {
+    await env.NORMALIZE.send({ vectorize: message.thread }, {
+      delaySeconds: VECTORIZE_DELAY_SECONDS,
+    });
+  }
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
   }) : [];
@@ -398,6 +405,7 @@ export async function consume(batch, env) {
     const body = msg.body || {};
     const key = body.key
       || (body.label && `label:${body.label}`)
+      || (body.vectorize && `vectorize:${body.vectorize}`)
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
@@ -427,6 +435,9 @@ export async function consume(batch, env) {
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };
+      } else if (body.vectorize) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await vectorizeThread(env, body.vectorize) };
       } else {
         // eslint-disable-next-line no-await-in-loop
         r = await processKey(env, key, cache);

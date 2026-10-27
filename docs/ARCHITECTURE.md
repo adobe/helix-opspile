@@ -9,7 +9,7 @@ It follows the spirit of [klickhaus](https://github.com/adobe/klickhaus): a smal
 plain JavaScript, fed by separate ingestion services, with the data store doing the heavy
 lifting.
 
-Everything runs on Cloudflare (Workers, R2, D1, Durable Objects, Workers AI, AI Search,
+Everything runs on Cloudflare (Workers, R2, D1, Durable Objects, Workers AI, Vectorize,
 Artifacts, AI Gateway) in a single account; the thread agents' model is Claude on Amazon
 Bedrock, reached through AI Gateway.
 
@@ -236,8 +236,18 @@ key (a link, a tab) opens its group too.
 
 Vector search uses Workers AI embeddings in Vectorize, written at ingestion time so that a
 message can be matched seconds after it arrives.
-[AI Search](https://blog.cloudflare.com/introducing-autorag-on-cloudflare/) indexes the same
-message files for agent retrieval, where its periodic re-indexing is acceptable.
+
+A second index, `CONTENT` ([src/vectors.js](../src/vectors.js)), holds what was said, for
+search over topics and who talks about them: one vector per message a person posted in a
+channel thread (`type: message`, with the author's `person`, `staff` and `author` key) and
+one per such thread (`type: thread`), the mean of the embeddings of its title and messages
+in pieces of about 512 tokens (a long thread keeps its first piece and its latest). Both
+carry `channel`, `thread`, `org`, `team` and `at`; the text stays in pile 2. Two minutes
+after a person posts, or a message is deleted, the thread is vectorized: each message keeps
+a hash of the text its vector was made from (`messages.embedded`), so only new and edited
+messages are embedded again, and a deleted one loses its vector. The cron enqueues the
+threads whose vectors are older than their latest message (`threads.vectorized_through`),
+which also fills the index the first time. Alert threads (a bot's posts) get no vectors here.
 
 ### 3. Knowledge bases
 
