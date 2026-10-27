@@ -194,22 +194,34 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
 
 **Re-threading.** People often post a follow-up as a new root message instead of replying,
 or split one request over several messages, and alert channels post the same alert again
-and again. A root by the same person within ten minutes of their previous root in the channel,
-with nobody else's root between them, continues it (a *burst*). When a root message arrives, its
-*skeleton* (the text without timestamps, long numbers, hex and UUID ids, query strings and user
-agents; short numbers like status codes stay) is embedded and the most similar earlier roots in
-the same channel, within 14 days, are found by vector search. A near-identical one (cosine ≥
-0.97) is a match outright; otherwise, above 0.82 (0.6 in conversation channels, where
-follow-ups are worded differently), Clef chooses between up to four candidates
-and "a new topic", and a match needs a probability of at least 0.7. In conversation channels
-the channel's previous root from the last hour is always a candidate too, whoever posted it:
-answers, nudges and escalations posted as new messages ("this is a blocker, please help")
-share few words with what they follow up. Clef is told how long before each candidate was
-posted, and candidates of the same group share their probability. A match sets
-`logicalThread` on that one message file and on its thread row, always pointing at the group's
-first thread. The file stays where it is and the platform thread is never modified, so undoing
-the match is a one-field change. Replays arrive in any order, so a root that is matched also
-pulls in near-identical later roots that had found nothing earlier. The inbox shows a group as
+and again. A root by the same person within three minutes of their previous root in the
+channel, with nobody else's root between them, continues it (a *burst*). When a root message
+arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
+strings and user agents; short numbers like status codes stay) is embedded and the most similar
+earlier roots in the same channel, within 14 days, are found by vector search.
+
+- **Alert channels:** an exact repeat of the skeleton or a near-identical root (cosine ≥ 0.97)
+  is a match outright; otherwise Clef chooses between up to four candidates above 0.82 and
+  "a new topic", told how long before each was posted, and a match needs a probability of at
+  least 0.7. Candidates of the same group share their probability.
+- **Conversation channels:** in a chat, answers, thanks, nudges and escalations posted as new
+  messages ("done, you have access now", "this is a blocker, please help") share few words with what
+  they follow up, people answer hours later, and the same words ("thanks!") are not a repeat.
+  So Clef reads the channel's **latest three conversations** active in the last three days and
+  the groups of up to four similar roots (cosine ≥ 0.6) as a transcript: each conversation's
+  first message and its latest two before the new root, marked with the conversation's letter
+  and how long before they were posted, then the new message, and says which conversation it
+  continues or that it is a new topic. A match needs a probability of at least 0.8. Comparing
+  the new root with each candidate on its own spread Clef's answer over several candidates and
+  left most of a chat in pieces. Platform notices ("… has joined the channel") are left alone.
+
+A match sets `logicalThread` on that one message file and on its thread row, always pointing at
+the group's first thread. The file stays where it is and the platform thread is never modified, so undoing
+the match is a one-field change. Replays arrive in any order, so an alert that is matched also
+pulls in near-identical later alerts that had found nothing earlier, and a root pulls in the
+next root by the same person within three minutes. A conversation's root is decided from the
+conversations before it, so re-threading a channel again goes oldest root first
+(`scripts/replay.mjs --rethread --channel <id>`). The inbox shows a group as
 one entry: the first thread's title, the latest activity, the most pressing attention of any
 member, and all members' messages in order. A root is re-threaded 30 seconds after it arrives,
 so it can be in the inbox on its own until then: a match tells the open inboxes which threads

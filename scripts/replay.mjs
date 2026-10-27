@@ -22,6 +22,8 @@
  *
  * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
  * minutes. Run it after a replay, once the vector index has caught up with the new roots.
+ * With --channel <id>, only that channel's roots, one after the other, oldest first: in
+ * conversations, a root is decided from the decisions about the roots before it.
  *
  * --clear deletes pile 2 (the channels bucket) first. Use it after changing the rules:
  * a file's path depends on its org and team, so a replay alone would leave the files
@@ -47,6 +49,9 @@ const suffix = mode === 'prod' ? '' : `-${mode}`;
 const clear = args.includes('--clear');
 const rethreadAll = args.includes('--rethread');
 const relabelAll = args.includes('--relabel');
+const channel = opt('channel', null);
+/** Seconds between two roots of one channel re-threaded in order. */
+const SPACING = 6;
 const bucket = `helix-opspile-raw${suffix}`;
 const channelsBucket = `helix-opspile-channels${suffix}`;
 const queueName = `helix-opspile-normalize${suffix}`;
@@ -89,8 +94,12 @@ const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
 
 if (rethreadAll || relabelAll) {
   const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
+  if (channel && (!rethreadAll || !/^[\w:@.-]+$/.test(channel))) {
+    throw new Error('--channel takes a channel id, and goes with --rethread');
+  }
+  const only = channel ? ` AND channel_id = '${channel}'` : '';
   const sql = rethreadAll
-    ? 'SELECT thread FROM threads WHERE root_at IS NOT NULL ORDER BY root_at'
+    ? `SELECT thread FROM threads WHERE root_at IS NOT NULL${only} ORDER BY root_at`
     : 'SELECT COALESCE(logical_thread, thread) AS thread FROM threads GROUP BY 1';
   if (relabelAll && !dryRun) {
     // Labels are skipped when nothing changed; forget what they were computed for.
@@ -98,9 +107,12 @@ if (rethreadAll || relabelAll) {
   }
   const res = cf('d1', 'query', db.uuid, '--sql', sql);
   const keys = (res.result || res)[0].results.map((r) => r.thread);
-  for (let i = 0; i < keys.length; i += 50) {
+  // One channel's roots one by one, oldest first; everything else in batches of 50.
+  const size = channel && rethreadAll ? 1 : 50;
+  const spacing = size === 1 ? SPACING : 20;
+  for (let i = 0; i < keys.length; i += size) {
     const file = join(dir, 'rethread.json');
-    writeFileSync(file, JSON.stringify(keys.slice(i, i + 50)
+    writeFileSync(file, JSON.stringify(keys.slice(i, i + size)
       .map((thread) => ({
         body: rethreadAll ? { rethread: thread, force: true } : { label: thread },
         content_type: 'json',
@@ -116,7 +128,7 @@ if (rethreadAll || relabelAll) {
         '--messages',
         `@${file}`,
         '--delay-seconds',
-        String(Math.floor(i / 50) * 20),
+        String(Math.floor(i / size) * spacing),
       );
     }
   }

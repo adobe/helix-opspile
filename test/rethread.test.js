@@ -246,34 +246,45 @@ describe('bursts', () => {
   });
 });
 
-describe('follow-ups by someone else', () => {
-  const conversation = (env, roots) => {
+describe('conversations', () => {
+  const conversation = (env, messages) => {
     env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
-    for (const [k, at, id, user] of roots) {
+    for (const [k, at, id, user] of messages) {
       env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted)
         VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, 1)`).run(id, k, at, `slack:E1:${user}`);
     }
   };
+  const reply = (env, n, id, text, at) => env.CHANNELS.put(`channels/acme/helix/slack-C1/${n}/${id}.md`, render({
+    source: 'slack', thread: `slack:E1:C1:${n}`, id, at,
+  }, text));
+  const ask = (env) => env.clefCalls[0].questions.continues;
 
-  it('asks Clef about the previous root of the last hour, however it is worded', async () => {
-    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.8 }) };
+  it('asks Clef which of the latest conversations a root continues, reading them as a transcript', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
     const at0 = new Date(T0).toISOString();
-    const at1 = new Date(T0 + 25 * 60000).toISOString();
+    const atReply = new Date(T0 + 20 * 60000).toISOString();
+    const at1 = new Date(T0 + 5 * 3600000).toISOString();
     const a = await seed(env, '7.0', 'Publishing a page from author fails with a permission error', at0);
+    await reply(env, '7.0', '7.5', 'Which page? Send me the URL', atReply);
     const b = await seed(env, '7.1', 'This is a BLOCKER for our go live, please help asap', at1);
-    conversation(env, [[a, at0, '7.0', 'U1'], [b, at1, '7.1', 'U2']]);
+    conversation(env, [[a, at0, '7.0', 'U1'], [a, atReply, '7.5', 'U3'], [b, at1, '7.1', 'U2']]);
     await rethread(env, a);
     const r = await rethread(env, b);
     assert.deepEqual([r.result, r.via], ['rethreaded', 'clef']);
     assert.equal(env.clefCalls.length, 1);
-    assert.match(env.clefCalls[0].questions.continues.criteria.c0, /^Continues this earlier thread, posted 25 minutes before: Publishing/);
+    const { state } = env.clefCalls[0];
+    assert.match(state, /^Earlier messages in the channel, by conversation:\n\[A, 5 hours before\] Publishing/);
+    assert.match(state, /\n\[A, 5 hours before\] Which page\? Send me the URL\n/);
+    assert.match(state, /\n\nNew message: This is a BLOCKER/);
+    assert.deepEqual(Object.keys(ask(env).criteria), ['new', 'c0']);
+    assert.match(ask(env).criteria.c0, /^Continues conversation A \(Publishing/);
     assert.equal(env.DB.rows('SELECT logical_thread FROM threads WHERE thread = ?', b)[0].logical_thread, a);
   });
 
-  it('does not ask about an unrelated root from more than an hour before', async () => {
-    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.8 }) };
+  it('does not ask about an unrelated conversation that has been quiet for more than three days', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
     const at0 = new Date(T0).toISOString();
-    const at1 = new Date(T0 + 61 * 60000).toISOString();
+    const at1 = new Date(T0 + 3 * DAY + 60000).toISOString();
     const a = await seed(env, '8.0', 'Publishing a page from author fails with a permission error', at0);
     const b = await seed(env, '8.1', 'This is a BLOCKER for our go live, please help asap', at1);
     conversation(env, [[a, at0, '8.0', 'U1'], [b, at1, '8.1', 'U2']]);
@@ -282,39 +293,82 @@ describe('follow-ups by someone else', () => {
     assert.equal(env.clefCalls.length, 0);
   });
 
-  it('adds up what Clef gives to candidates of the same group', async () => {
-    const env = {
-      DB: d1(),
-      CHANNELS: fakeBucket(),
-      ...fakes({ clefChoice: 'c0', clefP: 0.45, clefProbabilities: { new: 0.1, c0: 0.45, c1: 0.45 } }),
-    };
+  it('offers a group once, with its first and latest messages', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.85 }) };
     const at0 = new Date(T0).toISOString();
     const at1 = new Date(T0 + 5 * 60000).toISOString();
     const at2 = new Date(T0 + 30 * 60000).toISOString();
     const a = await seed(env, '9.0', 'Publishing a page from author fails with a permission error', at0);
-    const b = await seed(env, '9.1', 'WARN failed attempt to import the distribution package', at1);
-    const c = await seed(env, '9.2', 'Still: publishing a page fails with a permission error, any news?', at2);
-    conversation(env, [[a, at0, '9.0', 'U1'], [b, at1, '9.1', 'U1'], [c, at2, '9.2', 'U2']]);
+    const b = await seed(env, '9.1', 'yes, I can look into it, send me the page', at1);
+    const c = await seed(env, '9.2', 'Done, the page is published now', at2);
+    conversation(env, [[a, at0, '9.0', 'U1'], [b, at1, '9.1', 'U3'], [c, at2, '9.2', 'U1']]);
     await rethread(env, a);
-    await rethread(env, b); // a burst: joins a
+    env.DB.sqlite.prepare('UPDATE threads SET logical_thread = ?, rethreaded_at = ? WHERE thread = ?').run(a, at1, b);
     const r = await rethread(env, c);
-    const { criteria } = env.clefCalls[0].questions.continues;
-    assert.deepEqual(Object.keys(criteria), ['new', 'c0', 'c1']);
-    assert.deepEqual([r.result, r.via, r.p], ['rethreaded', 'clef', 0.9]);
+    assert.deepEqual(Object.keys(ask(env).criteria), ['new', 'c0']);
+    assert.match(env.clefCalls[0].state, /\[A, 30 minutes before\] Publishing.*\n\[A, 25 minutes before\] yes, I can/);
+    assert.deepEqual([r.result, r.via, r.p], ['rethreaded', 'clef', 0.85]);
     assert.equal(env.DB.rows('SELECT logical_thread FROM threads WHERE thread = ?', c)[0].logical_thread, a);
   });
 
-  it('says how sure Clef was when it said no', async () => {
-    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.57 }) };
+  it('says how sure Clef was when it said no, and needs it surer than for alerts', async () => {
+    for (const p of [0.57, 0.75]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: p }) };
+      const at0 = new Date(T0).toISOString();
+      const at1 = new Date(T0 + 25 * 60000).toISOString();
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '10.0', 'Publishing a page from author fails', at0);
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '10.1', 'Can someone help please', at1);
+      conversation(env, [[a, at0, '10.0', 'U1'], [b, at1, '10.1', 'U2']]);
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, a);
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await rethread(env, b), {
+        result: 'new-topic', via: null, p: null, clef: p,
+      });
+    }
+  });
+
+  it('asks Clef about a second root by the same person more than three minutes later', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
     const at0 = new Date(T0).toISOString();
-    const at1 = new Date(T0 + 25 * 60000).toISOString();
-    const a = await seed(env, '10.0', 'Publishing a page from author fails', at0);
-    const b = await seed(env, '10.1', 'Can someone help please', at1);
-    conversation(env, [[a, at0, '10.0', 'U1'], [b, at1, '10.1', 'U2']]);
+    const at1 = new Date(T0 + 4 * 60000).toISOString();
+    const a = await seed(env, '11.0', 'See you on the call then', at0);
+    const b = await seed(env, '11.1', 'The fix for the cache headers is deployed', at1);
+    conversation(env, [[a, at0, '11.0', 'U1'], [b, at1, '11.1', 'U1']]);
     await rethread(env, a);
-    assert.deepEqual(await rethread(env, b), {
-      result: 'new-topic', via: null, p: null, clef: 0.57,
-    });
+    assert.equal((await rethread(env, b)).result, 'new-topic');
+    assert.equal(env.clefCalls.length, 1);
+  });
+
+  it('does not take the same words for a repeat', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+    const at0 = new Date(T0).toISOString();
+    const at1 = new Date(T0 + 2 * DAY).toISOString();
+    const a = await seed(env, '12.0', 'Thank you!!', at0);
+    const b = await seed(env, '12.1', 'Thank you!!', at1);
+    conversation(env, [[a, at0, '12.0', 'U1'], [b, at1, '12.1', 'U2']]);
+    await rethread(env, a);
+    assert.equal((await rethread(env, b)).result, 'new-topic');
+    assert.equal(env.clefCalls.length, 1);
+  });
+
+  it('leaves platform notices alone', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.99 }) };
+    const at0 = new Date(T0).toISOString();
+    const at1 = new Date(T0 + 60000).toISOString();
+    const a = await seed(env, '13.0', 'Could you invite our new developer?', at0);
+    const b = 'slack:E1:C1:13.1';
+    env.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      kind, path, root_at, any_at, updated_at) VALUES (?, 'slack', 'E1', 'C1', '13.1', 'acme', 'helix',
+      'channel', 'channels/acme/helix/slack-C1/13.1/', ?, ?, ?)`).run(b, at1, at1, at1);
+    await env.CHANNELS.put('channels/acme/helix/slack-C1/13.1/13.1.md', render({
+      source: 'slack', thread: b, id: '13.1', at: at1, author: { kind: 'system', name: 'Slack' },
+    }, '@Someone has joined the channel'));
+    conversation(env, [[a, at0, '13.0', 'U1']]);
+    assert.deepEqual(await rethread(env, b), { result: 'skip', reason: 'system message' });
+    assert.equal(env.clefCalls.length, 0);
   });
 });
 
