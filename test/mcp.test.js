@@ -507,6 +507,24 @@ describe('mcp tools', () => {
       assert.equal(e.asked[0].options.chars, 1500);
     });
 
+    it('still shows the thread when the agent does not answer', async () => {
+      const e = withAgent();
+      e.AGENTS.get = () => ({
+        // eslint-disable-next-line no-underscore-dangle
+        __unsafe_ensureInitialized: async () => {},
+        trace: async () => { throw new Error('Durable Object reset'); },
+      });
+      const realError = console.error;
+      console.error = () => {};
+      try {
+        const t = structured(await send(e, req('tools/call', { name: 'get_thread_trace', arguments: { thread: SLACK } }), ADMIN));
+        assert.match(t.agent.error, /did not answer \(Durable Object reset\)/);
+        assert.deepEqual(t.timeline.map((x) => x.type), ['message', 'message']);
+      } finally {
+        console.error = realError;
+      }
+    });
+
     it('pages back with `before`, and says when the channel has no agent', async () => {
       const e = withAgent();
       const page = structured(await send(e, req('tools/call', { name: 'get_thread_trace', arguments: { thread: SLACK, limit: 2 } }), ADMIN));

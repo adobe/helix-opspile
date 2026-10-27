@@ -386,7 +386,8 @@ export class ThreadAgent extends Agent {
    */
   async trace(options = {}) {
     const entries = await this.harness.messages().catch(() => []);
-    return { status: await this.status(), ...traceSteps(entries, options) };
+    const calls = await this.servers.calls().catch(() => []);
+    return { status: await this.status(), ...traceSteps(entries, { ...options, calls }) };
   }
 
   /** What the agent is doing, for the inbox and for checks. */

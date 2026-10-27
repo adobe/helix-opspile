@@ -14,8 +14,9 @@
  * An agent's trace, for the admin team (the MCP tool `get_thread_trace`): the steps of its
  * active transcript (pi's entries since its newest reset), each as a small JSON object with its
  * time, so they can be laid out next to the thread's messages. What it was told, what it
- * thought and said, every tool call with its arguments, every result, and the calls a tool made
- * in turn (a code mode script's MCP calls). Long text is clipped; nothing is left out.
+ * thought and said, every tool call with its arguments, every result, and the MCP calls its code
+ * mode scripts made (`mcp_call`, kept by src/agent/mcp.js, since pi does not keep a script's
+ * calls). Long text is clipped; nothing is left out.
  */
 
 export const MAX_STEPS = 400;
@@ -149,12 +150,34 @@ function stepsOf(entry, n) {
   }
 }
 
+/** `extra` (each with a time) laid into `steps` (in order, some without one) by time. */
+function mergeByTime(steps, extra) {
+  const out = [];
+  const rest = [...extra].sort((a, b) => a.at.localeCompare(b.at));
+  for (const s of steps) {
+    while (s.at && rest.length && rest[0].at < s.at) {
+      out.push(rest.shift());
+    }
+    out.push(s);
+  }
+  return [...out, ...rest];
+}
+
+/** An MCP call a script made, as src/agent/mcp.js keeps it, as a trace step. */
+const callStep = (c) => ({ type: 'mcp_call', ...c });
+
 /**
  * The latest `max` steps of a transcript, with long text clipped to `chars`: `{ steps, earlier,
  * usage }`, `earlier` the steps left out before them, `usage` the tokens and cost of all of it.
+ * `calls`: the agent's MCP calls, laid in by time, from the transcript's start on (older ones
+ * belong to a context it has reset).
  */
-export function traceSteps(entries, { max = MAX_STEPS, chars = MAX_STEP_TEXT } = {}) {
-  const all = (entries || []).flatMap((e) => stepsOf(e, chars));
+export function traceSteps(entries, { max = MAX_STEPS, chars = MAX_STEP_TEXT, calls = [] } = {}) {
+  const steps0 = (entries || []).flatMap((e) => stepsOf(e, chars));
+  const first = steps0.map((s) => s.at).find(Boolean) || '';
+  const extra = (calls || []).filter((c) => c && c.at && c.at >= first).map(callStep);
+  // In time order; a step without a time stays after the one before it.
+  const all = extra.length ? mergeByTime(steps0, extra) : steps0;
   // Steps without a time (a reset without a handoff) take the one before them.
   let last = null;
   for (const s of all) {

@@ -259,6 +259,12 @@ export function codemodeExtension(catalog, sandbox) {
 const EMPTY = { fingerprint: '', at: 0, servers: [] };
 const EXPIRY_MARGIN_MS = 2 * 60 * 1000;
 
+// The agent's latest MCP calls, for its trace (src/agent/trace.js): pi keeps a script's tool
+// calls nowhere, so they are kept here, arguments clipped, results not at all.
+export const CALLS_KEY = 'mcp-calls';
+export const MAX_CALLS = 200;
+const MAX_CALL_ARGS = 1000;
+
 /**
  * One agent's MCP servers: the catalog in its storage, and a client per server, connected on
  * first use and dropped when a call fails (the next call connects again).
@@ -329,11 +335,42 @@ export class AgentMcp {
       pending = opened;
       this.clients.set(server.id, pending);
     }
+    const started = Date.now();
     try {
-      return await callTool(await pending, name, args, signal);
+      const value = await callTool(await pending, name, args, signal);
+      await this.record(server, name, args, started, value && value.isError ? 'error' : 'ok');
+      return value;
     } catch (e) {
       this.drop(server.id, pending);
+      await this.record(server, name, args, started, 'failed', e);
       throw e;
     }
+  }
+
+  /** Keeps a call for the trace; a failure to keep it never fails the call. */
+  async record(server, name, args, started, status, error = null) {
+    try {
+      const json = JSON.stringify(args ?? {});
+      const call = {
+        at: new Date(started).toISOString(),
+        tool: `mcp__${server.ns}__${ident(name)}`,
+        server: server.name,
+        status,
+        duration_ms: Date.now() - started,
+        ...(json.length > MAX_CALL_ARGS
+          ? { arguments: `${json.slice(0, MAX_CALL_ARGS - 1)}…`, arguments_bytes: json.length }
+          : { arguments: args ?? {} }),
+        ...(error ? { error: String(error.message || error).slice(0, 500) } : {}),
+      };
+      const list = (await this.storage.get(CALLS_KEY)) || [];
+      await this.storage.put(CALLS_KEY, [...list, call].slice(-MAX_CALLS));
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', mcp: 'record failed', error: e.message }));
+    }
+  }
+
+  /** The latest MCP calls, oldest first. */
+  async calls() {
+    return (await this.storage.get(CALLS_KEY)) || [];
   }
 }
