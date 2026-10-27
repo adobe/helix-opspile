@@ -676,7 +676,9 @@ async function api(req, res, url) {
     broadcast(entry.row.team, { type: 'draft', thread: key });
     return json(res, { ok: true, draft });
   }
-  if (url.pathname === '/api/post' && req.method === 'POST') {
+  if ((url.pathname === '/api/post' || url.pathname === '/api/post/app') && req.method === 'POST') {
+    // /api/post/app: as the opspile app (src/postapp.js); the preview lets it post everywhere.
+    const app = url.pathname === '/api/post/app';
     const {
       thread: key, text: reply, mentions = [], draft: base,
     } = await readJson(req);
@@ -699,7 +701,7 @@ async function api(req, res, url) {
         .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1_$2_')
       : String(reply).trim();
     setTimeout(() => {
-      store.post(key, 'dana', arrived, at.toISOString(), id);
+      store.post(key, app ? 'app' : 'dana', arrived, at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, 1200);
     return json(res, { ok: true, platform: entry.row.source, id });

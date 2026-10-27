@@ -424,6 +424,15 @@ A reply goes to the latest platform thread of an inbox entry and comes back thro
 normal ingestion path, like any other message. Replies are written in Markdown; on Slack they
 are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`).
 
+The one exception is posting **as the opspile app** (`POST /api/post/app`, `src/postapp.js`,
+used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the same post as a
+thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in
+channels whose **Post messages** switch is on (the channel's, else its team's) on a platform
+whose bot is set up, for staff of the thread's teams. The switch says whether the app speaks
+in a channel at all, whoever writes the text. The post names no person and carries no
+mentions; it comes back through ingestion by the app, and a thread agent there is told about
+it like any message.
+
 Discord threads are read-only in the inbox: Discord lets only bots post and react through its
 API, and opspile acts as the person or not at all. They have a link to reply in Discord, no
 reply box, reactions or ✅; Discord's own ✅ by staff still resolves them.

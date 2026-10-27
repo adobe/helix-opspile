@@ -2019,7 +2019,7 @@ function setCachedDraft(key, d) {
 }
 
 async function saveDraft(key, text, base) {
-  if (state.data?.me?.readonly || !text.trim()) return;
+  if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
   const res = await request('PUT', '/api/draft', {
     thread: key, text, mentions: mentionsIn(key, text), base: base === undefined ? c.base : base,
@@ -2028,9 +2028,13 @@ async function saveDraft(key, text, base) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
     setCachedDraft(key, res.data.draft);
     toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at) });
-    return;
+    return { error: res.data.error, conflict: res.data.draft };
   }
-  if (!res.ok) { toast(res.data.error || `could not save the draft (${res.status})`); return; }
+  if (!res.ok) {
+    const error = res.data.error || `could not save the draft (${res.status})`;
+    toast(error);
+    return { error };
+  }
   const d = res.data.draft;
   // What the box holds now (it may have changed while saving) stays; the draft is the base.
   const now = state.composers.get(key);
@@ -2043,6 +2047,7 @@ async function saveDraft(key, text, base) {
   setCachedDraft(key, d);
   const team = state.data?.teams?.[state.team]?.name || 'the team';
   toast(`Draft saved. Everyone in ${team} sees it.`);
+  return { ok: true, draft: d };
 }
 
 async function discardDraft(key) {
@@ -2106,6 +2111,24 @@ async function send(key, thread) {
   });
   openThread(key, { live: true });
   return true;
+}
+
+/**
+ * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
+ * the app post; `base` is the version of the shared draft it sends, which it uses up. Resolves
+ * to null, or the error.
+ */
+async function sendAsApp(key, text, base) {
+  const res = await request('POST', '/api/post/app', { thread: key, text, ...(base ? { draft: base } : {}) });
+  if (!res.ok) return res.data.error || `could not send (${res.status})`;
+  const c = state.composers.get(key);
+  if (c && c.text.trim() === text.trim()) {
+    state.composers.set(key, { text: '', from: '', base: null });
+    if (state.open === key && $('reply')) { $('reply').value = ''; $('reply').dispatchEvent(new Event('input')); }
+  }
+  if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
+  openThread(key, { live: true });
+  return null;
 }
 
 // ---------------------------------------------------------------- mentions
@@ -3030,7 +3053,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'draft_reply',
-    description: 'Puts a draft reply into the reply box of the open thread, for the user to review, edit and send themselves. Nothing is posted. Open the thread with open_thread first.',
+    description: 'Puts a draft reply into the reply box of the open thread, in this browser only, for the user to review, edit and send themselves. Nothing is posted or saved. Open the thread with open_thread first. Use post_draft to save it as the thread\'s shared draft for the team.',
     inputSchema: {
       type: 'object',
       properties: { text: { type: 'string', description: 'The reply, in Markdown. Replaces what is in the reply box.' } },
@@ -3047,8 +3070,38 @@ const WEBMCP_TOOLS = [
     },
   },
   {
-    name: 'send_reply',
-    description: 'Posts a reply in a thread on Slack or Teams, as the signed-in person, visible to everyone in the channel including customers. Use draft_reply instead when the user should review the text first.',
+    name: 'post_draft',
+    description: 'Saves a reply as the shared draft of a thread, without posting anything: everyone in the team sees it in the inbox and can change, send or discard it. A thread has at most one; to replace the one open_thread shows, pass its `saved` as `base`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        text: { type: 'string', description: 'The whole reply, in Markdown (up to 8000 characters)' },
+        base: { type: 'string', description: 'The `saved` of the shared draft this replaces, from open_thread' },
+      },
+      required: ['text'],
+    },
+    execute: async ({ thread, text, base } = {}) => {
+      if (state.data?.me?.readonly) return fail(READONLY);
+      const body = String(text || '').trim();
+      if (!body) return fail('The draft is empty. Provide the reply text.');
+      const key = thread || state.open;
+      if (!key) return fail('No thread is open. Pass `thread`, or open one with open_thread first.');
+      if (!teamThread(key)) return fail(UNKNOWN_THREAD);
+      const data = await showThread(key);
+      if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
+      const res = await saveDraft(key, body, base || null);
+      if (res.conflict) {
+        const d = res.conflict;
+        return fail(`${base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (saved ${d.updated_at} by ${draftBy(d)}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text: ${clip(d.body, 1200)}`);
+      }
+      if (res.error) return fail(res.error);
+      return out({ ok: true, thread: key, shared_draft: { by: draftBy(res.draft), saved: res.draft.updated_at }, note: 'Saved as the thread\'s shared draft: nothing was posted. The team sees it in the inbox.' });
+    },
+  },
+  {
+    name: 'post_as_user',
+    description: 'Posts a reply in a thread on Slack or Teams, as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Use draft_reply or post_draft instead when the user or the team should review the text first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3076,6 +3129,37 @@ const WEBMCP_TOOLS = [
       if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent. The text is left in the reply box as a draft.');
       if (!yes) return fail('The user declined to send. The text is left in the reply box as a draft.');
       return await send(key, data.thread) ? out({ ok: true, thread: key, note: 'Sent; it shows as "sending" until Slack or Teams confirms it.' }) : fail(state.sendError || 'Could not send.');
+    },
+  },
+  {
+    name: 'post_as_bot',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Only in channels where the team lets the app post ("Post messages" in the knowledge-base editor). No mentions; Discord takes up to 2000 characters. Pass `draft` (the shared draft\'s `saved`) when it sends that draft, so it is used up.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        text: { type: 'string', description: 'The reply, in Markdown' },
+        draft: { type: 'string', description: 'The `saved` of the shared draft this sends, from open_thread' },
+      },
+      required: ['text'],
+    },
+    annotations: { consequentialHint: true },
+    execute: async ({ thread, text, draft } = {}, client) => {
+      if (state.data?.me?.readonly) return fail(READONLY);
+      const body = String(text || '').trim();
+      if (!body) return fail('The reply is empty. Provide the reply text.');
+      const key = thread || state.open;
+      if (!key) return fail('No thread is open. Pass `thread`, or open one with open_thread first.');
+      if (!teamThread(key)) return fail(UNKNOWN_THREAD);
+      const data = await showThread(key);
+      if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
+      const where = `${platform(data.thread)} (${data.thread.org || 'customer'})`;
+      const ask = () => confirmInPage(`Post this reply in ${where} as the opspile app?`, body, client?.signal, 'Post as opspile');
+      const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
+      if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent.');
+      if (!yes) return fail('The user declined to send, so nothing was sent.');
+      const error = await sendAsApp(key, body, draft);
+      return error ? fail(`Nothing was sent: ${error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
     },
   },
   {
@@ -3128,11 +3212,11 @@ const WEBMCP_TOOLS = [
  * or the agent gave up). Not window.confirm(): that would freeze the page, and with it every
  * tool call, until someone answers.
  */
-function confirmInPage(question, body, signal) {
+function confirmInPage(question, body, signal, yesLabel = 'Post as me') {
   return new Promise((resolve) => {
     const dlg = toNode(`<dialog class="confirm" aria-label="${esc(question)}"><form method="dialog">
       <p><b>${esc(question)}</b></p><div class="bubble">${md(clip(body, 1200))}</div>
-      <div class="apply"><button value="no">Cancel</button><button value="yes" class="send">Post as me</button></div></form></dialog>`);
+      <div class="apply"><button value="no">Cancel</button><button value="yes" class="send">${esc(yesLabel)}</button></div></form></dialog>`);
     let answer = null;
     const timer = setTimeout(() => dlg.close(), 120000);
     const abort = () => dlg.close();

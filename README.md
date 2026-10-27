@@ -46,9 +46,10 @@ still answer.
 | `GET /api/me`, `/api/inbox?team=`, `/api/thread?thread=` | The signed-in person, a team's threads with read state and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. A thread also carries `mentioned`: who the people its messages `@`-mention are (Adobe, partner, customer or bot), by name, so the page sets mentions of people outside Adobe apart. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
+| `POST /api/post/app` | Reply in a thread **as the opspile app** (the Slack app, the Teams bot, the Discord bot) instead of as the signed-in person, `{ thread, text, draft? }`: the same post as a thread agent's `post_message`, and only where that may post, in channels whose **Post messages** switch (team or channel, knowledge-base editor) is on and whose platform's bot is set up (`409` otherwise). Only staff, only in their teams. No mentions. |
 | `POST /api/react` | Add (or with `remove`, take off) a reaction on one message **as the signed-in person**: `{ thread, id, emoji }`, where `thread` is the message's platform thread and `emoji` a picker name (`thumbsup`, `white_check_mark`, …) or a reaction as the thread shows it. Slack `reactions.add`/`remove`, Teams `setReaction`/`unsetReaction`; recorded in D1 at once, then again by the platform's own event. `409` with `reconnect: 'slack'` for Slack tokens from before `reactions:write`. Only staff, only in their teams. |
 | `POST /api/resolve` | `{ thread, undo? }`: ✅ on the root message of the entry's latest platform thread, as the signed-in person (`white_check_mark` on Slack, `✅` on Teams), or with `undo` take their ✅ off every root of the entry. A staff ✅ on the root marks the thread resolved (see ARCHITECTURE, "Resolved"). |
-| `GET`, `PUT`, `DELETE /api/draft` | The thread's shared draft (at most one per inbox entry), seen by everyone in the teams that follow the channel (the team it is filed under, and those it is shared with). `PUT { thread, text, mentions?, base }` saves it as the signed-in person, `DELETE { thread, base? }` discards it; `base` is the `updated_at` of the draft the text was written from, and a draft that changed since answers `409` with the current one. `POST /api/post` with `draft: <base>` uses the draft up. Inbox entries carry `draft` (who, when, a preview), the thread its full `draft`. Only in their teams (admins can see any thread's draft). |
+| `GET`, `PUT`, `DELETE /api/draft` | The thread's shared draft (at most one per inbox entry), seen by everyone in the teams that follow the channel (the team it is filed under, and those it is shared with). `PUT { thread, text, mentions?, base }` saves it as the signed-in person, `DELETE { thread, base? }` discards it; `base` is the `updated_at` of the draft the text was written from, and a draft that changed since answers `409` with the current one. `POST /api/post` or `/api/post/app` with `draft: <base>` uses the draft up. Inbox entries carry `draft` (who, when, a preview), the thread its full `draft`. Only in their teams (admins can see any thread's draft). |
 | `GET /api/mentionable?thread=&q=` | Who can be mentioned in a reply: accounts already in D1 for the thread's platform and workspace whose name (any word) starts with `q`; people in the thread first, then staff. |
 | `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
@@ -143,12 +144,17 @@ Slack app's redirect URLs and the Entra app's web redirect URIs.
 ### MCP server
 
 `/mcp` lets an agent outside the browser (Claude, an IDE, a CLI) work the inbox as the person
-signed in, with seven tools: `whoami`, `list_threads`,
-`get_thread`, `reply`, `react_to_message`, `resolve_thread` and `seed_agent`. It speaks MCP `2026-07-28`
+signed in, with nine tools: `whoami`, `list_threads`, `get_thread`, `post_draft`,
+`post_as_user`, `post_as_bot`, `react_to_message`, `resolve_thread` and `seed_agent`. A thread
+is answered three ways, as in the inbox: `post_draft` saves its shared draft (`PUT /api/draft`;
+`base` names the version it replaces), which the team sees and sends; `post_as_user` posts as
+the person (`POST /api/post`); `post_as_bot` posts as the opspile app (`POST /api/post/app`),
+where the channel lets the app post. Both post tools take the shared draft's version as
+`draft`, which uses it up; `get_thread` shows the draft and `can_post_as_bot`. It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each
 request's `_meta`, header checks (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), caching
 hints, and plain JSON responses (no SSE, no `subscriptions/listen`). Clients of the 2025
-revisions get `initialize` and the same tools, without a session. `reply` asks the user to
+revisions get `initialize` and the same tools, without a session. `post_as_user` and `post_as_bot` ask the user to
 confirm before posting (a multi round-trip `elicitation/create`) when the client supports
 elicitation; otherwise the client's own tool approval is the check. `get_thread` does not mark
 anything read.
@@ -373,13 +379,15 @@ a click, as that person. A read-only "view as" refuses writes.
 | `filter_threads` | Set filters, sort and team |
 | `list_threads` | The threads shown, most relevant first |
 | `open_thread` | Open a thread (marks it read) and return its latest messages |
-| `draft_reply` | Put a reply in the reply box for the person to send (only there: saving it as the thread's shared draft is the person's call) |
-| `send_reply` | Post a reply as the person, after a confirmation dialog |
+| `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |
+| `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces) |
+| `post_as_user` | Post a reply as the person, after a confirmation dialog |
+| `post_as_bot` | Post a reply as the opspile app, after a confirmation dialog, where the channel lets the app post |
 | `react_to_message` | Add or take off a reaction |
 | `resolve_thread` | ✅ on the first message, or take it off again |
 
 Tool output that carries message text or titles is marked `untrustedContentHint`, and
-`send_reply` is marked `consequentialHint`. To try them, turn on
+`post_as_user` and `post_as_bot` are marked `consequentialHint`. To try them, turn on
 `chrome://flags/#enable-webmcp-testing` and open the inbox (`npm run ui:dev` works) with the
 [Model Context Tool Inspector](https://chromewebstore.google.com/detail/model-context-tool-inspec/gbpdfapgefenggkahomfgkhfehlcenpd)
 extension.

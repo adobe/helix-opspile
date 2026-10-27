@@ -239,5 +239,22 @@ describe('shared drafts', () => {
       await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'something else' });
       assert.equal((await draftOf(e, ADA)).body, 'two');
     });
+
+    it('posts as the opspile app where Post messages is on, for the thread\'s teams', async () => {
+      const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-made-up' };
+      const off = await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: 'one' });
+      assert.equal(off.status, 409);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled,
+        changed_by, changed_at) VALUES ('post_message', 'channel', 'C1', 1, 'Ada',
+        '2026-10-21T10:00:00Z')`).run();
+      const elsewhere = await call(e, EVE, 'POST', '/api/post/app', { thread: ROOT, text: 'one' });
+      assert.equal(elsewhere.status, 404);
+      const d = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;
+      // No personal account needed: it goes out with the bot token.
+      const res = await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: 'one', draft: d.updated_at });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true, platform: 'slack', id: '1.9' });
+      assert.equal(await draftOf(e, ADA), null);
+    });
   });
 });
