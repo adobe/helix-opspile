@@ -20,7 +20,8 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable';
 import {
-  AgentMcp, CATALOG_TTL_MS, codemodeExtension, mcpExtension, mcpSection, withNamespaces,
+  AgentMcp, CATALOG_TTL_MS, codemodeExtension, MAX_CALLS, mcpExtension, mcpSection,
+  withNamespaces,
 } from '../src/agent/mcp.js';
 import { api } from '../src/api.js';
 import { d1 } from './d1.js';
@@ -297,6 +298,26 @@ describe('MCP servers in thread agents', () => {
     assert.match(result, /mcp__docs__search_docs/);
     assert.match(result, /Search before you read\./);
     assert.deepEqual(SERVERS.calls.slice(-2).map((c) => c.tool), ['search_docs', 'site_status']);
+  });
+
+  it('keeps the latest calls for the trace, arguments clipped, results not', async () => {
+    const e = await configured();
+    const storage = memoryStorage();
+    const mcp = new AgentMcp(e, storage);
+    const { catalog } = await mcp.refresh({ team: 'helix', org: 'acme' });
+    const [tool] = mcpExtension(catalog, (...args) => mcp.call(...args)).tools;
+    await tool.execute({ query: 'robots' }, {}, {});
+    await tool.execute({ query: 'x'.repeat(2000) }, {}, {});
+    const [first, second] = await mcp.calls();
+    assert.deepEqual([first.tool, first.server, first.status, first.arguments], ['mcp__docs__search_docs', 'docs', 'ok', { query: 'robots' }]);
+    assert.ok(/^\d{4}-/.test(first.at) && first.duration_ms >= 0 && !('result' in first));
+    assert.equal(typeof second.arguments, 'string');
+    assert.ok(second.arguments.length <= 1000 && second.arguments_bytes > 2000);
+    for (let i = 0; i < MAX_CALLS; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await mcp.record({ ns: 'docs', name: 'docs' }, 'search_docs', {}, Date.now(), 'ok');
+    }
+    assert.equal((await mcp.calls()).length, MAX_CALLS);
   });
 
   it('tells a script when a server fails', async () => {

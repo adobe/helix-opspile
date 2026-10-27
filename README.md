@@ -157,7 +157,7 @@ The admin team gets more tools, which nobody else sees in `tools/list` (for them
 
 | Tool | What |
 | --- | --- |
-| `get_thread_trace` | Any thread like `get_thread`, with its agent's work in the same timeline, oldest first: what it was told, what it thought and said, every tool call with its arguments and result, and the calls a code mode script made in turn (MCP servers included); its prompt and tool changes; its model, tools, MCP servers, latest turn and token use. From the agent's transcript since its last reset; `limit`, `before` (paging) and `max_chars`. A channel without agents has no trace (its agent is not started to look). |
+| `get_thread_trace` | Any thread like `get_thread`, with its agent's work in the same timeline, oldest first: what it was told, what it thought and said, every tool call with its arguments and result, and every MCP server call a code mode script made (`mcp_call`: arguments and status, not results; the agent keeps its latest 200); its prompt and tool changes; its model, tools, MCP servers, latest turn and token use. From the agent's transcript since its last reset; `limit`, `before` (paging) and `max_chars`. A channel without agents has no trace (its agent is not started to look). |
 
 It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each

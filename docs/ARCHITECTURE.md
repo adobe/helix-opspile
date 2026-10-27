@@ -540,8 +540,11 @@ transcript (`src/agent/turn.js`), nothing else is stored.
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
 same transcript through the agent's `trace()`): each input, its thinking and text, every tool
-call with its arguments and result, the calls a code mode script made through its tools (pi's
-`nestedCalls`, results not kept), prompt and tool changes, and the tokens and cost per step.
+call with its arguments and result, the MCP server calls its code mode scripts made (pi keeps
+no record of a script's calls, so the agent keeps its latest 200 in its storage, `mcp-calls`:
+when, which tool, the arguments clipped, the outcome, never the result), prompt and tool
+changes, and the tokens and cost per step. An agent that does not answer leaves the thread's
+messages, with `agent.error`.
 It covers the transcript since the agent's last reset; long text is clipped.
 
 **Prompt injection.** Before an agent sees a message that Adobe staff did not write

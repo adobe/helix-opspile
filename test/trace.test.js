@@ -115,4 +115,38 @@ describe('agent traces', () => {
     const latest = traceSteps(entries, { max: 1 });
     assert.deepEqual([latest.steps.map((s) => s.type), latest.earlier], [['agent_reset'], 2]);
   });
+
+  it('lays the MCP calls the scripts made in by time, from the transcript\'s start', () => {
+    const iso = (ms) => new Date(ms).toISOString();
+    const entries = [
+      { kind: 'pi.user', model: [{ role: 'user', content: 'm', timestamp: 1000 }] },
+      {
+        kind: 'pi.assistant',
+        model: [{
+          role: 'assistant',
+          content: [{
+            type: 'toolCall', id: 'c1', name: 'codemode', arguments: {},
+          }],
+          stopReason: 'toolUse',
+          timestamp: 2000,
+        }],
+      },
+      {
+        kind: 'pi.tool-result',
+        model: [{
+          role: 'toolResult', toolCallId: 'c1', toolName: 'codemode', content: [], isError: false, timestamp: 5000,
+        }],
+      },
+    ];
+    const calls = [
+      { at: iso(500), tool: 'mcp__github__old', status: 'ok' },
+      { at: iso(3000), tool: 'mcp__browser__get_url_markdown', status: 'ok' },
+      {
+        at: iso(4000), tool: 'mcp__github__get_file', status: 'failed', error: 'timeout',
+      },
+    ];
+    const { steps } = traceSteps(entries, { calls });
+    assert.deepEqual(steps.map((s) => s.tool || s.type), ['agent_input', 'agent_step', 'mcp__browser__get_url_markdown', 'mcp__github__get_file', 'codemode']);
+    assert.deepEqual([steps[3].type, steps[3].error], ['mcp_call', 'timeout']);
+  });
 });
