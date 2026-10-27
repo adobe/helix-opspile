@@ -79,25 +79,74 @@ async function rows(env, sql, ...args) {
 
 const CHANNEL_FIELDS = [['name', 'name'], ['groupName', 'group_name'], ['orgName', 'org_name'], ['org', 'org'], ['channelId', 'channel_id']];
 
+/** A channel's platform as the admin pages name it. */
+const platformLabel = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
+
+/**
+ * A channel's name as the admin pages show it: on Teams with its team (`acme-support › Main`),
+ * on Slack and Discord as `#name`.
+ */
+export function channelLabel(c) {
+  const name = c.name || c.channel_name || c.channel_id || '';
+  return c.source === 'teams' && c.group_name ? `${c.group_name} › ${name}` : `#${name}`;
+}
+
+/** Letters and digits only, so `aem-acme › Main`, `aem acme main` and `acme/main` meet. */
+const compact = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/** The words of a search, without the ones that are only separators (`›`, `>`, `/`, `#`). */
+export function searchWords(q) {
+  return String(q || '').toLowerCase().split(/\s+/).filter((w) => compact(w));
+}
+
+/**
+ * What a search can find a channel by: everything the picker shows of it. Its name, Teams team
+ * or Discord server, the two together as shown, its platform, its customer (slug or display
+ * name), the team it is filed under and the teams it is shared with, and its id.
+ */
+function searchFields(c, teamNames = new Map(), sharedWith = []) {
+  const teams = [c.team, ...sharedWith].filter(Boolean);
+  return [
+    ...CHANNEL_FIELDS.map(([field, col]) => [field, c[col]]),
+    ['name', c.channel_name],
+    ['label', channelLabel(c)],
+    ['platform', platformLabel(c)],
+    ...teams.flatMap((t) => [['team', t], ['team', teamNames.get(t)]]),
+  ].filter(([, v]) => v);
+}
+
 /**
  * Which fields of a channel the words of a search are found in, or null when one of the words
- * is in none of them. A channel matches when every word is in one of its fields: its name, its
- * Teams team name, its org (slug or display name) or its id.
+ * is in none of them. A channel matches when every word is in one of its fields (see
+ * `searchFields`), ignoring case, and spaces and punctuation when the word has them: a search
+ * for `acme main` or `aem-acme › Main` finds the Teams channel `aem acme › Main`.
  */
-export function channelMatch(c, words) {
-  const fields = new Set();
+export function channelMatch(c, words, teamNames, sharedWith) {
+  const fields = searchFields(c, teamNames, sharedWith)
+    .map(([field, v]) => [field, String(v).toLowerCase(), compact(v)]);
+  const found = new Set();
   for (const w of words) {
-    const hit = CHANNEL_FIELDS.filter(([, col]) => String(c[col] || '').toLowerCase().includes(w));
+    const cw = compact(w);
+    const hit = fields.filter(([, v, cv]) => v.includes(w) || (cw && cv.includes(cw)));
     if (!hit.length) {
       return null;
     }
-    hit.forEach(([field]) => fields.add(field));
+    // The name as shown only when the word is in it and not in its parts (`acme main`).
+    const own = hit.filter(([field]) => field !== 'label');
+    (own.length ? own : hit).forEach(([field]) => found.add(field));
   }
-  return [...fields];
+  return [...found];
 }
 
-/** How well a channel matches a search, for ordering: its name or Teams team first. */
+/**
+ * How well a channel matches a search, for ordering: the search as a whole in its name as shown
+ * first, then its name or Teams team starting with it, then containing it.
+ */
 function matchScore(c, needle) {
+  const whole = compact(needle);
+  if (whole && compact(channelLabel(c)).includes(whole)) {
+    return 3;
+  }
   const names = [c.name, c.group_name].map((v) => String(v || '').toLowerCase());
   if (names.some((v) => v.startsWith(needle))) {
     return 2;
@@ -113,7 +162,7 @@ function matchScore(c, needle) {
 async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}) {
   const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
       t.team, t.org, o.name AS org_name, t.kind, COUNT(t.thread) AS threads,
-      MAX(COALESCE(t.last_at, t.any_at)) AS latest
+      MAX(t.channel_name) AS channel_name, MAX(COALESCE(t.last_at, t.any_at)) AS latest
     FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
       AND t.channel_id = c.channel_id
     LEFT JOIN orgs o ON o.slug = t.org
@@ -123,14 +172,17 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
     .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
   const shares = await sharesByChannel(env);
   const needle = q.toLowerCase().trim();
-  const words = needle.split(/\s+/).filter(Boolean);
+  const words = searchWords(needle);
+  const teamNames = words.length
+    ? new Map((await rows(env, 'SELECT slug, name FROM teams')).map((t) => [t.slug, t.name]))
+    : new Map();
   const manual = (target, channelId) => rules.find((r) => r.target === target && isManual(r)
     && r.pattern === manualPattern(channelId)) || null;
   const out = [];
   for (const c of filed) {
-    const match = words.length ? channelMatch(c, words) : [];
     // The other teams that follow it; a channel shared with a team is on that team's page too.
     const sharedWith = (shares.get(`${c.source}:${c.channel_id}`) || []).filter((t) => t !== c.team);
+    const match = words.length ? channelMatch(c, words, teamNames, sharedWith) : [];
     if (match && (!inTeam || c.team === inTeam || sharedWith.includes(inTeam))
       && (!inOrg || c.org === inOrg)) {
       const mt = manual('team', c.channel_id);
@@ -139,7 +191,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
         source: c.source,
         tenant: c.tenant,
         channelId: c.channel_id,
-        name: c.name,
+        name: c.name || c.channel_name || null,
         groupName: c.group_name,
         shared: Boolean(c.shared),
         team: c.team,
