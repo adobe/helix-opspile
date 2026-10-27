@@ -467,7 +467,8 @@
    * a back button; both are hidden while there is room for all three columns.
    *
    * Under 1100px (a phone on its side, an unfolded iPhone Duo, a tablet upright) the filter
-   * cards move into a drawer over the page's left edge, opened from the list's heading, and the
+   * cards move into a drawer over the page's left edge, opened from the list's heading or by a
+   * swipe to the right over the list, and closed by a swipe to the left (or a tap beside it); the
    * list and the open thread share the width. Under 700px (phones, a folded iPhone Duo) the
    * list and the open thread take turns: opening a thread slides it in over the list, and its
    * back button, or the browser's Back, slides it out again. Both stay laid out (visibility,
@@ -529,6 +530,10 @@
     main::after { content: ""; position: fixed; z-index: 29; inset: var(--head) 0 0; background: rgba(0,0,0,.45);
       opacity: 0; pointer-events: none; transition: opacity .22s; }
     main.filtering::after { opacity: 1; pointer-events: auto; }
+    /* Following a finger that swipes the drawer in or out (`--pull`: 0 shut, 1 open). */
+    main.dragging #filters { transform: translateX(calc((var(--pull, 0) - 1) * 100%)); visibility: visible;
+      transition: none; box-shadow: 0 0 40px rgba(0,0,0,calc(.45 * var(--pull, 0))); }
+    main.dragging::after { opacity: var(--pull, 0); transition: none; }
     #threads { border-left: 0; }
     #threads .count .filt { display: inline-flex; }
     .ph, .feed { padding-left: 16px; padding-right: 16px; }
@@ -2528,6 +2533,67 @@ function setFiltering(on) {
   renderThreads();
 }
 
+// The filter drawer's swipes: one to the right over the list pulls it in, one to the left over
+// it (or over the dimmed page beside it) pushes it out. The drawer follows the finger; when it
+// lifts, a flick goes the way it went, a slow drag to the nearer end. Safari keeps a swipe from
+// the screen's very edge for Back while there is a page to go back to.
+const DRAWER = matchMedia('(max-width: 1099px)');
+const TAKING_TURNS = matchMedia('(max-width: 699px)');
+/** Whether the drawer ends up open: `pull` 0 (shut) to 1 (open), `speed` in px/ms, right positive. */
+const drawerOpens = (pull, speed) => (Math.abs(speed) > 0.3 ? speed > 0 : pull > 0.5);
+/** A touch that moved `dx`, `dy` from where it started: a swipe for the drawer, or the page's scroll. */
+const drawerSwipe = (dx, dy, open) => Math.abs(dx) > 1.5 * Math.abs(dy) && (dx > 0) !== open;
+function wireDrawerSwipes() {
+  const main = document.querySelector('main');
+  let s = null;
+  main.addEventListener('touchstart', (e) => {
+    s = null;
+    if (!DRAWER.matches || e.touches.length !== 1) return;
+    // Open: the drawer or the dimmed page beside it (main's ::after). Shut: the list, when it is on screen.
+    const where = state.filtering ? e.target === main || e.target.closest('#filters')
+      : e.target.closest('#threads') && !(TAKING_TURNS.matches && state.open);
+    if (!where) return;
+    const t = e.touches[0];
+    s = {
+      x: t.clientX, y: t.clientY, open: state.filtering, width: $('filters').offsetWidth || 1,
+      swiping: null, pull: state.filtering ? 1 : 0, lastX: t.clientX, lastT: e.timeStamp, speed: 0,
+    };
+  }, { passive: true });
+  main.addEventListener('touchmove', (e) => {
+    if (!s || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - s.x;
+    if (s.swiping === null) {
+      if (Math.hypot(dx, t.clientY - s.y) < 10) return;
+      s.swiping = drawerSwipe(dx, t.clientY - s.y, s.open);
+      if (s.swiping) main.classList.add('dragging');
+    }
+    if (!s.swiping) return;
+    e.preventDefault();
+    const dt = e.timeStamp - s.lastT;
+    if (dt > 0) s.speed = 0.6 * ((t.clientX - s.lastX) / dt) + 0.4 * s.speed;
+    s.lastX = t.clientX;
+    s.lastT = e.timeStamp;
+    s.pull = Math.min(1, Math.max(0, (s.open ? 1 : 0) + dx / s.width));
+    main.style.setProperty('--pull', String(s.pull));
+  }, { passive: false });
+  const end = (e) => {
+    const swipe = s;
+    s = null;
+    if (!swipe?.swiping) return;
+    // The lifted finger taps nothing (no thread opens under it).
+    if (e.type === 'touchend' && e.cancelable) e.preventDefault();
+    // A finger that stopped before it lifted is no flick.
+    const speed = e.timeStamp - swipe.lastT > 100 ? 0 : swipe.speed;
+    const open = e.type === 'touchend' ? drawerOpens(swipe.pull, speed) : swipe.open;
+    main.classList.remove('dragging');
+    main.style.removeProperty('--pull');
+    if (open !== state.filtering) setFiltering(open);
+  };
+  main.addEventListener('touchend', end, { passive: false });
+  main.addEventListener('touchcancel', end);
+}
+
 // ---------------------------------------------------------------- wiring
 function move(step) {
   if (!state.order.length) return;
@@ -2610,6 +2676,7 @@ async function start() {
   document.querySelector('main').addEventListener('click', (e) => {
     if (e.target === e.currentTarget && state.filtering) setFiltering(false);
   });
+  wireDrawerSwipes();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     const msg = e.target.closest('.msg');

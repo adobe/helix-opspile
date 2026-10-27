@@ -73,4 +73,23 @@ describe('inbox page', () => {
     md('hi @Ada');
     assert.equal(calls.length, 2);
   });
+
+  it('tells the filter drawer\'s swipes from scrolling, and where they leave it', () => {
+    const { drawerOpens, drawerSwipe } = piece('const DRAWER', 'function wireDrawerSwipes', 'drawerOpens, drawerSwipe', {
+      matchMedia: () => ({ matches: true }),
+    });
+    // Sideways towards where the drawer goes: right while shut, left while open.
+    assert.equal(drawerSwipe(40, 5, false), true);
+    assert.equal(drawerSwipe(-40, 5, false), false);
+    assert.equal(drawerSwipe(-40, 5, true), true);
+    assert.equal(drawerSwipe(40, 5, true), false);
+    // More down than sideways: the list or the drawer scrolls.
+    assert.equal(drawerSwipe(20, 30, false), false);
+    assert.equal(drawerSwipe(-20, 30, true), false);
+    // A flick goes its way; a slow drag to the nearer end.
+    assert.equal(drawerOpens(0.2, 0.8), true);
+    assert.equal(drawerOpens(0.9, -0.8), false);
+    assert.equal(drawerOpens(0.6, 0.1), true);
+    assert.equal(drawerOpens(0.4, -0.1), false);
+  });
 });
