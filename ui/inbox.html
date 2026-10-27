@@ -584,6 +584,8 @@
   @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
     #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
   }
+  /* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
+  main.instant #threads, main.instant #pane, main.instant.reading #pane { transition: none; }
 </style>
 </head>
 <body>
@@ -2664,7 +2666,10 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
-  window.addEventListener('popstate', async () => {
+  window.addEventListener('popstate', async (e) => {
+    // Safari's edge swipe has already slid the list or the thread into view: no second slide.
+    const main = document.querySelector('main');
+    main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const team = state.team;
     const { open, review } = fromUrl();
     renderUser();
@@ -2675,6 +2680,9 @@ async function start() {
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     syncPages();
+    // The styles are applied without transitions before they come back.
+    main.getBoundingClientRect();
+    main.classList.remove('instant');
   });
   if (state.me.admin) {
     const sel = $('as');
