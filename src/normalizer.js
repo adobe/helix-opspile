@@ -16,7 +16,7 @@ import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
-import { rethread } from './rethread.js';
+import { rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
@@ -360,16 +360,19 @@ export async function processKey(env, key, cache = {}) {
       });
     }
   }
-  // A new root may continue an earlier thread (a repeat alert, a follow-up).
+  // A thread agent reads every new message of its thread (only in channels where it is on).
+  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId);
+  // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
+  // poked once that is decided, so it is the group's agent, not one of the root's own.
   if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {
-    await env.NORMALIZE.send({ rethread: message.thread }, { delaySeconds: 30 });
+    await env.NORMALIZE.send({ rethread: message.thread, ...(poke ? { poke: true } : {}) }, {
+      delaySeconds: RETHREAD_DELAY_SECONDS,
+    });
+  } else if (poke) {
+    await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
-  }
-  // A thread agent reads every new message of its thread (only in channels where it is on).
-  if (written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId)) {
-    await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
@@ -379,6 +382,9 @@ export async function processKey(env, key, cache = {}) {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
   };
 }
+
+/** A job's last delivery: the queue retries it five times (`maxRetries`, cloudflare.config.ts). */
+const LAST_ATTEMPT = 6;
 
 /**
  * Queue consumer for NORMALIZE. Each message is acknowledged on its own; a failure is
@@ -403,6 +409,10 @@ export async function consume(batch, env) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
+        if (body.poke) {
+          // eslint-disable-next-line no-await-in-loop
+          await env.NORMALIZE.send({ agent: body.rethread });
+        }
       } else if (body.catchup) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await runCatchUp(env, body.catchup) };
@@ -425,6 +435,11 @@ export async function consume(batch, env) {
       console.error(JSON.stringify({ route: 'normalize', key, error: e.message }));
       // Rate limits (Vectorize, Workers AI) back off longer and spread out.
       const limited = /Too Many Requests|429|rate limit/i.test(e.message);
+      // A root that cannot be re-threaded still gets its agent, before the job is given up.
+      if (body.rethread && body.poke && msg.attempts >= LAST_ATTEMPT) {
+        // eslint-disable-next-line no-await-in-loop
+        await env.NORMALIZE.send({ agent: body.rethread }).catch(() => {});
+      }
       msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
     }
   }

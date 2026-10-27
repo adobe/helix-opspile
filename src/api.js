@@ -419,13 +419,23 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
 
 /**
  * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
- * every member's messages in order. Each message carries its platform `thread`.
+ * every member's messages in order. Each message carries its platform `thread`. A member's
+ * key opens its group (a root that is folded later was opened, linked or kept in a tab under
+ * its own key): `thread.thread` is the entry's key.
  */
-export async function thread(env, me, key, wanted = null) {
-  // The thread and the threads re-threaded into it, in one round trip.
+export async function thread(env, me, asked, wanted = null) {
+  // The thread's group: the thread itself, or the group it was re-threaded into, with every
+  // member, in one round trip.
   const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
-    WHERE thread = ? OR logical_thread = ? ORDER BY root_at`).bind(key, key).all();
-  const row = (memberRows || []).find((m) => m.thread === key);
+    WHERE thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+      OR logical_thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+    ORDER BY root_at`).bind(asked).all();
+  const rows = memberRows || [];
+  const own = rows.find((m) => m.thread === asked);
+  // A group whose first thread is gone (not expected) shows the asked thread on its own.
+  const anchor = own && rows.find((m) => m.thread === (own.logical_thread || asked));
+  const key = anchor ? anchor.thread : asked;
+  const row = anchor || own;
   // Every team whose inbox has it: the one it is filed under, and those its channel is shared
   // with. Read state is the team's the viewer looks at it from (`wanted`, if it is one).
   const teams = row ? await teamsOf(env, row) : [];
@@ -433,7 +443,7 @@ export async function thread(env, me, key, wanted = null) {
     return null;
   }
   const readers = viewTeam(me, teams, wanted);
-  const group = memberRows;
+  const group = anchor ? rows : [own];
   const keys = JSON.stringify(group.map((m) => m.thread));
   // The latest member's label speaks for the group.
   const labelKey = [...group]

@@ -140,6 +140,37 @@ describe('rethread', () => {
     }
   });
 
+  it('tells open inboxes which threads it folded into which group', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          notified.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const env = {
+      DB: d1(), CHANNELS: fakeBucket(), ROOMS, ...fakes(),
+    };
+    const keys = [];
+    for (const [i, ray] of ['a4e16b8edcc84c7a', 'b5f27c9fedd95d8b'].entries()) {
+      const at = new Date(T0 + i * 3600 * 1000).toISOString();
+      // eslint-disable-next-line no-await-in-loop
+      keys.push(await seed(env, `9.${i}`, alert(422, ray, at), at));
+    }
+    await rethread(env, keys[0]);
+    assert.deepEqual(notified, []); // a new topic changes no group
+    await rethread(env, keys[1]);
+    assert.deepEqual(notified, [{
+      team: 'helix', type: 'thread', thread: keys[0], folded: [keys[1]],
+    }]);
+    // Decided again, the same way: nothing moved.
+    await rethread(env, keys[1], { force: true });
+    assert.equal(notified.length, 1);
+  });
+
   it('matches exact repeats by skeleton even when vector search has not caught up', async () => {
     const f = fakes();
     f.VECTORS.query = async () => ({ matches: [] }); // nothing visible yet

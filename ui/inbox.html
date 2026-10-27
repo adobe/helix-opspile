@@ -1806,6 +1806,22 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (state.open !== key) return;
   }
   state.cache.set(key, { data, at: hit ? hit.at : Date.now() });
+  // A member of a folded group (a root re-threaded after it was opened, or a link to it): its
+  // group is the inbox entry, so open that instead of showing the member on its own.
+  const entryKey = data.thread?.thread;
+  if (entryKey && entryKey !== key) {
+    state.cache.delete(key);
+    state.cache.set(entryKey, { data, at: hit ? hit.at : Date.now() });
+    if (state.open !== key) return;
+    // What was typed or is being sent there belongs to the entry now.
+    if (state.composers.has(key) && !state.composers.has(entryKey)) state.composers.set(entryKey, state.composers.get(key));
+    state.composers.delete(key);
+    for (const p of state.sending) if (p.thread === key) p.thread = entryKey;
+    state.open = entryKey;
+    toUrl(false);
+    // The group has messages the member did not: shown as opened, not as new arrivals.
+    return openThread(entryKey, { cached: true });
+  }
   mergeProfiles(data.profiles);
   // Shown from the preload: fetch the current state behind it.
   if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
@@ -2507,7 +2523,13 @@ function connect() {
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'read' && ev.person === state.me.id) return;
-    if (ev.type === 'read' || ev.type === 'thread') reloadSoon(ev.thread);
+    if (ev.type === 'read') reloadSoon(ev.thread);
+    // Threads folded into a group (re-threading): the open one, if it is among them, reopens as
+    // its group; cached copies of them and of the group are out of date.
+    if (ev.type === 'thread') {
+      if (ev.folded) for (const k of [ev.thread, ...ev.folded]) if (k !== state.open) state.cache.delete(k);
+      reloadSoon(ev.folded?.includes(state.open) ? state.open : ev.thread);
+    }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
   };

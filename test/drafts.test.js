@@ -191,6 +191,22 @@ describe('shared drafts', () => {
     assert.deepEqual(e.DB.rows('SELECT thread, body FROM drafts'), [{ thread: ROOT, body: 'merged' }]);
   });
 
+  it('opens a folded thread as its group, not on its own', async () => {
+    const e = env();
+    e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(ROOT, FOLLOW);
+    for (const key of [FOLLOW, ROOT]) {
+      // eslint-disable-next-line no-await-in-loop
+      const data = await (await call(e, BO, 'GET', `/api/thread?thread=${key}`)).json();
+      assert.equal(data.thread.thread, ROOT);
+      assert.deepEqual(data.members.map((m) => m.thread).sort(), [ROOT, FOLLOW]);
+    }
+    // A group whose first thread is gone shows the asked thread alone.
+    e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run('slack:E1:C1:0.1', FOLLOW);
+    const alone = await (await call(e, BO, 'GET', `/api/thread?thread=${FOLLOW}`)).json();
+    assert.equal(alone.thread.thread, FOLLOW);
+    assert.deepEqual(alone.members.map((m) => m.thread), [FOLLOW]);
+  });
+
   it('marks threads with a draft in the inbox and the thread', async () => {
     const e = env();
     await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: `long ${'x'.repeat(200)}`, base: null });

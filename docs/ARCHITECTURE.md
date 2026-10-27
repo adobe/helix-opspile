@@ -211,7 +211,10 @@ first thread. The file stays where it is and the platform thread is never modifi
 the match is a one-field change. Replays arrive in any order, so a root that is matched also
 pulls in near-identical later roots that had found nothing earlier. The inbox shows a group as
 one entry: the first thread's title, the latest activity, the most pressing attention of any
-member, and all members' messages in order.
+member, and all members' messages in order. A root is re-threaded 30 seconds after it arrives,
+so it can be in the inbox on its own until then: a match tells the open inboxes which threads
+it folded, one that has a folded thread open shows its group instead, and opening a member's
+key (a link, a tab) opens its group too.
 
 Vector search uses Workers AI embeddings in Vectorize, written at ingestion time so that a
 message can be matched seconds after it arrives.
@@ -529,8 +532,9 @@ the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
 
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
-(after 15 seconds, so a burst arrives together); it reads the messages after its watermark
-from pile 2 and gets them as one input, the whole thread on first contact. A new message
+(after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
+a root folded into a group pokes the group's agent, not one of its own); it reads the
+messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, a schedule wakes it once more to
 wrap up: file what was learned, or put a follow-up in the draft.
 
