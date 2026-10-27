@@ -942,7 +942,7 @@ function banner() {
     ? 'production API · read-only'
     : `fake data${backendState.expired ? ' · production session not accepted: npm run ui:session' : ''}`;
   const color = prod ? '#2e9e5b' : '#b4540a';
-  return '<div id="dev-banner" style="position:fixed;left:8px;bottom:8px;z-index:9999;'
+  return '<div id="dev-banner" style="position:fixed;left:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:9999;'
     + `font:12px system-ui;padding:3px 8px;border-radius:6px;background:${color};color:#fff">`
     + `${label}</div>`;
 }
