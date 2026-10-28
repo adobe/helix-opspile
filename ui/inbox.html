@@ -662,7 +662,7 @@
   /* A: the smallest change. Unread rows are white (lighter in the dark theme), read rows keep
      a tint a shade deeper than now; unread titles are bold, the time blue. The second line:
      the customer (unless the filters pick one), "Y replies, X mentions", then the latest reply
-     as far as it fits before the reactions. */
+     as far as it fits before the reactions, grey in unread rows too, so the bold title leads. */
   :root[data-design="a"] { --row-read: #121519; --row-unread: #1f242b; }
   @media (prefers-color-scheme: light) {
     :root[data-design="a"] { --row-read: #eff1f4; --row-unread: #fff; }
@@ -680,7 +680,6 @@
   :root[data-design="a"] .t .replies .men { color: var(--red); font-weight: 650; }
   :root[data-design="a"] .t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; color: var(--mute); }
-  :root[data-design="a"] .t.unread .snip { color: color-mix(in srgb, var(--ink) 70%, var(--mute)); }
   :root[data-design="a"] .t .tags { flex: none; }
   :root[data-design="a"] .t .faces .av, :root[data-design="a"] .t .moods .em { border-color: var(--row-bg); }
   :root[data-design="a"] .t .dot.ring { box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 3.5px var(--ring); }
