@@ -119,6 +119,7 @@ describe('inbox page', () => {
       emoji: (x) => x,
       SIGNAL_HINT: {},
       favicon: (x) => x,
+      sendState: () => '',
     });
     const classes = (m) => /class="([^"]*)"/.exec(message({
       thread: 't', id: '1', at: '2026-10-21T10:00:00Z', body: 'hi', ...m,
@@ -163,6 +164,35 @@ describe('inbox page', () => {
     assert.match(open, /<textarea class="editbox"/);
     // While editing: no reactions, no second ✎, and not the old text (the editor gets it).
     assert.doesNotMatch(open, /data-pick=|data-edit="1"|>hi</);
+  });
+
+  it('fills the sending bar towards 90%, then completes it and fades it out', () => {
+    const { sendBar, sendState } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendState', {
+      esc: (x) => String(x ?? ''),
+    });
+    // Waiting for the replies before it: a sliver.
+    assert.deepEqual(sendBar({}, 5000), { fill: 0.08, opacity: 1, over: false });
+    const p = { startedAt: 1000 };
+    const fills = [1000, 1500, 2000, 3000, 10000, 60000].map((t) => sendBar(p, t).fill);
+    assert.equal(fills[0], 0.08);
+    for (let i = 1; i < fills.length; i += 1) {
+      assert.ok(fills[i] > fills[i - 1], `${fills}`);
+    }
+    // About two thirds at a typical send (0.9 s), and never full until the platform has it.
+    assert.ok(sendBar(p, 1900).fill > 0.55 && sendBar(p, 1900).fill < 0.7);
+    assert.ok(fills[5] < 0.9 + 1e-9);
+    // Through after 900 ms: full 250 ms later, then fading for 300 ms, then gone.
+    const done = { startedAt: 1000, doneAt: 1900 };
+    assert.equal(sendBar(done, 1900).fill.toFixed(4), sendBar(p, 1900).fill.toFixed(4));
+    assert.equal(sendBar(done, 2150).fill, 1);
+    assert.equal(sendBar(done, 2150).opacity, 1);
+    assert.ok(sendBar(done, 2300).opacity > 0 && sendBar(done, 2300).opacity < 1);
+    assert.equal(sendBar(done, 2450).over, true);
+    // The same markup while it fills and completes; a reason and Retry once it failed.
+    assert.equal(sendState({ id: 'x', status: 'sending' }), sendState({ id: 'x', status: 'sent' }));
+    assert.match(sendState({ id: 'x', status: 'sending' }), /role="progressbar"/);
+    assert.match(sendState({ id: 'x', status: 'failed', error: 'Slack: is_archived' }), /Not sent: Slack: is_archived[\s\S]*data-retry="x"/);
+    assert.equal(sendState({ id: 'x', status: 'delivered' }), '');
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {

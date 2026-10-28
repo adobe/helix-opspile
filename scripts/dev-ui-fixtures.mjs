@@ -139,6 +139,16 @@ const CHANNELS = {
   edgeQ: {
     source: 'slack', channelId: 'C0EDGEQ01', name: 'edge-questions', org: 'opspile', team: 'edge',
   },
+  // Archived on Slack's side: a reply sent here fails (`rejects` is Slack's error), and shows
+  // as not sent, with Retry.
+  archived: {
+    source: 'slack',
+    channelId: 'C0INITOLD1',
+    name: 'initech-legacy',
+    org: 'initech',
+    team: 'platform',
+    rejects: 'is_archived',
+  },
   // A community server: a forum where every post is a thread.
   forum: {
     source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge',
@@ -646,6 +656,19 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     reads: { dana: 'latest', mei: 'latest' },
     label: {
       kind: 'request', next_actor: 'customer', urgency: 0.5, resolved_p: 0.5,
+    },
+  });
+
+  // Replying here fails: the channel is archived (CHANNELS.archived).
+  seed({
+    ch: CHANNELS.archived,
+    messages: [
+      ['jonas', 50, 'Is the old staging host still needed? We would like to shut it down.'],
+      ['dana', 45, 'Checking with the team.'],
+    ],
+    reads: { dana: 45 },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.7, resolved_p: 0.2,
     },
   });
 

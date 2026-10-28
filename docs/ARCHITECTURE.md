@@ -524,6 +524,18 @@ A reply goes to the latest platform thread of an inbox entry and comes back thro
 normal ingestion path, like any other message. Replies are written in Markdown; on Slack they
 are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`).
 
+A reply shows in the thread at once, as it will look once sent (the person's name, avatar and
+blue bubble from their latest message on the platform), with a thin bar under it, as in
+iMessage. The platform takes a reply in about a second (`POST /api/post`); there is no real
+progress to report, so the bar eases towards 90% and completes and fades once the post
+returns. The bubble then stays until the message comes back through ingestion (some ten
+seconds later: the Slack event, the normalize queue's batch, the live update), and the message
+takes its place unchanged. Replies to a thread go out one after the other, in the order they
+were written. One that failed says why, with **Retry** and **Discard**; it stays until then.
+Leaving the page while a reply is still on its way (a reload, closing the tab) asks first,
+with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
+off.
+
 The one exception is posting **as the opspile app** (`POST /api/post/app`, `src/postapp.js`,
 used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the same post as a
 thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in
