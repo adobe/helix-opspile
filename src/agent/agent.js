@@ -19,9 +19,9 @@ import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
-import { entryOf } from '../drafts.js';
+import { draftOf, draftsFor, entryOf } from '../drafts.js';
 import {
-  agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
+  agentEnabled, deliveryText, discardText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
 import { toolsFor } from './agenttools.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
@@ -39,7 +39,8 @@ import { latestTurn } from './turn.js';
  * knowledge that staff share with it.
  *
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
- * without any (`idle`, a schedule), and about knowledge staff share (`seed`).
+ * without any (`idle`, a schedule), about knowledge staff share (`seed`), and about a draft of
+ * its that a person discarded (`discarded`).
  *
  * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
  * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
@@ -54,6 +55,8 @@ import { latestTurn } from './turn.js';
  */
 
 export const IDLE_SECONDS = 24 * 60 * 60;
+// A discarded draft is told after the inbox's Undo (8 s) has run out.
+export const DISCARD_SECONDS = 30;
 const TARGET_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
@@ -378,6 +381,37 @@ export class ThreadAgent extends Agent {
       whenBusy: 'followUp',
     });
     return { ok: true, accepted: receipt.accepted };
+  }
+
+  /** A person discarded the agent's draft: it is told so once Undo is no longer possible. */
+  async discarded({ by, body, version }) {
+    const problem = modelProblem(this.env);
+    if (problem) {
+      return { error: problem };
+    }
+    await this.schedule(DISCARD_SECONDS, 'discardNote', { by, body, version });
+    return { ok: true };
+  }
+
+  /** Schedule callback: tells the agent who discarded its draft, unless it came back. */
+  async discardNote(payload) {
+    const t = await this.target();
+    if (!payload || !t.key || modelProblem(this.env)
+      || !await agentEnabled(this.env, t.channelId)) {
+      return;
+    }
+    const keys = [t.key, ...(t.threads || [])];
+    const now = draftOf(await draftsFor(this.env, keys), keys);
+    if (now && now.body === payload.body) {
+      // Undone.
+      return;
+    }
+    await this.syncTools();
+    await this.syncMcp();
+    await this.harness.submit(discardText(payload, now), {
+      operationId: `discard:${payload.version}`,
+      whenBusy: 'followUp',
+    });
   }
 
   /**

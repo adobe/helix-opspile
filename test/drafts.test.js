@@ -16,6 +16,7 @@ import {
 } from 'node:test';
 import { api, inbox } from '../src/api.js';
 import { render } from '../src/channels.js';
+import { AGENT_EMAIL } from '../src/drafts.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -153,6 +154,35 @@ describe('shared drafts', () => {
     assert.equal((await res.json()).discarded, true);
     assert.equal(await draftOf(e, ADA), null);
     assert.equal((await (await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT })).json()).discarded, false);
+  });
+
+  it('tells the thread agent who discarded its draft', async () => {
+    const e = env();
+    const told = [];
+    e.AGENT_CHANNELS = 'C1';
+    e.AGENTS = {
+      idFromName: (name) => name,
+      get: (name) => ({
+        async __unsafe_ensureInitialized() {
+          told.push(['init', name]);
+        },
+        async discarded(note) {
+          told.push([name, note]);
+          return { ok: true };
+        },
+      }),
+    };
+    e.DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (91, ?, 'opspile agent', 0)")
+      .run(AGENT_EMAIL);
+    e.DB.sqlite.prepare(`INSERT INTO drafts (thread, body, person, created_at, updated_at)
+      VALUES (?, 'Hi Cy', 91, '2026-10-21T10:01:00Z', '2026-10-21T10:01:00Z')`).run(ROOT);
+    const res = await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: '2026-10-21T10:01:00Z' });
+    assert.equal((await res.json()).discarded, true);
+    assert.deepEqual(told, [['init', ROOT], [ROOT, { by: 'Bo', body: 'Hi Cy', version: '2026-10-21T10:01:00Z' }]]);
+    // A colleague's draft is not the agent's business.
+    await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'Mine', base: null });
+    assert.equal((await (await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT })).json()).discarded, true);
+    assert.equal(told.length, 2);
   });
 
   it('is only for the team that owns the channel', async () => {

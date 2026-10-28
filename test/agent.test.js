@@ -21,7 +21,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable';
 import {
-  agentEnabled, deliveryText, entryMessages, formatMessage, markOf, screen, untrusted,
+  agentEnabled, deliveryText, discardText, entryMessages, formatMessage, markOf, screen, untrusted,
 } from '../src/agent/deliver.js';
 import {
   agentModel, agentProvider, catalogEntry, gatewayBaseUrl, modelProblem,
@@ -30,10 +30,13 @@ import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { setAgent } from '../src/agent/enabled.js';
-import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
+import {
+  agentStatus, pokeAgent, seedAgent, tellDiscarded,
+} from '../src/agent/stub.js';
 import { channelThreads, resolveThread } from '../src/agent/history.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
-import { opspileExtension, staffExtension } from '../src/agent/tools.js';
+import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tools.js';
+import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -324,6 +327,52 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('hear who discarded their draft, and only theirs', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const told = [];
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async __unsafe_ensureInitialized() {
+          told.push(['init', id.name]);
+        },
+        async discarded(note) {
+          told.push([id.name, note]);
+          return { ok: true };
+        },
+      }),
+    };
+    const all = () => true;
+    const ada = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+    const agent = { id: await agentPerson(e) };
+    const discard = async (who) => (await discardDraft(e, who, { thread: THREAD }, all)).json();
+
+    await saveDraft(e, agent, { thread: THREAD, text: 'Hi Cy, we are on it.' }, all);
+    const gone = await discard(ada);
+    assert.equal(gone.discarded, true);
+    assert.deepEqual(await tellDiscarded(e, ada, THREAD, gone), { ok: true });
+    assert.deepEqual(told, [['init', THREAD], [THREAD, {
+      by: 'Ada Staff', body: 'Hi Cy, we are on it.', version: gone.draft.updated_at,
+    }]]);
+
+    // Nothing to tell: no draft, a person's own draft, or a channel without an agent.
+    assert.equal((await tellDiscarded(e, ada, THREAD, await discard(ada))).result, 'skip');
+    e.DB.sqlite.exec("INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (7, 'ada@staff.example', 'Ada Staff', 1)");
+    await saveDraft(e, ada, { thread: THREAD, text: 'Mine' }, all);
+    assert.equal((await tellDiscarded(e, ada, THREAD, await discard(ada))).reason, 'not the agent\'s draft');
+    await saveDraft(e, agent, { thread: THREAD, text: 'Again' }, all);
+    const off = await tellDiscarded({ ...e, AGENT_CHANNELS: '' }, ada, THREAD, await discard(ada));
+    assert.equal(off.reason, 'no agent');
+    assert.equal(told.length, 2);
+
+    const note = discardText({ by: 'Ada Staff', body: 'Hi Cy' }, null);
+    assert.match(note, /^Ada Staff \(Adobe staff\) discarded the shared draft you saved/);
+    assert.match(note, /Do not save it again/);
+    assert.match(note, /<discarded-draft>\nHi Cy\n<\/discarded-draft>$/);
+    assert.match(discardText({ by: 'Ada', body: 'x' }, { by: { name: 'Bo' } }), /Bo has saved another draft since/);
   });
 
   it('call Claude on Bedrock through AI Gateway with the Bedrock key as a bearer token', async () => {
