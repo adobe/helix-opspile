@@ -20,6 +20,10 @@
  *
  * --relabel labels every thread again (titles, Clef, Clairic, tech stack), spread out.
  *
+ * --vectorize embeds every channel thread and its messages again (the CONTENT index), spread
+ * out. The cron does this by itself for threads whose vectors are behind; this redoes all of
+ * them, after a change to what they are made from.
+ *
  * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
  * minutes. Run it after a replay, once the vector index has caught up with the new roots.
  * With --channel <id>, only that channel's roots, one after the other, oldest first: in
@@ -49,6 +53,7 @@ const suffix = mode === 'prod' ? '' : `-${mode}`;
 const clear = args.includes('--clear');
 const rethreadAll = args.includes('--rethread');
 const relabelAll = args.includes('--relabel');
+const vectorizeAll = args.includes('--vectorize');
 const channel = opt('channel', null);
 /** Seconds between two roots of one channel re-threaded in order. */
 const SPACING = 6;
@@ -92,18 +97,26 @@ if (!queue) {
 
 const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
 
-if (rethreadAll || relabelAll) {
+if (rethreadAll || relabelAll || vectorizeAll) {
   const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
   if (channel && (!rethreadAll || !/^[\w:@.-]+$/.test(channel))) {
     throw new Error('--channel takes a channel id, and goes with --rethread');
   }
   const only = channel ? ` AND channel_id = '${channel}'` : '';
-  const sql = rethreadAll
-    ? `SELECT thread FROM threads WHERE root_at IS NOT NULL${only} ORDER BY root_at`
-    : 'SELECT COALESCE(logical_thread, thread) AS thread FROM threads GROUP BY 1';
+  let sql = 'SELECT COALESCE(logical_thread, thread) AS thread FROM threads GROUP BY 1';
+  if (rethreadAll) {
+    sql = `SELECT thread FROM threads WHERE root_at IS NOT NULL${only} ORDER BY root_at`;
+  } else if (vectorizeAll) {
+    sql = "SELECT thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL ORDER BY any_at DESC";
+  }
   if (relabelAll && !dryRun) {
     // Labels are skipped when nothing changed; forget what they were computed for.
     cf('d1', 'query', db.uuid, '--sql', "UPDATE labels SET labeled_through = '', title = NULL");
+  }
+  if (vectorizeAll && !dryRun) {
+    // Vectors are only made again for text that changed: forget what they were made from.
+    cf('d1', 'query', db.uuid, '--sql', 'UPDATE messages SET embedded = NULL WHERE embedded IS NOT NULL; '
+      + 'UPDATE threads SET embedded = NULL, vectorized_through = NULL WHERE vectorized_through IS NOT NULL');
   }
   const res = cf('d1', 'query', db.uuid, '--sql', sql);
   const keys = (res.result || res)[0].results.map((r) => r.thread);
@@ -114,7 +127,8 @@ if (rethreadAll || relabelAll) {
     const file = join(dir, 'rethread.json');
     writeFileSync(file, JSON.stringify(keys.slice(i, i + size)
       .map((thread) => ({
-        body: rethreadAll ? { rethread: thread, force: true } : { label: thread },
+        body: (rethreadAll && { rethread: thread, force: true })
+          || (vectorizeAll && { vectorize: thread }) || { label: thread },
         content_type: 'json',
       }))));
     if (!dryRun) {
@@ -132,7 +146,8 @@ if (rethreadAll || relabelAll) {
       );
     }
   }
-  console.log(`${dryRun ? 'would' : 'will'} ${rethreadAll ? 're-thread' : 'relabel'} ${keys.length} thread(s)`);
+  const what = (rethreadAll && 're-thread') || (vectorizeAll && 'vectorize') || 'relabel';
+  console.log(`${dryRun ? 'would' : 'will'} ${what} ${keys.length} thread(s)`);
   rmSync(dir, { recursive: true, force: true });
   process.exit(0);
 }

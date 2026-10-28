@@ -36,6 +36,7 @@ import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
+import { sweepVectors } from './vectors.js';
 
 const INBOX_PAGE = inboxPage(inboxHtml);
 
@@ -177,8 +178,8 @@ export default {
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
- * MCP servers' tools once a day, and classify a batch of the admin team's channels for the
- * channel suggestions.
+ * MCP servers' tools once a day, classify a batch of the admin team's channels for the
+ * channel suggestions, and enqueue the threads whose message and thread vectors are behind.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -207,6 +208,9 @@ export default {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    ctx.waitUntil(sweepVectors(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
   },
 };
 

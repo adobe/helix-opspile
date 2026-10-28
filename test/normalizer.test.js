@@ -454,6 +454,26 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(e2.DB.rows('SELECT via FROM watermarks'), [{ via: 'post' }]);
   });
 
+  it('vectorizes a thread a person posted in, through the queue', async () => {
+    const stored = new Map();
+    const AI = { run: async (model, { text }) => ({ data: text.map((t) => [t.length, 1]) }) };
+    const CONTENT = {
+      upsert: async (items) => items.forEach((i) => stored.set(i.id, i)),
+      deleteByIds: async (ids) => ids.forEach((id) => stored.delete(id)),
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'site down on https://main--web--acme.aem.live',
+      }),
+    }, { AI, CONTENT });
+    await processKey(e, root);
+    const jobs = e.queued.filter((q) => q.body.vectorize);
+    assert.deepEqual(jobs, [{ body: { vectorize: 'slack:E1:C1:1.1' }, options: { delaySeconds: 120 } }]);
+    await quiet(() => consume({ messages: [{ body: jobs[0].body, ack() {}, retry() {} }] }, e));
+    assert.deepEqual([...stored.values()].map((v) => v.metadata.type).sort(), ['message', 'thread']);
+  });
+
   it('labels a thread with Clef and keeps confident Clairic facts', async () => {
     const calls = [];
     const AI = {
@@ -493,6 +513,8 @@ describe('backfill, mentions and labels', () => {
     await processKey(e, root);
     const labelJobs = e.queued.filter((q) => q.body.label).map((q) => q.options);
     assert.deepEqual(labelJobs, [{ delaySeconds: 120 }]);
+    // No CONTENT index bound: no vector jobs.
+    assert.deepEqual(e.queued.filter((q) => q.body.vectorize), []);
     const r = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO));
     assert.deepEqual([r.result, r.next_actor, r.kind, r.facts], ['labeled', 'us', 'incident', 1]);
     const asked = Object.keys(calls[0].input.questions);
