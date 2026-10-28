@@ -401,8 +401,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
   (`view=personal`, and the default: any address without `team=`) has the conversations of all your teams in the channels you posted or
   were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
-  latest activity first and keeps only the customer card, on which one customer is picked at a
-  time; filters on the cards it does not show do not apply there, and are kept for the team
+  latest activity first and keeps only the customer and platform cards (one customer is picked
+  at a time); filters on the cards it does not show do not apply there, and are kept for the team
   views. Its live updates come from the rooms of all your teams. A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention

@@ -679,6 +679,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
       ['mei', 65, 'Reproduced on two regions, attaching the headers.'],
     ],
+    // Puts a Teams channel in the personal view, so its platform card has more than Slack.
+    mentioned: ['dana'],
   });
 
   seed({
