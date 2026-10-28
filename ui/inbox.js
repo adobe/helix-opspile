@@ -15,6 +15,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const state = {
   me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
+  // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
+  not: {},
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, keep: new Set(), scores: new Map(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
@@ -586,8 +588,39 @@ function valuesOf(f, t) {
 // when you open it.
 const passes = (t, except) => (!state.unread || t.unread || state.keep.has(t.thread))
   && (!personal() || t.kind !== 'alert')
-  && viewFacets().every((f) => f.id === except || !state.sel[f.id]?.size
-    || valuesOf(f, t).some((v) => state.sel[f.id].has(v)));
+  && viewFacets().every((f) => f.id === except || facetPasses(f, t));
+/**
+ * Whether `t` passes facet `f`, as in klickhaus: one of its values is picked (when any are),
+ * and none of them is excluded. Picked values of a facet are OR'd, excluded ones AND'd.
+ */
+function facetPasses(f, t) {
+  const picked = state.sel[f.id];
+  const excluded = state.not[f.id];
+  if (!picked?.size && !excluded?.size) return true;
+  const vs = valuesOf(f, t);
+  return (!picked?.size || vs.some((v) => picked.has(v)))
+    && (!excluded?.size || !vs.some((v) => excluded.has(v)));
+}
+/** Filter values set on facet `id`, picked and excluded. */
+const filterCount = (id) => (state.sel[id]?.size || 0) + (state.not[id]?.size || 0);
+/**
+ * A click on a facet row: plain, it picks the value or drops it; with `exclude` (Shift, or the
+ * row's ≠ button), it excludes the value or stops excluding it. A value is picked or excluded,
+ * never both, and a plain click on an excluded one just stops excluding it.
+ */
+function toggleFilter(id, v, exclude) {
+  const picked = state.sel[id];
+  const excluded = state.not[id];
+  const was = excluded?.has(v) ? 'not' : (picked?.has(v) ? 'sel' : null);
+  picked?.delete(v);
+  excluded?.delete(v);
+  if (exclude && was !== 'not') (state.not[id] ||= new Set()).add(v);
+  else if (!exclude && !was) {
+    if (single(id)) state.sel[id] = new Set([v]);
+    else (state.sel[id] ||= new Set()).add(v);
+  }
+  for (const sets of [state.sel, state.not]) if (!sets[id]?.size) delete sets[id];
+}
 
 /**
  * A facet row's bar. Its length is the count; except on the status card itself, it is
@@ -618,14 +651,17 @@ function facetRows(f) {
   }
   if (f.multi) counts.delete('(none)');
   for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
+  for (const v of state.not[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
   let rows = [...counts];
   const order = typeof f.order === 'function' ? f.order() : f.order;
   if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
   rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
-  if (f.limit) rows = rows.slice(0, f.limit);
+  const on = state.sel[f.id] || new Set();
+  const off = state.not[f.id] || new Set();
+  // Past the limit, the values picked or excluded stay, so they can be clicked off again.
+  if (f.limit) rows = rows.filter(([v], i) => i < f.limit || on.has(v) || off.has(v));
   if (f.group) rows.sort((a, b) => f.groups.indexOf(f.group(a[0])) - f.groups.indexOf(f.group(b[0])));
   const max = Math.max(1, ...rows.map((r) => r[1]));
-  const on = state.sel[f.id] || new Set();
   let group = null;
   return rows.map(([v, n]) => {
     const color = f.color ? f.color(v) : 'c-accent';
@@ -634,10 +670,13 @@ function facetRows(f) {
     const g = f.group && f.group(v);
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
     group = g;
-    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
+    const out = off.has(v);
+    const not = out ? 'Stop excluding' : 'Exclude (or Shift-click the row)';
+    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
       <span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
+      <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
@@ -649,7 +688,7 @@ function renderFilters() { inPass(filterCards); }
 function filterCards() {
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
-    const on = parts.some((x) => state.sel[x.id]?.size);
+    const on = parts.some((x) => filterCount(x.id));
     return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
@@ -775,7 +814,7 @@ function threadRows() {
   const sorter = `<button class="order" data-sort="${mine ? 'team' : 'personal'}" role="switch" aria-checked="${mine}" aria-label="Personal view" title="${mine ? 'Personal: latest activity first, filtered by customer only' : 'Team: what needs you most first, with every filter'}">`
     + `<span class="${mine ? '' : 'on'}">Team</span><span class="${mine ? 'on' : ''}">Personal</span></button>`;
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
-  const on = viewFacets().reduce((n, f) => n + (state.sel[f.id]?.size || 0), 0);
+  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   const count = `${filt}${unread}<span class="sort">${sorter}</span>`;
@@ -1931,6 +1970,7 @@ function toUrl(push = true, entry = null) {
   q.set('team', state.team);
   q.set('filters', '1');
   for (const [id, set] of Object.entries(state.sel)) if (set.size) q.set(`f.${id}`, [...set].join('|'));
+  for (const [id, set] of Object.entries(state.not)) if (set.size) q.set(`not.${id}`, [...set].join('|'));
   if (state.open) q.set('t', state.open);
   if (state.review) q.set('review', '1');
   if (state.sort !== 'team') q.set('sort', state.sort);
@@ -1967,7 +2007,16 @@ function fromUrl() {
   state.team = team || state.me.teams[0]?.slug;
   if (q.has('filters')) {
     state.sel = {};
+    state.not = {};
     for (const [k, v] of q) if (k.startsWith('f.') && v) state.sel[k.slice(2)] = new Set(v.split('|'));
+    // Excluded wins over picked, should a hand-made URL have a value in both.
+    for (const [k, v] of q) {
+      if (!k.startsWith('not.') || !v) continue;
+      const id = k.slice(4);
+      state.not[id] = new Set(v.split('|'));
+      for (const x of state.not[id]) state.sel[id]?.delete(x);
+      if (!state.sel[id]?.size) delete state.sel[id];
+    }
   }
   // `recent` is what the personal view was called before.
   state.sort = ['personal', 'recent'].includes(q.get('sort')) ? 'personal' : 'team';
@@ -2109,18 +2158,17 @@ async function start() {
     const el = e.target.closest('.card');
     if (!el) return;
     if (e.target.dataset.clear) {
-      for (const f of cardFacets(el.dataset.f)) delete state.sel[f.id];
+      for (const f of cardFacets(el.dataset.f)) { delete state.sel[f.id]; delete state.not[f.id]; }
       render(); toUrl(); return;
     }
     const r = e.target.closest('.fr');
     if (!r || r.dataset.v === undefined) return;
-    const id = r.dataset.f;
-    const set = single(id) ? new Set() : (state.sel[id] || new Set());
-    if (state.sel[id]?.has(r.dataset.v)) set.delete(r.dataset.v); else set.add(r.dataset.v);
-    if (set.size) state.sel[id] = set; else delete state.sel[id];
+    toggleFilter(r.dataset.f, r.dataset.v, e.shiftKey || Boolean(e.target.closest('[data-not]')));
     render();
     toUrl();
   };
+  // Shift-click excludes: it should not select the labels it passes over.
+  $('filters').addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('.fr')) e.preventDefault(); });
   // A row under the pointer is about to be opened: fetch it first.
   $('threads').addEventListener('pointerover', (e) => {
     const t = e.target.closest('.t');
@@ -2294,11 +2342,37 @@ const cap = (v) => v[0].toUpperCase() + v.slice(1);
 const toFacet = { platform: cap, waiting_on: cap };
 const fromFacet = { platform: (v) => v.toLowerCase(), next: (v) => v.toLowerCase() };
 
-function activeFilters() {
+/** The filters on screen (or, given `state.not`, the values excluded), as tool arguments. */
+function activeFilters(sets = state.sel) {
   const args = Object.fromEntries(Object.entries(FILTER_ARGS).map(([a, id]) => [id, a]));
   const shown = new Set(viewFacets().map((f) => f.id));
-  return Object.fromEntries(Object.entries(state.sel).filter(([id, set]) => set.size && shown.has(id))
+  return Object.fromEntries(Object.entries(sets).filter(([id, set]) => set.size && shown.has(id))
     .map(([id, set]) => [args[id] || id, [...set].map((v) => (fromFacet[id] ? fromFacet[id](v) : v))]));
+}
+
+/**
+ * filter_threads' filter arguments (`args`, or its `exclude`) as facet values by argument,
+ * `{ error }` when one is not a value the inbox knows.
+ */
+function filterArgs(args) {
+  const next = {};
+  for (const arg of Object.keys(FILTER_ARGS)) {
+    if (!(arg in args) || args[arg] == null) continue;
+    const given = [].concat(args[arg]).map((v) => String(v).trim()).filter(Boolean);
+    if (arg === 'customer') {
+      const orgs = [...new Set(state.data.threads.map((t) => t.org).filter(Boolean))];
+      const picked = given.map((v) => orgs.find((o) => o.toLowerCase() === v.toLowerCase()));
+      const miss = given.filter((v, i) => !picked[i]);
+      if (miss.length) return { error: `No threads from customer ${miss.map((v) => `"${v}"`).join(', ')} in this team. Customers with threads: ${orgs.slice(0, 15).join(', ')}.` };
+      next[arg] = picked;
+    } else {
+      const vals = given.map((v) => v.toLowerCase());
+      const bad = vals.filter((v) => !FILTER_VALUES[arg].includes(v));
+      if (bad.length) return { error: `Invalid ${arg} value(s) ${bad.join(', ')}. Use: ${FILTER_VALUES[arg].join(', ')}.` };
+      next[arg] = vals.map((v) => (toFacet[arg] ? toFacet[arg](v) : v));
+    }
+  }
+  return next;
 }
 
 function threadInfo(t) {
@@ -2344,6 +2418,19 @@ function fillReply(text) {
   box.setSelectionRange(text.length, text.length);
 }
 
+// filter_threads' filters, which it also takes in `exclude`.
+const FILTER_PROPS = {
+  status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: customer silent too long' },
+  waiting_on: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.waiting_on }, description: 'Who has the next move' },
+  urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
+  kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
+  resolved: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.resolved } },
+  type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
+  platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
+  draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
+  customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
+};
+
 const WEBMCP_TOOLS = [
   {
     name: 'get_inbox_state',
@@ -2363,26 +2450,22 @@ const WEBMCP_TOOLS = [
       return out({
         viewer: state.data.me?.name || state.me.name, readonly: Boolean(state.data.me?.readonly),
         team: state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
-        unread_only: state.unread, filters: activeFilters(), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
+        unread_only: state.unread, filters: activeFilters(), excluded: activeFilters(state.not), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
       });
     },
   },
   {
     name: 'filter_threads',
-    description: 'Sets the inbox filters, sort and team on screen, like clicking the filter cards. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. Returns how many threads match. Then call list_threads.',
+    description: 'Sets the inbox filters, sort and team on screen, like clicking the filter cards. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. `exclude` leaves values out, as negative filters. Returns how many threads match. Then call list_threads.',
     inputSchema: {
       type: 'object',
       properties: {
         clear: { type: 'boolean', description: 'Clear every filter first. The default view shows conversations only (type: ["conversation"]).' },
-        status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: customer silent too long' },
-        waiting_on: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.waiting_on }, description: 'Who has the next move' },
-        urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
-        kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
-        resolved: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.resolved } },
-        type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
-        platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
-        draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
-        customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
+        ...FILTER_PROPS,
+        exclude: {
+          type: 'object', properties: FILTER_PROPS, additionalProperties: false,
+          description: 'Values to leave out, by the same filters: e.g. { "platform": ["discord"] } hides Discord threads. Each one given replaces what that filter excludes; an empty list stops excluding. A value excluded is no longer picked.',
+        },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
         sort: { type: 'string', enum: ['team', 'personal'], description: 'team: what needs the viewer most first, with every filter; personal: latest activity first, filtered on one customer at most (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
@@ -2395,29 +2478,22 @@ const WEBMCP_TOOLS = [
       if (args.team && !(state.teams || []).some((t) => t.slug === args.team)) {
         return fail(`Unknown team "${args.team}". Teams: ${(state.teams || []).map((t) => t.slug).join(', ')}.`);
       }
-      const next = {};
-      for (const arg of Object.keys(FILTER_ARGS)) {
-        if (!(arg in args) || args[arg] == null) continue;
-        const given = [].concat(args[arg]).map((v) => String(v).trim()).filter(Boolean);
-        if (arg === 'customer') {
-          const orgs = [...new Set(state.data.threads.map((t) => t.org).filter(Boolean))];
-          const picked = given.map((v) => orgs.find((o) => o.toLowerCase() === v.toLowerCase()));
-          const miss = given.filter((v, i) => !picked[i]);
-          if (miss.length) return fail(`No threads from customer ${miss.map((v) => `"${v}"`).join(', ')} in this team. Customers with threads: ${orgs.slice(0, 15).join(', ')}.`);
-          next[arg] = picked;
-        } else {
-          const vals = given.map((v) => v.toLowerCase());
-          const bad = vals.filter((v) => !FILTER_VALUES[arg].includes(v));
-          if (bad.length) return fail(`Invalid ${arg} value(s) ${bad.join(', ')}. Use: ${FILTER_VALUES[arg].join(', ')}.`);
-          next[arg] = vals.map((v) => (toFacet[arg] ? toFacet[arg](v) : v));
-        }
-      }
+      const next = filterArgs(args);
+      if (next.error) return fail(next.error);
+      const nots = filterArgs(args.exclude || {});
+      if (nots.error) return fail(`exclude: ${nots.error}`);
       const view = args.sort === 'team' || args.sort === 'personal' ? args.sort : state.sort;
       if (view === 'personal' && next.customer?.length > 1) return fail('The personal view filters on one customer at a time. Give one, or sort "team".');
       if (args.team && args.team !== state.team) await switchTeam(args.team);
-      if (args.clear) { state.sel = {}; setUnread(false); }
-      for (const [arg, vals] of Object.entries(next)) {
-        if (vals.length) state.sel[FILTER_ARGS[arg]] = new Set(vals); else delete state.sel[FILTER_ARGS[arg]];
+      if (args.clear) { state.sel = {}; state.not = {}; setUnread(false); }
+      // As on the cards, a value is picked or excluded: the one given last (excluded) wins.
+      for (const [sets, others, given] of [[state.sel, state.not, next], [state.not, state.sel, nots]]) {
+        for (const [arg, vals] of Object.entries(given)) {
+          const id = FILTER_ARGS[arg];
+          if (vals.length) sets[id] = new Set(vals); else delete sets[id];
+          for (const v of vals) others[id]?.delete(v);
+          if (!others[id]?.size) delete others[id];
+        }
       }
       if (args.involves_me === true) state.sel.involves = new Set(['me']);
       else if (args.involves_me === false) delete state.sel.involves;
@@ -2426,7 +2502,9 @@ const WEBMCP_TOOLS = [
       if (typeof args.unread_only === 'boolean') setUnread(args.unread_only);
       render();
       toUrl();
-      return out({ team: state.team, filters: activeFilters(), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length });
+      return out({
+        team: state.team, filters: activeFilters(), excluded: activeFilters(state.not), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length,
+      });
     },
   },
   {
