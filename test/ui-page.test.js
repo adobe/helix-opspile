@@ -228,6 +228,11 @@ describe('inbox page', () => {
     // A reply that arrived with its files matches the one being sent, by its text.
     assert.equal(withoutAttachments('See this\n\nAttachments:\n![a.png](https://x/a.png)').trim(), 'See this');
     assert.equal(withoutAttachments('\n\nAttachments:\n- [a.txt](https://x/a.txt)').trim(), '');
+    assert.equal(withoutAttachments('Two\n\nAttachments:\n![a.png](https://x/a.png "10x10")\n![b.png](https://x/b.png)\n\n- [c.txt](https://x/c.txt)').trim(), 'Two');
+    // A heading of the person's own is text, not a list of files.
+    const own = 'Review note\n\nAttachments:\nThe logs are in the ticket.';
+    assert.equal(withoutAttachments(own), own);
+    assert.equal(withoutAttachments('No files here'), 'No files here');
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {

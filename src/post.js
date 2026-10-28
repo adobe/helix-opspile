@@ -404,16 +404,25 @@ export async function personalToken(env, person, platform) {
     return null;
   }
   const refresh = { grant_type: 'refresh_token', refresh_token: await unseal(env, row.refresh_token) };
-  // Asking for the edit scope on refresh upgrades a token from before it; where the tenant has
-  // not consented to it after all, the token is refreshed as it was. A token with access to
-  // the channel files keeps it.
+  // Asking for the edit scope on refresh upgrades a token from before it; a token with access
+  // to the channel files keeps it. Where the tenant (or the person) has not consented to
+  // either after all, the token is refreshed without it, so replies keep working.
   const files = hasScope(row.scope, FILES_SCOPE.teams);
-  const data = await msToken(env, refresh, teamsScope(env, files)).catch((e) => {
-    if (!env.TEAMS_EDITS) {
-      throw e;
+  const tries = [...new Set([
+    teamsScope(env, files), teamsScope({}, files), teamsScope(env), TEAMS_SCOPE,
+  ])];
+  let data;
+  for (const [i, scope] of tries.entries()) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      data = await msToken(env, refresh, scope);
+      break;
+    } catch (e) {
+      if (i === tries.length - 1) {
+        throw e;
+      }
     }
-    return msToken(env, refresh, teamsScope({}, files));
-  });
+  }
   await saveToken(env, person, platform, {
     userId: row.user_id,
     access: data.access_token,

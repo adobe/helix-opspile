@@ -2585,8 +2585,19 @@ function pendingFiles(files) {
   return `<p>Attachments:</p>${images ? `<p>${images}</p>` : ''}${others ? `<ul>${others}</ul>` : ''}`;
 }
 
-/** Messages' bodies without the list of files the platforms put at their end. */
-const withoutAttachments = (body) => String(body || '').replace(/(^|\n)\s*(<p>)?Attachments:(<\/p>)?[\s\S]*$/, '');
+/**
+ * A message's body without the list of files ingestion puts at its end ("Attachments:", then
+ * only images and links to files, src/normalize.js). Text of its own that starts a line with
+ * "Attachments:" stays.
+ */
+const FILE_LINE = /^(!\[[^\]]*\]\([^)]*\)|- \[[^\]]*\]\([^)]*\)|- .*\(shared from another workspace; opspile cannot see it\))$/;
+function withoutAttachments(body) {
+  const text = String(body || '');
+  const at = text.search(/(^|\n)[ \t]*Attachments:[ \t]*(\n|$)(?![\s\S]*\nAttachments:)/);
+  if (at < 0) return text;
+  const list = text.slice(at).replace(/^\n?[ \t]*Attachments:[ \t]*/, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  return list.length && list.every((l) => FILE_LINE.test(l)) ? text.slice(0, at) : text;
+}
 
 /** The 📎 button, paste in the reply box. Dropping is wired once, on the pane (wireDrop). */
 function wireAttach(key, thread) {
