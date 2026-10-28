@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { joinOnEvent } from './autojoin.js';
 import { text } from './http.js';
 import { dayPath, putRaw, segment } from './raw.js';
 
@@ -132,7 +133,7 @@ function describe(payload, request) {
  * (a credential), before they are acknowledged; if storing fails, the 500 makes Slack
  * retry with the same `event_id`, which rewrites the same key.
  */
-export async function slackEvents(request, env) {
+export async function slackEvents(request, env, ctx) {
   const body = await request.text();
   const reason = await verifySlackSignature({
     secret: env.SLACK_SIGNING_SECRET,
@@ -168,5 +169,12 @@ export async function slackEvents(request, env) {
     return text('storage error\n', 500);
   }
   console.log(JSON.stringify(info));
+  // A new public channel: the app joins it (src/autojoin.js), after the event is stored.
+  const join = joinOnEvent(env, payload).catch((e) => console.warn(JSON.stringify({
+    route: 'slack', join: 'error', error: e.message,
+  })));
+  if (ctx) {
+    ctx.waitUntil(join);
+  }
   return text('', 200);
 }

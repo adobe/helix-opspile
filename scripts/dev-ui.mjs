@@ -26,7 +26,8 @@
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
  *
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
- * (a random one without `thread`) and sends the live update, as the simulation does.
+ * (a random one without `thread`) and sends the live update, as the simulation does; with
+ * `&mention=1` the message mentions Dana, who gets a notification (once the browser allows it).
  *
  * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
  * disk on every request (the Worker imports the same files) as src/page.js puts them together,
@@ -55,6 +56,7 @@ import { pwa } from '../src/pwa.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
+import { mergeSettings, withDefaults } from '../src/settings.js';
 import { readState, waitingOn } from '../src/threads.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
@@ -83,6 +85,11 @@ const kb = await createKnowledgeBases();
 const adminApi = createAdmin(store, { manager: MANAGER, bases: kb.list() });
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
+// Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
+// incidents, so the user menu lists one.
+let settings = withDefaults(store.me, {
+  bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
+});
 const reloadClients = new Set();
 
 // Which backend answers: the presence of a session file selects production, read-only.
@@ -580,7 +587,18 @@ async function api(req, res, url) {
       manages: MANAGER ? ['edge'] : [],
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
+      settings,
     });
+  }
+  if (url.pathname === '/api/settings') {
+    if (req.method === 'PUT') {
+      const r = mergeSettings(store.me, settings, await readJson(req));
+      if (r.error) {
+        return json(res, { error: r.error }, 400);
+      }
+      ({ settings } = r);
+    }
+    return json(res, settings);
   }
   if (url.pathname === '/api/people' && ADMIN) {
     // Everyone in a team, for "View as".
@@ -1028,18 +1046,34 @@ const LINES = [
   'Opened a ticket, linking it here.',
 ];
 
-/** A new message in a random conversation, or in `key` (POST /__dev/simulate?thread=). */
-function simulate(key) {
+/**
+ * A new message in a random conversation, or in `key` (POST /__dev/simulate?thread=). One in
+ * five, and every one with `mention` (`&mention=1`), mentions Dana, who is notified of it.
+ */
+function simulate(key, mention = Math.random() < 0.2) {
   const live = [...store.threads.values()].filter((e) => e.row.kind === 'channel');
   const entry = store.threads.get(key) || live[Math.floor(Math.random() * live.length)];
   const teamMembers = members(entry.row.team).map((m) => store.people.get(m.id));
   // Customers of the thread's org answer sometimes, staff the rest of the time.
   const customers = [...store.people.values()].filter((p) => p.org === entry.row.org);
   const pool = customers.length && Math.random() < 0.5 ? customers : teamMembers;
-  const sender = pool[Math.floor(Math.random() * pool.length)];
-  const body = LINES[Math.floor(Math.random() * LINES.length)];
-  store.post(entry.row.thread, sender.key, body);
-  broadcast(entry.row.team, { type: 'thread', thread: entry.row.thread });
+  const others = pool.filter((p) => p.id !== ME);
+  const sender = others[Math.floor(Math.random() * others.length)] || pool[0];
+  const line = LINES[Math.floor(Math.random() * LINES.length)];
+  const at = new Date().toISOString();
+  const body = mention ? `@${store.me.name} ${line}` : line;
+  store.post(entry.row.thread, sender.key, body, at);
+  if (mention) {
+    store.mentions.push({ thread: entry.row.thread, person: ME, at });
+  }
+  // As src/normalizer.js announces it: whom the message newly mentions, and who wrote it.
+  broadcast(entry.row.team, {
+    type: 'thread',
+    thread: entry.row.thread,
+    ...(mention ? {
+      mentions: [ME], by: sender.id, author: sender.name, at,
+    } : {}),
+  });
   console.log(`[sim] ${sender.name} in ${entry.row.channel_name}`);
 }
 
@@ -1110,7 +1144,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
-      simulate(url.searchParams.get('thread'));
+      simulate(url.searchParams.get('thread'), url.searchParams.get('mention') === '1');
       res.writeHead(204).end();
       return;
     }

@@ -36,6 +36,10 @@ describe('installable app', () => {
     const src = await res.text();
     assert.match(src, /mode !== 'navigate'/);
     assert.doesNotMatch(src, /caches\./);
+    // A click on a notification opens its thread, in an inbox already open if there is one.
+    assert.match(src, /'notificationclick'/);
+    assert.match(src, /opspile:open/);
+    assert.doesNotThrow(() => new Function(src)); // eslint-disable-line no-new-func
     assert.equal(get('/other'), null);
     assert.equal(pwa({ method: 'POST' }, '/sw.js'), null);
   });

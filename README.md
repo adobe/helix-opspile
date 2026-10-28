@@ -54,7 +54,8 @@ still answer.
 | `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/people`, header `x-opspile-as: <person id>` | Admins: the people in the ops teams, and any API call as one of them (read-only: no reads, replies, reviews or connections). |
-| `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. |
+| `POST /api/read`, `GET /api/live?team=` | Mark a thread read; the team's live WebSocket (read events and new activity), served by the team's Durable Object. A new message's `thread` event names the people it newly mentions (`mentions`, with `by`, `author` and `at`), when it was posted in the last hour, so their inboxes notify them. |
+| `GET /api/settings`, `PUT /api/settings` | The signed-in person's notification settings (also in `GET /api/me` as `settings`): `mentions` (notify of messages that mention them; on by default) and `bells` (views that notify of new messages: `{ view, sel, not }`, one of their teams or `~personal` with the filters picked and excluded by facet; at most 20). `PUT` changes what the body has. Kept in D1 (`person_settings`). |
 | `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), with its own OAuth (open client registration, consent behind Access). See "MCP server" below. |
 | `/.well-known/oauth-*`, `/oauth/authorize`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET /api/oauth/consent/…`, `POST /api/oauth/authorize` | OAuth for MCP clients. |
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs, and its latest `turn`: `{ state: working \| done \| failed, text, startedAt, endedAt }`, which the inbox shows under the thread's last message); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. Only in their teams. See "Thread agents". |
@@ -81,6 +82,7 @@ Nothing below is committed; set it on the Worker.
 | `ACCESS_API_TOKEN` | secret | API token with *Access: Apps and Policies Write*, for that sync. Required when `ACCESS_APP_ID` is set |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
+| `SLACK_JOIN_TEAMS` | var | Optional, comma-separated Slack workspace (team) ids: the app joins every public channel there by itself, a new one when it is created and the rest on the cron (40 a run). Needs the bot scope `channels:join` and the `channel_created` and `channel_unarchive` events. Private channels still need an invite; channels the rules mark `ignore` are left out |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `RETIRED_ORIGINS` | var | Optional, comma-separated origins the Worker answered on before `PUBLIC_ORIGIN`: pages opened there (`/`, `/inbox…`, the OAuth consent and connect pages) get a 301 to `PUBLIC_ORIGIN`; Slack events, Graph notifications, `/mcp` and the API still answer; the cron deletes Graph subscriptions that still point there |
@@ -350,7 +352,9 @@ or `src/` restarts the server with fresh data. The pages are the same files the 
 API uses the same `readState`, `parse` and `render` helpers. D1, R2, the team's Durable Object
 and Access are replaced by an in-memory store in
 [scripts/dev-ui-fixtures.mjs](scripts/dev-ui-fixtures.mjs), and you are signed in as Dana.
-New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off).
+New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off),
+one in five mentioning Dana, who gets a notification once the browser allows them
+(`curl -X POST 'localhost:8787/__dev/simulate?mention=1'` sends one).
 No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 <http://localhost:8787/inbox/kb>, over a few made-up knowledge bases in memory
 ([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production.

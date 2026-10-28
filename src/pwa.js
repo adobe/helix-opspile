@@ -56,8 +56,12 @@ background:#1a1e23;color:inherit}</style></head><body><main><h1>You are offline<
 <p>opspile needs a connection to show the inbox.</p>
 <button onclick="location.reload()">Try again</button></main></body></html>`;
 
-/** The service worker's source. Page loads go to the network; only a failed one is answered. */
-export const SERVICE_WORKER = `// opspile service worker: no cache, only an offline page.
+/**
+ * The service worker's source. Page loads go to the network; only a failed one is answered.
+ * The inbox shows its notifications through it (ui/inbox.js); a click on one brings an open
+ * inbox forward and has it open the thread (`opspile:open`), or opens the thread's inbox.
+ */
+export const SERVICE_WORKER = `// opspile service worker: no cache, only an offline page, and notification clicks.
 const OFFLINE = ${JSON.stringify(OFFLINE)};
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
@@ -66,6 +70,22 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(fetch(e.request).catch(() => new Response(OFFLINE, {
     status: 503, headers: { 'content-type': 'text/html; charset=utf-8' },
   })));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/inbox', self.location.origin);
+  if (url.origin !== self.location.origin) return;
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const inboxes = all.filter((c) => new URL(c.url).pathname === '/inbox');
+    const win = inboxes.find((c) => c.focused) || inboxes[0];
+    if (win) {
+      await win.focus();
+      win.postMessage({ type: 'opspile:open', url: url.href });
+      return;
+    }
+    await self.clients.openWindow(url.href);
+  })());
 });
 `;
 

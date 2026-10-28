@@ -23,6 +23,22 @@ jobs:
         npm test --
         --test-reporter=spec --test-reporter-destination=stdout
         --test-reporter=junit --test-reporter-destination="$REVIEW_RESULTS/junit.xml"
+      browsers: true
+      # The inbox UI with fake data (scripts/dev-ui.mjs): D1, R2, the TeamRoom Durable
+      # Object and Cloudflare Access are replaced by an in-memory store, signed in as Dana.
+      environment: |
+        npm run build --silent
+        PORT=$REVIEW_PORT nohup node scripts/dev-ui.mjs --no-sim > "$REVIEW_ENV_DIR/server.log" 2>&1 &
+        echo "http://localhost:$REVIEW_PORT/inbox" > "$REVIEW_ENV_DIR/url"
+        cat > "$REVIEW_ENV_DIR/notes.md" <<'EOF'
+        The inbox UI runs from scripts/dev-ui.mjs with fake data, signed in as Dana Ops
+        (a member of the Platform and Edge ops teams). It serves the real pages and scripts
+        of ui/ and the Worker's shared helpers; D1, R2, the TeamRoom Durable Object and
+        Cloudflare Access are an in-memory store (scripts/dev-ui-fixtures.mjs). See the
+        header of scripts/dev-ui.mjs for the /__dev endpoints (sign-out, simulated messages).
+        Its log is server.log next to these notes.
+        EOF
       review-prompt: >-
         helix-opspile is a Cloudflare Worker. `npm run lint` lints it and
-        `npx cf deploy --dry-run` builds it without deploying.
+        `npx cf deploy --dry-run` builds it without deploying. Check changes
+        to ui/ or the API it calls in the running inbox, on the head and on the base.

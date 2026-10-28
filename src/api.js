@@ -36,6 +36,7 @@ import {
 import {
   memberOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
+import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 import { Timing, withTiming } from './timing.js';
 
@@ -670,12 +671,23 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
       react: me.readonly ? {} : await reactable(env, me.id),
       // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
+      // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
+      settings: me.readonly ? DEFAULTS : await readSettings(env, me),
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
   const writes = request.method !== 'GET' || /^\/api\/auth\//.test(url.pathname);
   if (me.readonly && writes) {
     return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (url.pathname === '/api/settings') {
+    if (request.method === 'GET') {
+      return json(me.readonly ? DEFAULTS : await readSettings(env, me));
+    }
+    if (request.method === 'PUT') {
+      return saveSettings(env, me, await request.json().catch(() => null));
+    }
+    return json({ error: 'GET or PUT' }, 405);
   }
   if (url.pathname === '/api/people') {
     if (!(me.admin || (me.viewer))) {

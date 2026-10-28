@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { transform } from 'esbuild';
+import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
@@ -126,5 +127,17 @@ describe('inbox page', () => {
     // A colleague: on Adobe's side, but not blue.
     assert.deepEqual(classes({ author: { ...staff, name: 'Bo' }, mine: false }), ['msg', 'adobe']);
     assert.deepEqual(classes({ author: { name: 'Cy', kind: 'person', staff: false } }), ['msg']);
+  });
+
+  it('tells bells apart as the server does, whatever order the filters come in', () => {
+    const { bellKey } = piece('// As src/settings.js compares them.', 'const bellOn', 'bellKey');
+    const me = { teams: [{ slug: 'helix' }] };
+    const a = { view: 'helix', sel: { type: ['conversation'], kind: ['incident'] }, not: { org: ['x'] } };
+    const b = { view: 'helix', sel: { kind: ['incident'], type: ['conversation'] }, not: { org: ['x'] } };
+    const [stored] = withDefaults(me, { bells: [a] }).bells;
+    assert.equal(bellKey(a), bellKey(b));
+    assert.equal(bellKey(a), serverBellKey(stored));
+    assert.notEqual(bellKey(a), bellKey({ ...a, view: '~personal' }));
+    assert.notEqual(bellKey(a), bellKey({ ...a, not: {} }));
   });
 });
