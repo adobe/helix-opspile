@@ -196,24 +196,8 @@ const personNamed = (name) => [...store.people.values()].find((p) => p.name === 
   }
 }
 
-// Shared drafts, one per thread, as src/drafts.js keeps them in D1. Tom has one waiting.
-const drafts = new Map();
-{
-  const tom = personNamed('Tom Okafor');
-  const open = [...store.threads.values()]
-    .find((e) => e.row.kind !== 'alert' && (store.labels.get(e.key)?.resolved_p ?? 0) < 0.5);
-  if (open && tom) {
-    const at = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    drafts.set(open.key, {
-      thread: open.key,
-      body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
-      mentions: [],
-      by: { id: tom.id, name: tom.name },
-      created_at: at,
-      updated_at: at,
-    });
-  }
-}
+// Shared drafts, one per thread, as src/drafts.js keeps them in D1 (the fixtures seed some).
+const { drafts } = store;
 const draftSummary = (d) => d && ({
   by: d.by,
   updated_at: d.updated_at,
@@ -738,7 +722,9 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));
-    return result ? json(res, result) : json(res, { error: 'not found' }, 404);
+    // As src/api.js: where "Post messages" is on (the fixtures' `appPosting` channels).
+    const entry = result && store.threads.get(result.thread.thread);
+    return result ? json(res, { ...result, can_post_as_bot: Boolean(entry?.ch.appPosting) }) : json(res, { error: 'not found' }, 404);
   }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
     // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
@@ -833,11 +819,14 @@ async function api(req, res, url) {
     return json(res, { ok: true, draft });
   }
   if ((url.pathname === '/api/post' || url.pathname === '/api/post/app') && req.method === 'POST') {
-    // /api/post/app: as the opspile app (src/postapp.js); the preview lets it post everywhere.
+    // /api/post/app: as the opspile app (src/postapp.js), where the channel lets it.
     const app = url.pathname === '/api/post/app';
     const {
       thread: key, text: reply, mentions = [], draft: base,
     } = await readJson(req);
+    if (app && !store.threads.get(key)?.ch.appPosting) {
+      return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
+    }
     if (base && drafts.get(key)?.updated_at === base) {
       drafts.delete(key);
     }

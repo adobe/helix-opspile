@@ -261,9 +261,14 @@ describe('shared drafts', () => {
       const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-made-up' };
       const off = await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: 'one' });
       assert.equal(off.status, 409);
+      const asBot = async (who) => (await (await call(e, who, 'GET', `/api/thread?thread=${ROOT}`)).json()).can_post_as_bot;
+      assert.equal(await asBot(BO), false);
       e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled,
         changed_by, changed_at) VALUES ('post_message', 'channel', 'C1', 1, 'Ada',
         '2026-10-21T10:00:00Z')`).run();
+      // The thread says so, for its teams' staff, and not when viewing as someone.
+      assert.equal(await asBot(BO), true);
+      assert.equal(await asBot({ ...BO, readonly: true, viewer: { id: 1, name: 'Ada' } }), false);
       const elsewhere = await call(e, EVE, 'POST', '/api/post/app', { thread: ROOT, text: 'one' });
       assert.equal(elsewhere.status, 404);
       const d = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;

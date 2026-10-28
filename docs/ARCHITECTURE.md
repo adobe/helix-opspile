@@ -641,11 +641,22 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 - A draft's `updated_at` is its version. A save names the version its text was written from,
   and a draft that changed meanwhile is not overwritten: the colleague's draft is shown, with
   an offer to overwrite it. A discard does the same.
-- Sending a reply written from the draft uses it up (unless it changed since). Saves and
-  discards are fanned out over the rooms of every team that follows the channel, so every
-  open inbox follows at once; a reply box that still holds the draft unchanged follows the
-  draft, one with your own changes keeps them (and offers to load the draft instead). What
-  you type and do not save stays with its thread in the tab.
+- The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
+  you, or the thread agent), when, and how it starts, opened to all of it with ▾. The reply box
+  is yours, and a draft never replaces what you typed. Resting the pointer on the line, or
+  moving the keyboard focus into it, shows the draft in the box, in place (dashed), and gives
+  the box back as it was when the pointer or focus leaves; the box grows upwards, so the line
+  stays under the pointer. Clicking the line or **Edit** (tapping it, on touch) takes the draft
+  into the box to edit; with text there already, **Add to reply** puts it after that text.
+- The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
+  `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
+  **Post messages** switch is on and its platform's bot is set up). On Discord, and before the
+  Slack or Teams account is connected, Send as bot is the only way to send it from the inbox.
+- Sending a reply written from the draft uses it up (unless it changed since), from the line or
+  from the box. Saves and discards are fanned out over the rooms of every team that follows the
+  channel, so every open inbox follows at once; a reply box that took the draft in and still
+  holds it unchanged follows the draft, one with your own changes keeps them (and the line says
+  the draft changed since). What you type and do not save stays with its thread in the tab.
 - In the inbox, an entry with a draft shows **✎ Draft**, and the **Draft** card filters by
   drafts saved last by you, by a colleague, or none. A draft does not change the status pile.
 

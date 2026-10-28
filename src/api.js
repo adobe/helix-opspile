@@ -23,7 +23,8 @@ import { cachedGraph } from './graph.js';
 import {
   connections, disconnect, editable, finishAuth, mentionable, post, reactable, startAuth,
 } from './post.js';
-import { postApp } from './postapp.js';
+import { appPostCheck, postApp } from './postapp.js';
+import { isStaffDomain } from './lookup.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
@@ -851,8 +852,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }));
   }
   if (url.pathname === '/api/thread') {
-    const result = await thread(env, me, url.searchParams.get('thread'), team);
-    return result ? json(result) : json({ error: 'not found' }, 404);
+    const key = url.searchParams.get('thread');
+    // Whether the viewer may send as the opspile app here (POST /api/post/app): asked
+    // alongside the thread, not after it.
+    const [result, app] = await Promise.all([
+      thread(env, me, key, team),
+      me.readonly || !isStaffDomain(env, me.email) ? null : appPostCheck(env, key),
+    ]);
+    if (!result) {
+      return json({ error: 'not found' }, 404);
+    }
+    result.can_post_as_bot = Boolean(app && !app.problem && inTeam(me, result.thread.teams));
+    return json(result);
   }
   if (url.pathname === '/api/media') {
     return media(env, url.searchParams.get('u'));
