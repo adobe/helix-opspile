@@ -1765,7 +1765,10 @@ function renderDraftBar(key, force = false) {
   const el = $('draftbar');
   if (!el || state.open !== key) return;
   const data = state.cache.get(key)?.data;
-  const d = data?.draft;
+  // A draft on its way (its reply shows in the feed, sending) is not offered again; it comes
+  // back if the reply fails.
+  const going = (x) => x && state.sending.some((p) => p.thread === key && p.base === x.updated_at && p.status !== 'failed');
+  const d = going(data?.draft) ? null : data?.draft;
   const box = $('reply');
   const readonly = state.data?.me?.readonly;
   const c = state.composers.get(key);
