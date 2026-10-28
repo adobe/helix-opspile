@@ -125,25 +125,25 @@ function checkValues(name, values, allowed) {
   return bad.length ? { error: `Invalid ${name}: ${bad.join(', ')}. Use: ${allowed.join(', ')}.` } : null;
 }
 
+/** list_threads' filters on one value of a thread each, as `summary` names them. */
+const FACET_ARGS = ['waiting_on', 'urgency', 'kind', 'platform', 'type', 'customer'];
+const FACET_VALUES = {
+  waiting_on: WAITING, urgency: URGENCY, kind: KINDS, platform: PLATFORMS, type: ['conversation', 'alert'],
+};
+const facetArgs = (args) => Object.fromEntries(FACET_ARGS.map((k) => [k, list(args[k])]));
+/** `{ error }` when a filter (in `exclude` with `prefix`) has a value it does not know. */
+const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
+  .map((k) => checkValues(`${prefix}${k}`, f[k], FACET_VALUES[k])).find(Boolean) || null;
+
 async function listThreads(env, me, args) {
   const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
   const unknown = teams.filter((t) => !inTeamOf(me)(t));
   if (unknown.length) {
     return { error: `Not one of your teams: ${unknown.join(', ')}. Your teams: ${me.teams.map((t) => t.slug).join(', ')}.` };
   }
-  const f = {
-    waiting_on: list(args.waiting_on),
-    urgency: list(args.urgency),
-    kind: list(args.kind),
-    platform: list(args.platform),
-    type: list(args.type),
-    customer: list(args.customer),
-  };
-  const bad = checkValues('waiting_on', f.waiting_on, WAITING)
-    || checkValues('urgency', f.urgency, URGENCY)
-    || checkValues('kind', f.kind, KINDS)
-    || checkValues('platform', f.platform, PLATFORMS)
-    || checkValues('type', f.type, ['conversation', 'alert']);
+  const f = facetArgs(args);
+  const x = facetArgs(args.exclude || {});
+  const bad = checkFacets(f) || checkFacets(x, 'exclude.');
   if (bad) {
     return bad;
   }
@@ -154,21 +154,23 @@ async function listThreads(env, me, args) {
     .sort((a, b) => latest(b).localeCompare(latest(a)));
   const matches = all.filter((t) => {
     const s = summary(t, me);
-    return (!f.waiting_on.length || f.waiting_on.includes(s.waiting_on))
-      && (!f.urgency.length || f.urgency.includes(s.urgency))
-      && (!f.kind.length || f.kind.includes(s.kind))
-      && (!f.platform.length || f.platform.includes(s.platform))
-      && (!f.type.length || f.type.includes(s.type))
-      && (!f.customer.length || f.customer.includes(String(t.org || '').toLowerCase()))
+    const v = { ...s, customer: String(t.org || '').toLowerCase() };
+    // As klickhaus filters: one of the values picked, if any, and none of those excluded.
+    return FACET_ARGS.every((k) => (!f[k].length || f[k].includes(v[k])) && !x[k].includes(v[k]))
       && (args.resolved == null || s.resolved === Boolean(args.resolved))
       && (!args.unread_only || s.unread)
       && (!args.mentions_me || t.mentionedMe)
       && (!args.involves_me || s.posted_in
         || (t.mentioned || []).some((m) => m.person === me.id) || t.mentionedMe);
   });
+  const known = () => [...new Set(all.map((t) => t.org).filter(Boolean))].slice(0, 20).join(', ');
   if (f.customer.length && !matches.length) {
-    const known = [...new Set(all.map((t) => t.org).filter(Boolean))].slice(0, 20);
-    return { error: `No threads from customer ${f.customer.join(', ')}. Customers with threads: ${known.join(', ')}.` };
+    return { error: `No threads from customer ${f.customer.join(', ')}. Customers with threads: ${known()}.` };
+  }
+  // A customer excluded by a name nobody posts under is likely a typo.
+  const strangers = x.customer.filter((c) => !all.some((t) => String(t.org || '').toLowerCase() === c));
+  if (strangers.length) {
+    return { error: `No threads from customer ${strangers.join(', ')} to exclude. Customers with threads: ${known()}.` };
   }
   const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
   const limit = Math.max(1, Math.min(MAX_LIST, Math.floor(Number(args.limit) || 20)));
@@ -576,6 +578,7 @@ const THREAD_ARG = { type: 'string', description: 'Thread key from list_threads'
 const MENTION_ARG = { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' };
 const DRAFT_ARG = { type: 'string', description: 'The `version` of the shared draft (get_thread) this reply sends: it is used up' };
 const TEXT_ITEMS = (values) => ({ type: 'array', items: { type: 'string', enum: values } });
+const CUSTOMER_ARG = { type: 'array', items: { type: 'string' }, description: 'Customer names as list_threads shows them; case does not matter' };
 
 /** Tool definitions, in a fixed order (the spec asks for a deterministic tools/list). */
 export const TOOLS = [
@@ -590,7 +593,7 @@ export const TOOLS = [
   {
     name: 'list_threads',
     title: 'List inbox threads',
-    description: 'Lists threads from the ops inbox of the signed-in person, latest activity first, with who has the next move, urgency, kind and whether they are resolved. Filters combine; all are optional. Titles are written by customers and colleagues.',
+    description: 'Lists threads from the ops inbox of the signed-in person, latest activity first, with who has the next move, urgency, kind and whether they are resolved. Filters combine; all are optional; `exclude` leaves values out. Titles are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -601,7 +604,20 @@ export const TOOLS = [
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
         platform: TEXT_ITEMS(PLATFORMS),
-        customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as list_threads shows them; case does not matter' },
+        customer: CUSTOMER_ARG,
+        exclude: {
+          type: 'object',
+          properties: {
+            waiting_on: TEXT_ITEMS(WAITING),
+            urgency: TEXT_ITEMS(URGENCY),
+            kind: TEXT_ITEMS(KINDS),
+            type: TEXT_ITEMS(['conversation', 'alert']),
+            platform: TEXT_ITEMS(PLATFORMS),
+            customer: CUSTOMER_ARG,
+          },
+          additionalProperties: false,
+          description: 'Values to leave out, by the same filters: e.g. { "platform": ["discord"] } skips Discord threads',
+        },
         unread_only: { type: 'boolean', description: 'Only threads with messages the viewer has not read' },
         mentions_me: { type: 'boolean', description: 'Only threads that mention the viewer' },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },

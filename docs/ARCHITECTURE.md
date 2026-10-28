@@ -353,6 +353,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
+- A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
+  filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
+  cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; an
+  excluded value is struck through, and a plain click stops excluding it.
 - The thread list has two views. **Team** (the default) puts what needs you most first and
   has every facet card. **Personal** (`sort=personal`) puts the latest activity first, shows
   conversations only (no alerts) and keeps only the customer card, on which one customer is
