@@ -92,6 +92,43 @@ describe('inbox page', () => {
     assert.equal(drawerOpens(0.6, 0.1), true);
     assert.equal(drawerOpens(0.4, -0.1), false);
   });
+
+  it('opens the personal view unless the address names a team', () => {
+    const { personalAsked } = piece('const personalAsked', 'function fromUrl', 'personalAsked');
+    const asks = (search) => personalAsked(new URLSearchParams(search));
+    for (const search of ['', '?view=personal', '?sort=personal', '?sort=recent', '?connected=slack', '?t=slack:E1:C1:1.1']) {
+      assert.equal(asks(search), true, search);
+    }
+    // Team links and bookmarks keep their team; an explicit personal view wins over one.
+    assert.equal(asks('?team=helix&filters=1'), false);
+    assert.equal(asks('?team=helix&view=personal'), true);
+  });
+
+  it('shows only the viewer\'s own messages (and those being sent) as theirs', () => {
+    const { message } = piece('const continues', '// ---------------------------------------------------------------- the thread agent', 'message', {
+      dayLabel: () => 'Today',
+      profileKey: () => 'k',
+      avatar: () => '',
+      esc: (x) => String(x ?? ''),
+      clock: () => '10:00',
+      md: (x) => x,
+      canReact: () => false,
+      QUICK: [],
+      emoji: (x) => x,
+      SIGNAL_HINT: {},
+      favicon: (x) => x,
+    });
+    const classes = (m) => /class="([^"]*)"/.exec(message({
+      thread: 't', id: '1', at: '2026-10-21T10:00:00Z', body: 'hi', ...m,
+    }, null, false))[1].split(/\s+/).filter(Boolean);
+    const staff = { name: 'Ada', kind: 'person', staff: true };
+    assert.deepEqual(classes({ author: staff, mine: true }), ['msg', 'adobe', 'mine']);
+    assert.deepEqual(classes({ author: staff, pending: true }), ['msg', 'adobe', 'mine', 'pending']);
+    // A colleague: on Adobe's side, but not blue.
+    assert.deepEqual(classes({ author: { ...staff, name: 'Bo' }, mine: false }), ['msg', 'adobe']);
+    assert.deepEqual(classes({ author: { name: 'Cy', kind: 'person', staff: false } }), ['msg']);
+  });
+
   it('tells bells apart as the server does, whatever order the filters come in', () => {
     const { bellKey } = piece('// As src/settings.js compares them.', 'const bellOn', 'bellKey');
     const me = { teams: [{ slug: 'helix' }] };
