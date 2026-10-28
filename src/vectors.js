@@ -13,6 +13,7 @@
 import { threadMessages } from './label.js';
 import { sha256 } from './raw.js';
 import { EMBEDDING_MODEL } from './rethread.js';
+import { indexThread } from './fulltext.js';
 
 /**
  * Message and thread vectors (CONTENT, Vectorize): one vector per message a person posted in
@@ -163,8 +164,27 @@ async function dropVectors(env, thread) {
 }
 
 /**
- * Brings the vectors of thread `key` and of its messages up to date. Only channel threads
- * (an alert thread is a bot's post) and only what a person wrote.
+ * The thread's full-text items brought up to date (src/fulltext.js). A failure there (the
+ * service, its item limit) is logged and leaves the thread for the sweep to come back to
+ * (`complete: false`), and does not keep the vectors from being made.
+ */
+async function fulltextOf(env, thread, files) {
+  try {
+    return await indexThread(env, thread, files);
+  } catch (e) {
+    console.log(JSON.stringify({
+      route: 'fulltext', thread: thread.thread, error: e.message,
+    }));
+    return {
+      uploaded: 0, removed: 0, complete: false, error: e.message,
+    };
+  }
+}
+
+/**
+ * Brings the vectors of thread `key` and of its messages up to date (CONTENT), and its
+ * messages' full-text items (SEARCH, src/fulltext.js), with whichever of them is bound. Only
+ * channel threads (an alert thread is a bot's post); vectors only for what a person wrote.
  */
 export async function vectorizeThread(env, key) {
   const thread = await env.DB.prepare(`SELECT t.*, COALESCE(l.title, t.title) AS shown_title
@@ -173,11 +193,23 @@ export async function vectorizeThread(env, key) {
     return { result: 'missing' };
   }
   if (thread.kind !== 'channel') {
-    return { result: 'skip', reason: thread.kind, ...await dropVectors(env, thread) };
+    const items = env.SEARCH ? await fulltextOf(env, thread, new Map()) : null;
+    return {
+      result: 'skip',
+      reason: thread.kind,
+      ...await dropVectors(env, thread),
+      ...(items && (items.removed || items.error) ? { fulltext: items } : {}),
+    };
   }
   const { results } = await env.DB.prepare(`SELECT id, at, person, staff, counted, deleted,
       author_key, embedded FROM messages WHERE thread = ?`).bind(key).all();
   const files = new Map((await threadMessages(env, thread)).map((m) => [String(m.id), m]));
+  const fulltext = env.SEARCH ? await fulltextOf(env, thread, files) : null;
+  if (!env.CONTENT || !env.AI) {
+    await env.DB.prepare('UPDATE threads SET indexed_through = ? WHERE thread = ?')
+      .bind(fulltext && fulltext.complete ? thread.any_at : null, key).run();
+    return { result: 'indexed', fulltext };
+  }
   const channel = `${thread.source}:${thread.tenant}:${thread.channel_id}`;
   const common = {
     channel, thread: key, org: thread.org, team: thread.team,
@@ -258,27 +290,39 @@ export async function vectorizeThread(env, key) {
     await remove(env, [await threadVectorId(key)]);
     threadResult = 'removed';
   }
-  await env.DB.prepare('UPDATE threads SET embedded = ?, vectorized_through = ? WHERE thread = ?')
-    .bind(hash, thread.any_at, key).run();
+  await env.DB.prepare(`UPDATE threads SET embedded = ?, vectorized_through = ?,
+      indexed_through = ? WHERE thread = ?`)
+    .bind(hash, thread.any_at, fulltext && fulltext.complete ? thread.any_at : null, key).run();
   return {
-    result: 'vectorized', messages: fresh.length, removed: gone.length, thread: threadResult,
+    result: 'vectorized',
+    messages: fresh.length,
+    removed: gone.length,
+    thread: threadResult,
+    ...(fulltext ? { fulltext } : {}),
   };
 }
 
 /**
- * Cron: enqueues the channel threads whose vectors are older than their latest message, the
- * most recently active first, once they have been quiet for a few minutes. The first runs
- * after a deploy vectorize what was there before.
+ * Cron: enqueues the channel threads whose vectors (or full-text items) are older than their
+ * latest message, the most recently active first, once they have been quiet for a few
+ * minutes. The first runs after a deploy vectorize and index what was there before.
  */
 export async function sweepVectors(env, now = new Date()) {
-  if (!env.CONTENT || !env.AI || !env.NORMALIZE) {
+  const vectors = Boolean(env.CONTENT && env.AI);
+  if ((!vectors && !env.SEARCH) || !env.NORMALIZE) {
     return { skipped: 'no CONTENT index' };
   }
   const { results } = await env.DB.prepare(`SELECT thread FROM threads
     WHERE kind = 'channel' AND last_at IS NOT NULL AND any_at < ?
-      AND (vectorized_through IS NULL OR vectorized_through != any_at)
-    ORDER BY any_at DESC LIMIT ?`)
-    .bind(new Date(now.getTime() - SETTLE_MS).toISOString(), SWEEP).all();
+      AND ((?3 AND (vectorized_through IS NULL OR vectorized_through != any_at))
+        OR (?4 AND (indexed_through IS NULL OR indexed_through != any_at)))
+    ORDER BY any_at DESC LIMIT ?2`)
+    .bind(
+      new Date(now.getTime() - SETTLE_MS).toISOString(),
+      SWEEP,
+      vectors ? 1 : 0,
+      env.SEARCH ? 1 : 0,
+    ).all();
   const jobs = (results || []).map((r) => ({ body: { vectorize: r.thread } }));
   if (jobs.length) {
     await env.NORMALIZE.sendBatch(jobs);

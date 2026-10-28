@@ -384,8 +384,10 @@ export async function processKey(env, key, cache = {}) {
   if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
-  // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away.
-  if (cls.kind === 'channel' && (author.kind === 'person' || deleted) && env.CONTENT && env.AI) {
+  // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away. The
+  // full-text index (SEARCH) has the bots' messages too.
+  const vectors = (author.kind === 'person' || deleted) && env.CONTENT && env.AI;
+  if (cls.kind === 'channel' && (vectors || env.SEARCH)) {
     await env.NORMALIZE.send({ vectorize: message.thread }, {
       delaySeconds: VECTORIZE_DELAY_SECONDS,
     });

@@ -251,6 +251,24 @@ which also fills the index the first time. Alert threads (a bot's posts) get no 
 A re-filed thread's vectors are made again (its hashes cleared, a vectorize job queued), so
 that they carry its new team and org; re-filed as an alert or ignored, it loses them.
 
+A third index, `SEARCH` ([src/fulltext.js](../src/fulltext.js)), is for full-text search: an
+[AI Search](https://developers.cloudflare.com/ai-search/) instance with built-in storage, one
+item per message of a channel thread (people's and bots', not system notices), its markdown
+body as it is. It carries `team`, `channel` (a hash of the channel key: AI Search filters read
+the first 64 bytes of a value, and a Teams channel key is longer), `message` (`<thread>|<id>`)
+and `at`. The vectors find what a message is about; BM25 here finds the words it has, an error
+string, a hostname or an id, which an embedding blurs. Its items are kept in step by the same
+job as the vectors: each message keeps a hash of its team and text (`messages.indexed`) and
+its item's id (`messages.search_item`), so an edit uploads one item again (a re-upload under
+the same name replaces it), a deletion takes it away, and a re-filed thread's items are
+uploaded again under the new team (re-filed as an alert or ignored, it loses them). A failure
+leaves a message's row as it was, so the next run tries again, and does not keep the vectors
+from being made; an item whose deletion failed keeps its id until it is gone. Search only
+counts and shows an item whose message D1 has and is not deleted, so a deleted message's words
+are never found, whatever is left in the index. A job uploads at most 100; `threads.indexed_through` tells
+the cron's sweep which threads are behind. AI Search's own vectors (the instance is hybrid)
+are not used yet: the `CONTENT` vectors already do that part.
+
 ### 3. Knowledge bases
 
 One [Artifacts](https://blog.cloudflare.com/artifacts-git-for-agents-beta/) repository per org
@@ -360,17 +378,19 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   Teams reports on each message.
 - **Search** is the box over the thread list (`/` jumps to it): one search over the view on
   screen, a team's inbox or the personal view (`view=personal`), on every platform at once, Slack, Teams and Discord alike (`GET /api/search`,
-  [src/search.js](../src/search.js)). It looks two ways and adds them up. By meaning: the
+  [src/search.js](../src/search.js)). It looks three ways and adds them up. By meaning: the
   query is embedded (bge, with its instruction for short queries) and the `CONTENT` index
   answers with the team's message and thread vectors and those of the channels shared with it;
-  a match needs a similarity of 0.6 and to be within 0.12 of the best one. By words: every
+  a match needs a similarity of 0.6 and to be within 0.12 of the best one. By the words of a
+  message: `SEARCH` with BM25, every word in one message (Porter stemming: "purged" finds
+  "purge"), the recent boosted; the best scores 0.7, the others by their BM25 score relative to
+  it. By the words of the thread: every
   word of the query in the title, the channel or the customer (the more of them in the title,
   the better), or in a fact (a URL, ticket, CVE, site, the problem). Members of a re-threaded
   group count for its entry, and D1 decides what the viewer sees, as for the inbox. The results
   take the list's place, best match first, each with the message that matched (its words
   marked); opening one scrolls the thread to that message. The filter cards count and filter
   the results, j and k step through them, and Esc or **Clear** brings the inbox back.
-  Words in message bodies are found through their vectors only: the text stays in pile 2.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; an

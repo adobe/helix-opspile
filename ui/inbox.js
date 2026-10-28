@@ -791,7 +791,7 @@ function marked(text, words) {
   return String(text).split(new RegExp(`(${ws.join('|')})`, 'gi'))
     .map((part, i) => (i % 2 ? `<mark>${emojify(part)}</mark>` : emojify(part))).join('');
 }
-const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', topic: 'About this' };
+const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', text: 'Words in a message', topic: 'About this' };
 const FACT_LABEL = { url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline' };
 /** A result's third line: the message that matched, else the fact, else why it matched. */
 function hitLine(hit) {
@@ -3034,7 +3034,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'search_threads',
-    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning) and threads whose title, channel, customer or facts have its words, best match first, each with what matched and the message that matched best. The filters on screen apply to the results; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best. The filters on screen apply to the results; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {

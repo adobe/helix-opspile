@@ -151,20 +151,22 @@ async function moveFolder(bucket, from, to, budget) {
 }
 
 /**
- * The message and thread vectors (CONTENT) carry the team and org a thread was filed under,
- * and search asks for a team's: those of re-filed threads are made again, under the new ones.
- * A thread that is no longer a channel thread (`kind`, now an alert or ignored) loses them:
- * its hashes stay, so the job knows which to take away.
+ * The message and thread vectors (CONTENT) and the full-text items (SEARCH) carry the team a
+ * thread was filed under, and search asks for a team's: those of re-filed threads are made
+ * again, under the new one (an item's hash has the team in it, so it is uploaded again). A
+ * thread that is no longer a channel thread (`kind`, now an alert or ignored) loses them: its
+ * hashes and item ids stay, so the job knows which to take away.
  */
 async function revectorize(env, threads, kind) {
-  if (!threads.length || !env.CONTENT || !env.NORMALIZE.sendBatch) {
+  if (!threads.length || !(env.CONTENT || env.SEARCH) || !env.NORMALIZE.sendBatch) {
     return;
   }
   const keys = JSON.stringify(threads);
   if (kind === 'channel') {
     await env.DB.prepare(`UPDATE messages SET embedded = NULL
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
-    await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL
+    await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL,
+        indexed_through = NULL
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
   }
   for (let i = 0; i < threads.length; i += 100) {
