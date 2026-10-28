@@ -85,7 +85,8 @@ export const fingerprint = (servers) => servers.map((s) => `${s.id}@${s.updated_
 
 /** Connects to a server and lists its tools: `{ tools, instructions }` or `{ error }`. */
 async function ask(env, s, { fetch: fetchFn }) {
-  const full = await serverWithHeaders(env, s.id).catch((e) => ({ error: e.message }));
+  const full = await serverWithHeaders(env, s.id, { fetch: fetchFn })
+    .catch((e) => ({ error: e.message }));
   return full && !full.error
     ? probe(full, { fetch: fetchFn })
     : { error: (full && full.error) || 'not available' };
@@ -325,7 +326,7 @@ export class AgentMcp {
       pending = null;
     }
     if (!pending) {
-      const opened = serverWithHeaders(this.env, server.id).then((full) => {
+      const opened = serverWithHeaders(this.env, server.id, { fetch: this.fetch }).then((full) => {
         if (!full) {
           throw new Error(`the MCP server ${server.name} was removed or turned off`);
         }

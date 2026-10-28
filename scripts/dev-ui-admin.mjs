@@ -29,7 +29,9 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * The agents' MCP servers (the editor's "MCP servers"): a few made-up ones answer in memory at
  * `https://*.mcp.example` and `https://status.acme.example` (test/mcp-server.js), so adding and
  * checking a server works in the preview; any other `.example` URL fails the check, as an
- * unreachable server would.
+ * unreachable server would. `https://wiki.mcp.example/mcp` signs in with OAuth: its made-up
+ * authorization server registers any client and grants at once (its sign-in page is the
+ * preview's `/__dev/oauth/authorize`, which sends the browser straight back), so Connect works.
  *
  * The global servers: Cloudflare's Browser Run MCP server answers in memory (made up), and so
  * do GitHub's API and its MCP server for a made-up GitHub App, installed on one made-up
@@ -74,6 +76,47 @@ const MCP = fakeMcpServers([
     ], 'site'),
   },
 ]);
+const PREVIEW_OAUTH_TOKEN = 'preview-oauth-token';
+const PREVIEW_ORIGIN = `http://localhost:${Number(process.env.PORT) || 8787}`;
+const WIKI = 'https://wiki.mcp.example';
+const WIKI_MCP = fakeMcpServers([{
+  url: `${WIKI}/mcp`,
+  name: 'wiki',
+  token: PREVIEW_OAUTH_TOKEN,
+  tools: tools([
+    ['search_wiki', 'Search the team wiki', true],
+    ['read_wiki_page', 'Read one wiki page', true],
+  ], 'query'),
+}]);
+/** The wiki's authorization server, made up: any client, any code, one token. */
+async function wikiOauth(request) {
+  const { pathname } = new URL(request.url);
+  if (pathname.startsWith('/.well-known/oauth-protected-resource')) {
+    return Response.json({ resource: `${WIKI}/mcp`, authorization_servers: [WIKI] });
+  }
+  if (pathname === '/.well-known/oauth-authorization-server') {
+    return Response.json({
+      issuer: WIKI,
+      authorization_endpoint: `${PREVIEW_ORIGIN}/__dev/oauth/authorize`,
+      token_endpoint: `${WIKI}/token`,
+      registration_endpoint: `${WIKI}/register`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+      token_endpoint_auth_methods_supported: ['none'],
+    });
+  }
+  if (pathname === '/register') {
+    const body = await request.json();
+    return Response.json({ ...body, client_id: 'preview-client' }, { status: 201 });
+  }
+  if (pathname === '/token') {
+    return Response.json({
+      access_token: PREVIEW_OAUTH_TOKEN, token_type: 'Bearer', expires_in: 3600, refresh_token: 'preview-refresh',
+    });
+  }
+  return WIKI_MCP.fetch(request);
+}
 const PREVIEW_INSTALL_TOKEN = 'ghs_preview';
 const GLOBAL_MCP = fakeMcpServers([
   {
@@ -136,6 +179,9 @@ globalThis.fetch = (input, init) => {
   if (MCP.handles(url)) {
     return MCP.fetch(input, init);
   }
+  if (url.startsWith(`${WIKI}/`)) {
+    return wikiOauth(new Request(input, init));
+  }
   if (GLOBAL_MCP.handles(url)) {
     return GLOBAL_MCP.fetch(input, init);
   }
@@ -167,6 +213,13 @@ const SEED_MCP = [
     url: 'https://tickets.internal.example/mcp',
     description: 'The ticket tracker',
     headers: [{ name: 'X-Api-Key', value: 'preview' }],
+  },
+  {
+    repo: 'kb-team-platform',
+    name: 'wiki',
+    url: `${WIKI}/mcp`,
+    description: 'The team wiki, as the person who connects it',
+    auth: 'oauth',
   },
   {
     repo: 'kb-org-acme', name: 'acme-status', url: 'https://status.acme.example/mcp', description: 'ACME\'s own status service: uptime and their open incidents',
@@ -407,7 +460,7 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     AGENT_CHANNELS: 'C0ACMEAEM',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
-    PUBLIC_ORIGIN: 'http://localhost:8788',
+    PUBLIC_ORIGIN: PREVIEW_ORIGIN,
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
     // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader.

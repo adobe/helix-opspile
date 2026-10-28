@@ -553,6 +553,15 @@ async function kbApi(req, res, url) {
   if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools'].includes(url.pathname)
     || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')) {
     const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);
+    // Back from an MCP server's OAuth sign-in: a redirect to the editor, or a page of text.
+    if (r.status >= 300 && r.status < 400) {
+      res.writeHead(r.status, { location: r.headers.get('location') }).end();
+      return true;
+    }
+    if (!(r.headers.get('content-type') || '').includes('json')) {
+      res.writeHead(r.status, { 'content-type': 'text/plain; charset=utf-8' }).end(await r.text());
+      return true;
+    }
     const out = await r.json();
     if (url.pathname === '/api/kb') {
       const names = new Map(kb.list().map((b) => [b.repo, b.name]));
@@ -1318,6 +1327,15 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
       simulate(url.searchParams.get('thread'), url.searchParams.get('mention') === '1');
       res.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/__dev/oauth/authorize') {
+      // The made-up wiki's sign-in (scripts/dev-ui-admin.mjs): granted at once.
+      const back = new URL(url.searchParams.get('redirect_uri'));
+      back.searchParams.set('code', 'preview-code');
+      back.searchParams.set('state', url.searchParams.get('state') || '');
+      back.searchParams.set('iss', 'https://wiki.mcp.example');
+      res.writeHead(302, { location: back.href }).end();
       return;
     }
     if (url.pathname === '/__dev/reload') {

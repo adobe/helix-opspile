@@ -739,7 +739,8 @@ thread, so a script that computes holds up only its own agent, for at most its i
 budget), every call it makes is a nested tool call, and a script interrupted by an eviction
 resumes where it was without making its finished calls again. Each ops team and each customer
 can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
-per-channel switch; credentials are request headers sealed with `TOKEN_KEY`). An agent gets the enabled servers of its thread's team and
+per-channel switch; credentials are request headers sealed with `TOKEN_KEY`, or an OAuth
+grant, below). An agent gets the enabled servers of its thread's team and
 customer: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
 offered to the model as a tool of its own, and each server is a code mode namespace that
 `describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
@@ -750,6 +751,27 @@ servers and tools (no credentials) is kept in the agent's storage, so a restarte
 same tools at once; before the agent is told anything it is checked against D1, and the servers
 are asked again when it changed or after an hour. MCP results come from systems outside
 opspile; the prompt says they are data, not instructions, like customer messages.
+
+**MCP servers with OAuth.** A server can sign in with OAuth instead of headers (`auth`
+'oauth', `src/agent/mcpoauth.js`); opspile is then the OAuth client. Someone who manages the
+server **connects** it in the editor: opspile asks the server without credentials and follows
+its 401 to the protected resource metadata (RFC 9728) and its authorization server's metadata
+(RFC 8414 or OpenID), registers itself there (RFC 7591) unless staff gave a client id, and
+sends the browser to the authorization endpoint with PKCE (S256), a resource indicator and a
+`state` whose hash finds the server again. The callback, `/api/kb/mcp/oauth/callback`, is behind
+Access, and only the person who started may finish, within ten minutes; the grant (client,
+tokens, the authorization server's metadata) is kept sealed in `mcp_servers.oauth`, with who
+connected it and when in plain columns. **The agents act as that person** at the server.
+Agents and the editor's check get the token from the transport's auth provider: the stored one
+until two minutes before it expires, else a refresh, and a refresh too when the server answers
+401. Many agents share one grant and refresh tokens may be single-use (opspile's own are), so
+only the holder of a 30-second lease in D1 (`oauth_lock`) refreshes, and the others wait and
+read its result. A grant the server rejects (`invalid_grant`) is dropped with the reason, which
+the editor and the agents' prompt show until someone connects again; a new URL, client or
+scope, a switch back to headers, **Disconnect** and deleting the server revoke it where the
+server has a revocation endpoint. The cron refreshes grants nobody refreshed for a week, so
+refresh tokens that expire unused (opspile's own after 30 days) stay alive. opspile's own
+`/mcp` is such a server, so agents can be given what a person sees in the inbox.
 
 ### Global MCP servers
 

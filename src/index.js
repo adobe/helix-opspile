@@ -20,6 +20,7 @@ import kbJs from '../ui/kb.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
+import { keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
@@ -191,9 +192,10 @@ export default {
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
- * MCP servers' tools once a day, classify a batch of the admin team's channels for the
- * channel suggestions, join the public Slack channels the app is not in (SLACK_JOIN_TEAMS), and
- * enqueue the threads whose message and thread vectors are behind.
+ * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
+ * the admin team's channels for the channel suggestions, join the public Slack channels the app
+ * is not in (SLACK_JOIN_TEAMS), and enqueue the threads whose message and thread vectors are
+ * behind.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -216,6 +218,11 @@ export default {
         .then((r) => console.log(JSON.stringify({ route: 'cron', discord: r.state })))
         .catch((e) => console.error(JSON.stringify({ route: 'cron', discord: 'error', error: e.message }))));
     }
+    // OAuth grants of the agents' MCP servers that nobody used for a week: refreshed, so that
+    // refresh tokens that expire unused stay alive.
+    ctx.waitUntil(keepOAuthAlive(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mcpOauth: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpOauth: 'error', error: e.message }))));
     ctx.waitUntil(refreshGlobalTools(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));

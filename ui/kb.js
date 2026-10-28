@@ -361,7 +361,9 @@ async function switchAgent(c) {
 // The MCP servers the thread agents of this team (kb-team-*) or customer (kb-org-*) may use,
 // over /api/kb/mcp (src/mcpadmin.js). Agents call their tools from code mode scripts, as
 // `tools.mcp__<name>__<tool>`. Credentials are request headers: sent once, then only their
-// names come back.
+// names come back. Or the server signs in with OAuth: Connect sends the browser to the server's
+// sign-in (/api/kb/mcp/oauth/start), which comes back to the editor with `mcp_connected=<id>`
+// or `mcp_error=<why>` (src/agent/mcpoauth.js); the agents then act as whoever connected it.
 
 /** This knowledge base's MCP servers, and the global ones; null when unknown. */
 async function loadMcp(repo) {
@@ -397,26 +399,38 @@ async function showMcp({ force = false, nav = 'push' } = {}) {
   return true;
 }
 
+/** How an OAuth server is signed in, for its row. */
+function oauthCreds(o) {
+  if (o.connected) return `OAuth: connected by ${o.by}, ${ago(o.at)}; the agents act as them`;
+  return o.by ? `OAuth: connected by ${o.by}, no longer works` : 'OAuth: not connected';
+}
+
 function mcpRow(s) {
   const allowed = new Set(String(s.allow || '').split(/[\s,]+/).filter(Boolean));
   const usable = mcpUsable(s);
+  const oauth = s.auth === 'oauth' ? s.oauth : null;
   let status = '<span class="src">not checked</span>';
-  if (s.checkError) status = '<span class="src err">unreachable</span>';
+  if (oauth && !oauth.connected) status = `<span class="src${oauth.error ? ' err' : ''}">${oauth.error ? 'sign-in expired' : 'not connected'}</span>`;
+  else if (s.checkError) status = '<span class="src err">unreachable</span>';
   else if (s.checkedAt) status = `<span class="src ok">${usable} tool${usable === 1 ? '' : 's'}</span>`;
   const tools = s.tools.map((t) => {
     const off = allowed.size && !allowed.has(t.name);
     return `<span class="src${off ? ' off' : ''}" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}${off ? ' (not for agents)' : ''}">${esc(t.name)}</span>`;
   }).join('');
-  const creds = s.headerNames.length ? s.headerNames.map((h) => `${h} ••••`).join(', ') : 'no credentials';
+  const creds = oauth ? oauthCreds(oauth)
+    : s.headerNames.length ? s.headerNames.map((h) => `${h} ••••`).join(', ') : 'no credentials';
+  const signIn = oauth ? `<button data-connect="${s.id}"${oauth.connected ? '' : ' class="primary"'}>${oauth.connected ? 'Reconnect' : 'Connect'}</button>${oauth.connected ? `<button data-disconnect="${s.id}">Disconnect</button>` : ''}` : '';
+  const checkable = !oauth || oauth.connected;
   return `<div class="ch">
     <div class="who">
       <div class="nm">${esc(s.name)}<span class="src mono">mcp__${esc(s.name.replace(/[^a-z0-9_]/g, '_'))}</span>${status}</div>
       <div class="sub">${esc([s.description, s.url].filter(Boolean).join(' · '))}</div>
+      ${oauth && oauth.error ? `<div class="sub err">${esc(oauth.error)}</div>` : ''}
       ${s.checkError ? `<div class="sub err">${esc(s.checkError)}</div>` : ''}
       ${tools ? `<div class="tags">${tools}</div>` : ''}
       <div class="sub by">${esc([creds, s.checkedAt && `checked ${ago(s.checkedAt)}`, s.updatedBy && `changed by ${s.updatedBy}`].filter(Boolean).join(' · '))}</div>
     </div>
-    <span class="acts"><button data-check="${s.id}">Check</button><button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>
+    <span class="acts">${signIn}${checkable ? `<button data-check="${s.id}">Check</button>` : ''}<button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>
     <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
     <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents'}" data-server="${s.id}"></button>
   </div>`;
@@ -647,20 +661,43 @@ function globalRow(g) {
 
 function mcpForm(s = {}) {
   const set = s.headerNames && s.headerNames.length;
+  const auth = s.auth || 'headers';
+  const o = s.oauth || {};
+  const hide = (kind) => (auth === kind ? '' : ' hidden');
   return `<form class="mcpform" id="mcpForm" autocomplete="off">
     <h3>${s.id ? `Edit ${esc(s.name)}` : 'Add a server'}</h3>
     <label for="mName">Name</label><input id="mName" class="mono" placeholder="docs" value="${esc(s.name || '')}" required pattern="[a-z][a-z0-9_\\-]*" style="max-width:240px">
     <label for="mUrl">URL</label><input id="mUrl" class="mono" placeholder="https://mcp.example.com/mcp" value="${esc(s.url || '')}" required>
     <label for="mDesc">What it is for</label><input id="mDesc" placeholder="Told to the agents, e.g. Product documentation search" value="${esc(s.description || '')}">
-    <label for="mHdrName">Header</label><span class="pair"><input id="mHdrName" class="mono" placeholder="Authorization"><input id="mHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
-    <span class="hint">${set ? `${esc(s.headerNames.join(', '))} set; fill in a header to replace ${s.headerNames.length === 1 ? 'it' : 'them'}.` : 'An API key or a bearer token. Stored encrypted, never shown again.'}</span>
+    <label for="mAuth">Sign-in</label><select id="mAuth" style="max-width:360px">
+      <option value="headers"${auth === 'headers' ? ' selected' : ''}>Request headers: an API key or a token</option>
+      <option value="oauth"${auth === 'oauth' ? ' selected' : ''}>OAuth: someone signs in at the server</option></select>
+    <label for="mHdrName" data-auth="headers"${hide('headers')}>Header</label><span class="pair" data-auth="headers"${hide('headers')}><input id="mHdrName" class="mono" placeholder="Authorization"><input id="mHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
+    <span class="hint" data-auth="headers"${hide('headers')}>${set ? `${esc(s.headerNames.join(', '))} set; fill in a header to replace ${s.headerNames.length === 1 ? 'it' : 'them'}.` : 'An API key or a bearer token. Stored encrypted, never shown again.'}</span>
+    <span class="hint wide" data-auth="oauth"${hide('oauth')}>Once it is saved, Connect sends you to the server's sign-in, and the agents then call it as you, with what you may do there. Most servers let opspile register itself; for one that does not, register a client there with the redirect URI <span class="mono">${esc(location.origin)}/api/kb/mcp/oauth/callback</span> and give its id.</span>
+    <label for="mClientId" data-auth="oauth"${hide('oauth')}>Client id</label><input id="mClientId" data-auth="oauth" class="mono" placeholder="optional: opspile registers itself" value="${esc(o.clientId || '')}"${hide('oauth')}>
+    <label for="mClientSecret" data-auth="oauth"${hide('oauth')}>Client secret</label><input id="mClientSecret" data-auth="oauth" class="mono" type="password" placeholder="${o.clientSecret ? 'set; fill in to replace it' : 'optional, with a client id'}"${hide('oauth')}>
+    <label for="mScope" data-auth="oauth"${hide('oauth')}>Scope</label><input id="mScope" data-auth="oauth" class="mono" placeholder="optional: what the server asks for" value="${esc(o.scope || '')}"${hide('oauth')}>
     <label for="mAllow">Only these tools</label><input id="mAllow" class="mono" placeholder="all tools; or comma-separated names" value="${esc(s.allow || '')}">
-    <span class="apply"><button class="primary">${s.id ? 'Save and check' : 'Add and check'}</button>${s.id ? '<button type="button" id="mCancel">Cancel</button>' : ''}
-      ${set ? '<button type="button" class="danger" id="mClear">Remove the headers</button>' : ''}</span>
+    <span class="apply"><button class="primary" id="mSave">${s.id ? 'Save' : 'Add'} ${auth === 'oauth' && !o.connected ? 'and connect' : 'and check'}</button>${s.id ? '<button type="button" id="mCancel">Cancel</button>' : ''}
+      ${set ? `<button type="button" class="danger" id="mClear" data-auth="headers"${hide('headers')}>Remove the headers</button>` : ''}</span>
   </form>`;
 }
 
-function renderMcp(note) {
+/** What the server's sign-in said, when the editor opens after it: once. */
+function flashNote() {
+  const f = state.flash;
+  state.flash = null;
+  if (!f) return null;
+  if (f.error) return { kind: 'err', text: `The sign-in did not work: ${f.error}` };
+  const s = (state.mcp || []).find((x) => String(x.id) === f.connected);
+  if (!s) return null;
+  if (s.checkError) return { kind: 'warn', text: `Connected ${s.name} as you, but it could not be reached: ${s.checkError}` };
+  return { kind: 'ok', text: `Connected ${s.name} as you: ${mcpUsable(s)} tool${mcpUsable(s) === 1 ? '' : 's'} for the agents.` };
+}
+
+function renderMcp(shownNote) {
+  const note = shownNote || flashNote();
   const b = base();
   const list = state.mcp;
   const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
@@ -702,6 +739,33 @@ function renderMcp(note) {
   for (const el of $('editor').querySelectorAll('[data-edit]')) {
     el.onclick = () => { state.editing = Number(el.dataset.edit); renderMcp(); $('mUrl').focus(); };
   }
+  // Off to the server's sign-in; it comes back to this page (flashNote).
+  const connect = async (s) => {
+    const host = (() => { try { return new URL(s.url).host; } catch { return s.url; } })();
+    const yes = await ask(
+      `Connect ${s.name} as you?`,
+      `You sign in at ${host}. From then on the agents of these threads call it as you, with everything you may do there, until someone disconnects it. "Only these tools" limits which of its tools they get.`,
+      'Sign in',
+    );
+    if (!yes) return;
+    renderMcp({ kind: '', text: `Finding the sign-in of ${s.name}…` });
+    const { ok, body } = await call('/api/kb/mcp/oauth/start', { method: 'POST', body: JSON.stringify({ id: s.id }) });
+    if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Could not start the sign-in.' }); return; }
+    location.assign(body.authorizationUrl);
+  };
+  for (const el of $('editor').querySelectorAll('[data-connect]')) {
+    el.onclick = () => connect(find(el.dataset.connect));
+  }
+  for (const el of $('editor').querySelectorAll('[data-disconnect]')) {
+    el.onclick = async () => {
+      const s = find(el.dataset.disconnect);
+      if (!(await ask(`Disconnect ${s.name}?`, 'Its sign-in is revoked where the server allows it, and forgotten. Agents cannot use it until someone connects it again.', 'Disconnect'))) return;
+      const { ok, body } = await call('/api/kb/mcp/oauth/disconnect', { method: 'POST', body: JSON.stringify({ id: s.id }) });
+      if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
+      put(body.server);
+      renderMcp({ kind: 'ok', text: `Disconnected ${s.name}.` });
+    };
+  }
   for (const el of $('editor').querySelectorAll('[data-del]')) {
     el.onclick = async () => {
       const s = find(el.dataset.del);
@@ -734,13 +798,19 @@ function renderMcp(note) {
     const id = editing ? editing.id : null;
     const name = $('mHdrName').value.trim();
     const value = $('mHdrValue').value.trim();
+    const auth = $('mAuth').value;
+    const secret = $('mClientSecret').value.trim();
     const payload = {
       ...(id ? { id } : { repo: state.repo }),
       name: $('mName').value.trim(),
       url: $('mUrl').value.trim(),
       description: $('mDesc').value.trim(),
       allow: $('mAllow').value.trim(),
-      ...(name || value ? { headers: [{ name, value }] } : {}),
+      auth,
+      ...(auth === 'headers' && (name || value) ? { headers: [{ name, value }] } : {}),
+      ...(auth === 'oauth' ? {
+        oauth: { clientId: $('mClientId').value.trim(), scope: $('mScope').value.trim(), ...(secret ? { clientSecret: secret } : {}) },
+      } : {}),
       ...patch,
     };
     $('note').className = 'note';
@@ -755,9 +825,21 @@ function renderMcp(note) {
     }
     state.editing = null;
     put(body.server);
+    const o = body.server.auth === 'oauth' ? body.server.oauth : null;
+    if (o && !o.connected) {
+      renderMcp({ kind: '', text: `${body.server.name} is saved, not connected yet: Connect signs you in at the server.` });
+      connect(body.server);
+      return;
+    }
     renderMcp(reached(body.server));
   };
   $('mcpForm').onsubmit = (e) => { e.preventDefault(); save(); };
+  // Headers or OAuth: only the fields of the one picked.
+  $('mAuth').onchange = () => {
+    for (const el of $('mcpForm').querySelectorAll('[data-auth]')) el.hidden = el.dataset.auth !== $('mAuth').value;
+    const connects = $('mAuth').value === 'oauth' && !(editing && editing.oauth && editing.oauth.connected);
+    $('mSave').textContent = `${editing ? 'Save' : 'Add'} ${connects ? 'and connect' : 'and check'}`;
+  };
   if ($('mCancel')) $('mCancel').onclick = () => { state.editing = null; renderMcp(); };
   if ($('mClear')) $('mClear').onclick = () => save({ headers: {} });
 }
@@ -1192,6 +1274,10 @@ window.addEventListener('popstate', async () => {
   // `repo` (with `path` or `view`) names one; from the inbox, `org` and `team` say what was on
   // screen there, and the customer's knowledge base wins over the team's.
   const exact = state.bases.find((b) => b.repo === q.get('repo'));
+  // Back from an MCP server's sign-in (src/mcpadmin.js): said once on the servers' page.
+  if (exact && (q.get('mcp_connected') || q.get('mcp_error'))) {
+    state.flash = q.get('mcp_error') ? { error: q.get('mcp_error') } : { connected: q.get('mcp_connected') };
+  }
   const pick = exact
     || state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org'))
     || state.bases.find((b) => b.kind === 'team' && b.slug === q.get('team'));
@@ -1202,7 +1288,7 @@ window.addEventListener('popstate', async () => {
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')))) showPane('editor');
+    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')) || q.get('mcp_connected') || q.get('mcp_error'))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');
