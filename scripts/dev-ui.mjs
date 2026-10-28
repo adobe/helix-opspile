@@ -24,6 +24,9 @@
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
+ * The banner's "design" links switch the thread list between the design explorations
+ * (`?design=a|b|c`, see DESIGNS in ui/inbox.js) on the same address; "now" is the list as it is.
+ *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
  *
@@ -1137,15 +1140,34 @@ const RELOAD_CLIENT = `<script>(() => {
   es.onmessage = () => location.reload();
 })();</script>`;
 
-function banner() {
+/**
+ * The thread list's design explorations (`?design=a|b|c`, see DESIGNS in ui/inbox.js), one
+ * click apart in the banner: the same address with another design.
+ */
+const DESIGN_SWITCH = [['', 'now'], ['a', 'A'], ['b', 'B'], ['c', 'C']]
+  .map(([d, label]) => `<a data-design-pick="${d}" href="?design=${d}" style="color:#fff;padding:0 5px;`
+    + `border-radius:4px;text-decoration:none">${label}</a>`)
+  .join('');
+const DESIGN_CLIENT = `<script>(() => {
+  const now = new URLSearchParams(location.search).get('design') ?? localStorage.getItem('opspile.design') ?? '';
+  for (const a of document.querySelectorAll('[data-design-pick]')) {
+    const q = new URLSearchParams(location.search);
+    q.set('design', a.dataset.designPick);
+    a.href = '?' + q;
+    if (a.dataset.designPick === now) a.style.background = 'rgba(255,255,255,.3)';
+  }
+})();</script>`;
+
+function banner(name) {
   const prod = backendState.mode === 'prod';
   const label = prod
     ? 'production API · read-only'
     : `fake data${backendState.expired ? ' · production session not accepted: npm run ui:session' : ''}`;
   const color = prod ? '#2e9e5b' : '#b4540a';
+  const designs = name === 'inbox.html' ? ` · design ${DESIGN_SWITCH}${DESIGN_CLIENT}` : '';
   return '<div id="dev-banner" style="position:fixed;left:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:9999;'
     + `font:12px system-ui;padding:3px 8px;border-radius:6px;background:${color};color:#fff">`
-    + `${label}</div>`;
+    + `${label}${designs}</div>`;
 }
 
 /** The pages' scripts, ui/*.js, read again on every page load (src/index.js imports them). */
@@ -1197,7 +1219,7 @@ async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
   const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
-  return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
+  return served.replace('</body>', `${banner(name)}${rail}${RELOAD_CLIENT}\n</body>`);
 }
 
 function reloadStream(req, res) {
