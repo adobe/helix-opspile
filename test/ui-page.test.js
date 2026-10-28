@@ -263,4 +263,34 @@ describe('inbox page', () => {
     const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n {2}\}/g)].map((m) => m[1]).join('\n');
     assert.match(touch, /main\.rail\.railopen #filters[^{]*\.fr \.not \{[^}]*pointer-events: auto/);
   });
+
+  it('folds the filter column by the screen\'s width, up to a 13" MacBook\'s, in every view', () => {
+    const railAt = (width, view) => {
+      // Only the min-width/max-width queries of RAIL_BAND and WIDE, against `width`.
+      const matchMedia = (q) => ({
+        matches: [...q.matchAll(/\((min|max)-width: (\d+)px\)/g)]
+          .every(([, m, px]) => (m === 'min' ? width >= Number(px) : width <= Number(px))),
+      });
+      const classes = new Set();
+      const classList = {
+        toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)),
+        remove: (c) => classes.delete(c),
+      };
+      const main = { classList };
+      const document = { querySelector: () => main, documentElement: { dataset: {} } };
+      const { syncRail } = piece('const RAIL_BAND', 'function wireRail', 'syncRail', {
+        matchMedia, document, personal: () => view === 'personal',
+      });
+      syncRail();
+      return classes.has('rail');
+    };
+    for (const view of ['personal', 'team']) {
+      assert.equal(railAt(390, view), false, `iPhone, ${view}: the drawer`);
+      assert.equal(railAt(1099, view), false, `under 1100px, ${view}: the drawer`);
+      assert.equal(railAt(1440, view), true, `13" MacBook Pro, ${view}`);
+      assert.equal(railAt(1470, view), true, `13" MacBook Air, ${view}`);
+      assert.equal(railAt(1512, view), false, `14" MacBook Pro, ${view}`);
+      assert.equal(railAt(1920, view), false, `desktop, ${view}`);
+    }
+  });
 });
