@@ -833,7 +833,10 @@ function threadRows() {
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
-  const count = `${filt}${unread}<span class="sort">${sorter}</span>`;
+  // The bell: notifications for this view, with its filters (not while viewing as someone).
+  const rung = bellOn();
+  const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
+  const count = `${filt}${unread}${bell}<span class="sort">${sorter}</span>`;
   const head = box.querySelector('.count');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -1802,7 +1805,7 @@ function markRead(t) {
     const msg = { type: 'read', thread: m.thread, at };
     // A team's view sends it to the team's room; the personal view has a socket per team, and
     // the API picks the room (one of the viewer's teams whose inbox has the thread).
-    const ws = !personal() && state.sockets[0];
+    const ws = !personal() && state.sockets.find((x) => x.team === state.team);
     if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
   }
@@ -1876,6 +1879,7 @@ async function loadInbox(early = null) {
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
   }
   state.data = first;
+  if (!state.as) checkBells(scopeKey(), first);
   mergeProfiles(state.data.profiles);
   renderUser();
   state.coPeople = coParticipants();
@@ -1952,18 +1956,29 @@ function prefetchAround(key) {
   if (i < 0) return;
   for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
+/** The rooms of the inbox on screen: its team's, or for Personal those of all the viewer's teams. */
+const screenTeams = () => (personal() ? (state.teams || []).map((t) => t.slug) : [state.team]).filter(Boolean);
+/** One socket per team: the ones on screen, and the ones the notifications need (notifyTeams). */
+const wantedTeams = () => [...new Set([...screenTeams(), ...notifyTeams()])];
 /**
  * Live updates: the room of the team on screen, or for the personal view the rooms of all the
- * viewer's teams (every thread in it is in one of their inboxes, and announced there).
+ * viewer's teams (every thread in it is in one of their inboxes, and announced there), and the
+ * rooms the notifications listen to.
  */
 function connect() {
   state.live += 1;
   for (const ws of state.sockets.splice(0)) ws.close();
-  const teams = personal() ? (state.teams || []).map((t) => t.slug) : [state.team];
-  for (const team of teams.filter(Boolean)) listen(team, state.live);
+  for (const team of wantedTeams()) listen(team, state.live);
+}
+/** Connects again only if the teams it needs changed (a bell on another team, say). */
+function syncSockets() {
+  const have = new Set(state.sockets.map((ws) => ws.team));
+  const want = wantedTeams();
+  if (want.length !== have.size || want.some((t) => !have.has(t))) connect();
 }
 function listen(team, live) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(team)}${state.as ? `&as=${state.as}` : ''}`);
+  ws.team = team;
   state.sockets.push(ws);
   // Reconnecting is only shown when it takes a while (not for a view switch or a blip).
   ws.onopen = () => {
@@ -1983,6 +1998,9 @@ function listen(team, live) {
   };
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
+    noteEvent(ev, team);
+    // A room only the notifications listen to: the inbox on screen is not its.
+    if (!screenTeams().includes(team)) return;
     if (ev.type === 'read' && ev.person === state.me.id) return;
     if (ev.type === 'read') reloadSoon(ev.thread);
     // Threads folded into a group (re-threading): the open one, if it is among them, reopens as
@@ -1994,6 +2012,288 @@ function listen(team, live) {
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
   };
+}
+
+// ---------------------------------------------------------------- notifications
+// This browser shows them while an inbox is open (a tab, or the installed app, in the background
+// too), through the service worker, so that a click opens the thread (src/pwa.js). Two kinds,
+// both settings of the person (GET/PUT /api/settings, in D1, so every device has them; the user
+// menu changes them):
+// - a message that mentions you, on unless turned off: the room's `thread` event names the
+//   people a message just posted newly mentions (src/normalizer.js);
+// - a bell on a view (a team's inbox, or Personal, with the filters set on it): a thread in it
+//   gets a message you have not read. The view's filters are checked on the inbox of the team
+//   whose room announced it: the one on screen, when it is that view, else its first page.
+// Inboxes open in several tabs show one notification per thread (its tag). Nothing is shown
+// while viewing as someone else.
+const BELL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path class="body" d="M4 11V7.2a4 4 0 0 1 8 0V11l1.2 1.5H2.8z"/><path d="M6.6 14.2a1.5 1.5 0 0 0 2.8 0" stroke-linecap="round"/></svg>';
+const PERSONAL_VIEW = '~personal';
+const canNotify = () => 'Notification' in window;
+const allowed = () => canNotify() && Notification.permission === 'granted';
+const notifying = () => !state.as && allowed();
+/** The views this inbox watches: from loading the page or turning a bell on, later messages count. */
+const watch = {
+  since: new Date().toISOString(), known: new Map(), timers: new Map(), noted: new Set(),
+};
+
+/** The view on screen as a bell: its inbox, and the filters of the cards it shows. */
+function currentBell() {
+  const ids = new Set(viewFacets().map((f) => f.id));
+  const pick = (sets) => Object.fromEntries(Object.entries(sets)
+    .filter(([id, set]) => ids.has(id) && set.size).map(([id, set]) => [id, [...set].sort()]));
+  return { view: scopeKey(), sel: pick(state.sel), not: pick(state.not) };
+}
+// As src/settings.js compares them.
+const bellKey = (b) => JSON.stringify([b.view, Object.entries(b.sel || {}).sort(), Object.entries(b.not || {}).sort()]);
+const bellOn = () => (state.settings?.bells || []).some((b) => bellKey(b) === bellKey(currentBell()));
+const viewName = (view) => (view === PERSONAL_VIEW ? 'Personal' : state.teams?.find((t) => t.slug === view)?.name || view);
+const valueLabel = (f, v) => (f && ((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]))) || v;
+/** A bell's name: the view, and its filters as the cards say them. */
+function bellLabel(b) {
+  const f = (id) => FACETS.find((x) => x.id === id);
+  const parts = [
+    ...Object.entries(b.sel).map(([id, vs]) => vs.map((v) => valueLabel(f(id), v)).join(' or ')),
+    ...Object.entries(b.not).flatMap(([id, vs]) => vs.map((v) => `not ${valueLabel(f(id), v)}`)),
+  ];
+  return parts.length ? `${viewName(b.view)}: ${parts.join(', ')}` : viewName(b.view);
+}
+/** A bell's view as an address: the inbox with its filters. */
+function bellHref(b) {
+  const q = new URLSearchParams();
+  if (b.view === PERSONAL_VIEW) q.set('view', 'personal'); else q.set('team', b.view);
+  q.set('filters', '1');
+  for (const [id, vs] of Object.entries(b.sel)) q.set(`f.${id}`, vs.join('|'));
+  for (const [id, vs] of Object.entries(b.not)) q.set(`not.${id}`, vs.join('|'));
+  return `/inbox?${q}`;
+}
+
+/** Changes settings at once here, then on the server; back as they were if that fails. */
+async function saveSettings(patch) {
+  const before = state.settings;
+  state.settings = { ...before, ...patch };
+  renderNotify(); renderThreads(); syncSockets();
+  const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (res.ok) { state.settings = res.data; renderNotify(); renderThreads(); return true; }
+  state.settings = before;
+  renderNotify(); renderThreads(); syncSockets();
+  toast(`Could not save the notification settings: ${res.data.error || res.status}`);
+  return false;
+}
+
+/** Asks the browser to allow notifications (only on a click). True if they are allowed. */
+async function askToNotify() {
+  if (!canNotify()) { toast('This browser does not show notifications.'); return false; }
+  if (Notification.permission === 'default') await Notification.requestPermission().catch(() => {});
+  renderNotify();
+  if (Notification.permission === 'denied') toast('Notifications are blocked for opspile: allow them in this browser\'s site settings.');
+  return Notification.permission === 'granted';
+}
+
+/** The bell above the list: on, for the view on screen with its filters, or off again. */
+async function toggleBell() {
+  if (state.as) return;
+  const bell = currentBell();
+  const bells = state.settings.bells || [];
+  if (bellOn()) {
+    if (await saveSettings({ bells: bells.filter((b) => bellKey(b) !== bellKey(bell)) })) toast(`No more notifications for ${bellLabel(bell)}.`);
+    return;
+  }
+  if (bells.length >= 20) { toast('That is 20 views with notifications already: turn one off in the menu first.'); return; }
+  const ok = await askToNotify();
+  if (await saveSettings({ bells: [...bells, bell] })) {
+    toast(`${ok ? 'You get a notification' : 'Once this browser allows notifications, you get one'} when a thread in ${bellLabel(bell)} gets a new message.`);
+  }
+}
+
+/** The notifications section of the user menu. */
+function renderNotify() {
+  const box = $('notifyBox');
+  box.hidden = Boolean(state.as);
+  if (box.hidden) return;
+  const s = state.settings;
+  $('notifyMentions').setAttribute('aria-checked', String(Boolean(s.mentions)));
+  $('bells').innerHTML = (s.bells || []).map((b, i) => `<div class="bell">${BELL}<a href="${esc(bellHref(b))}" title="${esc(bellLabel(b))}">${esc(bellLabel(b))}</a><button type="button" data-unbell="${i}" title="Turn off notifications for this view" aria-label="Turn off notifications for ${esc(bellLabel(b))}">✕</button></div>`).join('');
+  const perm = canNotify() ? Notification.permission : 'unsupported';
+  const wanted = s.mentions || s.bells?.length;
+  $('notifyHint').textContent = {
+    unsupported: 'This browser does not show notifications.',
+    denied: 'Blocked for opspile in this browser: allow notifications in its site settings.',
+    default: wanted ? 'This browser has not been allowed to show them yet.' : '',
+    granted: '',
+  }[perm] || '';
+  if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While opspile is open, in a tab or as the app.' : 'While opspile is open. The bell above the list adds the view on screen.';
+  $('notifyAllow').hidden = perm !== 'default';
+}
+function wireNotify() {
+  $('notifyMentions').onclick = async () => {
+    const on = !state.settings.mentions;
+    if (on) await askToNotify();
+    saveSettings({ mentions: on });
+  };
+  $('notifyAllow').onclick = () => askToNotify();
+  $('bells').onclick = (e) => {
+    const x = e.target.closest('[data-unbell]');
+    if (!x) return;
+    const bells = [...state.settings.bells];
+    bells.splice(Number(x.dataset.unbell), 1);
+    saveSettings({ bells });
+  };
+  // A click on a notification, in an inbox already open: it opens the thread here.
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'opspile:open') openFromNote(e.data.url); });
+    navigator.serviceWorker.startMessages?.();
+  }
+  renderNotify();
+  // Mentions notify unless turned off, once the browser allows it: asked for once, on a click.
+  if (!state.as && state.settings.mentions && canNotify() && Notification.permission === 'default'
+    && !localStorage.getItem('opspile.notify.asked')) {
+    localStorage.setItem('opspile.notify.asked', '1');
+    toast('Get a notification when someone mentions you?', { label: 'Allow', run: askToNotify });
+  }
+}
+
+/** The teams whose rooms the notifications need: all of yours for mentions and Personal. */
+function notifyTeams() {
+  if (state.as || !state.settings) return [];
+  const all = (state.teams || []).map((t) => t.slug);
+  const bells = state.settings.bells || [];
+  if (state.settings.mentions || bells.some((b) => b.view === PERSONAL_VIEW)) return all;
+  return all.filter((slug) => bells.some((b) => b.view === slug));
+}
+
+const noteUrl = (scope, thread) => {
+  const q = new URLSearchParams(scope === PERSONAL_VIEW ? { view: 'personal' } : { team: scope });
+  q.set('t', thread);
+  return `/inbox?${q}`;
+};
+/** Shows one, unless the thread is on screen in a focused window or this message was shown. */
+async function showNote({
+  thread, at, title, body, url,
+}) {
+  const id = `${thread}@${at}`;
+  if (!notifying() || watch.noted.has(id)) return;
+  if (document.hasFocus() && document.visibilityState === 'visible' && state.open === thread) return;
+  watch.noted.add(id);
+  const opts = {
+    body, tag: `opspile:${thread}`, icon: '/icon-192.png', badge: '/icon-192.png', data: { url },
+  };
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg) { await reg.showNotification(title, opts); return; }
+  } catch {
+    // no service worker: a plain one, below
+  }
+  const n = new Notification(title, opts);
+  n.onclick = () => { window.focus(); n.close(); openFromNote(url); };
+}
+/** The thread a notification is about, in the inbox it names. */
+async function openFromNote(url) {
+  const q = new URL(url, location.href).searchParams;
+  const view = q.get('view') === 'personal' ? null : q.get('team');
+  if (view && !(state.teams || []).some((t) => t.slug === view)) return;
+  window.focus();
+  await switchView(view);
+  if (q.get('t')) openThread(q.get('t'));
+}
+
+/** Text for a notification: emoji as characters, without markup, on one line, clipped. */
+const clipNote = (s, n = 160) => {
+  const v = String(s || '').replace(EMOJI_CODE, (m, name) => emojiByName(name) || m)
+    .replace(/<@[^>]+>/g, '@…').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim();
+  return v.length > n ? `${v.slice(0, n - 1)}…` : v;
+};
+/** A message that mentions you: who wrote what, in which thread. */
+async function noteMention(ev, team) {
+  if (!state.settings?.mentions || !notifying() || !ev.mentions?.includes(state.me.id) || ev.by === state.me.id) return;
+  const known = state.data?.threads.find((t) => t.thread === ev.thread || t.members?.some((m) => m.thread === ev.thread));
+  let data = null;
+  try { data = await get(`/api/thread?thread=${encodeURIComponent(ev.thread)}&team=${encodeURIComponent(team)}`); } catch { /* the title is enough */ }
+  const msg = data?.messages?.findLast((m) => m.at === ev.at) || data?.messages?.at(-1);
+  const title = data?.thread?.title || known?.title || 'a thread';
+  showNote({
+    thread: known?.thread || ev.thread,
+    at: ev.at,
+    title: `${ev.author || 'Someone'} mentioned you`,
+    body: `${clipNote(title, 80)}${msg?.body ? `\n${clipNote(msg.body)}` : ''}`,
+    url: noteUrl(team, known?.thread || ev.thread),
+  });
+}
+
+/**
+ * Whether thread `t` of inbox `data` is in bell `b`'s view. The facets work on the inbox on
+ * screen (`state`): it is swapped for the bell's for the moment of the check, which is
+ * synchronous, so nothing on screen sees it.
+ */
+function inBell(b, data, t) {
+  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'keep', 'coPeople'];
+  const saved = Object.fromEntries(keys.map((k) => [k, state[k]]));
+  const savedPass = pass;
+  const sets = (o) => Object.fromEntries(Object.entries(o).map(([id, vs]) => [id, new Set(vs)]));
+  try {
+    pass = null;
+    Object.assign(state, {
+      data,
+      sort: b.view === PERSONAL_VIEW ? 'personal' : 'team',
+      team: b.view === PERSONAL_VIEW ? state.team : b.view,
+      sel: sets(b.sel),
+      not: sets(b.not),
+      unread: false,
+      keep: new Set(),
+    });
+    state.coPeople = coParticipants();
+    return inPass(() => passes(t));
+  } finally {
+    Object.assign(state, saved);
+    pass = savedPass;
+  }
+}
+/**
+ * An inbox (`scope`: a team's slug, or `~personal`) as it is now: its threads with a message
+ * since it was last looked at (or since the page was loaded) that you have not read, and that
+ * are in one of its bells' views, notify.
+ */
+function checkBells(scope, data) {
+  const bells = (state.settings?.bells || []).filter((b) => b.view === scope);
+  const known = watch.known.get(scope) || new Map();
+  watch.known.set(scope, known);
+  for (const t of data.threads || []) {
+    const at = lastOf(t);
+    const was = known.get(t.thread) || watch.since;
+    if (at) known.set(t.thread, at > was ? at : was);
+    if (!at || at <= was || !t.unread || !bells.length || state.as) continue;
+    const b = bells.find((x) => inBell(x, data, t));
+    if (!b) continue;
+    showNote({
+      thread: t.thread,
+      at,
+      title: clipNote(t.title || '(no text)', 80),
+      body: `${t.last_author ? `${t.last_author} wrote` : 'New message'} · ${orgName(t)}\n🔔 ${bellLabel(b)}`,
+      url: noteUrl(scope, t.thread),
+    });
+  }
+}
+/** A room announced activity: the bells on inboxes that are not on screen look again, soon. */
+function bellsSoon(team) {
+  if (state.as) return;
+  const scopes = new Set((state.settings?.bells || []).map((b) => b.view)
+    .filter((v) => v === team || (v === PERSONAL_VIEW && (state.teams || []).some((t) => t.slug === team))));
+  for (const scope of scopes) {
+    // The inbox on screen reloads on its own (reloadSoon), and is checked then.
+    if (scope === scopeKey()) continue;
+    clearTimeout(watch.timers.get(scope));
+    watch.timers.set(scope, setTimeout(async () => {
+      watch.timers.delete(scope);
+      const url = scope === PERSONAL_VIEW ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(scope)}`;
+      const data = await get(url).catch(() => null);
+      if (data && !state.as) checkBells(scope, data);
+    }, 1500));
+  }
+}
+/** Activity a room announced, for the notifications. */
+function noteEvent(ev, team) {
+  if (ev.type !== 'thread' || state.as) return;
+  if (ev.mentions) noteMention(ev, team);
+  bellsSoon(team);
 }
 
 function setUnread(on, open = state.open) {
@@ -2182,6 +2482,7 @@ async function start() {
   }
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
+  state.settings = state.me.settings || { mentions: true, bells: [] };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
     : `Connected your ${accountOf(q.get('connected'))} account. Replies are sent as you.`);
@@ -2220,6 +2521,7 @@ async function start() {
     const view = e.target.closest('[data-view]');
     if (view) { switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
+    if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('a')) return;
     const el = e.target.closest('.t');
     if (el) openThread(el.dataset.thread);
@@ -2322,6 +2624,7 @@ async function start() {
       syncReading();
       $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
       await loadWho();
+      renderNotify();
       toUrl();
       await loadInbox();
       connect();
@@ -2354,6 +2657,7 @@ async function start() {
     // Fresh at the moment it is used (the open thread's customer may have loaded since).
     for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }
+  wireNotify();
   await loadInbox(early);
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
   if (initial.open) openThread(initial.open);
