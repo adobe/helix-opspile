@@ -1899,7 +1899,11 @@ function connect() {
   ws.onclose = () => {
     if (state.ws !== ws) return;
     setTimeout(connect, 3000);
-    state.offline ??= setTimeout(() => { $('offline').hidden = false; }, 5000);
+    state.offline ??= setTimeout(() => {
+      $('offline').hidden = false;
+      // Signed out (Access answers with a redirect, which app.js shows), or offline?
+      fetch('/api/me', { credentials: 'same-origin' }).catch(() => {});
+    }, 5000);
   };
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
@@ -2731,3 +2735,12 @@ async function registerTools() {
 
 wireCards();
 start();
+// Signed in again (app.js): what could not be loaded is, and live updates start again.
+window.addEventListener('opspile:signedin', () => {
+  if (!state.me) {
+    start();
+    return;
+  }
+  if (state.open) openThread(state.open, { live: true });
+  loadInbox().then(connect, () => {});
+});
