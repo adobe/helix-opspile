@@ -444,6 +444,17 @@ function search(team, q, personal = false) {
   };
 }
 
+function editableOf(meta, source) {
+  if (meta.deletedAt || meta.author.kind === 'system') {
+    return null;
+  }
+  if (store.appPosts.has(`${meta.thread}|${meta.id}`)) {
+    return 'app';
+  }
+  const mine = meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name;
+  return mine && source !== 'discord' ? 'user' : null;
+}
+
 function thread(key) {
   const entry = store.threads.get(key);
   if (!entry || !inTeam(entry.row.team)) {
@@ -464,6 +475,8 @@ function thread(key) {
       ),
       // As src/api.js: posted by the viewer (messages.person).
       mine: meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name,
+      // As src/api.js's editableAs: the viewer's own (not on Discord), or posted as the app.
+      editable: editableOf(meta, entry.row.source),
       reactions: reactionsOn(key, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
@@ -646,6 +659,7 @@ async function api(req, res, url) {
       manages: MANAGER ? ['edge'] : [],
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
+      edit: { slack: true, teams: true },
       settings,
     });
   }
@@ -820,6 +834,25 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, 1200);
     return json(res, { ok: true, platform: entry.row.source, id });
+  }
+  if (url.pathname === '/api/edit' && req.method === 'POST') {
+    // As src/edit.js: the platform takes the edit, and its event brings it back a moment later.
+    const { thread: key, id, text: changed } = await readJson(req);
+    const entry = store.threads.get(key);
+    const m = entry && inTeam(entry.row.team) && entry.messages.find((x) => x.id === id);
+    const meta = m && { ...m, thread: key };
+    const how = meta && editableOf(meta, entry.row.source);
+    if (!how || !String(changed || '').trim()) {
+      return json(res, { error: m ? 'you can only edit messages you sent' : 'not found' }, m ? 403 : 404);
+    }
+    console.log(`edit ${key}|${id} as ${how}`);
+    setTimeout(() => {
+      store.edit(key, id, String(changed).trim());
+      broadcast(entry.row.team, { type: 'thread', thread: key });
+    }, 1200);
+    return json(res, {
+      ok: true, platform: entry.row.source, id, as: how,
+    });
   }
   if (url.pathname === '/api/react' && req.method === 'POST') {
     const {

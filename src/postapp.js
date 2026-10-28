@@ -58,6 +58,20 @@ export async function appPostCheck(env, key) {
 }
 
 /**
+ * Records a message the person posted as the opspile app (`app_posts`), so that they may edit
+ * it later. `t` is the platform thread it went to.
+ */
+export async function recordAppPost(env, me, t, id) {
+  if (!t || !id) {
+    return;
+  }
+  await env.DB.prepare(`INSERT INTO app_posts (source, tenant, channel_id, id, thread, person, at)
+    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (source, tenant, channel_id, id) DO NOTHING`)
+    .bind(t.source, t.tenant, t.channel_id, String(id), t.thread, me.id, new Date().toISOString())
+    .run();
+}
+
+/**
  * POST /api/post/app `{ thread, text }`: posts `text` in the thread as the opspile app, for a
  * staff member of one of the thread's teams. The reply arrives like any other message, through
  * the platform's events, by the app.
@@ -82,6 +96,8 @@ export async function postApp(env, me, request, inTeam) {
   if (res.error) {
     return json({ error: res.error }, /^too long/.test(res.error) ? 400 : 502);
   }
+  // Theirs to edit later (src/edit.js).
+  await recordAppPost(env, me, check.target, res.id);
   console.log(JSON.stringify({
     route: 'post', action: 'app', platform: res.platform, team: check.entry.team,
   }));

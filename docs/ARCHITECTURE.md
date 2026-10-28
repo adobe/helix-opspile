@@ -533,6 +533,21 @@ in a channel at all, whoever writes the text. The post names no person and carri
 mentions; it comes back through ingestion by the app, and a thread agent there is told about
 it like any message.
 
+**Editing.** A message sent from opspile, or from the platform, can be edited in the inbox the
+way it was sent (`POST /api/edit`, `src/edit.js`): hovering one of your own messages shows ✎,
+which turns the bubble into an editor (Enter saves, Escape cancels, `@` suggests people as in
+the reply box). Your own messages are edited as you, with your token: Slack `chat.update`
+(`chat:write` covers your own messages) and Teams `PATCH` on the message, which needs the
+delegated `ChannelMessage.ReadWrite`; that takes the tenant's admin consent, so it is asked for
+only once `TEAMS_EDITS` says it was given. A message you posted as the opspile app is recorded
+in `app_posts` (user state, like drafts) and is yours to edit as the app, where the app may
+still post: Slack `chat.update` with the bot token, the Teams bot's update activity, Discord
+`PATCH` with the bot. Nobody else's messages, and nothing on Discord as a person, are offered.
+The accounts the message mentioned (`@Name` in its markdown, one account by that name) stay
+mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
+edit made on the platform, and the inbox shows the new text and "(edited)" meanwhile. A Slack
+change without `edited` (a bot's `chat.update`) that changes the text counts as an edit too.
+
 Discord threads are read-only in the inbox: Discord lets only bots post and react through its
 API, and opspile acts as the person or not at all. They have a link to reply in Discord, no
 reply box, reactions or ✅; Discord's own ✅ by staff still resolves them.

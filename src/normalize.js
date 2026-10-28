@@ -200,9 +200,14 @@ export function normalizeSlack(key, delivered) {
     const msg = event.message || {};
     const message = slackMessage(payload, key, msg, event.channel);
     // Unfurls and bot updates arrive as changes without `edited`; they still replace
-    // the content, so they get the version of the change itself.
+    // the content, so they get the version of the change itself. A bot's update that changes
+    // the text (chat.update, as the opspile app edits) is an edit all the same.
     if (!msg.edited) {
       message.version = slackVersion(event.event_ts || event.ts);
+      const before = event.previous_message;
+      if (before && typeof before.text === 'string' && before.text !== (msg.text || '')) {
+        message.editedAt = iso(event.event_ts || event.ts);
+      }
     }
     return { op: 'upsert', message };
   }

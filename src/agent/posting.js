@@ -12,7 +12,7 @@
 
 import { discordApi, discordEnabled } from '../discord.js';
 import { slackText, target as replyTarget } from '../post.js';
-import { postToTeams } from '../teamsbot.js';
+import { editInTeams, postToTeams } from '../teamsbot.js';
 
 /**
  * Posting by a thread agent (its `post_message` tool, when it is on): a reply in the latest
@@ -100,4 +100,79 @@ export async function postAsApp(env, key, text, options = {}) {
     return postToTeams(env, t, body, options);
   }
   return { error: `opspile cannot post to ${t.source}` };
+}
+
+/** The Discord channel a message is in, from its link (`/channels/<guild>/<channel>/<id>`). */
+const discordChannelOf = (permalink) => {
+  const m = /\/channels\/\d+\/(\d+)\/\d+$/.exec(String(permalink || ''));
+  return m ? m[1] : null;
+};
+
+/**
+ * Replaces the text of a message the opspile app posted, as the app: `{ ok, platform, id }`, or
+ * `{ error }`. `t` is the message's platform thread row (with its Teams team's `group_id`),
+ * `message` its `{ id, permalink }`. The edit then arrives like any other, through the
+ * platform's events.
+ */
+export async function editAsApp(env, t, message, text) {
+  const body = String(text || '').trim();
+  const { id } = message;
+  if (!body) {
+    return { error: 'write something' };
+  }
+  if (MAX_POST[t.source] && body.length > MAX_POST[t.source]) {
+    return { error: `too long: ${t.source} takes up to ${MAX_POST[t.source]} characters` };
+  }
+  if (t.source === 'slack') {
+    if (!env.SLACK_BOT_TOKEN) {
+      return { error: 'the opspile Slack app is not set up here' };
+    }
+    const res = await fetch('https://slack.com/api/chat.update', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
+      // As it was posted: the Markdown as a `markdown` block, `text` in mrkdwn.
+      body: JSON.stringify({
+        channel: t.channel_id,
+        ts: id,
+        text: slackText(body),
+        blocks: [{ type: 'markdown', text: body }],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok) {
+      return { error: `Slack: ${data.error || res.status}` };
+    }
+    return { ok: true, platform: 'slack', id };
+  }
+  if (t.source === 'discord') {
+    if (!discordEnabled(env)) {
+      return { error: 'the opspile Discord bot is not set up here' };
+    }
+    const patch = { content: body, allowed_mentions: { parse: [] } };
+    // In the Discord thread of the conversation, or (an inline reply, the first message) in
+    // the channel; the message's link says which.
+    const channels = [...new Set([discordChannelOf(message.permalink),
+      ...(id === t.root_id ? [] : [t.root_id]), t.channel_id].filter(Boolean))];
+    try {
+      for (const channel of channels) {
+        // eslint-disable-next-line no-await-in-loop
+        const done = await discordApi(env, `/channels/${channel}/messages/${id}`, {
+          method: 'PATCH', body: patch, allow: [404],
+        });
+        if (done) {
+          return { ok: true, platform: 'discord', id };
+        }
+      }
+      return { error: 'Discord: the message is not there any more' };
+    } catch (e) {
+      return { error: `Discord: ${e.message}` };
+    }
+  }
+  if (t.source === 'teams') {
+    return editInTeams(env, t, id, body);
+  }
+  return { error: `opspile cannot edit on ${t.source}` };
 }

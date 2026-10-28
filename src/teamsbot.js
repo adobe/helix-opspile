@@ -22,6 +22,7 @@ import { cachedGraph } from './graph.js';
  *
  * - Posting: the Bot Connector API, a reply in the channel thread
  *   (`<channel id>;messageid=<root id>`), with a token for the Bot Framework from the tenant.
+ *   Editing a message it posted is the Bot Connector's update activity in the same thread.
  * - Installing: the bot can post only in teams it is installed in. On the first post to a team
  *   without it, opspile installs its app there through Graph (`TeamsAppInstallation.
  *   ReadWriteSelfForTeam.All`: the app may install only itself) and tries again.
@@ -131,6 +132,38 @@ export async function postToTeams(env, t, text, { sleep = wait } = {}) {
       return { error: `Teams: ${res.status} ${(data.error && data.error.code) || ''}`.trim() };
     }
     return { ok: true, platform: 'teams', id: data.id };
+  } catch (e) {
+    return { error: `Teams: ${e.message}` };
+  }
+}
+
+/**
+ * Replaces the text of a message the opspile bot posted in a Teams channel thread (the Bot
+ * Connector's update activity): `{ ok, platform, id }`, or `{ error }`.
+ */
+export async function editInTeams(env, t, id, text) {
+  if (!teamsBotEnabled(env)) {
+    return { error: 'the opspile Teams bot is not set up here' };
+  }
+  const base = String(env.TEAMS_BOT_SERVICE_URL || SERVICE_URL).replace(/\/*$/, '/');
+  const conversation = `${t.channel_id};messageid=${t.root_id}`;
+  try {
+    const res = await fetch(`${base}v3/conversations/${encodeURIComponent(conversation)}`
+      + `/activities/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${await botToken(env)}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'message', id, text, textFormat: 'markdown',
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { error: `Teams: ${res.status} ${(data.error && data.error.code) || ''}`.trim() };
+    }
+    return { ok: true, platform: 'teams', id };
   } catch (e) {
     return { error: `Teams: ${e.message}` };
   }
