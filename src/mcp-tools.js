@@ -674,7 +674,7 @@ export const TOOLS = [
   {
     name: 'search_threads',
     title: 'Search inbox threads',
-    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have its words. Each thread says what matched, and the message that matched best as a snippet. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {

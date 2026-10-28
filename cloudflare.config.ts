@@ -112,6 +112,10 @@ function resources(mode: string | undefined) {
     // Every message a person posted in a channel thread, and every such thread as a whole
     // (src/vectors.js). Created by hand (768 dimensions, cosine, metadata indexes); see README.
     CONTENT: bindings.vectorize({ name: `helix-opspile-content${suffix}` }),
+    // Full-text search: one item per message of a channel thread (src/fulltext.js), in an AI
+    // Search instance with built-in storage. Created by hand (hybrid, custom metadata); see
+    // README. AI Search does not run locally.
+    SEARCH: bindings.aiSearch({ name: `helix-opspile-messages${suffix}`, dev: { remote: true } }),
     // Pile 3: one knowledge-base repo per org and per team (#12). Artifacts creates the
     // namespace with its first repo.
     ARTIFACTS: bindings.artifacts({ namespace: `helix-opspile${suffix}` }),

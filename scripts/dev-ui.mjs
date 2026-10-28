@@ -388,8 +388,8 @@ function inbox(team, before = null, personal = false, only = null) {
 
 /**
  * GET /api/search, made up: words in the title, channel or customer as src/search.js finds
- * them, and words in the messages for what the vectors would find, the best message as the
- * snippet.
+ * them, a message with every word as the full-text index would find it, some of them for what
+ * the vectors would, the best message as the snippet.
  */
 function search(team, q, personal = false) {
   const query = String(q || '').replace(/\s+/g, ' ').trim();
@@ -409,22 +409,24 @@ function search(team, q, personal = false) {
     const best = [...store.files.entries()]
       .filter(([path]) => path.startsWith(r.path))
       .map(([, body]) => parse(body))
-      .filter((f) => f && f.meta.author?.kind === 'person' && !f.meta.deletedAt)
+      .filter((f) => f && f.meta.author?.kind !== 'system' && !f.meta.deletedAt)
       .map((f) => ({ f, score: share(f.body) }))
       .sort((a, b) => b.score - a.score)[0];
-    const topic = best && best.score > 0 ? 0.6 + 0.2 * best.score : 0;
+    const said = best && best.score === 1 ? 1 : 0;
+    const topic = best && best.score > 0 && !said ? 0.6 + 0.2 * best.score : 0;
     const fact = (store.facts.get(r.thread) || []).find((x) => share(x.value) === 1);
-    if (!all && !topic && !fact) {
+    if (!all && !topic && !said && !fact) {
       // eslint-disable-next-line no-continue
       continue;
     }
-    const score = topic + (all ? 0.8 * title + 0.5 * (1 - title) : 0) + (fact ? 0.4 : 0);
+    const score = topic + 0.7 * said + (all ? 0.8 * title + 0.5 * (1 - title) : 0)
+      + (fact ? 0.4 : 0);
     hits.push({
       thread: r.thread,
       score: Math.round(score * 1000) / 1000,
-      matched: [all && title > 0 && 'title', all && title < 1 && 'place', fact && 'fact', topic && 'topic'].filter(Boolean),
+      matched: [all && title > 0 && 'title', all && title < 1 && 'place', fact && 'fact', said && 'text', topic && 'topic'].filter(Boolean),
       ...(fact ? { fact: { field: fact.field, value: fact.value } } : {}),
-      ...(topic ? {
+      ...(topic || said ? {
         snippet: {
           message: `${best.f.meta.thread}|${best.f.meta.id}`,
           author: best.f.meta.author.name,
