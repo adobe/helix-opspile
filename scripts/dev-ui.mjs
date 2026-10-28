@@ -21,6 +21,8 @@
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
+ *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
+ *                                          # production), and arrives some 8 s after that
  *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
@@ -75,6 +77,10 @@ const ADMIN = process.argv.includes('--admin');
 const MANAGER = process.argv.includes('--manager');
 const SIM_EVERY_MS = 25 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
+// Sending a reply, as production's take: the platform takes it in about 900 ms (POST
+// /api/post), and it comes back through the normalize queue some eight seconds later.
+const SEND_MS = Number(process.argv.find((a) => a.startsWith('--send='))?.slice(7)) || 900;
+const ARRIVE_MS = 8000;
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
@@ -829,7 +835,16 @@ async function api(req, res, url) {
     if (!entry || !inTeam(entry.row.team) || !String(reply || '').trim()) {
       return json(res, { error: 'not found' }, 404);
     }
-    // As the real reply would: it arrives a moment later, like a platform event, with the
+    if (!app) {
+      await new Promise((r) => {
+        setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
+      });
+    }
+    // A channel that turns replies away (fixtures: `rejects`), as Slack does an archived one.
+    if (entry.ch.rejects && !app) {
+      return json(res, { error: `Slack: ${entry.ch.rejects}` }, 502);
+    }
+    // As the real reply would: it arrives a while later, like a platform event, with the
     // platform's id, and on Slack with emoji as :shortcodes: and _italics_ as Slack writes them.
     const at = new Date();
     const id = store.newId(key, at.getTime());
@@ -840,7 +855,7 @@ async function api(req, res, url) {
     setTimeout(() => {
       store.post(key, app ? 'app' : 'dana', arrived, at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
-    }, 1200);
+    }, app ? 1200 : ARRIVE_MS);
     return json(res, { ok: true, platform: entry.row.source, id });
   }
   if (url.pathname === '/api/edit' && req.method === 'POST') {

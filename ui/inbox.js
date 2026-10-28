@@ -1250,13 +1250,13 @@ function message(m, prev, fresh, followed = false) {
     ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
       <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the opspile app' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
     : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>`;
-  const notes = [m.pending ? 'sending…' : '', m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
+  const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col">${quick}<div class="who">${who}</div>
       ${bubble}
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${notes ? `<div class="meta"${m.editedAt ? ` title="Edited ${esc(new Date(m.editedAt).toLocaleString())}"` : ''}>${notes}</div>` : ''}
+      ${notes ? `<div class="meta"${m.editedAt ? ` title="Edited ${esc(new Date(m.editedAt).toLocaleString())}"` : ''}>${notes}</div>` : ''}${m.pending ? sendState(m) : ''}
     </div></div>`;
 }
 
@@ -1464,13 +1464,24 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Where I was: the last time I had read any member of this entry.
   const myRead = watermarks.filter((w) => w.person === state.me.id).map((w) => w.read_at).sort().pop() || null;
   const ids = new Set(messages.map((m) => `${m.thread}|${m.id}`));
-  const fresh = (m) => live && state.shownIds && !state.shownIds.has(`${m.thread}|${m.id}`);
   // Replies I sent that have not arrived yet: a reply has arrived once a message has the id
   // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
-  // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions).
-  state.sending = state.sending.filter((p) => p.thread === key && Date.now() - p.sentAt < 60000
-    && !messages.some((m) => (p.postedId ? String(m.id) === String(p.postedId)
-      : m.author?.name === state.me.name && looseText(m.body) === looseText(p.body))));
+  // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions). One still on its way,
+  // or that failed, stays; one the platform took, for a minute at most.
+  const settled = new Set();
+  state.sending = state.sending.filter((p) => {
+    if (p.status === 'sending' || p.status === 'failed') return true;
+    if (Date.now() - p.sentAt >= 60000) return false;
+    if (p.thread !== key) return true;
+    const m = messages.find((x) => (p.postedId ? String(x.id) === String(p.postedId)
+      : x.author?.name === p.author.name && looseText(x.body) === looseText(p.body)));
+    if (m) settled.add(`${m.thread}|${m.id}`);
+    return !m;
+  });
+  // Arrivals come up into view, but not a reply taking the place of its bubble, which looks
+  // the same, nor that bubble again when it changes (its bar is through, or it failed).
+  const fresh = (m) => (m.pending ? m.fresh : live && state.shownIds
+    && !state.shownIds.has(`${m.thread}|${m.id}`) && !settled.has(`${m.thread}|${m.id}`));
   // Edits saved here and not back from the platform yet show their new text, until a message
   // has it (compared loosely, as replies are), is edited after it, or a minute has passed.
   for (const [id, e] of state.edits) {
@@ -1483,9 +1494,9 @@ async function openThread(key, { live = false, cached = false } = {}) {
     const e = state.edits.get(`${m.thread}|${m.id}`);
     return e ? { ...m, body: e.body, editedAt: new Date(e.sentAt).toISOString(), saving: e.saving } : m;
   };
-  const shown = [...messages.map(withEdit), ...state.sending.map((p) => ({
-    ...p, author: { kind: 'person', name: state.me.name, staff: true }, pending: true,
-  }))];
+  const sending = state.sending.filter((p) => p.thread === key);
+  const shown = [...messages.map(withEdit), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
+  for (const p of sending) p.shown = true;
   // Who they are: the server's answer for the names the messages mention, then what the
   // thread's authors, the inbox's people and the picked mentions say.
   const kinds = new Map(Object.entries(data.mentioned || {}));
@@ -1775,37 +1786,196 @@ async function discardDraft(key) {
   });
 }
 
+// Sending, as in iMessage: a reply shows at once, as it will look once sent, with a thin bar
+// under it that fills while the platform takes it (POST /api/post: 0.3 to 1.5 s). There is no
+// real progress to show, so the bar eases towards 90%, completes once the platform has the
+// message, and fades. The bubble stays until the message comes back through the platform's
+// events, some ten seconds later, looking the same. A reply that failed says why, with Retry.
+const SEND_FROM = 0.08;
+const SEND_TO = 0.9;
+const SEND_EASE_MS = 800;
+const SEND_FINISH_MS = 250;
+const SEND_FADE_MS = 300;
+
+/**
+ * The bar of reply `p` at `now`: how full it is (0 to 1), how visible, and whether it is
+ * gone. It starts filling when the request goes out (`startedAt`; replies to one thread go
+ * out one by one), and completes from wherever it was when the platform took it (`doneAt`).
+ */
+function sendBar(p, now) {
+  const eased = (ms) => SEND_FROM + (SEND_TO - SEND_FROM) * (1 - Math.exp(-Math.max(0, ms) / SEND_EASE_MS));
+  const at = (t) => (p.startedAt ? eased(t - p.startedAt) : SEND_FROM);
+  if (!p.doneAt) return { fill: at(now), opacity: 1, over: false };
+  const from = at(p.doneAt);
+  const t = now - p.doneAt;
+  const k = Math.min(1, t / SEND_FINISH_MS);
+  return {
+    fill: from + (1 - from) * (1 - (1 - k) ** 2),
+    opacity: 1 - Math.min(1, Math.max(0, (t - SEND_FINISH_MS) / SEND_FADE_MS)),
+    over: t >= SEND_FINISH_MS + SEND_FADE_MS,
+  };
+}
+
+/**
+ * What goes under a reply being sent: the bar (the same markup from start to end, so the
+ * feed keeps its node while the bar fills), why it failed, or nothing once it is through.
+ */
+function sendState(p) {
+  if (p.status === 'failed') {
+    return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}</span>
+      <button data-retry="${esc(p.id)}">Retry</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+  }
+  if (p.status !== 'sending' && p.status !== 'sent') return '';
+  return `<div class="sendbar" data-send="${esc(p.id)}" role="progressbar" aria-label="Sending" aria-valuemin="0" aria-valuemax="100"><i></i></div>`;
+}
+
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+// Replies to a thread go out in the order they were written: each waits for the one before.
+const sendQueue = new Map();
+let sendSeq = 0;
+let sendFrame = 0;
+
+/**
+ * How the viewer's messages on `source` look (their name there, avatar and account), from
+ * the latest one opspile has, this thread's first: a reply being sent looks the same.
+ */
+function ownLook(key, source) {
+  const lists = [key, ...state.cache.keys()].map((k) => state.cache.get(k)?.data?.messages || []);
+  for (const list of lists) {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const m = list[i];
+      if (m.mine && m.source === source && m.author?.kind === 'person' && !m.deletedAt) {
+        return { author: m.author, avatar: m.avatar || null, authorKey: m.authorKey || null };
+      }
+    }
+  }
+  return { author: { kind: 'person', name: state.me.name, staff: true }, avatar: null, authorKey: null };
+}
+
+/** Shows the thread's replies being sent as they are now, if it is open. */
+function showSending(key) {
+  if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
+}
+
+/** Fills the bars, one frame at a time, while any are on their way. */
+function animateSending() {
+  if (sendFrame || REDUCED_MOTION.matches) return;
+  const frame = () => {
+    sendFrame = 0;
+    const now = Date.now();
+    const through = new Set();
+    let more = false;
+    for (const p of state.sending) {
+      if (p.status !== 'sending' && p.status !== 'sent') continue;
+      const look = sendBar(p, now);
+      if (look.over) {
+        p.status = 'delivered';
+        through.add(p.thread);
+        continue;
+      }
+      more = true;
+      for (const el of document.querySelectorAll(`.sendbar[data-send="${CSS.escape(p.id)}"]`)) {
+        el.style.setProperty('--p', look.fill.toFixed(4));
+        el.style.opacity = look.opacity.toFixed(3);
+        el.setAttribute('aria-valuenow', String(Math.round(look.fill * 100)));
+      }
+    }
+    for (const key of through) showSending(key);
+    if (more) sendFrame = requestAnimationFrame(frame);
+  };
+  sendFrame = requestAnimationFrame(frame);
+}
+
+/** Posts reply `p` once the thread's replies before it are out. Resolves to whether it went. */
+function postPending(p) {
+  const key = p.thread;
+  const run = (sendQueue.get(key) || Promise.resolve()).catch(() => {}).then(() => deliver(p));
+  sendQueue.set(key, run);
+  run.finally(() => { if (sendQueue.get(key) === run) sendQueue.delete(key); });
+  return run;
+}
+
+async function deliver(p) {
+  Object.assign(p, {
+    status: 'sending', startedAt: Date.now(), doneAt: null, error: null,
+  });
+  animateSending();
+  let res = null;
+  let data = {};
+  try {
+    res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: p.thread, text: p.body, mentions: p.mentions, ...(p.base ? { draft: p.base } : {}) }) });
+    data = await res.json().catch(() => ({}));
+  } catch { /* offline, or the connection dropped */ }
+  if (!res?.ok) {
+    p.status = 'failed';
+    p.error = data.error || (res ? `could not send (${res.status})` : 'could not reach opspile');
+    state.sendError = p.error;
+    if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
+    // Somewhere else by now: say so there.
+    if (state.open !== p.thread) toast(`A reply was not sent: ${p.error}`, { label: 'Show', run: () => openThread(p.thread) });
+    // The reply box offers to connect the account.
+    if (data.connect && state.open === p.thread) openThread(p.thread, { live: true });
+    else showSending(p.thread);
+    return false;
+  }
+  const now = Date.now();
+  Object.assign(p, {
+    postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
+  });
+  if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
+  if (p.status === 'delivered') showSending(p.thread); else animateSending();
+  return true;
+}
+
 async function send(key, thread) {
   const box = $('reply');
   const body = box.value.trim();
   state.sendError = null;
   if (!body) return false;
-  $('send').disabled = true;
   closeMentions();
   const mentions = mentionsIn(key, body);
   // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
   const base = state.composers.get(key)?.base;
-  const res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: key, text: body, mentions, ...(base ? { draft: base } : {}) }) });
-  const data = await res.json().catch(() => ({}));
-  $('send').disabled = false;
-  if (!res.ok) {
-    if (data.connect) { state.me.connected = { ...state.me.connected, [data.connect]: false }; }
-    state.sendError = data.error || `could not send (${res.status})`;
-    toast(state.sendError);
-    if (data.connect) openThread(key, { live: true });
-    return false;
-  }
+  // Shown at once, as it will look once sent; the box is free for the next one.
   box.value = '';
   state.composers.set(key, { text: '', from: '', base: null });
-  if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   mention.picked.delete(key);
-  const last = state.shownIds ? [...state.shownIds].pop() : null;
-  state.sending.push({
-    thread: key, body, at: new Date().toISOString(), sentAt: Date.now(), id: `pending-${Date.now()}`, postedId: data.id || null, source: thread.source, last,
-  });
-  openThread(key, { live: true });
-  return true;
+  sendSeq += 1;
+  const p = {
+    thread: key, body, mentions, base, at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
+  };
+  state.sending.push(p);
+  showSending(key);
+  return postPending(p);
 }
+
+/** Sends a reply that failed again. */
+function retrySend(id) {
+  const p = state.sending.find((x) => x.id === id);
+  if (!p || p.status !== 'failed') return;
+  Object.assign(p, { status: 'sending', startedAt: null, error: null });
+  showSending(p.thread);
+  animateSending();
+  postPending(p);
+}
+
+/** Throws a reply that failed away, with a moment to take that back. */
+function discardSend(id) {
+  const i = state.sending.findIndex((x) => x.id === id);
+  if (i < 0 || state.sending[i].status !== 'failed') return;
+  const [p] = state.sending.splice(i, 1);
+  showSending(p.thread);
+  toast('Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
+}
+
+// Leaving the page (a reload, closing the tab, the browser's Back out of the inbox) while a
+// reply is still on its way would lose it: the box is already empty, the bubble lives in this
+// page only, and the post may be cut off. The browser asks first, then and only then.
+window.addEventListener('beforeunload', (e) => {
+  if (!state.sending.some((p) => p.status === 'sending')) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 /**
  * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
@@ -2891,6 +3061,10 @@ async function start() {
   wireRail();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
+    const retry = e.target.closest('[data-retry]');
+    if (retry) { retrySend(retry.dataset.retry); return; }
+    const unsend = e.target.closest('[data-unsend]');
+    if (unsend) { discardSend(unsend.dataset.unsend); return; }
     const msg = e.target.closest('.msg');
     const pick = e.target.closest('[data-pick]');
     const chip = e.target.closest('.rx button');
@@ -3386,7 +3560,7 @@ const WEBMCP_TOOLS = [
       const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
       if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent. The text is left in the reply box as a draft.');
       if (!yes) return fail('The user declined to send. The text is left in the reply box as a draft.');
-      return await send(key, data.thread) ? out({ ok: true, thread: key, note: 'Sent; it shows as "sending" until Slack or Teams confirms it.' }) : fail(state.sendError || 'Could not send.');
+      return await send(key, data.thread) ? out({ ok: true, thread: key, note: 'Sent; it shows as "sending" until Slack or Teams confirms it.' }) : fail(`${state.sendError || 'Could not send.'} The reply shows as not sent in the thread, where the user can retry it.`);
     },
   },
   {
