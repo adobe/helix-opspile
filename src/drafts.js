@@ -23,6 +23,9 @@ import { teamsOf } from './shares.js';
  * without seeing it first.
  */
 
+/** The person drafts by thread agents are saved as (src/agent/tools.js agentPerson). */
+export const AGENT_EMAIL = 'agent@opspile.invalid';
+
 const MAX_TEXT = 8000;
 const MAX_MENTIONS = 20;
 const PREVIEW = 140;

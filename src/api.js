@@ -13,7 +13,7 @@
 import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
-import { agentStatus, seedAgent } from './agent/stub.js';
+import { agentStatus, seedAgent, tellDiscarded } from './agent/stub.js';
 import {
   discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -798,7 +798,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return saveDraft(env, me, body, (t) => inTeam(me, t));
     }
     if (request.method === 'DELETE') {
-      return discardDraft(env, me, body, (t) => inTeam(me, t));
+      const res = await discardDraft(env, me, body, (t) => inTeam(me, t));
+      if (res.ok) {
+        // The agent hears who threw its draft away; the discard never fails because of it.
+        const told = res.clone().json().then((r) => tellDiscarded(env, me, body.thread, r))
+          .catch((e) => console.log(JSON.stringify({ route: 'draft', action: 'tell-agent', error: String(e) })));
+        if (waitUntil) {
+          waitUntil(told);
+        } else {
+          await told;
+        }
+      }
+      return res;
     }
   }
   if (url.pathname === '/api/agent' && request.method === 'GET') {

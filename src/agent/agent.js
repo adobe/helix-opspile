@@ -24,6 +24,7 @@ import {
   agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
 import { toolsFor } from './agenttools.js';
+import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -39,7 +40,8 @@ import { latestTurn } from './turn.js';
  * knowledge that staff share with it.
  *
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
- * without any (`idle`, a schedule), and about knowledge staff share (`seed`).
+ * without any (`idle`, a schedule), about knowledge staff share (`seed`), and about a draft of
+ * its that a person discarded (`discarded`).
  *
  * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
  * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
@@ -378,6 +380,16 @@ export class ThreadAgent extends Agent {
       whenBusy: 'followUp',
     });
     return { ok: true, accepted: receipt.accepted };
+  }
+
+  /** A person discarded the agent's draft (src/agent/discard.js). */
+  async discarded(note) {
+    return discarded(this, note);
+  }
+
+  /** Schedule callback: tells the agent who discarded its draft, unless it came back. */
+  async discardNote(payload) {
+    return discardNote(this, payload);
   }
 
   /**

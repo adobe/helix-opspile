@@ -15,7 +15,7 @@ import { createBashTool } from '@earendil-works/pi-durable/tools';
 import { Type } from 'typebox';
 import { platformName } from '../platforms.js';
 import {
-  discardDraft, draftOf, draftsFor, saveDraft,
+  AGENT_EMAIL, discardDraft, draftOf, draftsFor, saveDraft,
 } from '../drafts.js';
 import { COMPUTER_CWD } from './computer.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
@@ -37,7 +37,6 @@ import {
  * src/agent/agenttools.js): then it may post itself, or has a shell.
  */
 
-export const AGENT_EMAIL = 'agent@opspile.invalid';
 const MAX_INDEX = 8000;
 // Messages of another thread of the channel the agent reads: its first and the latest ones.
 const MAX_OTHER = 100;

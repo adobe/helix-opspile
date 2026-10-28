@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { entryOf } from '../drafts.js';
+import { AGENT_EMAIL, entryOf } from '../drafts.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { agentEnabled } from './enabled.js';
@@ -98,6 +98,32 @@ export async function seedAgent(env, me, body, inTeam) {
   const agent = await agentStub(env, name);
   const res = await agent.seed({ by: me.name || me.email || 'staff', text });
   return json(res, res.error ? 503 : 202);
+}
+
+/**
+ * After DELETE /api/draft (`result`: what discardDraft answered): when the draft a person
+ * discarded was the agent's, the thread's agent hears who discarded it and what it said, so it
+ * learns which drafts are not wanted. A draft a person saved last, or one a reply used up, is
+ * not the agent's business.
+ */
+export async function tellDiscarded(env, me, key, result) {
+  const draft = result && result.discarded && result.draft;
+  if (!env.AGENTS || !draft) {
+    return { result: 'skip', reason: 'nothing discarded' };
+  }
+  const saver = await env.DB.prepare('SELECT email FROM people WHERE id = ?')
+    .bind(draft.by && draft.by.id).first();
+  if (!saver || saver.email !== AGENT_EMAIL) {
+    return { result: 'skip', reason: 'not the agent\'s draft' };
+  }
+  const t = await threadTarget(env, key);
+  if (!t || !t.enabled) {
+    return { result: 'skip', reason: 'no agent' };
+  }
+  const agent = await agentStub(env, t.entry.key);
+  return agent.discarded({
+    by: me.name || me.email || 'staff', body: draft.body, version: draft.updated_at,
+  });
 }
 
 /** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */

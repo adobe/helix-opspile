@@ -24,16 +24,22 @@ import {
   agentEnabled, deliveryText, entryMessages, formatMessage, markOf, screen, untrusted,
 } from '../src/agent/deliver.js';
 import {
+  DISCARD_SECONDS, discarded, discardNote, discardText,
+} from '../src/agent/discard.js';
+import {
   agentModel, agentProvider, catalogEntry, gatewayBaseUrl, modelProblem,
 } from '../src/agent/model.js';
 import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { setAgent } from '../src/agent/enabled.js';
-import { agentStatus, pokeAgent, seedAgent } from '../src/agent/stub.js';
+import {
+  agentStatus, pokeAgent, seedAgent, tellDiscarded,
+} from '../src/agent/stub.js';
 import { channelThreads, resolveThread } from '../src/agent/history.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
-import { opspileExtension, staffExtension } from '../src/agent/tools.js';
+import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tools.js';
+import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -324,6 +330,127 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('hear who discarded their draft, and only theirs', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const told = [];
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async __unsafe_ensureInitialized() {
+          told.push(['init', id.name]);
+        },
+        async discarded(note) {
+          told.push([id.name, note]);
+          return { ok: true };
+        },
+      }),
+    };
+    const all = () => true;
+    const ada = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+    const agent = { id: await agentPerson(e) };
+    const discard = async (who) => (await discardDraft(e, who, { thread: THREAD }, all)).json();
+
+    await saveDraft(e, agent, { thread: THREAD, text: 'Hi Cy, we are on it.' }, all);
+    const gone = await discard(ada);
+    assert.equal(gone.discarded, true);
+    assert.deepEqual(await tellDiscarded(e, ada, THREAD, gone), { ok: true });
+    assert.deepEqual(told, [['init', THREAD], [THREAD, {
+      by: 'Ada Staff', body: 'Hi Cy, we are on it.', version: gone.draft.updated_at,
+    }]]);
+
+    // Nothing to tell: no draft, a person's own draft, or a channel without an agent.
+    assert.equal((await tellDiscarded(e, ada, THREAD, await discard(ada))).result, 'skip');
+    e.DB.sqlite.exec("INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (7, 'ada@staff.example', 'Ada Staff', 1)");
+    await saveDraft(e, ada, { thread: THREAD, text: 'Mine' }, all);
+    assert.equal((await tellDiscarded(e, ada, THREAD, await discard(ada))).reason, 'not the agent\'s draft');
+    await saveDraft(e, agent, { thread: THREAD, text: 'Again' }, all);
+    const off = await tellDiscarded({ ...e, AGENT_CHANNELS: '' }, ada, THREAD, await discard(ada));
+    assert.equal(off.reason, 'no agent');
+    assert.equal(told.length, 2);
+    assert.equal(discardText({ by: 'Ada', body: 'x' }, null), discardText({ by: 'Ada', body: 'x' }));
+  });
+
+  it('are told a discarded draft once Undo has run out, unless it came back', async () => {
+    const model = {
+      AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'm', BEDROCK_API_KEY: 'k',
+    };
+    const e = { ...env({ AI: clef }), ...model };
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const all = () => true;
+    const ada = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+    const bo = { id: 8, name: 'Bo Staff', email: 'bo@staff.example' };
+    e.DB.sqlite.exec(`INSERT OR IGNORE INTO people (id, email, name, staff) VALUES
+      (7, 'ada@staff.example', 'Ada Staff', 1), (8, 'bo@staff.example', 'Bo Staff', 1)`);
+    const me = { id: await agentPerson(e) };
+    const scheduled = [];
+    const submitted = [];
+    const synced = [];
+    const told = () => submitted.map(([input]) => input);
+    const agent = {
+      env: e,
+      async schedule(seconds, method, payload) {
+        scheduled.push([seconds, method, payload]);
+        return { id: 's1' };
+      },
+      target: async () => ({ key: THREAD, channelId: 'C1', threads: [THREAD] }),
+      async syncTools() {
+        synced.push('tools');
+      },
+      async syncMcp() {
+        synced.push('mcp');
+      },
+      harness: {
+        async submit(input, options) {
+          submitted.push([input, options]);
+          return { accepted: true };
+        },
+      },
+    };
+    const note = { by: 'Ada Staff', body: 'Hi Cy, we are on it.', version: 'v1' };
+
+    // Scheduled after the inbox's Undo, not told at once.
+    assert.deepEqual(await discarded(agent, note), { ok: true });
+    assert.deepEqual(scheduled, [[DISCARD_SECONDS, 'discardNote', note]]);
+    assert.ok(DISCARD_SECONDS > 8);
+    assert.equal(submitted.length, 0);
+    assert.match((await discarded({ ...agent, env: { DB: e.DB } }, note)).error, /^missing /);
+    assert.equal(scheduled.length, 1);
+
+    // No draft since: told, once per discarded version.
+    assert.deepEqual(await discardNote(agent, note), { result: 'told' });
+    const [first, options] = submitted[0];
+    assert.deepEqual(synced, ['tools', 'mcp']);
+    assert.match(first, /^Ada Staff \(Adobe staff\) discarded the shared draft you saved, without sending it\. Take it/);
+    assert.match(first, /Do not save it again/);
+    assert.match(first, /<discarded-draft>\nHi Cy, we are on it\.\n<\/discarded-draft>$/);
+    assert.deepEqual(options, { operationId: 'discard:v1', whenBusy: 'followUp' });
+
+    // Undone: the same text, saved again by the person. Nothing is told.
+    await saveDraft(e, ada, { thread: THREAD, text: note.body }, all);
+    assert.deepEqual(await discardNote(agent, note), { result: 'skip', reason: 'undone' });
+    assert.equal(submitted.length, 1);
+
+    // A colleague's other draft: told, and to leave that one alone.
+    let d = (await (await discardDraft(e, ada, { thread: THREAD }, all)).json()).draft;
+    await saveDraft(e, bo, { thread: THREAD, text: 'Fixed in 1.2' }, all);
+    assert.deepEqual(await discardNote(agent, note), { result: 'told' });
+    assert.match(told()[1], /Bo Staff has saved another draft since: leave it alone\./);
+
+    // The same text, saved by the agent itself: not an Undo, so it is told.
+    d = (await (await discardDraft(e, bo, { thread: THREAD }, all)).json()).draft;
+    assert.equal(d.body, 'Fixed in 1.2');
+    await saveDraft(e, me, { thread: THREAD, text: note.body }, all);
+    assert.deepEqual(await discardNote(agent, note), { result: 'told' });
+    assert.match(told()[2], /You have saved a new draft since: check it against this feedback\./);
+
+    // Turned off since, or no payload: nothing.
+    const off = { ...agent, env: { ...e, AGENT_CHANNELS: '' } };
+    assert.deepEqual(await discardNote(off, note), { result: 'skip', reason: 'no agent' });
+    assert.deepEqual(await discardNote(agent, null), { result: 'skip', reason: 'no agent' });
+    assert.equal(submitted.length, 3);
   });
 
   it('call Claude on Bedrock through AI Gateway with the Bedrock key as a bearer token', async () => {
