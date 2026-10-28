@@ -271,6 +271,19 @@ describe('mcp tools', () => {
     assert.match(team.body.result.content[0].text, /Your teams: helix/);
   });
 
+  it('list_threads leaves out what `exclude` names, and explains bad values there too', async () => {
+    const n = async (args) => structured(await callTool(env(), 'list_threads', args)).matched;
+    assert.equal(await n({ exclude: { platform: ['discord'] } }), 1);
+    assert.equal(await n({ exclude: { platform: ['slack'] } }), 0);
+    assert.equal(await n({ exclude: { customer: ['ACME'] } }), 0);
+    assert.equal(await n({ waiting_on: ['us'], exclude: { waiting_on: ['customer'] } }), 1);
+    const bad = await callTool(env(), 'list_threads', { exclude: { platform: ['irc'] } });
+    assert.equal(bad.body.result.isError, true);
+    assert.match(bad.body.result.content[0].text, /Invalid exclude\.platform: irc/);
+    const typo = await callTool(env(), 'list_threads', { exclude: { customer: ['acne'] } });
+    assert.match(typo.body.result.content[0].text, /No threads from customer acne to exclude/);
+  });
+
   it('get_thread returns messages with ids, and nothing for other teams', async () => {
     const t = structured(await callTool(env(), 'get_thread', { thread: SLACK }));
     assert.equal(t.customer, 'acme');

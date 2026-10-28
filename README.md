@@ -390,7 +390,7 @@ a click, as that person. A read-only "view as" refuses writes.
 | Tool | What |
 | --- | --- |
 | `get_inbox_state` | Viewer, team, filters, open thread, and counts per filter value |
-| `filter_threads` | Set filters, sort and team |
+| `filter_threads` | Set filters (and values to exclude), sort and team |
 | `list_threads` | The threads shown, most relevant first |
 | `open_thread` | Open a thread (marks it read) and return its latest messages |
 | `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |

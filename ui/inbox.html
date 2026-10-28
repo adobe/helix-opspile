@@ -130,6 +130,21 @@
     padding: 4px 4px; border-radius: 6px; cursor: pointer; }
   .fr:hover { background: var(--hover); }
   .fr.on { background: var(--sel); }
+  /*
+   * Excluded values, as klickhaus shows them: struck through and faded, with the \2260 button
+   * that excludes a value (or stops) shown red. It sits over the end of the label, on hover.
+   */
+  .fr { position: relative; }
+  .fr .lab, .fr .lw { grid-column: 3; grid-row: 1; }
+  .fr .not { grid-column: 3; grid-row: 1; justify-self: end; z-index: 1; opacity: 0; pointer-events: none;
+    border: 0; border-radius: 4px; padding: 1px 5px; font: inherit; font-size: 12px; line-height: 1.2; color: var(--mute);
+    background: inherit; cursor: pointer; }
+  .fr:hover .not, .fr .not:focus-visible { opacity: 1; pointer-events: auto; }
+  .fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 1px var(--line); }
+  .fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
+  .fr.off .lab { text-decoration: line-through; color: var(--mute); }
+  .fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+  @media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; background: none; } }
   .fr .ind { width: 3px; height: 16px; border-radius: 2px; background: var(--faint); }
   .fr .ico { width: 16px; height: 16px; border-radius: 3px; }
   .fr .lw { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -639,6 +654,7 @@
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
       <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>
       <dt title="in the reply box: your team sees it">Save the reply as a draft</dt><dd><kbd>⌘S</kbd></dd>
+      <dt title="or the ≠ beside it; click it again to stop excluding">Exclude a filter value</dt><dd><kbd>⇧</kbd> click</dd>
     </dl></section>
     <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
   </div>
