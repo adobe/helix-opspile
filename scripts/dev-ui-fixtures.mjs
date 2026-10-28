@@ -413,6 +413,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
    * `who` is a person key or 'bot'. `extra`: `{ subject, editedAgo, deleted, predates }`.
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
+   * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [],
@@ -469,8 +470,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     facts.set(key, threadFacts.map(([field, value]) => ({
       source: 'rule', field, value, confidence: null,
     })));
-    for (const who of mentioned) {
-      mentions.push({ thread: key, person: byKey.get(who).id, at: entry.row.any_at });
+    for (const m of mentioned) {
+      const [who, ago] = [].concat(m);
+      const at = ago === undefined ? entry.row.any_at : new Date(now - ago * MIN).toISOString();
+      mentions.push({ thread: key, person: byKey.get(who).id, at });
     }
     return key;
   }
@@ -525,6 +528,23 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   seed({
     ch: CHANNELS.alerts,
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
+  });
+
+  // Two messages mention the viewer since she last read it, one before: the customer card
+  // shows 2 unread mentions on ACME, and the personal view has ACME's channel.
+  seed({
+    ch: CHANNELS.aemAcme,
+    messages: [
+      ['sam', 180, '@Dana Ops the CDN still serves the old robots.txt.'],
+      ['dana', 170, 'Purging it now.'],
+      ['sam', 50, '@Dana Ops it is back after the next deploy.'],
+      ['ravi', 15, '@Dana Ops same on the staging host, logs attached.'],
+    ],
+    reads: { dana: 170 },
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.2,
+    },
+    mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });
 
   // Labeled "us", but Adobe asked last: not waiting on us, whatever the label says.

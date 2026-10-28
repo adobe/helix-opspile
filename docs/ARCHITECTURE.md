@@ -353,18 +353,23 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
-- The thread list has two views. **Team** (the default) puts what needs you most first and
-  has every facet card. **Personal** (`sort=personal`) puts the latest activity first, shows
-  conversations only (no alerts) and keeps only the customer card, on which one customer is
-  picked at a time; filters on the cards it does not show do not apply there, and are kept
-  for the team view. A facet value with threads you have not read has its label in bold, and
-  a thread's "N replies" is bold and blue while it has replies you have not read.
+- The thread list has a view per team the viewer is in, and the personal view, switched above
+  the list (for a member of two teams: *Admin · Helix · Personal*). A **team's** view
+  (`team=<slug>`) puts what needs you most first and has every facet card. **Personal**
+  (`view=personal`) has the conversations of all your teams in the channels you posted or
+  were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
+  latest activity first and keeps only the customer card, on which one customer is picked at a
+  time; filters on the cards it does not show do not apply there, and are kept for the team
+  views. Its live updates come from the rooms of all your teams. A facet value with threads
+  you have not read has its label in bold, and a red badge counts the messages that mention
+  you and that you have not read yet (Slack's and Teams' mention count); a thread's
+  "N replies" is bold and blue while it has replies you have not read.
 - The toolbar is the same on the inbox and the admin pages: the pages and label review on the
-  left, and on the right whoever is signed in. Their name opens a menu with the team to show
-  (the inbox), "View as" (admin team; while it is on, a chip next to the name says whose inbox
-  this is and leaves it in one click), the keyboard shortcuts, and **Log out**, which is
-  Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the toolbar
-  says "Reconnecting…" when the WebSocket has been down for a few seconds.
+  left, and on the right whoever is signed in, with the view on screen under their name. Their
+  name opens a menu with "View as" (admin team; while it is on, a chip next to the name says
+  whose inbox this is and leaves it in one click), the keyboard shortcuts, and **Log out**,
+  which is Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the
+  toolbar says "Reconnecting…" when a WebSocket has been down for a few seconds.
 
 ## Read state
 

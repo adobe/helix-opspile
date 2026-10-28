@@ -65,6 +65,12 @@ describe('inbox queries', () => {
     assert.deepEqual(threadScans, []);
   });
 
+  it('search identities, messages and threads by index when loading the personal view', async () => {
+    const ps = await plans((env) => inbox(env, me, null, { personal: true }));
+    assert.deepEqual(scans(ps), []);
+    assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
+  });
+
   it('search identities and messages by index when opening a thread', async () => {
     assert.deepEqual(scans(await plans((env) => thread(env, me, 'slack:E1:C1:1.1'))), []);
   });

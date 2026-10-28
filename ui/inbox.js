@@ -13,7 +13,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const state = {
-  me: null, team: null, data: null, open: null, ws: null, review: null, answers: null,
+  me: null, team: null, data: null, open: null, sockets: [], live: 0, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, keep: new Set(), scores: new Map(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), filtering: false,
@@ -556,11 +556,17 @@ const FACETS = [
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
 ];
-// The personal view (latest activity first) keeps the customer card only, and picks one
-// customer at a time; it shows conversations, not alerts. The team view has every card.
-// Filters on the cards a view does not show do not apply in it, and are kept for the other.
+// The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
+// (`state.sort` is 'personal'), the threads of all their teams in the channels they posted or
+// were mentioned in. The personal view (latest activity first) keeps the customer card only,
+// and picks one customer at a time; it shows conversations, not alerts. A team's view has
+// every card. Filters on the cards a view does not show do not apply in it, and are kept for
+// the other.
 const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer');
 const personal = () => state.sort === 'personal';
+/** Which inbox is on screen (or `data` is of): a team's slug, or `~personal`. */
+const scopeKey = () => (personal() ? '~personal' : state.team);
+const scopeOf = (data) => (data.personal ? '~personal' : data.team);
 const viewFacets = () => (personal() ? PERSONAL_FACETS : FACETS);
 const single = (id) => personal() && id === 'customer';
 /** Into the personal view: one customer stays picked, the open thread's if it is one of them. */
@@ -607,10 +613,12 @@ function facetRows(f) {
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
+  const mentions = new Map(); // value -> messages mentioning the viewer they have not read
   for (const t of pool) {
     for (const v of valuesOf(f, t)) {
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
+      if (t.unreadMentions) mentions.set(v, (mentions.get(v) || 0) + t.unreadMentions);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
@@ -637,11 +645,14 @@ function facetRows(f) {
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
-      <span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>
+      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>${mentionBadge(mentions.get(v))}</span>
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
 }
+
+/** How many messages mention the viewer that they have not read, as Slack and Teams show it. */
+const mentionBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">${n > 99 ? '99+' : n}</b>` : '');
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
@@ -772,8 +783,13 @@ function threadRows() {
   if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
   const mine = personal();
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
-  const sorter = `<button class="order" data-sort="${mine ? 'team' : 'personal'}" role="switch" aria-checked="${mine}" aria-label="Personal view" title="${mine ? 'Personal: latest activity first, filtered by customer only' : 'Team: what needs you most first, with every filter'}">`
-    + `<span class="${mine ? '' : 'on'}">Team</span><span class="${mine ? 'on' : ''}">Personal</span></button>`;
+  // Each of the viewer's teams, then the personal view: one switch, the active one highlighted.
+  const views = [...(state.teams || []).map((t) => ({
+    slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
+  })), {
+    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, in all your teams, latest activity first',
+  }];
+  const sorter = `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + (state.sel[f.id]?.size || 0), 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
@@ -1463,7 +1479,9 @@ async function saveDraft(key, text, base) {
     box.dispatchEvent(new Event('input'));
   }
   setCachedDraft(key, d);
-  const team = state.data?.teams?.[state.team]?.name || 'the team';
+  // In the personal view: the team it is filed under.
+  const slug = personal() ? state.data?.threads.find((t) => t.thread === key)?.team : state.team;
+  const team = state.data?.teams?.[slug]?.name || 'the team';
   toast(`Draft saved. Everyone in ${team} sees it.`);
   return { ok: true, draft: d };
 }
@@ -1734,7 +1752,7 @@ function openPicker(button) {
 
 // ---------------------------------------------------------------- read state, live
 /** A thread as seen from the open team's inbox (a shared channel is in several). */
-const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team ? `&team=${encodeURIComponent(state.team)}` : ''}`;
+const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team && !personal() ? `&team=${encodeURIComponent(state.team)}` : ''}`;
 const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
 function markRead(t) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
@@ -1743,12 +1761,17 @@ function markRead(t) {
     const at = memberLast(m, t.kind);
     if (!at) continue;
     const msg = { type: 'read', thread: m.thread, at };
-    if (state.ws?.readyState === 1) state.ws.send(JSON.stringify(msg));
-    else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: state.team }), credentials: 'same-origin' });
+    // A team's view sends it to the team's room; the personal view has a socket per team, and
+    // the API picks the room (one of the viewer's teams whose inbox has the thread).
+    const ws = !personal() && state.sockets[0];
+    if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+    else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
   }
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
   if (state.unread && t.unread) state.keep.add(t.thread);
-  Object.assign(t, { unread: false, unseen: false, mentionedMe: false });
+  Object.assign(t, {
+    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
+  });
   if (lastOf(t)) t.unseenByAdobe = false;
   const applies = { 'mentioned-team': t.mentionedTeam.length > 0 };
   t.attention = applies['mentioned-team'] ? 'mentioned-team' : null;
@@ -1774,24 +1797,21 @@ async function loadWho() {
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
   renderUser();
 }
-const CHECK = '<svg class="ck" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" fill="none" '
-  + 'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 /**
- * The toolbar's right end: you and the team on screen, and the menu behind them (the teams to
- * switch to, "View as", shortcuts, log out). Viewing as someone shows who, until left.
+ * The toolbar's right end: you and the view on screen, and the menu behind them ("View as",
+ * shortcuts, log out). Viewing as someone shows who, until left. The views are switched
+ * above the thread list.
  */
 function renderUser() {
   const name = state.me.name || state.me.email;
   $('me').textContent = name;
-  $('teamName').textContent = state.teams?.find((t) => t.slug === state.team)?.name || '';
+  $('teamName').textContent = personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '';
   for (const id of ['userAv', 'menuAv']) {
     $(id).textContent = initials(name);
     $(id).style.background = hue(name);
   }
   $('menuName').textContent = name;
   $('menuEmail').textContent = state.me.email || '';
-  $('teams').innerHTML = (state.teams || []).map((t) => `<button class="item" role="radio" aria-checked="${t.slug === state.team}"
-    data-team="${esc(t.slug)}">${CHECK}${esc(t.name)}</button>`).join('');
   const as = state.data?.me?.readonly ? state.data.me.name : null;
   $('viewing').hidden = !as;
   $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
@@ -1801,11 +1821,12 @@ function renderUser() {
 // are fetched behind it (up to BACKFILL entries), and more on demand at the end of the list.
 // Reloading the first page (live updates) keeps the older pages already here.
 const BACKFILL = 1000;
-const pageUrl = (before) => `/api/inbox?team=${encodeURIComponent(state.team)}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
+const inboxUrl = () => (personal() ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(state.team)}`);
+const pageUrl = (before) => `${inboxUrl()}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
 async function loadInbox(early = null) {
   const ahead = early && await early;
-  const first = ahead && ahead.team === state.team ? ahead : await get(pageUrl());
-  const prev = state.data && state.data.team === first.team && state.data.as === (state.as || null) ? state.data : null;
+  const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
+  const prev = state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
   first.as = state.as || null;
   first.page = first.page || { next: null };
   if (prev) {
@@ -1842,15 +1863,17 @@ let paging = null;
 /** Fetches older pages one after the other, while idle, until `limit` entries are here. */
 function backfill(limit = BACKFILL) {
   if (paging || !state.data?.page?.next || state.data.threads.length >= limit) return paging;
-  const { team, as } = state.data;
+  const { as } = state.data;
+  const scope = scopeOf(state.data);
+  const same = () => state.data && scopeOf(state.data) === scope && state.data.as === as;
   paging = (async () => {
-    while (state.data?.team === team && state.data.as === as && state.data.page?.next
+    while (same() && state.data.page?.next
       && state.data.threads.length < limit) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => { if (window.requestIdleCallback) requestIdleCallback(r, { timeout: 1500 }); else setTimeout(r, 50); });
       // eslint-disable-next-line no-await-in-loop
       const p = await get(pageUrl(state.data.page.next)).catch(() => null);
-      if (!p || state.data?.team !== team || state.data.as !== as) break;
+      if (!p || !same()) break;
       addPage(p);
     }
   })().finally(() => { paging = null; if (state.data) renderThreads(); });
@@ -1890,15 +1913,29 @@ function prefetchAround(key) {
   if (i < 0) return;
   for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
+/**
+ * Live updates: the room of the team on screen, or for the personal view the rooms of all the
+ * viewer's teams (every thread in it is in one of their inboxes, and announced there).
+ */
 function connect() {
-  state.ws?.close();
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(state.team)}${state.as ? `&as=${state.as}` : ''}`);
-  state.ws = ws;
-  // Reconnecting is only shown when it takes a while (not for a team switch or a blip).
-  ws.onopen = () => { clearTimeout(state.offline); state.offline = null; $('offline').hidden = true; };
+  state.live += 1;
+  for (const ws of state.sockets.splice(0)) ws.close();
+  const teams = personal() ? (state.teams || []).map((t) => t.slug) : [state.team];
+  for (const team of teams.filter(Boolean)) listen(team, state.live);
+}
+function listen(team, live) {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(team)}${state.as ? `&as=${state.as}` : ''}`);
+  state.sockets.push(ws);
+  // Reconnecting is only shown when it takes a while (not for a view switch or a blip).
+  ws.onopen = () => {
+    if (state.sockets.some((x) => x.readyState !== 1)) return;
+    clearTimeout(state.offline); state.offline = null; $('offline').hidden = true;
+  };
   ws.onclose = () => {
-    if (state.ws !== ws) return;
-    setTimeout(connect, 3000);
+    const i = state.sockets.indexOf(ws);
+    if (i < 0) return;
+    state.sockets.splice(i, 1);
+    setTimeout(() => { if (state.live === live) listen(team, live); }, 3000);
     state.offline ??= setTimeout(() => {
       $('offline').hidden = false;
       // Signed out (Access answers with a redirect, which app.js shows), or offline?
@@ -1928,12 +1965,11 @@ function setUnread(on, open = state.open) {
 // ---------------------------------------------------------------- URL state
 function toUrl(push = true, entry = null) {
   const q = new URLSearchParams();
-  q.set('team', state.team);
+  if (personal()) q.set('view', 'personal'); else q.set('team', state.team);
   q.set('filters', '1');
   for (const [id, set] of Object.entries(state.sel)) if (set.size) q.set(`f.${id}`, [...set].join('|'));
   if (state.open) q.set('t', state.open);
   if (state.review) q.set('review', '1');
-  if (state.sort !== 'team') q.set('sort', state.sort);
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
   const url = `${location.pathname}?${q}`;
@@ -1953,7 +1989,7 @@ function kbHref() {
   const customers = state.sel.customer;
   const org = open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
   if (org) q.set('org', org);
-  if (state.team) q.set('team', state.team);
+  if (state.team && !personal()) q.set('team', state.team);
   q.set('back', `${location.pathname}${location.search}`);
   return `/inbox/kb?${q}`;
 }
@@ -1969,8 +2005,8 @@ function fromUrl() {
     state.sel = {};
     for (const [k, v] of q) if (k.startsWith('f.') && v) state.sel[k.slice(2)] = new Set(v.split('|'));
   }
-  // `recent` is what the personal view was called before.
-  state.sort = ['personal', 'recent'].includes(q.get('sort')) ? 'personal' : 'team';
+  // `sort=personal` (and `recent`, before it) is how the personal view was asked for before.
+  state.sort = q.get('view') === 'personal' || ['personal', 'recent'].includes(q.get('sort')) ? 'personal' : 'team';
   onePick();
   setUnread(q.get('unread') === '1', q.get('t'));
   state.as = Number(q.get('as')) || null;
@@ -2069,12 +2105,19 @@ function move(step) {
   }
 }
 
-async function switchTeam(slug) {
-  state.team = slug; state.open = null; state.prevKeys = null;
+/** Shows a team's inbox (`slug`), or the personal view (no slug). */
+async function switchView(slug) {
+  const was = scopeKey();
+  if (slug) state.team = slug;
+  state.sort = slug ? 'team' : 'personal';
+  onePick();
+  if (scopeKey() === was) { render(); toUrl(); return; }
+  state.open = null; state.prevKeys = null;
   // A thread of a shared channel shows the read state of the team it is looked at from.
   state.cache.clear();
   syncReading();
   renderUser();
+  render();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
 }
@@ -2083,8 +2126,11 @@ async function start() {
   // The team is in the address (after the first visit): its inbox is fetched alongside
   // /api/me instead of after it. Viewing as someone else waits, as their teams decide.
   const asked = new URLSearchParams(location.search);
-  const early = asked.get('team') && !asked.get('as')
-    ? get(`/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null) : null;
+  const forMe = asked.get('view') === 'personal' || ['personal', 'recent'].includes(asked.get('sort'));
+  let early = null;
+  if (!asked.get('as') && (forMe || asked.get('team'))) {
+    early = get(forMe ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null);
+  }
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);
@@ -2098,12 +2144,6 @@ async function start() {
   syncReading();
   await loadWho();
   toUrl(false);
-  $('teams').onclick = (e) => {
-    const b = e.target.closest('[data-team]');
-    if (!b) return;
-    $('menu').hidePopover();
-    if (b.dataset.team !== state.team) switchTeam(b.dataset.team);
-  };
   $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
     const el = e.target.closest('.card');
@@ -2129,8 +2169,8 @@ async function start() {
   $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
-    const sort = e.target.closest('[data-sort]');
-    if (sort) { state.sort = sort.dataset.sort; onePick(); render(); toUrl(); return; }
+    const view = e.target.closest('[data-view]');
+    if (view) { switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('a')) return;
     const el = e.target.closest('.t');
@@ -2204,10 +2244,10 @@ async function start() {
     // Safari's edge swipe has already slid the list or the thread into view: no second slide.
     const main = document.querySelector('main');
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
-    const team = state.team;
+    const scope = scopeKey();
     const { open, review } = fromUrl();
     renderUser();
-    if (team !== state.team) { state.prevKeys = null; await loadInbox(); connect(); }
+    if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); await loadInbox(); connect(); }
     state.review = review;
     $('review').setAttribute('aria-pressed', String(review));
     render();
@@ -2308,12 +2348,13 @@ function threadInfo(t) {
     resolved: resolvedOf(t) === 'resolved', last: lastOf(t) || t.any_at || null,
   };
   if (t.unread) info.unread = true;
+  if (t.unreadMentions) info.unread_mentions = t.unreadMentions;
   if (t.draft) info.draft = { by: draftBy(t.draft), saved: t.draft.updated_at };
   return info;
 }
 
 const teamThread = (key) => state.data?.threads.find((t) => t.thread === key);
-const UNKNOWN_THREAD = 'Unknown thread. Use a `thread` value from list_threads; only threads of the selected team are known.';
+const UNKNOWN_THREAD = 'Unknown thread. Use a `thread` value from list_threads; only threads of the view on screen (a team, or personal) are known.';
 const READONLY = 'This inbox is a read-only "view as" of someone else. Ask the user to switch "View as" back to themselves.';
 
 /**
@@ -2347,7 +2388,7 @@ function fillReply(text) {
 const WEBMCP_TOOLS = [
   {
     name: 'get_inbox_state',
-    description: 'Returns who is signed in, the selected ops team and the teams they can switch to, the active filters and sort, the open thread, and how many threads each filter value matches. Call it first to learn which filter values exist.',
+    description: 'Returns who is signed in, the view on screen (one of their ops teams, or "personal") and the teams they can switch to, the active filters, the open thread, and how many threads each filter value matches. Call it first to learn which filter values exist.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { readOnlyHint: true },
     execute: async () => {
@@ -2362,14 +2403,14 @@ const WEBMCP_TOOLS = [
       }
       return out({
         viewer: state.data.me?.name || state.me.name, readonly: Boolean(state.data.me?.readonly),
-        team: state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
+        view: personal() ? 'personal' : state.team, team: personal() ? null : state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
         unread_only: state.unread, filters: activeFilters(), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
       });
     },
   },
   {
     name: 'filter_threads',
-    description: 'Sets the inbox filters, sort and team on screen, like clicking the filter cards. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. Returns how many threads match. Then call list_threads.',
+    description: 'Sets the inbox filters and view (a team, or personal) on screen, like clicking the filter cards and the view switch. Each filter given replaces that filter; an empty list clears it; filters not given stay as they are. Returns how many threads match. Then call list_threads.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2384,9 +2425,9 @@ const WEBMCP_TOOLS = [
         draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
         customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
-        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: what needs the viewer most first, with every filter; personal: latest activity first, filtered on one customer at most (the other filters do not apply there, and alerts are not shown)' },
+        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, in all their teams, latest activity first, filtered on one customer at most (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
-        team: { type: 'string', description: 'Ops team slug from get_inbox_state; switching team closes the open thread' },
+        team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
     },
     execute: async (args = {}) => {
@@ -2412,21 +2453,23 @@ const WEBMCP_TOOLS = [
           next[arg] = vals.map((v) => (toFacet[arg] ? toFacet[arg](v) : v));
         }
       }
-      const view = args.sort === 'team' || args.sort === 'personal' ? args.sort : state.sort;
+      if (args.team && args.sort === 'personal') return fail('The personal view is of all the viewer\'s teams. Give either `team` or sort "personal".');
+      const view = args.team ? 'team' : (args.sort === 'team' || args.sort === 'personal' ? args.sort : state.sort);
       if (view === 'personal' && next.customer?.length > 1) return fail('The personal view filters on one customer at a time. Give one, or sort "team".');
-      if (args.team && args.team !== state.team) await switchTeam(args.team);
+      if (view !== state.sort || (args.team && args.team !== state.team)) await switchView(view === 'personal' ? null : args.team || state.team);
       if (args.clear) { state.sel = {}; setUnread(false); }
       for (const [arg, vals] of Object.entries(next)) {
         if (vals.length) state.sel[FILTER_ARGS[arg]] = new Set(vals); else delete state.sel[FILTER_ARGS[arg]];
       }
       if (args.involves_me === true) state.sel.involves = new Set(['me']);
       else if (args.involves_me === false) delete state.sel.involves;
-      if (args.sort === 'team' || args.sort === 'personal') state.sort = args.sort;
       onePick();
       if (typeof args.unread_only === 'boolean') setUnread(args.unread_only);
       render();
       toUrl();
-      return out({ team: state.team, filters: activeFilters(), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length });
+      return out({
+        view: personal() ? 'personal' : state.team, filters: activeFilters(), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length,
+      });
     },
   },
   {

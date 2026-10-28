@@ -53,7 +53,7 @@
   button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; cursor: pointer; }
   /* The toolbar: pages and label review on the left; on the right, whoever is signed in, with a
-     menu for the team, "View as" (admin team), the keyboard shortcuts and logging out. */
+     menu for "View as" (admin team), the keyboard shortcuts and logging out. */
   header { display: flex; gap: 10px; align-items: center; height: var(--head); padding: 0 12px 0 14px; flex: none;
     background: var(--col); border-bottom: 1px solid var(--line); }
   header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
@@ -132,7 +132,11 @@
   .fr.on { background: var(--sel); }
   .fr .ind { width: 3px; height: 16px; border-radius: 2px; background: var(--faint); }
   .fr .ico { width: 16px; height: 16px; border-radius: 3px; }
+  .fr .lw { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .fr .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Unread mentions of you, counted as Slack and Teams count them. */
+  .fr .men { flex: none; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--red);
+    color: #fff; font: 650 11px/17px system-ui, sans-serif; text-align: center; }
   .fr .lab.dim { color: var(--faint); }
   /* Values with threads the viewer has not read. */
   .fr .lab.new { font-weight: 650; }
@@ -203,11 +207,15 @@
     background: var(--card); border: 2px solid var(--col); margin-left: -5px; }
   .moods .em:first-child { margin-left: 0; }
   #threads .count { display: flex; align-items: center; }
-  #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-  /* Team and Personal: one switch, the active side highlighted. */
-  #threads .count .order { display: flex; padding: 1px; border-radius: 9px; font-size: 11px; }
-  #threads .count .order span { padding: 1px 8px; border-radius: 7px; color: var(--mute); }
-  #threads .count .order span.on { background: var(--sel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
+  #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  /* Each of your teams, then Personal: one switch, the active one highlighted. */
+  #threads .count .order { display: flex; min-width: 0; padding: 1px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--card); font-size: 11px; }
+  #threads .count .order button { min-width: 0; max-width: 10em; padding: 1px 8px; border: 0; border-radius: 7px;
+    background: none; color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #threads .count .order button:hover { color: var(--ink); }
+  #threads .count .order button[aria-checked="true"] { background: var(--sel); color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--accent); cursor: default; }
   /* Unread only: an icon, filled with the accent colour while it filters. */
   #threads .count .unread { display: grid; place-items: center; width: 26px; height: 22px; padding: 0;
     border-radius: 7px; color: var(--mute); }
@@ -625,7 +633,6 @@
   </button>
   <div id="menu" class="menu" popover>
     <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
-    <section aria-labelledby="teamsLabel"><h4 id="teamsLabel">Team</h4><div id="teams" role="radiogroup" aria-labelledby="teamsLabel"></div></section>
     <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
       <p class="hint">See the inbox as someone else, read-only.</p></section>
     <section><h4>Keyboard</h4><dl class="keys">

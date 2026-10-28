@@ -199,6 +199,7 @@ function group(rows) {
  *   - `unseenByAdobe`: no staff member at all has (posting, reacting or opening counts)
  *   - `mentionedMe` / `mentionedTeam`: I / these teammates were mentioned after they
  *     last read the thread
+ *   - `unreadMentions`: how many messages mention me after I last read the thread
  *   - `attention`: the most pressing of ATTENTION that applies, or null
  */
 export function readState(threads, marks, mentions, me) {
@@ -214,7 +215,8 @@ export function readState(threads, marks, mentions, me) {
     const mine = readers.includes(me);
     const fresh = (m) => !readAt.has(m.person) || m.at > readAt.get(m.person);
     const ms = (mentionsBy.get(t.thread) || []).filter(fresh);
-    const mentionedMe = ms.some((m) => m.person === me);
+    const unreadMentions = ms.filter((m) => m.person === me).length;
+    const mentionedMe = unreadMentions > 0;
     const mentionedTeam = [...new Set(ms.filter((m) => m.person !== me).map((m) => m.person))];
     const state = {
       readers,
@@ -224,6 +226,7 @@ export function readState(threads, marks, mentions, me) {
       // Alert threads are bot posts: nobody outside is waiting for Adobe to look.
       unseenByAdobe: !alert && Boolean(last) && !ws.some((w) => w.staff && caughtUp(w)),
       mentionedMe,
+      unreadMentions,
       mentionedTeam,
     };
     const applies = {
