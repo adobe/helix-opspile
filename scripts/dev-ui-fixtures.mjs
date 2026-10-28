@@ -678,6 +678,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
       ['mei', 65, 'Reproduced on two regions, attaching the headers.'],
+      // A screenshot attached in Teams (a SharePoint file), copied into pile 1 and shown
+      // inline; the other file stays a link.
+      ['mei', 64, '![Screenshot 2026-10-21 at 10.02.11 AM.png](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/Screenshot%202026-10-21%20at%2010.02.11%E2%80%AFAM.png "1280x720")\n\nAttachments:\n\n- [headers.har](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/headers.har)'],
     ],
     // Puts a Teams channel in the personal view, so its platform card has more than Slack.
     mentioned: ['dana'],

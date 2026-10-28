@@ -57,6 +57,15 @@ are removed before an event is stored.
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
   fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
   `resource` names the message; the message's metadata names the notification.
+  The files of a Teams message are kept here too, as bytes: the images pasted into it (hosted
+  contents, fetched with the app's Graph token) and the files attached to it (SharePoint or
+  OneDrive links, fetched through Graph's `/shares` with `Files.Read.All`), under
+  `teams/<tenant>/<team>/<channel>/files/<sha256 of the URL>` with their content type and name
+  (`src/teamsfiles.js`). The normalizer copies them when it first sees the message; the message
+  keeps the platform's link, and an image attached as a file is shown where Teams shows it. The
+  inbox's media proxy serves the copies, only to those who may see the message's thread
+  (SharePoint files only from there, since the app could read any of them), and agents' `read_file` reads them. They are not events and are skipped;
+  one Graph does not hand over is not kept, and the file stays a link.
 - **Discord** is polled (see [Ingestion](#ingestion)): one Durable Object (`DiscordPoller`)
   stores each state of a message it reads (new, edited, other reactions) and each deletion it
   finds as an envelope `{ t, via, guild, d, thread?, root?, reactions?, at? }`. `d` is what
@@ -719,7 +728,7 @@ labelled as written by people outside its control.
 | Tool | |
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
-| `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Files of withheld messages cannot be read, nor Teams files (SharePoint, behind the sender's permissions). |
+| `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
 | `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |

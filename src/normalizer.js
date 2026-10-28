@@ -25,6 +25,7 @@ import { discordApi } from './discord.js';
 import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
 import { normalize } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
+import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
@@ -265,12 +266,18 @@ const fresh = (message, now = Date.now()) => {
  * @param {{ rules?: object[] }} cache shared across one queue batch
  */
 export async function processKey(env, key, cache = {}) {
+  if (isTeamsFileKey(key)) {
+    // A Teams file's bytes kept in pile 1 (src/teamsfiles.js), not an event.
+    return { key, result: 'skip', reason: 'file' };
+  }
   const obj = await env.RAW.get(key);
   if (!obj) {
     return { key, result: 'missing' };
   }
   // Slack Connect files arrive as stubs: what files.info says about them, kept in pile 1.
-  const op = normalize(key, await withSlackFiles(env, key, JSON.parse(await obj.text())));
+  // Teams files are copied into pile 1, and the images among them shown inline.
+  const payload = await withSlackFiles(env, key, JSON.parse(await obj.text()));
+  const op = normalize(key, await withTeamsFiles(env, key, payload));
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }

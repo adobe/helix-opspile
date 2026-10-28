@@ -323,16 +323,21 @@ function setMentionNames(names, kinds = new Map()) {
   if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
   mentionSet = mentionSets.get(source);
 }
-const proxied = (u) => (/^https:\/\/(files\.slack\.com\/|graph\.microsoft\.com\/|(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/)/.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
+// Slack, Teams and Discord images come through the Worker, with the app's credentials; a Teams
+// image with its thread, so the Worker serves its copy from pile 1 (SharePoint files only so).
+const MEDIA = /^https:\/\/(files\.slack\.com\/|graph\.microsoft\.com\/|[a-z0-9-]+\.sharepoint\.com\/|(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/)/i;
+const proxied = (u, thread) => (MEDIA.test(u) ? `/api/media?u=${encodeURIComponent(u)}${thread && /^teams:/.test(thread) ? `&t=${encodeURIComponent(thread)}` : ''}` : u);
 // Rendered once per text and set of known names: opening a thread again, or a live update,
 // renders only the messages that are new or changed.
 const rendered = new Map();
 const RENDERED_MAX = 4000;
-function md(src) {
-  const k = `${mentionSet}\u0000${src}`;
+// `thread`: the message's own, for its images.
+function md(src, thread = '') {
+  const k = `${mentionSet}\u0000${thread}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
-    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy: proxied, kindOf: mentionKindOf });
+    const proxy = (u) => proxied(u, thread);
+    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
     rendered.delete(k);
@@ -1220,7 +1225,7 @@ function message(m, prev, fresh, followed = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
   const enter = fresh ? 'enter' : '';
-  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body)} · ${clock(m.at)}</div>`;
+  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} · ${clock(m.at)}</div>`;
   const adobe = Boolean(a.staff);
   // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage.
   const own = Boolean(m.mine || m.pending);
@@ -1251,7 +1256,7 @@ function message(m, prev, fresh, followed = false) {
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
       <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the opspile app' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
-    : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>`;
+    : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}</div>`;
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}

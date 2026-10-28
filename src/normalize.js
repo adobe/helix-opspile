@@ -25,6 +25,7 @@
 
 import { snowflakeMs } from './discord.js';
 import { mdLink, sizeTitle } from './markdown.js';
+import { canonicalUrl } from './teamsfiles.js';
 
 /** Slack subtypes that are ordinary messages from a person or a bot. */
 const SLACK_CONTENT = new Set([
@@ -389,11 +390,37 @@ export function normalizeTeams(key, msg) {
       Object.assign(authorRef, { source: 'teams', tenant, botId: app.id });
     }
   }
-  const attachments = (msg.attachments || [])
-    .filter((a) => a && a.contentType === 'reference')
+  const refs = (msg.attachments || []).filter((a) => a && a.contentType === 'reference');
+  const html = (msg.body && msg.body.contentType) === 'html';
+  // Images opspile copied into pile 1 (src/teamsfiles.js) are shown where Teams shows them,
+  // in place of their `<attachment>` tag, through the inbox's media proxy; other files are
+  // links, listed below the text.
+  const inline = new Set(refs.filter((a) => a.opspile && /^image\//.test(a.opspile.type || '')
+    && canonicalUrl(a.contentUrl)));
+  let body = (msg.body && msg.body.content) || '';
+  const after = [];
+  for (const a of inline) {
+    const url = canonicalUrl(a.contentUrl);
+    const { width: w, height: h } = a.opspile;
+    if (html) {
+      const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
+        '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
+      })[c]);
+      const img = `<img src="${attr(url)}" alt="${attr(a.name || 'image')}"${sizeTitle(w, h) ? ` width="${Math.round(w)}" height="${Math.round(h)}"` : ''}>`;
+      const id = String(a.id || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const tag = new RegExp(`<attachment\\s+id="${id}"\\s*>\\s*</attachment>`, 'i');
+      if (a.id && tag.test(body)) {
+        body = body.replace(tag, `<p>${img}</p>`);
+      } else {
+        after.push(`<p>${img}</p>`);
+      }
+    } else {
+      after.push(mdLink(a.name || 'image', url, true, sizeTitle(w, h)));
+    }
+  }
+  const attachments = refs.filter((a) => !inline.has(a))
     .map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`)
     .join('\n');
-  const html = (msg.body && msg.body.contentType) === 'html';
   const message = {
     source: 'teams',
     tenant,
@@ -409,7 +436,7 @@ export function normalizeTeams(key, msg) {
     subject: msg.subject || undefined,
     format: html ? 'html' : 'text',
     // The same list as for Slack files; a plain-text body gets no HTML around it.
-    text: [(msg.body && msg.body.content) || '', attachments
+    text: [body, ...after, attachments
       && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
       .filter(Boolean).join('\n'),
     permalink: msg.webUrl,

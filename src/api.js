@@ -30,6 +30,7 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
+import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
@@ -173,6 +174,13 @@ export async function viewer(request, env, options) {
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
+
+/** Whether the viewer may see thread `key`, as `/api/thread` decides: a team whose inbox has it. */
+async function canSee(env, me, key) {
+  const row = await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+    .bind(key).first();
+  return Boolean(row) && (inTeam(me, await teamsOf(env, row)) || isAdmin(me));
+}
 
 /**
  * Whose inbox it is, as SQL: `team_members.team` (or any column of team slugs) is in it with
@@ -667,22 +675,42 @@ export async function thread(env, me, asked, wanted = null) {
 }
 
 const MEDIA_MAX = 10 * 1024 * 1024;
+const mediaHeaders = (type) => ({
+  'content-type': type,
+  'cache-control': 'private, max-age=86400',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'",
+});
 const DISCORD_MEDIA = /^(cdn\.discordapp\.com|media\.discordapp\.net)$/;
 
 /**
  * Images from messages, fetched with the platform's credentials: Slack files need the bot
  * token, Teams inline images (hostedContents) a Graph token, and Discord attachment links
  * expire (the bot token refreshes them). Only those kinds of URL are fetched, and only
- * images are passed on.
+ * images are passed on. With the message's thread (`t`), Teams images come from the copies
+ * in pile 1 when there are some.
  */
-export async function media(env, target) {
+export async function media(env, target, threadKey = null) {
   let u;
   try {
     u = new URL(target);
   } catch {
     return json({ error: 'bad url' }, 400);
   }
+  // Teams files opspile copied into pile 1 (src/teamsfiles.js) come from there. SharePoint
+  // files only ever do: the app could read any of them, the inbox shows those of messages.
+  const kept = threadKey && await keptTeamsFile(env, threadKey, u.href);
+  if (kept) {
+    const type = (kept.httpMetadata && kept.httpMetadata.contentType) || '';
+    if (!type.startsWith('image/')) {
+      return json({ error: 'cannot show this attachment (not an image)' }, 502);
+    }
+    return new Response(kept.body, { headers: mediaHeaders(type) });
+  }
   let res;
+  if (isSharePointUrl(u.href)) {
+    return json({ error: 'opspile has no copy of this file' }, 404);
+  }
   if (u.protocol === 'https:' && u.hostname === 'files.slack.com') {
     res = await fetch(u, { headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } });
   } else if (u.protocol === 'https:' && DISCORD_MEDIA.test(u.hostname)
@@ -704,14 +732,7 @@ export async function media(env, target) {
   if (!res.ok || !type.startsWith('image/') || length > MEDIA_MAX) {
     return json({ error: `cannot show this attachment (${res.status})` }, 502);
   }
-  return new Response(res.body, {
-    headers: {
-      'content-type': type,
-      'cache-control': 'private, max-age=86400',
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'",
-    },
-  });
+  return new Response(res.body, { headers: mediaHeaders(type) });
 }
 
 function room(env, team) {
@@ -877,7 +898,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return json(result);
   }
   if (url.pathname === '/api/media') {
-    return media(env, url.searchParams.get('u'));
+    // A thread's files (the copies of Teams files) only for those who may see the thread.
+    const t = url.searchParams.get('t');
+    if (t && !await canSee(env, me, t)) {
+      return json({ error: 'not found' }, 404);
+    }
+    return media(env, url.searchParams.get('u'), t);
   }
   // The admin pages and the editor: the admin team, and team managers for their teams (the
   // routes check which).
