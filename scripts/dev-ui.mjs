@@ -727,6 +727,16 @@ async function api(req, res, url) {
     const result = thread(url.searchParams.get('thread'));
     return result ? json(res, result) : json(res, { error: 'not found' }, 404);
   }
+  if (url.pathname === '/api/media') {
+    // Images of messages (src/api.js `media`), made up: a placeholder of the size the link
+    // names. A SharePoint file comes only with its Teams thread, as the Worker serves it.
+    const u = url.searchParams.get('u') || '';
+    if (/\.sharepoint\.com\//.test(u) && !/^teams:/.test(url.searchParams.get('t') || '')) {
+      return json(res, { error: 'opspile has no copy of this file' }, 404);
+    }
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
+    return res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#e8eef7"/><rect x="40" y="40" width="1200" height="60" rx="8" fill="#c9d6ea"/><rect x="40" y="130" width="760" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="170" width="980" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="210" width="640" height="24" rx="6" fill="#b4c4de"/><text x="640" y="470" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#5b6b85">${decodeURIComponent(u.split('/').pop()).replace(/[<>&]/g, '')}</text></svg>`);
+  }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
     // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
     // for a few seconds after the thread is first asked about, then leaves a note.

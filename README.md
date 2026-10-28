@@ -309,6 +309,10 @@ can mention them; `/diag/teams?bots=1` runs that once). `TeamMember.Read.All` is
 the channel suggestions on the admin pages count the members of a Teams team who never post; without
 it they go by posts and reactions there. On Slack they use `conversations.members`, which needs the
 bot scopes `channels:read` (and `groups:read` for private channels).
+`Files.Read.All` (or `Sites.Read.All`) is optional too: with it, the files attached to Teams
+messages (SharePoint and OneDrive) are copied into pile 1 and their images shown in the inbox;
+without it they stay links. Images pasted into a message (hosted contents) need only
+`ChannelMessage.Read.All`.
 For replies and reactions it also needs the **delegated** permissions `ChannelMessage.Send`
 (which covers `setReaction`/`unsetReaction` on channel messages), `offline_access` and
 `User.Read`, and the web redirect URI `<origin>/api/auth/teams/callback`; editing one's own

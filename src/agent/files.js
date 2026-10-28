@@ -12,6 +12,7 @@
 
 import { discordEnabled, refreshAttachment } from '../discord.js';
 import { slackApi } from '../lookup.js';
+import { canonicalUrl, isTeamsFileUrl, keptTeamsFile } from '../teamsfiles.js';
 
 /**
  * The files people attached to the messages of an agent's thread, for its `read_file` tool.
@@ -28,7 +29,8 @@ import { slackApi } from '../lookup.js';
  * What a file says is written by people outside the agent's control, like a message: its text
  * goes through the same prompt-injection check (Clef) and is withheld when flagged.
  *
- * Teams files live in SharePoint and OneDrive, behind the sender's permissions: not readable.
+ * Teams files (SharePoint and OneDrive files, pasted images) are read from the copies the
+ * normalizer keeps in pile 1 (src/teamsfiles.js); one without a copy cannot be read.
  */
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -59,6 +61,9 @@ export function fileRef(link) {
   if (discord) {
     return { source: 'discord', id: discord[0], url };
   }
+  if (isTeamsFileUrl(url)) {
+    return { source: 'teams', id: canonicalUrl(url), url: canonicalUrl(url) };
+  }
   return null;
 }
 
@@ -71,7 +76,7 @@ export function threadFiles(messages, readable = () => true) {
         const ref = fileRef(url);
         if (ref && !out.has(ref.id)) {
           out.set(ref.id, {
-            ...ref, name: label || null, message: m.id, at: m.at,
+            ...ref, name: label || null, message: m.id, at: m.at, thread: m.thread,
           });
         }
       }
@@ -88,10 +93,29 @@ export function pickFile(files, wanted) {
   return files.find((f) => f.id === id || (ref && f.id === ref.id)) || null;
 }
 
+/** A Teams file from its copy in pile 1: `{ bytes, type, name }` or `{ error }`. */
+async function keptCopy(env, f, name) {
+  const kept = await keptTeamsFile(env, f.thread, f.url);
+  if (!kept) {
+    return { error: 'opspile has no copy of this Teams file (it could not read it from SharePoint)' };
+  }
+  if (kept.size > MAX_FILE_BYTES) {
+    return { error: `too large (${Math.round(kept.size / 1024 / 1024)} MB; up to 10 MB)` };
+  }
+  return {
+    bytes: new Uint8Array(await kept.arrayBuffer()),
+    type: (kept.httpMetadata && kept.httpMetadata.contentType) || 'application/octet-stream',
+    name: (kept.customMetadata && kept.customMetadata.name) || name,
+  };
+}
+
 /** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
 async function download(env, f) {
   let { url } = f;
   let name = f.name || url.split('/').pop().split('?')[0];
+  if (f.source === 'teams') {
+    return keptCopy(env, f, name);
+  }
   let type = '';
   const headers = {};
   if (f.source === 'slack') {
@@ -182,7 +206,7 @@ export async function readThreadFile(env, {
   if (!f) {
     const list = files.map((x) => x.url).slice(0, 10);
     return {
-      error: `That is not a file of your thread. Give the link as a message shows it${list.length ? `; the files of your thread: ${list.join(', ')}` : ' (your thread has no files opspile can read; Teams files cannot be read)'}.`,
+      error: `That is not a file of your thread. Give the link as a message shows it${list.length ? `; the files of your thread: ${list.join(', ')}` : ' (your thread has no files opspile can read)'}.`,
     };
   }
   const got = await download(env, f);

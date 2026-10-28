@@ -198,6 +198,34 @@ describe('normalize (teams)', () => {
     assert.equal(plain.message.text, `hi\n\nAttachments:\n\n${link}`);
   });
 
+  it('shows an attached image opspile copied where Teams shows it, and lists the rest', () => {
+    const attachments = [{
+      id: 'a-1',
+      contentType: 'reference',
+      name: 'Screenshot 10.02.11\u202fAM.png',
+      contentUrl: 'https://contoso.sharepoint.com/sites/x/Shared Documents/Screenshot 10.02.11\u202fAM.png',
+      opspile: { type: 'image/png', width: 1280, height: 720 },
+    }, {
+      id: 'a-2',
+      contentType: 'reference',
+      name: 'trace.har',
+      contentUrl: 'https://contoso.sharepoint.com/sites/x/Shared Documents/trace.har',
+      opspile: { type: 'application/json' },
+    }];
+    const body = { contentType: 'html', content: '<p>look</p><attachment id="a-1"></attachment>' };
+    const { message } = normalize(TKEY, msg({ attachments, body }));
+    const src = 'https://contoso.sharepoint.com/sites/x/Shared%20Documents/Screenshot%2010.02.11%E2%80%AFAM.png';
+    assert.equal(htmlToMarkdown(message.text), `look\n\n![Screenshot 10.02.11\u202fAM.png](${src} "1280x720")\n\nAttachments:\n\n`
+      + '- [trace.har](https://contoso.sharepoint.com/sites/x/Shared%20Documents/trace.har)');
+    // Without its tag in the body, the image goes after the text.
+    const loose = normalize(TKEY, msg({ attachments: attachments.slice(0, 1) }));
+    assert.equal(htmlToMarkdown(loose.message.text), `hi\n\n![Screenshot 10.02.11\u202fAM.png](${src} "1280x720")`);
+    // Not copied: a link, as before.
+    const uncopied = { ...attachments[0], opspile: undefined };
+    const link = normalize(TKEY, msg({ attachments: [uncopied], body }));
+    assert.match(htmlToMarkdown(link.message.text), /^look\n\nAttachments:\n\n- \[Screenshot/);
+  });
+
   it('turns a soft-deleted message into a tombstone', () => {
     assert.equal(normalize(TKEY, msg({ deletedDateTime: '2026-10-21T12:05:00Z' })).op, 'delete');
   });

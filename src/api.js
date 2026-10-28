@@ -29,6 +29,7 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
+import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { json, text } from './http.js';
 import {
@@ -666,22 +667,42 @@ export async function thread(env, me, asked, wanted = null) {
 }
 
 const MEDIA_MAX = 10 * 1024 * 1024;
+const mediaHeaders = (type) => ({
+  'content-type': type,
+  'cache-control': 'private, max-age=86400',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'",
+});
 const DISCORD_MEDIA = /^(cdn\.discordapp\.com|media\.discordapp\.net)$/;
 
 /**
  * Images from messages, fetched with the platform's credentials: Slack files need the bot
  * token, Teams inline images (hostedContents) a Graph token, and Discord attachment links
  * expire (the bot token refreshes them). Only those kinds of URL are fetched, and only
- * images are passed on.
+ * images are passed on. With the message's thread (`t`), Teams images come from the copies
+ * in pile 1 when there are some.
  */
-export async function media(env, target) {
+export async function media(env, target, threadKey = null) {
   let u;
   try {
     u = new URL(target);
   } catch {
     return json({ error: 'bad url' }, 400);
   }
+  // Teams files opspile copied into pile 1 (src/teamsfiles.js) come from there. SharePoint
+  // files only ever do: the app could read any of them, the inbox shows those of messages.
+  const kept = threadKey && await keptTeamsFile(env, threadKey, u.href);
+  if (kept) {
+    const type = (kept.httpMetadata && kept.httpMetadata.contentType) || '';
+    if (!type.startsWith('image/')) {
+      return json({ error: 'cannot show this attachment (not an image)' }, 502);
+    }
+    return new Response(kept.body, { headers: mediaHeaders(type) });
+  }
   let res;
+  if (isSharePointUrl(u.href)) {
+    return json({ error: 'opspile has no copy of this file' }, 404);
+  }
   if (u.protocol === 'https:' && u.hostname === 'files.slack.com') {
     res = await fetch(u, { headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } });
   } else if (u.protocol === 'https:' && DISCORD_MEDIA.test(u.hostname)
@@ -703,14 +724,7 @@ export async function media(env, target) {
   if (!res.ok || !type.startsWith('image/') || length > MEDIA_MAX) {
     return json({ error: `cannot show this attachment (${res.status})` }, 502);
   }
-  return new Response(res.body, {
-    headers: {
-      'content-type': type,
-      'cache-control': 'private, max-age=86400',
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'",
-    },
-  });
+  return new Response(res.body, { headers: mediaHeaders(type) });
 }
 
 function room(env, team) {
@@ -855,7 +869,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return result ? json(result) : json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/media') {
-    return media(env, url.searchParams.get('u'));
+    return media(env, url.searchParams.get('u'), url.searchParams.get('t'));
   }
   // The admin pages and the editor: the admin team, and team managers for their teams (the
   // routes check which).

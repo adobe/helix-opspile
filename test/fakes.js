@@ -68,6 +68,14 @@ const nextVersion = () => {
   return `v${versions}`;
 };
 
+const meta = (key, o) => ({
+  key,
+  size: typeof o.body === 'string' ? new TextEncoder().encode(o.body).length
+    : Number(o.body && o.body.byteLength) || 0,
+  httpMetadata: (o.options && o.options.httpMetadata) || {},
+  customMetadata: (o.options && o.options.customMetadata) || {},
+});
+
 /** An R2 bucket with get/put, enough for pile 2. */
 export function fakeBucket(initial = {}) {
   const objects = new Map(Object.entries(initial)
@@ -80,15 +88,19 @@ export function fakeBucket(initial = {}) {
         return null;
       }
       return {
-        text: async () => o.body,
-        customMetadata: (o.options && o.options.customMetadata) || {},
+        ...meta(key, o),
+        get body() {
+          return new Response(o.body).body;
+        },
+        text: async () => (typeof o.body === 'string' ? o.body : new TextDecoder().decode(o.body)),
+        arrayBuffer: async () => new Response(o.body).arrayBuffer(),
       };
     },
     async put(key, body, options) {
       objects.set(key, { body, options, version: nextVersion() });
     },
     async head(key) {
-      return objects.has(key) ? { key } : null;
+      return objects.has(key) ? meta(key, objects.get(key)) : null;
     },
     async delete(key) {
       objects.delete(key);
