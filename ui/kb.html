@@ -173,6 +173,9 @@
   .mcpform .pair input:first-child { width: 160px; flex: none; }
   .mcpform .pair input:last-child { flex: 1; min-width: 0; }
   .mcpform .hint { grid-column: 2; color: var(--faint); font-size: 12px; margin-top: -4px; }
+  .mcpform .hint.wide { margin-top: 0; }
+  .mcpform .hint .mono { overflow-wrap: anywhere; font-size: 11px; }
+  .mcpform [hidden] { display: none; }
   .mcpform .apply { grid-column: 2; display: flex; gap: 8px; }
   /* Global MCP servers: opspile's own, switched per team and per channel. */
   .channels h3.group { margin: 14px 2px 2px; font-size: 12px; font-weight: 600; letter-spacing: .06em;

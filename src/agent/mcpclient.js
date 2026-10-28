@@ -14,13 +14,15 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/validators/cf-worker';
 import { unseal } from '../post.js';
 import { globalConnection, globalServersFor } from './globals.js';
+import { NOT_CONNECTED, oauthAuthProvider } from './mcpoauth.js';
 
 /**
  * The MCP servers configured for a team or an org (`mcp_servers`, migration 0023), and the
  * global ones turned on for the team or the channel (src/agent/globals.js), and talking to
  * them: Streamable HTTP with the official client, request headers (credentials) from D1,
- * sealed with TOKEN_KEY. Used by the thread agents (src/agent/mcp.js) and by the knowledge-base
- * editor's check (src/mcpadmin.js).
+ * sealed with TOKEN_KEY, or an OAuth grant someone connected (src/agent/mcpoauth.js). Used by
+ * the thread agents (src/agent/mcp.js) and by the knowledge-base editor's check
+ * (src/mcpadmin.js).
  *
  * No standing connection: the client's GET stream for server-sent notifications is answered
  * with 405 (no stream) right here, so a Durable Object with a client is not kept awake by it.
@@ -43,15 +45,29 @@ export async function serversFor(env, { team, org, channelId }) {
   return [...(results || []), ...await globalServersFor(env, { team, channelId })];
 }
 
-/** One server with its request headers, unsealed; null when it is gone or disabled. */
-export async function serverWithHeaders(env, id) {
+/**
+ * One server with its request headers, unsealed, or for an OAuth server the `authProvider`
+ * that gives the transport its tokens; null when it is gone or disabled. Throws for an OAuth
+ * server nobody connected, or whose grant stopped working.
+ */
+export async function serverWithHeaders(env, id, { fetch: fetchFn } = {}) {
   if (String(id).startsWith('global:')) {
     return globalConnection(env, id);
   }
-  const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, updated_at
-    FROM mcp_servers WHERE id = ? AND enabled = 1`).bind(id).first();
+  const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, auth, oauth_by,
+      oauth_error, updated_at FROM mcp_servers WHERE id = ? AND enabled = 1`).bind(id).first();
   if (!row) {
     return null;
+  }
+  if (row.auth === 'oauth') {
+    if (!row.oauth_by || row.oauth_error) {
+      throw new Error(row.oauth_error || NOT_CONNECTED);
+    }
+    return {
+      ...row,
+      headers: {},
+      authProvider: oauthAuthProvider(env, row.id, fetchFn ? { fetch: fetchFn } : {}),
+    };
   }
   return { ...row, headers: row.headers ? JSON.parse(await unseal(env, row.headers)) : {} };
 }
@@ -82,7 +98,7 @@ function noStream(fetchFn) {
   };
 }
 
-/** A connected client for `{ url, headers }`. */
+/** A connected client for `{ url, headers, authProvider? }`. */
 export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}) {
   const client = new Client(CLIENT_INFO, {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
@@ -90,6 +106,7 @@ export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
     fetch: noStream(fetchFn),
     requestInit: { headers: server.headers || {} },
+    ...(server.authProvider ? { authProvider: server.authProvider } : {}),
   });
   await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connecting to ${server.name || server.url}`);
   return client;

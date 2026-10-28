@@ -16,6 +16,9 @@ import {
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
+  beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, openOauth, revokeGrant, serverForState,
+} from './agent/mcpoauth.js';
+import {
   appManifest, approveInstallation, createApp, currentApp, forgetGithub, installationsWithApprovals,
   manifestAction, shownApp,
 } from './github.js';
@@ -38,6 +41,12 @@ import { isAdmin, managesTeam } from './review.js';
  *   server checks it too.
  *
  * Header values are sealed with TOKEN_KEY and only unsealed to talk to the server.
+ *
+ * A server can sign in with OAuth instead (`auth: 'oauth'`, optionally `oauth: { clientId,
+ * clientSecret, scope }` for a client registered at the server; src/agent/mcpoauth.js):
+ * `POST /oauth/start { id }` answers with the URL of the server's sign-in, which comes back to
+ * `GET /oauth/callback`, keeps the grant and goes back to the editor;
+ * `POST /oauth/disconnect { id }` revokes and forgets it. The agents act as whoever connected it.
  *
  * The global servers (src/agent/globals.js) come with the list, as `globals`: whether each is
  * available, what its last check found, and its switches for this knowledge base's team and
@@ -69,8 +78,10 @@ const parse = (s, fallback) => {
   }
 };
 
-/** A row as the page sees it: no header values. */
-function shown(row) {
+/** A row as the page sees it: no header values, no tokens, no client secret. */
+async function shown(env, row) {
+  const oauth = row.auth === 'oauth' ? await openOauth(env, row.oauth).catch(() => ({})) : null;
+  const config = (oauth && oauth.config) || {};
   return {
     id: row.id,
     repo: repoName(row.scope, row.slug),
@@ -80,6 +91,19 @@ function shown(row) {
     url: row.url,
     description: row.description,
     headerNames: row.header_names ? row.header_names.split(',') : [],
+    auth: row.auth || 'headers',
+    oauth: oauth && {
+      connected: Boolean(row.oauth_by && !row.oauth_error),
+      by: row.oauth_by || null,
+      at: row.oauth_at || null,
+      expiresAt: row.oauth_expires_at || null,
+      refreshedAt: row.oauth_refreshed_at || null,
+      error: row.oauth_error || null,
+      issuer: (oauth.server && oauth.server.metadata && oauth.server.metadata.issuer) || null,
+      clientId: config.clientId || null,
+      clientSecret: Boolean(config.clientSecret),
+      scope: config.scope || null,
+    },
     allow: row.allow || '',
     enabled: Boolean(row.enabled),
     tools: parse(row.tools, []),
@@ -128,6 +152,63 @@ function headersFrom(input) {
   return { headers: out };
 }
 
+/** The OAuth client staff gave, if any, and the scope, from the request: `{ config }`. */
+function oauthConfig(given, old) {
+  const clientId = clean(given.clientId, 300);
+  const secret = String(given.clientSecret ?? '').trim();
+  if (secret.length > MAX_VALUE || /[\r\n]/.test(secret)) {
+    return { error: `give the client secret on one line (at most ${MAX_VALUE} characters)` };
+  }
+  if (secret && !clientId) {
+    return { error: 'a client secret goes with a client id' };
+  }
+  // No secret given keeps the one of the same client.
+  const clientSecret = secret || (clientId && clientId === old.clientId ? old.clientSecret : '');
+  const scope = clean(given.scope, 500).split(/\s+/).filter(Boolean).join(' ');
+  return {
+    config: {
+      ...(clientId ? { clientId } : {}),
+      ...(clientSecret ? { clientSecret } : {}),
+      ...(scope ? { scope } : {}),
+    },
+  };
+}
+
+/**
+ * The fields of a server that signs in with OAuth. It takes no headers. A new URL, a new
+ * client or scope, or switching from headers forgets the grant: someone connects it again.
+ */
+async function oauthFields(env, body, current, f) {
+  if (!env.TOKEN_KEY || !env.PUBLIC_ORIGIN) {
+    return { error: 'TOKEN_KEY and PUBLIC_ORIGIN must be set for OAuth sign-ins' };
+  }
+  const was = current.auth === 'oauth' ? await openOauth(env, current.oauth).catch(() => ({})) : {};
+  const old = was.config || {};
+  let config = old;
+  if (body.oauth !== undefined) {
+    const c = oauthConfig(body.oauth || {}, old);
+    if (c.error) {
+      return c;
+    }
+    config = c.config;
+  }
+  const out = { ...f };
+  if (current.auth !== 'oauth' || current.header_names) {
+    out.headers = null;
+    out.header_names = null;
+  }
+  if (current.auth !== 'oauth' || f.url !== current.url || JSON.stringify(config) !== JSON.stringify(old)) {
+    // A client registered for the same URL can sign in again; one staff gave changes with it.
+    const keep = current.auth === 'oauth' && f.url === current.url && !config.clientId
+      && was.client && !was.client.given;
+    out.oauth = await seal(env, JSON.stringify({
+      config, ...(keep ? { client: was.client, clientIssuer: was.clientIssuer } : {}),
+    }));
+    out.oauthReset = true;
+  }
+  return { fields: out };
+}
+
 /** The fields of a server from the request, checked. */
 async function fieldsFrom(env, body, current) {
   const f = {
@@ -156,6 +237,18 @@ async function fieldsFrom(env, body, current) {
     return { error: 'put credentials in a header (e.g. Authorization), not in the URL' };
   }
   f.url = url.href;
+  f.auth = body.auth !== undefined ? String(body.auth) : (current.auth || 'headers');
+  if (!['headers', 'oauth'].includes(f.auth)) {
+    return { error: 'auth is headers or oauth' };
+  }
+  if (f.auth === 'oauth') {
+    return oauthFields(env, body, current, f);
+  }
+  if (current.auth === 'oauth') {
+    // Back to headers: the grant goes.
+    f.oauth = null;
+    f.oauthReset = true;
+  }
   if (body.headers !== undefined) {
     const h = headersFrom(body.headers);
     if (h.error) {
@@ -171,12 +264,30 @@ async function fieldsFrom(env, body, current) {
   return { fields: f };
 }
 
+/** Forgets the grant of server `id` (its configuration stays in `oauth`, sealed). */
+async function resetOauth(env, id, sealed) {
+  await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_by = NULL, oauth_at = NULL,
+      oauth_expires_at = NULL, oauth_refreshed_at = NULL, oauth_error = NULL, oauth_lock = NULL,
+      oauth_pending = NULL, oauth_state = NULL WHERE id = ?`).bind(sealed, Number(id)).run();
+}
+
+const connected = (row) => row.auth !== 'oauth' || Boolean(row.oauth_by && !row.oauth_error);
+
 async function byId(env, id) {
   return env.DB.prepare('SELECT * FROM mcp_servers WHERE id = ?').bind(Number(id)).first();
 }
 
-/** Connects to the server and lists its tools; the result is stored with the row. */
+/**
+ * Connects to the server and lists its tools; the result is stored with the row. An OAuth
+ * server nobody connected has nothing to check: its row says why.
+ */
 async function check(env, id) {
+  const row = await byId(env, id);
+  if (row && !connected(row)) {
+    await env.DB.prepare(`UPDATE mcp_servers SET tools = NULL, checked_at = NULL, check_error = NULL
+      WHERE id = ?`).bind(Number(id)).run();
+    return {};
+  }
   const server = await serverWithHeaders(env, id).catch((e) => ({ error: e.message }));
   let res;
   if (!server) {
@@ -489,7 +600,7 @@ async function list(env, me, repo) {
     ORDER BY name`).bind(owner.scope, owner.slug).all();
   return json({
     repo,
-    servers: (results || []).map(shown),
+    servers: await Promise.all((results || []).map((r) => shown(env, r))),
     globals: await globalsView(env, me, owner),
   });
 }
@@ -509,25 +620,27 @@ async function create(env, me, body) {
     return json({ error: `there is a server named ${fields.name} here already` }, 409);
   }
   const row = await env.DB.prepare(`INSERT INTO mcp_servers (scope, slug, name, url, description,
-      headers, header_names, allow, enabled, updated_by, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).bind(
+      headers, header_names, allow, enabled, auth, oauth, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).bind(
     scope,
     slug,
     fields.name,
     fields.url,
     fields.description,
-    fields.headers,
-    fields.header_names,
+    fields.headers ?? null,
+    fields.header_names ?? null,
     fields.allow,
     fields.enabled,
+    fields.auth,
+    fields.oauth ?? null,
     me.email || String(me.id),
     new Date().toISOString(),
   ).first();
   const checked = await check(env, row.id);
   console.log(JSON.stringify({
-    route: 'kb', mcp: 'added', id: row.id, scope, by: me.id,
+    route: 'kb', mcp: 'added', id: row.id, scope, auth: fields.auth, by: me.id,
   }));
-  return json({ ok: true, ...checked, server: shown(await byId(env, row.id)) });
+  return json({ ok: true, ...checked, server: await shown(env, await byId(env, row.id)) });
 }
 
 async function update(env, me, body) {
@@ -548,7 +661,7 @@ async function update(env, me, body) {
   }
   const headers = 'headers' in fields;
   await env.DB.prepare(`UPDATE mcp_servers SET name = ?, url = ?, description = ?, allow = ?,
-      enabled = ?, headers = CASE WHEN ? THEN ? ELSE headers END,
+      enabled = ?, auth = ?, headers = CASE WHEN ? THEN ? ELSE headers END,
       header_names = CASE WHEN ? THEN ? ELSE header_names END, updated_by = ?, updated_at = ?
     WHERE id = ?`).bind(
     fields.name,
@@ -556,6 +669,7 @@ async function update(env, me, body) {
     fields.description,
     fields.allow,
     fields.enabled,
+    fields.auth,
     headers ? 1 : 0,
     fields.headers ?? null,
     headers ? 1 : 0,
@@ -564,10 +678,18 @@ async function update(env, me, body) {
     new Date().toISOString(),
     current.id,
   ).run();
+  if (fields.oauthReset) {
+    // The grant is of no use any more: revoked where the server can, then forgotten.
+    if (current.auth === 'oauth' && current.oauth_by) {
+      await revokeGrant(env, current);
+    }
+    await resetOauth(env, current.id, fields.oauth);
+  }
   // Turning a server on or off, or a new URL or credentials, is worth checking again.
-  const again = fields.enabled && (headers || fields.url !== current.url || !current.enabled);
+  const again = fields.enabled && (headers || fields.oauthReset || fields.url !== current.url
+    || !current.enabled);
   const checked = again ? await check(env, current.id) : {};
-  return json({ ok: true, ...checked, server: shown(await byId(env, current.id)) });
+  return json({ ok: true, ...checked, server: await shown(env, await byId(env, current.id)) });
 }
 
 async function remove(env, me, body) {
@@ -577,6 +699,9 @@ async function remove(env, me, body) {
   }
   if (!mayManage(me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
+  }
+  if (current.auth === 'oauth' && current.oauth_by) {
+    await disconnect(env, current, me.email || String(me.id)).catch(() => {});
   }
   await env.DB.prepare('DELETE FROM mcp_servers WHERE id = ?').bind(current.id).run();
   return json({ ok: true, deleted: current.id });
@@ -591,7 +716,87 @@ async function recheck(env, me, body) {
     return json({ error: 'no such server' }, 404);
   }
   const checked = await check(env, current.id);
-  return json({ ok: true, ...checked, server: shown(await byId(env, current.id)) });
+  return json({ ok: true, ...checked, server: await shown(env, await byId(env, current.id)) });
+}
+
+// ---- OAuth sign-ins ------------------------------------------------------------------------
+
+/** A server `me` manages that signs in with OAuth, by id; else an error response. */
+async function oauthServer(env, me, id) {
+  const current = await byId(env, id);
+  if (!current || !mayManage(me, current.scope, current.slug)) {
+    return { error: json({ error: 'no such server' }, 404) };
+  }
+  if (current.auth !== 'oauth') {
+    return { error: bad(`${current.name} sends request headers; it has no OAuth sign-in`) };
+  }
+  return { current };
+}
+
+/** POST /api/kb/mcp/oauth/start `{ id }`: where to send the browser to sign in. */
+async function oauthStart(env, me, body) {
+  const { current, error } = await oauthServer(env, me, body.id);
+  if (error) {
+    return error;
+  }
+  try {
+    const authorizationUrl = await beginSignIn(env, current, me.id);
+    console.log(JSON.stringify({
+      route: 'kb', mcp: 'oauth start', id: current.id, by: me.id,
+    }));
+    return json({ ok: true, authorizationUrl });
+  } catch (e) {
+    console.log(JSON.stringify({
+      route: 'kb', mcp: 'oauth start failed', id: current.id, error: String(e.message).slice(0, 200),
+    }));
+    return json({ error: `${current.name}: ${e.message}` }, 502);
+  }
+}
+
+/**
+ * GET /api/kb/mcp/oauth/callback?code&state&iss (or ?error): the authorization server sent the
+ * browser back. Keeps the grant, lists the tools, and goes back to the editor, saying how it went.
+ */
+async function oauthCallback(env, me, url) {
+  const row = await serverForState(env, url.searchParams.get('state'));
+  if (!row || !mayManage(me, row.scope, row.slug)) {
+    return text('This sign-in expired or was not started here. Connect the server again from the'
+      + ' knowledge-base editor.\n', 400);
+  }
+  const back = (q) => new Response(null, {
+    status: 302,
+    headers: {
+      location: `/inbox/kb?${new URLSearchParams({ repo: repoName(row.scope, row.slug), view: 'mcp', ...q })}`,
+      'cache-control': 'no-store',
+    },
+  });
+  const by = me.email || String(me.id);
+  try {
+    await finishSignIn(env, row, { id: me.id, label: by }, Object.fromEntries(url.searchParams));
+  } catch (e) {
+    console.log(JSON.stringify({
+      route: 'kb', mcp: 'oauth failed', id: row.id, error: String(e.message).slice(0, 200),
+    }));
+    return back({ mcp_error: `${row.name}: ${e.message}` });
+  }
+  await check(env, row.id);
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'oauth connected', id: row.id, by: me.id,
+  }));
+  return back({ mcp_connected: String(row.id) });
+}
+
+/** POST /api/kb/mcp/oauth/disconnect `{ id }`: revokes the grant where it can, and forgets it. */
+async function oauthDisconnect(env, me, body) {
+  const { current, error } = await oauthServer(env, me, body.id);
+  if (error) {
+    return error;
+  }
+  await disconnect(env, current, me.email || String(me.id));
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'oauth disconnected', id: current.id, by: me.id,
+  }));
+  return json({ ok: true, server: await shown(env, await byId(env, current.id)) });
 }
 
 /** Routes `/api/kb/mcp*` and `/api/kb/github/*`; null for other paths. */
@@ -612,6 +817,9 @@ export async function mcpAdmin(request, env, url, me) {
     case 'PUT /api/kb/mcp': return update(env, me, body);
     case 'DELETE /api/kb/mcp': return remove(env, me, body);
     case 'POST /api/kb/mcp/check': return recheck(env, me, body);
+    case 'POST /api/kb/mcp/oauth/start': return oauthStart(env, me, body);
+    case `GET ${CALLBACK_PATH}`: return oauthCallback(env, me, url);
+    case 'POST /api/kb/mcp/oauth/disconnect': return oauthDisconnect(env, me, body);
     default: return json({ error: 'not found' }, 404);
   }
 }
