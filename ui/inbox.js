@@ -593,11 +593,11 @@ const FACETS = [
 ];
 // The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
 // (`state.sort` is 'personal'), the threads of all their teams in the channels they posted or
-// were mentioned in. The personal view (latest activity first) keeps the customer card only,
-// and picks one customer at a time; it shows conversations, not alerts. A team's view has
-// every card. Filters on the cards a view does not show do not apply in it, and are kept for
-// the other.
-const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer');
+// were mentioned in. The personal view (latest activity first) keeps the customer and platform
+// cards only, and picks one customer at a time; it shows conversations, not alerts. A team's
+// view has every card. Filters on the cards a view does not show do not apply in it, and are
+// kept for the other.
+const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer' || f.id === 'platform');
 const personal = () => state.sort === 'personal';
 /** Which inbox is on screen (or `data` is of): a team's slug, or `~personal`. */
 const scopeKey = () => (personal() ? '~personal' : state.team);
@@ -3554,7 +3554,7 @@ const WEBMCP_TOOLS = [
           description: 'Values to leave out, by the same filters: e.g. { "platform": ["discord"] } hides Discord threads. Each one given replaces what that filter excludes; an empty list stops excluding. A value excluded is no longer picked.',
         },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
-        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, in all their teams, latest activity first, filtered on one customer at most (the other filters do not apply there, and alerts are not shown)' },
+        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, in all their teams, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
