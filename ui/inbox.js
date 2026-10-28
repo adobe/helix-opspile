@@ -808,6 +808,7 @@ function moods(t) {
 }
 
 function row(t, hit = null) {
+  if (design === 'a') return rowA(t, hit);
   if (design === 'b') return rowB(t, hit);
   if (design === 'c') return rowC(t, hit);
   const status = statusOf(t);
@@ -818,11 +819,11 @@ function row(t, hit = null) {
   const fresh = !hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
   const n = t.occurrences || (t.members || []).length;
   const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
-  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}${flags(t)}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
+  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
     <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
       ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
-      ${design ? resolvedMark(t) : ''}<span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
-      ${design ? mentionMark(t) : ''}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>${design ? '<span class="pip" aria-hidden="true"></span>' : ''}</div>
+      <span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
+      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
     <div class="l2">
       <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
       <span class="faces">${faces}</span>
@@ -858,6 +859,42 @@ const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.tit
 const draftMark = (t, label = '✎ Draft') => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">${label}</span>` : '');
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
 const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
+
+/** One customer picked in the filters: every row is theirs, so the rows leave it out. */
+const oneCustomer = () => state.sel.customer?.size === 1;
+
+/**
+ * A, white unread rows: the list as it is, with unread rows white and read ones tinted. The
+ * customer is left out when the filters pick one; the second line says "Y replies, X mentions"
+ * and, as far as there is room before the reactions, the latest reply, as Messages does.
+ */
+function rowA(t, hit) {
+  const status = statusOf(t);
+  const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
+    key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
+  })).join('');
+  const replies = Math.max(0, (t.messages || 1) - 1);
+  const n = t.occurrences || (t.members || []).length;
+  let count = '';
+  if (n > 1) count = `${n}×`;
+  else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
+  const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
+  const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
+  // The latest reply, once the thread is in the cache (rows in view are fetched ahead).
+  const p = replies && !hit ? preview(t) : null;
+  const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
+  const cust = oneCustomer() ? ''
+    : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
+  return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
+    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
+      ${draftMark(t)}${resolvedMark(t)}<span class="title">${titleHtml(t, hit)}</span>
+      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
+    <div class="l2">${cust}
+      <span class="faces">${faces}</span>
+      ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
+      <span class="tags">${moods(t)}</span>
+    </div>${hit ? hitLine(hit) : ''}</div>`;
+}
 
 /** Markdown as one line of plain text, for a preview. */
 const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiByName(n) || m)
@@ -2751,14 +2788,14 @@ function pump() {
     inflight.set(key, get(threadUrl(key))
       .then((data) => {
         if (!fresh(key)) state.cache.set(key, { data, at: Date.now() });
-        if (design === 'b') previewSoon();
+        if (design === 'a' || design === 'b') previewSoon();
         return data;
       })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
   }
 }
-/** Design B: the rows again once fetched threads give them their previews, one frame later. */
+/** Designs A and B: the rows again once fetched threads give them their previews, one frame later. */
 let previewFrame = 0;
 function previewSoon() {
   if (!previewFrame) previewFrame = requestAnimationFrame(() => { previewFrame = 0; renderThreads(); });
