@@ -236,8 +236,36 @@
   .moods .em { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
     background: var(--card); border: 2px solid var(--col); margin-left: -5px; }
   .moods .em:first-child { margin-left: 0; }
-  #threads .count { display: flex; align-items: center; }
+  /* The list's heading: the search box, then the controls (or, while searching, the results' count). */
+  #threads .count { display: flex; flex-direction: column; align-items: stretch; gap: 7px; }
+  #threads .count .ctl { display: flex; align-items: center; min-height: 22px; }
   #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .find { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 7px 0 9px; cursor: text;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--faint); }
+  .find:focus-within { border-color: var(--accent); color: var(--mute); }
+  .find svg { width: 14px; height: 14px; flex: none; }
+  .find input { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: transparent;
+    color: var(--ink); font: inherit; font-size: 13px; }
+  .find input::placeholder { color: var(--faint); }
+  .find:focus-within kbd { display: none; }
+  @media (hover: none) { .find kbd { display: none; } }
+  #threads .count .found { color: var(--mute); }
+  #threads .count .clearq { height: 22px; margin-left: 8px; padding: 0 9px; border-radius: 7px; font-size: 11px; color: var(--mute); flex: none; }
+  #threads .count .found { flex: none; }
+  #threads .count .clearq:hover { color: var(--ink); }
+  /* A search result: a third line with the message that matched, the query's words marked. */
+  .t.hit { height: 84px; grid-template-rows: 22px 24px 18px; contain-intrinsic-size: auto 84px; }
+  .t .l3 { min-width: 0; padding-left: 17px; font-size: 12px; color: var(--mute); overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  .t .l3 b { color: var(--ink); font-weight: 600; }
+  .t .l3 .tag { margin-right: 3px; }
+  .t .l3.dim { color: var(--faint); }
+  mark { background: color-mix(in srgb, var(--yellow) 32%, transparent); color: inherit; border-radius: 3px; }
+  #threads .rows.stale { opacity: .55; transition: opacity .15s; }
+  .linkish { padding: 0; border: 0; background: none; color: var(--link); cursor: pointer; text-decoration: underline; }
+  /* The message a search result opened the thread at. */
+  .msg .bubble { transition: box-shadow .6s ease-out; }
+  .msg.found .bubble { box-shadow: 0 0 0 2px var(--yellow); }
   /* Each of your teams, then Personal: one switch, the active one highlighted. */
   #threads .count .order { display: flex; min-width: 0; padding: 1px; border: 1px solid var(--line); border-radius: 9px;
     background: var(--card); font-size: 11px; }
@@ -571,6 +599,10 @@
     #threads .count .filt, #threads .count .unread, #threads .count .bell { height: 27px; }
     #threads .count .unread, #threads .count .bell { width: 32px; }
     #threads .count .order span { padding: 4px 11px; }
+    #threads .count .clearq { height: 27px; }
+    /* 16px: Safari zooms into a smaller field it focuses. */
+    .find { height: 36px; }
+    .find input { font-size: 16px; }
     .fr { padding: 7px 4px; }
     .card h3 .clear { padding: 4px 6px; margin: -4px -6px -4px auto; }
     .ph .close { width: 40px; height: 40px; }
@@ -681,6 +713,7 @@
       <p class="hint" id="notifyHint"></p>
       <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
     <section><h4>Keyboard</h4><dl class="keys">
+      <dt>Search, on every platform</dt><dd><kbd>/</kbd></dd>
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
       <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>
       <dt title="in the reply box: your team sees it">Save the reply as a draft</dt><dd><kbd>⌘S</kbd></dd>

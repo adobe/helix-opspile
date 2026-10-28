@@ -24,6 +24,10 @@
  * out. The cron does this by itself for threads whose vectors are behind; this redoes all of
  * them, after a change to what they are made from.
  *
+ * --index brings the full-text items (the SEARCH index) of every channel thread up to date,
+ * spread out: the first time, all of them. Vectors and items that are current are not made
+ * again. The cron does this by itself too, fifty threads a run.
+ *
  * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
  * minutes. Run it after a replay, once the vector index has caught up with the new roots.
  * With --channel <id>, only that channel's roots, one after the other, oldest first: in
@@ -54,6 +58,7 @@ const clear = args.includes('--clear');
 const rethreadAll = args.includes('--rethread');
 const relabelAll = args.includes('--relabel');
 const vectorizeAll = args.includes('--vectorize');
+const indexAll = args.includes('--index');
 const channel = opt('channel', null);
 /** Seconds between two roots of one channel re-threaded in order. */
 const SPACING = 6;
@@ -97,7 +102,7 @@ if (!queue) {
 
 const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
 
-if (rethreadAll || relabelAll || vectorizeAll) {
+if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
   const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
   if (channel && (!rethreadAll || !/^[\w:@.-]+$/.test(channel))) {
     throw new Error('--channel takes a channel id, and goes with --rethread');
@@ -108,6 +113,8 @@ if (rethreadAll || relabelAll || vectorizeAll) {
     sql = `SELECT thread FROM threads WHERE root_at IS NOT NULL${only} ORDER BY root_at`;
   } else if (vectorizeAll) {
     sql = "SELECT thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL ORDER BY any_at DESC";
+  } else if (indexAll) {
+    sql = "SELECT thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL AND (indexed_through IS NULL OR indexed_through != any_at) ORDER BY any_at DESC";
   }
   if (relabelAll && !dryRun) {
     // Labels are skipped when nothing changed; forget what they were computed for.
@@ -128,7 +135,7 @@ if (rethreadAll || relabelAll || vectorizeAll) {
     writeFileSync(file, JSON.stringify(keys.slice(i, i + size)
       .map((thread) => ({
         body: (rethreadAll && { rethread: thread, force: true })
-          || (vectorizeAll && { vectorize: thread }) || { label: thread },
+          || ((vectorizeAll || indexAll) && { vectorize: thread }) || { label: thread },
         content_type: 'json',
       }))));
     if (!dryRun) {
@@ -146,7 +153,8 @@ if (rethreadAll || relabelAll || vectorizeAll) {
       );
     }
   }
-  const what = (rethreadAll && 're-thread') || (vectorizeAll && 'vectorize') || 'relabel';
+  const what = (rethreadAll && 're-thread') || (vectorizeAll && 'vectorize')
+    || (indexAll && 'index') || 'relabel';
   console.log(`${dryRun ? 'would' : 'will'} ${what} ${keys.length} thread(s)`);
   rmSync(dir, { recursive: true, force: true });
   process.exit(0);

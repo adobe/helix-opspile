@@ -21,6 +21,10 @@ const state = {
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
+  // Search (GET /api/search): the query, its words, the answer, and which request is current.
+  search: { q: '', words: [], data: null, loading: false, error: null, seq: 0 },
+  // The message a search hit opens the thread at: { key, id }.
+  jump: null,
 };
 
 // ---------------------------------------------------------------- helpers
@@ -543,7 +547,7 @@ const FACETS = [
   { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
     emoji: (v) => (v === 'none' ? '' : '✎'), color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
-    labelFn: (v) => { const t = (state.data?.threads || []).find((x) => x.org === v); return t ? orgName(t) : v; }, limit: 12,
+    labelFn: (v) => { const t = [...listed(), ...(state.data?.threads || [])].find((x) => x.org === v); return t ? orgName(t) : v; }, limit: 12,
     group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
   { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
     order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
@@ -641,7 +645,7 @@ function bar(f, v, n, max, m, color) {
 }
 
 function facetRows(f) {
-  const all = state.data?.threads || [];
+  const all = listed();
   const pool = all.filter((t) => passes(t, f.id));
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
@@ -744,26 +748,145 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
-function row(t) {
+function row(t, hit = null) {
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
   })).join('');
   const replies = Math.max(0, (t.messages || 1) - 1);
-  const fresh = state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
+  const fresh = !hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
   const n = t.occurrences || (t.members || []).length;
   const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
-  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}" data-thread="${esc(t.thread)}">
+  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
     <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
       ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
-      <span class="title">${t.root_known ? '' : '↳ '}${emojify(t.title || '(no text)')}</span>
+      <span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
       <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
     <div class="l2">
       <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
       <span class="faces">${faces}</span>
       ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
       <span class="tags">${moods(t)}</span>
-    </div></div>`;
+    </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+// ---------------------------------------------------------------- search
+// The search box over the list: what it finds (GET /api/search, every platform at once) takes
+// the list's place, best match first, each row with the message that matched. The filter
+// cards count and filter the results; clearing the search brings the inbox back as it was.
+const searching = () => Boolean(state.search.q);
+/** A search result's entry: the inbox's own (kept current by live updates), else the search's. */
+const searchEntry = (key) => state.data?.threads.find((t) => t.thread === key)
+  || state.search.data?.threads.find((t) => t.thread === key);
+/** The entries the list and the filter cards are about: the search results, or the inbox. */
+function listed() {
+  if (!searching()) return state.data?.threads || [];
+  return (state.search.data?.hits || []).map((h) => searchEntry(h.thread)).filter(Boolean);
+}
+const reEscape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** `text`, escaped, with the query's words marked. */
+function marked(text, words) {
+  const ws = (words || []).filter(Boolean).map(reEscape);
+  if (!ws.length) return emojify(text);
+  return String(text).split(new RegExp(`(${ws.join('|')})`, 'gi'))
+    .map((part, i) => (i % 2 ? `<mark>${emojify(part)}</mark>` : emojify(part))).join('');
+}
+const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', text: 'Words in a message', topic: 'About this' };
+const FACT_LABEL = { url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline' };
+/** A result's third line: the message that matched, else the fact, else why it matched. */
+function hitLine(hit) {
+  const words = state.search.words;
+  if (hit.snippet) {
+    const s = hit.snippet;
+    return `<div class="l3" title="${esc(s.text)}">${s.author ? `<b>${esc(s.author)}</b> ` : ''}${marked(s.text, words)}</div>`;
+  }
+  if (hit.fact) {
+    return `<div class="l3"><span class="tag">${esc(FACT_LABEL[hit.fact.field] || hit.fact.field)}</span> ${marked(hit.fact.value, words)}</div>`;
+  }
+  return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(' · '))} matches</div>`;
+}
+
+/** Asks for `q` (after a pause in typing, or at once), and shows the answer when it is the latest. */
+let searchTimer = null;
+function searchSoon(q, wait = 250) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runSearch(q), wait);
+}
+async function runSearch(q) {
+  clearTimeout(searchTimer);
+  const query = String(q || '').replace(/\s+/g, ' ').trim();
+  // The same question as the one on screen, or on its way, is not asked again.
+  if (query === state.search.q && (state.search.loading || (state.search.data?.scope === scopeKey() && !state.search.error))) return;
+  const seq = ++state.search.seq;
+  state.search.q = query;
+  if ($('q') && $('q').value.trim() !== query) $('q').value = query;
+  toUrl(false);
+  if (!query) { Object.assign(state.search, { words: [], data: null, loading: false, error: null }); render(); return; }
+  state.search.loading = true;
+  state.search.error = null;
+  render();
+  try {
+    const scope = scopeKey();
+    const data = await get(`/api/search?${personal() ? 'view=personal' : `team=${encodeURIComponent(state.team)}`}&q=${encodeURIComponent(query)}`);
+    if (seq !== state.search.seq) return;
+    data.scope = scope;
+    mergeProfiles(data.profiles);
+    if (state.data) state.data.people = { ...(data.people || {}), ...(state.data.people || {}) };
+    Object.assign(state.search, { data, words: data.words || [], loading: false });
+  } catch (e) {
+    if (seq !== state.search.seq) return;
+    Object.assign(state.search, { data: null, loading: false, error: e.message });
+  }
+  render();
+}
+function clearSearch() {
+  if ($('q')) $('q').value = '';
+  runSearch('');
+}
+/** The results, as rows: built anew when they change, the rest kept. */
+function searchRows(box) {
+  const { data, loading, error, q } = state.search;
+  const all = data?.hits || [];
+  const hits = all.filter((h) => { const t = searchEntry(h.thread); return t && passes(t); });
+  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (state.unread ? 1 : 0);
+  const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  let said = 'Searching…';
+  if (!loading && error) said = 'Search failed';
+  else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
+  // The view switch stays: a search is of the view on screen, a team's or the personal one.
+  const ctl = `${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button><span class="sort">${viewSwitch()}</span>`;
+  const head = box.querySelector('.ctl');
+  if (head.__html !== ctl) { head.innerHTML = ctl; head.__html = ctl; }
+  const list = box.querySelector('.rows');
+  const made = state.hitNodes || (state.hitNodes = new Map());
+  const nodes = hits.map((h) => {
+    const html = row(searchEntry(h.thread), h).trim();
+    let node = made.get(h.thread);
+    if (!node || node.__html !== html) {
+      node = toNode(html);
+      node.__html = html;
+      made.set(h.thread, node);
+    }
+    preload.observe(node);
+    return node;
+  });
+  for (const c of list.children) if (!nodes.includes(c)) preload.unobserve(c);
+  if (nodes.length) list.replaceChildren(...nodes);
+  else if (loading && !data) list.innerHTML = '<div class="empty">Searching…</div>';
+  else if (error) list.innerHTML = `<div class="empty">${esc(error)}</div>`;
+  else if (all.length) list.innerHTML = `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
+  else if (data) list.innerHTML = `<div class="empty">Nothing found for “${esc(q)}”.</div>`;
+  list.classList.toggle('stale', Boolean(loading && data));
+  const keep = new Set(hits.map((h) => h.thread));
+  for (const k of made.keys()) if (!keep.has(k)) made.delete(k);
+  cardGone();
+  state.order = hits.map((h) => h.thread);
+}
+/** Opens a result at the message that matched. */
+function openHit(key) {
+  const el = document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"][data-msg]`);
+  state.jump = el ? { key, id: el.dataset.msg } : null;
+  openThread(key);
 }
 
 // Team order: what needs me most, first. Recency always counts; a thread that waits on
@@ -811,25 +934,42 @@ const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
 
 function renderThreads() { inPass(threadRows); }
-function threadRows() {
-  const box = $('threads');
-  if (!state.data) return;
-  const shown = state.data.threads.filter((t) => passes(t));
-  if (personal()) shown.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
-  // Team order is computed when the inbox loads, not when you read a thread, so a click
-  // never moves the row you clicked.
-  else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
-  if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
+/** The personal view (the default), then each of the viewer's teams: one switch, the active one highlighted. */
+function viewSwitch() {
   const mine = personal();
-  const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
-  // The personal view (the default), then each of the viewer's teams: one switch, the active
-  // one highlighted.
   const views = [{
     slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, in all your teams, latest activity first',
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
   }))];
-  const sorter = `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
+  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
+}
+const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>';
+/** The list's heading, made once: the search box (kept, as you type in it), then the controls. */
+function listHead(box) {
+  if (box.querySelector('.rows')) return;
+  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
+  const input = $('q');
+  input.value = state.search.q;
+  input.addEventListener('input', () => searchSoon(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); runSearch(input.value); }
+    if (e.key === 'Escape') { e.preventDefault(); if (input.value || searching()) clearSearch(); else input.blur(); }
+    if (e.key === 'ArrowDown' && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
+  });
+}
+function threadRows() {
+  const box = $('threads');
+  if (!state.data) return;
+  listHead(box);
+  if (searching()) { searchRows(box); return; }
+  const shown = state.data.threads.filter((t) => passes(t));
+  if (personal()) shown.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
+  // Team order is computed when the inbox loads, not when you read a thread, so a click
+  // never moves the row you clicked.
+  else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+  const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
+  const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
   const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
@@ -838,13 +978,14 @@ function threadRows() {
   const rung = bellOn();
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
   const count = `${filt}${unread}${bell}<span class="sort">${sorter}</span>`;
-  const head = box.querySelector('.count');
+  const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
   // also rows a filter hid for a while, which are kept aside for when they show again.
   const list = box.querySelector('.rows');
   const existing = state.rowNodes || (state.rowNodes = new Map());
-  for (const c of list.children) if (c.dataset.thread) existing.set(c.dataset.thread, c);
+  for (const c of list.children) if (c.dataset.thread && !c.dataset.hit) existing.set(c.dataset.thread, c);
+  list.classList.remove('stale');
   const nodes = shown.map((t) => {
     const html = row(t);
     // Selection, read state and the status dot change on a click; only the first line is
@@ -1265,7 +1406,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const { thread, members = [], messages, watermarks, model, reviews, facts, resolution } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
-  const t = state.data?.threads.find((x) => x.thread === key) || {};
+  const t = searchEntry(key) || {};
   // Where I was: the last time I had read any member of this entry.
   const myRead = watermarks.filter((w) => w.person === state.me.id).map((w) => w.read_at).sort().pop() || null;
   const ids = new Set(messages.map((m) => `${m.thread}|${m.id}`));
@@ -1347,10 +1488,15 @@ async function openThread(key, { live = false, cached = false } = {}) {
     scroller.scrollTop = keepTop;
     if (wasNear) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
   } else {
+    // Opened from a search result: at the message that matched, marked for a moment.
+    const jump = state.jump?.key === key ? state.jump : null;
+    state.jump = null;
+    const found = jump && scroller.querySelector(`[data-id="${CSS.escape(jump.id)}"]`);
     const firstUnread = myRead && messages.find((m) => m.at > myRead && m.author?.name !== state.me.name);
-    const el = firstUnread && scroller.querySelector(`[data-id="${CSS.escape(`${firstUnread.thread}|${firstUnread.id}`)}"]`);
+    const el = found || (firstUnread && scroller.querySelector(`[data-id="${CSS.escape(`${firstUnread.thread}|${firstUnread.id}`)}"]`));
     if (el) scroller.scrollTop = Math.max(0, el.offsetTop - scroller.offsetTop - 80);
     else scroller.scrollTop = scroller.scrollHeight;
+    if (found) { found.classList.add('found'); setTimeout(() => found.classList.remove('found'), 2400); }
   }
   const box = $('reply');
   if (box) {
@@ -1376,7 +1522,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     $('send').onclick = (e) => { if (!sendHold.held) send(key, thread); e.preventDefault(); };
     wireHoldMenu(key, thread);
   }
-  if (state.data?.threads.some((x) => x.thread === key) && (switching || !live)) markRead(t);
+  if (searchEntry(key) && (switching || !live)) markRead(t);
 }
 
 // Keeping the pointer on Send for a second (or pressing it for a second on touch) shows
@@ -2315,6 +2461,7 @@ function toUrl(push = true, entry = null) {
   if (state.review) q.set('review', '1');
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
+  if (state.search.q) q.set('q', state.search.q);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
   syncPages();
@@ -2367,7 +2514,7 @@ function fromUrl() {
   onePick();
   setUnread(q.get('unread') === '1', q.get('t'));
   state.as = Number(q.get('as')) || null;
-  return { open: q.get('t'), review: q.get('review') === '1' };
+  return { open: q.get('t'), review: q.get('review') === '1', q: q.get('q') || '' };
 }
 
 // ---------------------------------------------------------------- narrow screens
@@ -2457,7 +2604,7 @@ function move(step) {
   const i = state.order.indexOf(state.open);
   const next = state.order[Math.max(0, Math.min(state.order.length - 1, i < 0 ? 0 : i + step))];
   if (next && next !== state.open) {
-    openThread(next);
+    if (searching()) openHit(next); else openThread(next);
     document.querySelector(`#threads .t[data-thread="${CSS.escape(next)}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 }
@@ -2477,6 +2624,8 @@ async function switchView(slug) {
   render();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
+  // The search goes on in the other view.
+  if (searching()) { state.search.data = null; const q = state.search.q; state.search.q = ''; runSearch(q); }
 }
 
 async function start() {
@@ -2494,6 +2643,7 @@ async function start() {
     : `Connected your ${accountOf(q.get('connected'))} account. Replies are sent as you.`);
   if (q.get('connect_error')) toast(`Could not connect: ${q.get('connect_error')}`);
   const initial = fromUrl();
+  state.search.q = initial.q;
   // The thread the URL opens is open from the start: settling the URL keeps it, and opening it
   // adds no history entry (Back from here leaves the inbox, to where it came from).
   state.open = initial.open || null;
@@ -2528,9 +2678,12 @@ async function start() {
     if (view) { switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
-    if (e.target.closest('a')) return;
+    if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
+    if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); render(); toUrl(); return; }
+    if (e.target.closest('a, .find')) return;
     const el = e.target.closest('.t');
-    if (el) openThread(el.dataset.thread);
+    if (el && el.dataset.hit) openHit(el.dataset.thread);
+    else if (el) openThread(el.dataset.thread);
   };
   // A tap on the dimmed page beside the filter drawer closes it.
   document.querySelector('main').addEventListener('click', (e) => {
@@ -2588,6 +2741,7 @@ async function start() {
     }
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
+    if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
@@ -2601,9 +2755,10 @@ async function start() {
     const main = document.querySelector('main');
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const scope = scopeKey();
-    const { open, review } = fromUrl();
+    const { open, review, q: query } = fromUrl();
     renderUser();
-    if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); await loadInbox(); connect(); }
+    if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
+    if (query !== state.search.q || !state.search.data) runSearch(query);
     state.review = review;
     $('review').setAttribute('aria-pressed', String(review));
     render();
@@ -2664,6 +2819,8 @@ async function start() {
     for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
   }
   wireNotify();
+  // A search in the address is asked for alongside the inbox.
+  if (initial.q) runSearch(initial.q);
   await loadInbox(early);
   if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
   if (initial.open) openThread(initial.open);
@@ -2737,7 +2894,7 @@ function threadInfo(t) {
   return info;
 }
 
-const teamThread = (key) => state.data?.threads.find((t) => t.thread === key);
+const teamThread = (key) => searchEntry(key);
 const UNKNOWN_THREAD = 'Unknown thread. Use a `thread` value from list_threads; only threads of the view on screen (a team, or personal) are known.';
 const READONLY = 'This inbox is a read-only "view as" of someone else. Ask the user to switch "View as" back to themselves.';
 
@@ -2877,6 +3034,39 @@ const WEBMCP_TOOLS = [
       const res = { shown: state.order.length, offset: from, threads };
       if (!state.order.length) res.hint = 'No thread matches the current filters. Loosen them with filter_threads.';
       else if (from + n < state.order.length) res.next_offset = from + n;
+      return out(res);
+    },
+  },
+  {
+    name: 'search_threads',
+    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best. The filters on screen apply to the results; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look for: a question, a topic, words, a URL or a ticket' },
+        limit: { type: 'number', description: 'How many threads, 1 to 25 (default 8)' },
+      },
+      required: ['query'],
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    execute: async ({ query = '', limit = 8 } = {}) => {
+      if (!state.data) return fail('The inbox is still loading. Try again in a moment.');
+      await runSearch(query);
+      if (!searching()) return out({ searching: false, shown: state.order.length });
+      if (state.search.error) return fail(`The search failed: ${state.search.error}`);
+      const n = Math.max(1, Math.min(25, Math.floor(Number(limit) || 8)));
+      const byKey = new Map((state.search.data?.hits || []).map((h) => [h.thread, h]));
+      const threads = state.order.slice(0, n).map((k) => {
+        const h = byKey.get(k);
+        const info = { ...threadInfo(teamThread(k)), matched: h.matched };
+        if (h.snippet) info.snippet = { message: h.snippet.message, from: h.snippet.author, text: clip(h.snippet.text, 240) };
+        else if (h.fact) info.fact = h.fact;
+        return info;
+      });
+      const res = { query: state.search.q, found: byKey.size, shown: state.order.length, threads };
+      if (!byKey.size) res.hint = 'Nothing found. Try other words, or fewer.';
+      else if (!state.order.length) res.hint = 'The filters on screen hide every result. Loosen them with filter_threads.';
+      else if (n < state.order.length) res.next_offset = n;
       return out(res);
     },
   },
