@@ -497,7 +497,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [
       ['mei', 600, 'Could the nightly index job skip the archive folder?'],
       ['dana', 590, 'On it. Will check the job config today.'],
-      ['priya', 40, 'Done: archive is excluded from the job now. Please confirm.'],
+      ['priya', 40, 'Done: archive is excluded from the job now.'],
+      ['priya', 39, 'The next run is tonight at 02:00.'],
+      ['priya', 38, 'Please confirm once you have seen it.'],
     ],
     reads: { lena: 'latest', priya: 'latest' },
     label: {

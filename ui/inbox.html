@@ -324,7 +324,8 @@
   .msg .face { position: relative; flex: none; width: 36px; }
   .msg .face .badge-ico { position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border-radius: 4px;
     background: #fff; border: 2px solid var(--pane); }
-  .msg.cont .face { visibility: hidden; height: 0; }
+  /* A run of one author's messages: the name above the first, the avatar beside the last. */
+  .msg.followed .face { visibility: hidden; height: 0; }
   .msg.adobe { flex-direction: row-reverse; }
   .msg .col { max-width: min(74%, 760px); display: flex; flex-direction: column; align-items: flex-start; }
   .msg.adobe .col { align-items: flex-end; }
