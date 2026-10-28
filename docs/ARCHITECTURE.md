@@ -341,7 +341,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
   them back to D1 in batches.
   New messages, reactions and drafts are announced in the room of every team whose inbox
-  has the thread (a shared channel's are in several).
+  has the thread (a shared channel's are in several). A message posted in the last hour that
+  mentions people it did not mention before (a new message, or an edit that adds a mention)
+  names them in its announcement, with who wrote it, for their notifications; a backfill, a
+  replay or a late catch-up names nobody.
 - The index is derived: a `messages` row per pile-2 file, and a `threads` row recomputed from
   its messages on every write (last activity by a person, last speaker and whether they are
   staff, title, message count), so it is the same in any replay order. Alert threads use the
@@ -368,10 +371,24 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.
+- **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
+  app, also in the background), through the service worker, so that a click opens the thread
+  in the inbox already open, or in a new one. There are two kinds, settings of the person in
+  D1 (`person_settings`, `GET`/`PUT /api/settings`), so every device has them: a message that
+  mentions you (on unless turned off in the user menu; the room's announcement says whom it
+  mentions), and a **bell** on a view. The bell above the thread list turns notifications on
+  for the view on screen with its filters (picked and excluded); a thread of that view that
+  gets a message you have not read then notifies you. The inbox listens to the rooms of the
+  teams its notifications need (all of yours, for mentions and Personal), checks a bell on
+  the inbox on screen when it reloads, and fetches the first page of a belled view that is
+  not on screen when its room announces activity. The menu lists the bells, each opening its
+  view or turning it off. Inboxes in several tabs show one notification per thread, and none
+  for the thread you are reading, nor while viewing as someone else. The first visit asks once
+  (a toast) whether the browser may show them; browsers only ask on a click.
 - The toolbar is the same on the inbox and the admin pages: the pages and label review on the
   left, and on the right whoever is signed in, with the view on screen under their name. Their
   name opens a menu with "View as" (admin team; while it is on, a chip next to the name says
-  whose inbox this is and leaves it in one click), the keyboard shortcuts, and **Log out**,
+  whose inbox this is and leaves it in one click), the notifications, the keyboard shortcuts, and **Log out**,
   which is Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the
   toolbar says "Reconnecting…" when a WebSocket has been down for a few seconds.
 

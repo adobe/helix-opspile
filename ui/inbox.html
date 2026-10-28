@@ -114,6 +114,16 @@
   .menu .item svg { width: 14px; height: 14px; flex: none; }
   .menu select { width: calc(100% - 16px); margin: 2px 8px 4px; padding: 4px 8px; }
   .menu .hint { margin: 0 8px 4px; color: var(--mute); font-size: 11.5px; }
+  /* Bells: the views that notify you, each with the ✕ that turns it off. */
+  .menu #bells .bell { display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px; }
+  .menu #bells .bell svg { width: 13px; height: 13px; flex: none; color: var(--accent); }
+  .menu #bells .bell a { flex: 1; min-width: 0; color: inherit; text-decoration: none; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .menu #bells .bell a:hover { text-decoration: underline; }
+  .menu #bells .bell button { flex: none; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--mute); }
+  .menu #bells .bell button:hover { background: var(--hover); color: var(--ink); }
+  .menu .item.allow { color: var(--link); }
+  .menu .item[hidden] { display: none; }
   .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
   .menu .keys dd { margin: 0; text-align: right; }
   main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
@@ -238,6 +248,13 @@
   #threads .rows > .older { display: block; width: calc(100% - 28px); margin: 10px 14px 18px; padding: 8px; color: var(--mute); }
   #threads .count .unread:hover { color: var(--ink); }
   #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* The bell: notifications for the view on screen (its team and filters), filled while on. */
+  #threads .count .bell { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; margin-left: 2px;
+    border-radius: 7px; color: var(--mute); }
+  #threads .count .bell svg { width: 15px; height: 15px; }
+  #threads .count .bell:hover { color: var(--ink); }
+  #threads .count .bell[aria-pressed="true"] { color: var(--accent); }
+  #threads .count .bell[aria-pressed="true"] svg .body { fill: currentColor; }
   .t .tags { margin-left: auto; display: flex; gap: 4px; overflow: hidden; flex-shrink: 1; }
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; color: var(--mute); }
   .tag.hot { color: var(--red); border-color: var(--red); }
@@ -543,8 +560,8 @@
     nav.pages a { padding: 0 14px; }
     #user { min-height: 44px; }
     #threads .count { padding-top: 6px; padding-bottom: 6px; }
-    #threads .count .filt, #threads .count .unread { height: 27px; }
-    #threads .count .unread { width: 32px; }
+    #threads .count .filt, #threads .count .unread, #threads .count .bell { height: 27px; }
+    #threads .count .unread, #threads .count .bell { width: 32px; }
     #threads .count .order span { padding: 4px 11px; }
     .fr { padding: 7px 4px; }
     .card h3 .clear { padding: 4px 6px; margin: -4px -6px -4px auto; }
@@ -650,6 +667,11 @@
     <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
     <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
       <p class="hint">See the inbox as someone else, read-only.</p></section>
+    <section id="notifyBox" hidden><h4>Notifications</h4>
+      <button class="item" id="notifyMentions" role="switch" aria-checked="true"><span class="ck">✓</span>When someone mentions me</button>
+      <div id="bells"></div>
+      <p class="hint" id="notifyHint"></p>
+      <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
     <section><h4>Keyboard</h4><dl class="keys">
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
       <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>

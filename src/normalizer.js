@@ -250,6 +250,13 @@ export async function recordBots(env, message) {
   }
 }
 
+/** Mentions in a message older than this are not announced to whoever they mention. */
+export const NOTIFY_WITHIN_MS = 60 * 60 * 1000;
+const fresh = (message, now = Date.now()) => {
+  const at = Date.parse(message.editedAt || message.at);
+  return Number.isFinite(at) && now - at < NOTIFY_WITHIN_MS;
+};
+
 /**
  * Turns one pile-1 object into its pile-2 file. Returns a short result for the log.
  *
@@ -343,7 +350,7 @@ export async function processKey(env, key, cache = {}) {
     // eslint-disable-next-line no-await-in-loop
     await advanceWatermark(env.DB, reactor, message.thread, message.at, 'react');
   }
-  await recordMentions(env.DB, {
+  const mentioned = await recordMentions(env.DB, {
     thread: message.thread,
     message: messageKeyOf(message),
     at: message.at,
@@ -386,7 +393,15 @@ export async function processKey(env, key, cache = {}) {
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
   }) : [];
-  await notifyRoom(env, rooms, { type: 'thread', thread: message.thread });
+  await notifyRoom(env, rooms, {
+    type: 'thread',
+    thread: message.thread,
+    // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay
+    // or a catch-up long after) newly mentions, with who wrote it.
+    ...(written && fresh(message) && mentioned.length ? {
+      mentions: mentioned, by: person, author: author.name, at: message.at,
+    } : {}),
+  });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
   };

@@ -434,6 +434,38 @@ describe('backfill, mentions and labels', () => {
     ]);
   });
 
+  it('tells the room whom a message just posted newly mentions, once', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          notified.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const ts = (Date.now() / 1000).toFixed(6);
+    const live = `slack/E1/C1/2026/10/21/${ts}-l.json`;
+    const e = env({
+      [live]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts, thread_ts: '1.1', text: 'Ada Staff, can you look?',
+      }),
+      [reply]: replyEvent,
+    }, { ROOMS });
+    await processKey(e, live);
+    const threads = notified.filter((n) => n.type === 'thread');
+    assert.deepEqual(threads.map((n) => [n.team, n.mentions, n.author]), [['helix', [7], 'Cy']]);
+    // Delivered again: nobody is newly mentioned.
+    notified.length = 0;
+    await processKey(e, live);
+    assert.deepEqual(notified.filter((n) => n.type === 'thread').map((n) => n.mentions), [undefined]);
+    // An old message (a backfill, a replay) mentions Ada too, but is not announced as one.
+    await processKey(e, reply);
+    assert.deepEqual(notified.filter((n) => n.type === 'thread').map((n) => n.mentions), [undefined, undefined]);
+    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM mentions')[0].n, 2);
+  });
+
   it('records mentions by name, and a staff author becomes a person', async () => {
     const e = env({ [reply]: replyEvent });
     await processKey(e, reply);

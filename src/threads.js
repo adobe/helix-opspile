@@ -240,14 +240,24 @@ export function readState(threads, marks, mentions, me) {
   });
 }
 
-/** Records who a message mentions, replacing what was recorded for it before. */
+/**
+ * Records who a message mentions, replacing what was recorded for it before. Returns the
+ * people it mentions now and did not before (a new message's, or the ones an edit added).
+ */
 export async function recordMentions(db, { thread, message, at }, mentioned) {
+  const had = new Set();
+  if (mentioned.length) {
+    const { results } = await db.prepare('SELECT person FROM mentions WHERE thread = ? AND message = ?')
+      .bind(thread, message).all();
+    (results || []).forEach((r) => had.add(r.person));
+  }
   await db.prepare('DELETE FROM mentions WHERE thread = ? AND message = ?').bind(thread, message).run();
   for (const { person, via } of mentioned) {
     // eslint-disable-next-line no-await-in-loop
     await db.prepare(`INSERT OR IGNORE INTO mentions (thread, message, person, at, via)
       VALUES (?, ?, ?, ?, ?)`).bind(thread, message, person, at, via).run();
   }
+  return [...new Set(mentioned.map((m) => m.person))].filter((p) => !had.has(p));
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
