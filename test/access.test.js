@@ -16,7 +16,7 @@ import {
 } from 'node:test';
 import { accessEmail, resetKeyCache } from '../src/access.js';
 import { api, inbox, viewer } from '../src/api.js';
-import { indexMessage } from '../src/threads.js';
+import { advanceWatermark, indexMessage, recordMentions } from '../src/threads.js';
 import { d1 } from './d1.js';
 
 // A throwaway key pair and made-up team domain, audience and people.
@@ -120,6 +120,116 @@ describe('viewer and inbox', () => {
       ['t2', true, true, false, 1, 'nobody'],
       ['t1', true, false, true, 0, 'us'],
     ]);
+  });
+});
+
+describe('personal view', () => {
+  const people = [
+    {
+      id: 1, email: 'a@staff.example', name: 'A', staff: 1, teams: ['admin', 'helix'],
+    },
+    {
+      id: 2, email: 'b@staff.example', name: 'B', staff: 1, teams: ['helix', 'other'],
+    },
+  ];
+  const fresh = () => d1({
+    teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'admin', name: 'Admin' }, { slug: 'other', name: 'Other' }],
+    people,
+  });
+  const me = {
+    id: 1, name: 'A', teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix' }],
+  };
+  let n = 0;
+  /** One message: `channelId` filed under `team`, as `person` (or a customer). */
+  const say = (DB, {
+    thread, channelId, team, person = null, at, kind = 'channel',
+  }) => {
+    n += 1;
+    return indexMessage(DB, {
+      source: 'slack',
+      tenant: 'E1',
+      channelId,
+      org: 'acme',
+      team,
+      kind,
+      counted: true,
+      staff: Boolean(person),
+      person,
+      rootId: thread,
+      id: `${thread}.${n}`,
+      thread,
+      at,
+      title: thread,
+      path: `${thread}/`,
+    }).then(() => `slack:E1:${channelId}:${thread}.${n}`);
+  };
+
+  it('has the threads of my teams\' channels that I posted or was mentioned in', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', person: 1, at: at(1),
+    });
+    // Another thread of a channel I posted in, though not in this one.
+    await say(DB, {
+      thread: 'same-channel', channelId: 'C1', team: 'helix', at: at(2),
+    });
+    await say(DB, {
+      thread: 'alert', channelId: 'C1', team: 'helix', at: at(3), kind: 'alert',
+    });
+    const m = await say(DB, {
+      thread: 'mentioned', channelId: 'C2', team: 'helix', person: 2, at: at(4),
+    });
+    await recordMentions(DB, { thread: 'mentioned', message: m, at: at(4) }, [{ person: 1, via: 'id' }]);
+    await say(DB, {
+      thread: 'quiet', channelId: 'C3', team: 'helix', at: at(5),
+    });
+    await say(DB, {
+      thread: 'admin', channelId: 'C4', team: 'admin', person: 1, at: at(6),
+    });
+    // Not one of my teams' channels: not mine to see, though I posted there.
+    await say(DB, {
+      thread: 'elsewhere', channelId: 'C5', team: 'other', person: 1, at: at(7),
+    });
+    const res = await inbox({ DB }, me, null, { personal: true });
+    assert.equal(res.personal, true);
+    assert.equal(res.team, null);
+    assert.deepEqual(res.threads.map((t) => t.thread).sort(), ['admin', 'mentioned', 'posted', 'same-channel']);
+    assert.deepEqual(res.members.map((x) => x.name), ['A', 'B']);
+    // The team inbox is as it was.
+    const team = await inbox({ DB }, me, 'helix');
+    assert.deepEqual(team.threads.map((t) => t.thread).sort(), ['alert', 'mentioned', 'posted', 'quiet', 'same-channel']);
+  });
+
+  it('is asked for with view=personal, whatever the team', async () => {
+    const DB = fresh();
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', person: 1, at: '2026-10-21T10:00:00Z',
+    });
+    const url = new URL('https://opspile.test/api/inbox?view=personal');
+    const res = await api(new Request(url), { DB }, url, { viewer: me });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).threads.map((t) => t.thread), ['posted']);
+  });
+
+  it('counts the mentions of me since I last read the thread, once each', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    const mention = async (minute) => {
+      const m = await say(DB, {
+        thread: 't', channelId: 'C1', team: 'helix', person: 2, at: at(minute),
+      });
+      await recordMentions(DB, { thread: 't', message: m, at: at(minute) }, [{ person: 1, via: 'id' }]);
+    };
+    await mention(1);
+    await advanceWatermark(DB, 1, 't', at(1), 'open');
+    await mention(2);
+    await mention(3);
+    // A is in two of the teams (admin, helix), B in helix: the mention counts once.
+    const [t] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.deepEqual([t.thread, t.unreadMentions, t.mentionedMe], ['t', 2, true]);
+    const [same] = (await inbox({ DB }, me, 'helix')).threads;
+    assert.equal(same.unreadMentions, 2);
   });
 });
 

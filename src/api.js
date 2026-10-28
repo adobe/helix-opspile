@@ -170,10 +170,45 @@ export async function viewer(request, env, options) {
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
 
-async function members(env, team) {
-  const { results } = await env.DB.prepare(`SELECT p.id, p.name FROM team_members m
-    JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`).bind(team).all();
+/**
+ * Whose inbox it is, as SQL: `team_members.team` (or any column of team slugs) is in it with
+ * `in(column)`, bound to `value`: the team, or for the personal view the viewer's teams.
+ */
+function inboxTeams(me, team, personal) {
+  if (!personal) {
+    return { in: (column) => `${column} = ?`, value: team };
+  }
+  return {
+    in: (column) => `${column} IN (SELECT value FROM json_each(?))`,
+    value: JSON.stringify((me.teams || []).map((t) => t.slug)),
+  };
+}
+
+async function members(env, teams) {
+  const { results } = await env.DB.prepare(`SELECT DISTINCT p.id, p.name FROM team_members m
+    JOIN people p ON p.id = m.person WHERE ${teams.in('m.team')} ORDER BY p.name`)
+    .bind(teams.value).all();
   return results || [];
+}
+
+/**
+ * SQL: the thread row `alias` is in the inbox, with `?1` bound to `inboxTeams(…).value`. A
+ * team's inbox has its own channels and the channels shared with it. The personal view has
+ * the conversations of all the viewer's teams in the channels they posted or were mentioned
+ * in (`me`: the parameter bound to their id); alerts are not in it.
+ */
+function inInbox(alias, personal, me) {
+  if (!personal) {
+    return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')})`;
+  }
+  const teams = '(SELECT value FROM json_each(?1))';
+  return `(${alias}.team IN ${teams} OR (${alias}.source, ${alias}.channel_id) IN (
+      SELECT source, channel_id FROM channel_teams WHERE team IN ${teams}))
+    AND ${alias}.kind != 'alert'
+    AND (${alias}.source, ${alias}.channel_id) IN (
+      SELECT source, channel_id FROM messages WHERE person = ${me}
+      UNION SELECT c.source, c.channel_id FROM mentions n JOIN threads c ON c.thread = n.thread
+        WHERE n.person = ${me})`;
 }
 
 const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
@@ -224,6 +259,7 @@ export function fold(threads) {
       unseenByAdobe: ms.some((m) => m.unseenByAdobe),
       seenByOthers: ms.some((m) => m.seenByOthers),
       mentionedMe: ms.some((m) => m.mentionedMe),
+      unreadMentions: ms.reduce((n, m) => n + (m.unreadMentions || 0), 0),
       mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
       readers: latest.readers,
       reactions: Object.values(ms.flatMap((m) => m.reactions || []).reduce((acc, r) => {
@@ -240,10 +276,14 @@ export function fold(threads) {
 }
 
 /**
- * A page of the inbox. `before` is the `next` cursor of the previous page (`<latest>|<group>`):
- * the groups whose latest activity comes after it in the newest-first order.
+ * A page of a team's inbox, or with `personal` (and no team) of the viewer's personal view.
+ * `before` is the `next` cursor of the previous page (`<latest>|<group>`): the groups whose
+ * latest activity comes after it in the newest-first order.
  */
-export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE } = {}) {
+export async function inbox(env, me, team, {
+  before = null, limit = INBOX_PAGE, personal = false,
+} = {}) {
+  const scope = inboxTeams(me, team, personal);
   const size = Math.max(1, Math.min(MAX_PAGE, Number(limit) || INBOX_PAGE));
   const cursor = before ? String(before).split('|') : null;
   const [beforeAt, beforeG] = cursor && cursor.length === 2 ? cursor : [null, null];
@@ -253,7 +293,7 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
   const teamRowsP = env.DB.prepare(`SELECT m.team, m.person, t.name FROM team_members m
     JOIN teams t ON t.slug = m.team
     WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
-  const membersP = members(env, team);
+  const membersP = members(env, scope);
   // Settled either way, so a failure elsewhere does not leave these rejections unhandled.
   teamRowsP.catch(() => {});
   membersP.catch(() => {});
@@ -262,7 +302,7 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
       COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
     -- The team's own channels, and the channels shared with it (migration 0024).
-    FROM threads WHERE (team = ?1 OR ${sharedWith('threads', '?1')}) AND kind != 'ignore'
+    FROM threads WHERE ${inInbox('threads', personal, '?5')} AND kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
       AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
@@ -270,7 +310,7 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
     GROUP BY g
     HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
     ORDER BY latest DESC, g DESC LIMIT ?4`)
-    .bind(team, beforeAt, beforeG, size + 1).all();
+    .bind(...[scope.value, beforeAt, beforeG, size + 1, personal ? me.id : []].flat()).all();
   // One more than the page says whether there is another.
   const more = (groups || []).length > size;
   if (more) {
@@ -288,14 +328,14 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
         FROM threads t
-        WHERE (t.team = ?1 OR ${sharedWith('t', '?1')}) AND t.kind != 'ignore'
+        WHERE ${inInbox('t', personal, '?3')} AND t.kind != 'ignore'
           AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
     WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
-    .bind(team, groupKeys).all();
+    .bind(...[scope.value, groupKeys, personal ? me.id : []].flat()).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
     return {
-      team, members: await membersP, threads: [], page,
+      team: personal ? null : team, personal, members: await membersP, threads: [], page,
     };
   }
   const threadKeys = threads.map((t) => t.thread);
@@ -305,22 +345,23 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
   ] = await Promise.all([
-    // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team.
-    env.DB.prepare(`SELECT w.person, w.thread, w.read_at,
-        p.staff, EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?)
+    // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
+    // (the personal view: of the viewer's teams).
+    env.DB.prepare(`SELECT w.person, w.thread, w.read_at, p.staff, EXISTS (
+          SELECT 1 FROM team_members m WHERE m.person = w.person AND ${scope.in('m.team')})
           AS in_team
       FROM watermarks w JOIN people p ON p.id = w.person
       WHERE w.thread IN (SELECT value FROM json_each(?))
         AND (p.staff = 1 OR EXISTS (
-          SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?))`)
-      .bind(team, keys, team).all(),
-    env.DB.prepare(`SELECT n.thread, n.person, n.at
-      FROM mentions n JOIN team_members m ON m.person = n.person AND m.team = ?
+          SELECT 1 FROM team_members m WHERE m.person = w.person AND ${scope.in('m.team')}))`)
+      .bind(scope.value, keys, scope.value).all(),
+    env.DB.prepare(`SELECT DISTINCT n.thread, n.message, n.person, n.at
+      FROM mentions n JOIN team_members m ON m.person = n.person AND ${scope.in('m.team')}
       -- A mention's message is in the mention's thread: the thread narrows the search.
       JOIN messages x ON x.thread = n.thread
         AND x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = +n.message
       WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
-      .bind(team, keys).all(),
+      .bind(scope.value, keys).all(),
     env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
         kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
@@ -380,7 +421,8 @@ export async function inbox(env, me, team, { before = null, limit = INBOX_PAGE }
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
   return {
-    team,
+    team: personal ? null : team,
+    personal,
     page,
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
@@ -696,6 +738,11 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t));
+  }
+  if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
+    return json(await inbox(env, me, null, {
+      personal: true, before: url.searchParams.get('before'), limit: url.searchParams.get('limit'),
+    }));
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(me, team)) {

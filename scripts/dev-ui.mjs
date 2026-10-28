@@ -240,8 +240,9 @@ function broadcast(team, event) {
 
 // ---- API, the same shapes as src/api.js -----------------------------------------------
 
-function members(team) {
-  return store.teams.find((t) => t.slug === team).members
+/** The members of a team, or of several (the personal view: all of ME's teams). */
+function members(...teams) {
+  return [...new Set(store.teams.filter((t) => teams.includes(t.slug)).flatMap((t) => t.members))]
     .map((id) => store.people.get(id))
     .map(({ id, name }) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -293,11 +294,27 @@ function people(entry) {
   };
 }
 
-function inbox(team, before = null) {
+/** The channels ME posted or was mentioned in, as `source:channelId`: the personal view's. */
+function myChannels() {
+  const { name } = store.people.get(ME);
+  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
+  const mentioned = new Set(store.mentions.filter((m) => m.person === ME).map((m) => m.thread));
+  return new Set([...store.threads.values()]
+    .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
+    .map(at));
+}
+
+/** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
+function inbox(team, before = null, personal = false) {
   const latest = (r) => r.last_at || r.any_at || '';
+  const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+  const channels = personal ? myChannels() : null;
+  const inScope = (r) => (personal
+    ? mine.includes(r.team) && r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
+    : r.team === team);
   const all = [...store.threads.values()]
     .map((e) => e.row)
-    .filter((r) => r.team === team && r.kind !== 'ignore')
+    .filter((r) => inScope(r) && r.kind !== 'ignore')
     .sort((a, b) => latest(b).localeCompare(latest(a)) || b.thread.localeCompare(a.thread));
   const [at, key] = before ? String(before).split('|') : [null, null];
   const after = at === null ? all
@@ -309,7 +326,8 @@ function inbox(team, before = null) {
     .map((r) => ({
       ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
     }));
-  const teamIds = new Set(members(team).map((m) => m.id));
+  const scope = personal ? mine : [team];
+  const teamIds = new Set(members(...scope).map((m) => m.id));
   const keys = new Set(rows.map((r) => r.thread));
   // As in src/api.js: the team's marks, plus every staff member's (for "unseen by Adobe").
   const marks = [...store.watermarks.values()]
@@ -344,7 +362,8 @@ function inbox(team, before = null) {
     }))
     .map((t) => ({ ...t, waiting_on: waitingOn(t) }));
   return {
-    team,
+    team: personal ? null : team,
+    personal,
     me: { id: ME, name: store.people.get(ME).name, readonly: false },
     profiles: profiles(threads.flatMap((t) => t.participants.map((p) => p.key))),
     people: Object.fromEntries([...store.people.values()]
@@ -353,7 +372,7 @@ function inbox(team, before = null) {
       }])),
     teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
-    members: members(team),
+    members: members(...scope),
     threads,
     page,
   };
@@ -577,6 +596,10 @@ async function api(req, res, url) {
   if (url.pathname.startsWith('/api/review') || url.pathname === '/api/people') {
     // The fake user is not in the admin team, so the review API answers as it does for her.
     return json(res, { error: 'label review is for the admin team' }, 403);
+  }
+  if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
+    const view = inbox(null, url.searchParams.get('before'), true);
+    return json(res, as ? { ...view, me: { id: as.id, name: as.name, readonly: true } } : view);
   }
   if (url.pathname === '/api/inbox' && as) {
     // Dana's inbox of that team, marked as theirs: enough to try the read-only view.
