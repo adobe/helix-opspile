@@ -20,6 +20,35 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - Code style is `@adobe/eslint-config-helix` (`npm run lint`), ES modules, 2-space indent,
   max line length 100.
 
+## Debugging
+
+- **The inbox in a browser: `playwright-cli --cdp=9222`.** Chrome runs with remote debugging
+  on port 9222 and is signed in to the inbox (Cloudflare Access), so `goto`, `snapshot`,
+  `eval`, `click` and `screenshot` work on the production inbox as the user sees it.
+  `screenshot` and `drop` take refs from `snapshot` (`e492`), not CSS selectors. Use
+  `eval` to read the DOM. To check a fix before it is deployed, run `npm run ui:dev`
+  (fake data, `PORT=` for another port) and open it in the same browser.
+  `npm run ui:session -- <inbox origin>` points the preview at production's API, read-only.
+- **Screenshots for pull requests** come from `npm run ui:dev` with fake data, never from
+  production: the repo is public, and production shows customers' messages and names. To
+  attach one, `drop` the files onto the PR's comment box (`snapshot` gives its ref). GitHub
+  uploads them and writes their `user-attachments` URLs into the box. Read the URLs with
+  `eval`, clear the box, and put the URLs in the PR body.
+- **The Worker: `cf`** (the Cloudflare CLI, reads `cloudflare.config.ts`; `--mode prod` or
+  `--mode stage`). Find a command with `cf cli search "<task>"` and then `<command> --help`;
+  do not walk nested `--help`. Keep search queries anonymous. Logs are on (Workers Logs):
+  `cf o11y telemetry query` searches them, `cf o11y telemetry live-tail` follows them, and
+  `cf d1 query <database id>` reads D1.
+- **`wrangler`** (`npx wrangler`, a dev dependency) is the fallback where `cf` cannot do
+  something yet: `wrangler tail helix-opspile-prod` streams live logs, `wrangler secret put`
+  sets one secret, and
+  `wrangler d1 execute helix-opspile --remote --command "SELECT …"` queries D1
+  (`helix-opspile-stage` for stage).
+- Production is live. Read from it freely, but get the user's go-ahead before anything
+  that writes: D1 changes, secrets, deploys, posts.
+- The `/diag/*` endpoints (`x-opspile-diag` header) and the `/mcp` server (the `pile` MCP
+  server, where an agent has it) show what the Worker and the thread agents see.
+
 ## Layout
 
 - `src/index.js` — router
