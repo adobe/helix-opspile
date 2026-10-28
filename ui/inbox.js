@@ -964,14 +964,20 @@ function resolveButton(thread, r) {
   return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
 }
 
-function message(m, prev, fresh) {
+/** Whether `m` goes on from `prev`: same author, same post and day, within five minutes. */
+const continues = (prev, m) => Boolean(prev) && m.author?.kind !== 'system' && prev.author?.kind !== 'system'
+  && prev.author?.name === m.author?.name && prev.author?.kind === m.author?.kind && prev.thread === m.thread
+  && Date.parse(m.at) - Date.parse(prev.at) < 5 * 60 * 1000 && dayLabel(prev.at) === dayLabel(m.at);
+
+// A run of one author's messages: the name above the first, the avatar beside the last
+// (`followed`: the next message goes on from this one).
+function message(m, prev, fresh, followed = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
   const enter = fresh ? 'enter' : '';
   if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body)} · ${clock(m.at)}</div>`;
   const adobe = Boolean(a.staff);
-  const cont = prev && prev.author?.name === a.name && prev.author?.kind === a.kind && prev.thread === m.thread
-    && Date.parse(m.at) - Date.parse(prev.at) < 5 * 60 * 1000 && dayLabel(prev.at) === dayLabel(m.at);
+  const cont = continues(prev, m);
   const key = profileKey(m.authorKey, {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
@@ -989,7 +995,7 @@ function message(m, prev, fresh) {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button></div>` : '';
-  return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
+  return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
@@ -1233,11 +1239,16 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before opspile started listening.</div>' }];
   let prev = null;
   let day = null;
+  // A message's markup waits for the next one: the avatar goes beside the last of a run.
+  let last = null;
   shown.forEach((m, i) => {
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
     if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post">new post · ${clock(m.at)}</div>` }); prev = null; }
     if (!group && i === 1 && thread.root_at && messages.length > 1) { items.push({ html: `<div class="divider">${messages.length - 1} ${messages.length === 2 ? 'reply' : 'replies'}</div>` }); prev = null; }
-    items.push({ html: message(m, prev, false), enter: fresh(m) });
+    if (last && continues(prev, m)) last.item.html = message(last.m, last.prev, false, true);
+    const item = { html: message(m, prev, false), enter: fresh(m) };
+    items.push(item);
+    last = { item, m, prev };
     prev = m;
   });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
