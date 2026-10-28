@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { loadRules, slackApi } from './lookup.js';
+import { connectedTeams, loadRules, slackApi } from './lookup.js';
 import { classify } from './rules.js';
 
 /**
@@ -37,8 +37,9 @@ export function joinTeams(env) {
   return String(env.SLACK_JOIN_TEAMS || '').split(',').map((t) => t.trim()).filter(Boolean);
 }
 
-const ignored = (rules, channel) => classify(rules, {
-  source: 'slack', channelId: channel.id, name: channel.name, connected: [],
+/** Whether the rules mark a channel (a Slack conversation object) `ignore`. */
+const ignored = (rules, c) => classify(rules, {
+  source: 'slack', channelId: c.id, name: c.name, connected: connectedTeams(c),
 }).kind === 'ignore';
 
 /** The public channels of one workspace the app is not in, oldest first. */
@@ -123,7 +124,9 @@ export async function joinPublicChannels(env, {
 
 /**
  * Events: a public channel created (or unarchived) in one of SLACK_JOIN_TEAMS is joined at
- * once, so its first thread is not missed. Errors are logged; the cron tries again.
+ * once, so its first thread is not missed. The events name the channel only partly (an
+ * unarchive just its id), so the channel is looked up first and the same rules as on the cron
+ * decide. Errors are logged; the cron tries again.
  */
 export async function joinOnEvent(env, payload, {
   slack = (method, params) => slackApi(env, method, params),
@@ -133,14 +136,17 @@ export async function joinOnEvent(env, payload, {
     return null;
   }
   const id = typeof event.channel === 'string' ? event.channel : event.channel?.id;
-  const team = event.channel?.context_team_id || payload.team_id;
-  if (!id || !joinTeams(env).includes(team) || !env.SLACK_BOT_TOKEN) {
-    return null;
-  }
-  if (event.channel?.name && ignored(await loadRules(env), event.channel)) {
+  const teams = joinTeams(env);
+  if (!id || !teams.length || !env.SLACK_BOT_TOKEN) {
     return null;
   }
   try {
+    const { channel: c } = await slack('conversations.info', { channel: id });
+    const team = c.context_team_id || event.channel?.context_team_id || payload.team_id;
+    if (!teams.includes(team) || c.is_private || c.is_archived || c.is_member
+      || ignored(await loadRules(env), c)) {
+      return null;
+    }
     await slack('conversations.join', { channel: id });
     return { joined: id };
   } catch (e) {

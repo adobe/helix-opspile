@@ -14,6 +14,11 @@ import { discordApi, discordAvatar, staffRolesOf } from './discord.js';
 import { cachedGraph } from './graph.js';
 import { sha256 } from './raw.js';
 
+/** The Slack Connect teams of a channel (a conversation object): every team but its own. */
+export const connectedTeams = (c) => [...new Set([
+  ...(c.connected_team_ids || []), ...(c.shared_team_ids || []),
+])].filter((t) => t !== c.context_team_id);
+
 /**
  * Channel and author lookups, cached in D1 (`channels`, `identities`). These are the
  * only platform calls the normalizer makes; everything else comes from pile 1.
@@ -56,9 +61,7 @@ async function graphJson(env, path) {
 
 async function fetchSlackChannel(env, channelId) {
   const { channel: c } = await slackApi(env, 'conversations.info', { channel: channelId });
-  const connected = [...new Set([
-    ...(c.connected_team_ids || []), ...(c.shared_team_ids || []),
-  ])].filter((t) => t !== c.context_team_id);
+  const connected = connectedTeams(c);
   return {
     name: c.name,
     group_id: c.context_team_id || null,

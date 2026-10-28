@@ -23,11 +23,20 @@ const ch = (id, name, more = {}) => ({
   id, name, is_member: false, created: Number(id.replace(/\D/g, '')), ...more,
 });
 
-/** A fake Slack Web API: channels by team, two pages each; joins answered from `refuse`. */
-function fakeSlack(byTeam, refuse = {}) {
+/**
+ * A fake Slack Web API: channels by team, two pages each; `info` answers conversations.info by
+ * channel id; joins answered from `refuse`.
+ */
+function fakeSlack(byTeam, refuse = {}, info = {}) {
   const calls = [];
   const slack = async (method, params) => {
     calls.push([method, params]);
+    if (method === 'conversations.info') {
+      if (!info[params.channel]) {
+        throw new Error('slack conversations.info: channel_not_found');
+      }
+      return { ok: true, channel: info[params.channel] };
+    }
     if (method === 'conversations.list') {
       assert.equal(params.types, 'public_channel');
       const list = byTeam[params.team_id] || [];
@@ -49,6 +58,10 @@ const env = (more = {}) => ({
   DB: d1({
     rules: [{
       id: 1, target: 'kind', priority: 10, field: 'name', pattern: '^random$', value: 'ignore',
+    }, {
+      id: 2, target: 'kind', priority: 10, field: 'channel_id', pattern: '^C7$', value: 'ignore',
+    }, {
+      id: 3, target: 'kind', priority: 10, field: 'connected', pattern: '^TX$', value: 'ignore',
     }],
   }),
   SLACK_BOT_TOKEN: 'xoxb-test',
@@ -72,13 +85,15 @@ describe('joinPublicChannels', () => {
 
   it('joins the public channels it is not in, oldest first, across workspaces and pages', async () => {
     const { slack, joins } = fakeSlack({
-      T1: [ch('C3', 'aem-acme'), ch('C1', 'aem-beta', { is_member: true }), ch('C2', 'random'), ch('C5', 'aso-gamma')],
-      T2: [ch('C4', 'commerce-delta')],
+      T1: [ch('C3', 'aem-acme'), ch('C1', 'aem-beta', { is_member: true }), ch('C2', 'random'), ch('C5', 'aso-gamma'),
+        ch('C7', 'aem-eta'), ch('C6', 'aem-zeta', { context_team_id: 'T1', connected_team_ids: ['T1', 'TX'] })],
+      T2: [ch('C4', 'commerce-delta'), ch('C8', 'aem-theta', { context_team_id: 'T2', shared_team_ids: ['T2', 'TY'] })],
     });
     const r = await joinPublicChannels(env(), { slack, now: NOW });
-    assert.deepEqual(joins(), ['C3', 'C5', 'C4']); // C1 already in, C2 ignored by the rules
+    // C1 already in; C2 (name), C7 (id) and C6 (Slack Connect team) ignored by the rules
+    assert.deepEqual(joins(), ['C3', 'C5', 'C4', 'C8']);
     assert.deepEqual(r, {
-      teams: 2, missing: 3, refused: 0, joined: 3, failed: {}, left: 0,
+      teams: 2, missing: 4, refused: 0, joined: 4, failed: {}, left: 0,
     });
   });
 
@@ -118,32 +133,57 @@ describe('joinPublicChannels', () => {
 
 describe('joinOnEvent', () => {
   const created = (team, channel) => ({ team_id: team, event: { type: 'channel_created', channel } });
+  const unarchived = (team, id) => ({ team_id: team, event: { type: 'channel_unarchive', channel: id } });
+  const info = {
+    C9: ch('C9', 'aem-acme', { context_team_id: 'T1' }),
+    C8: ch('C8', 'aem-beta', { context_team_id: 'T2' }),
+    C7: ch('C7', 'aem-eta', { context_team_id: 'T1' }),
+    C6: ch('C6', 'random', { context_team_id: 'T1' }),
+    C5: ch('C5', 'aem-zeta', { context_team_id: 'T1', connected_team_ids: ['TX'] }),
+    C4: ch('C4', 'aem-delta', { context_team_id: 'T3' }),
+    C3: ch('C3', 'aem-gamma', { context_team_id: 'T1', is_private: true }),
+  };
 
   it('joins a channel created in one of the workspaces', async () => {
-    const { slack, joins } = fakeSlack({});
-    assert.deepEqual(
-      await joinOnEvent(env(), created('T1', { id: 'C9', name: 'aem-acme' }), { slack }),
-      { joined: 'C9' },
-    );
+    const { slack, joins } = fakeSlack({}, {}, info);
+    const r = await joinOnEvent(env(), created('T1', { id: 'C9', name: 'aem-acme' }), { slack });
+    assert.deepEqual(r, { joined: 'C9' });
     assert.deepEqual(joins(), ['C9']);
   });
 
-  it('joins an unarchived channel', async () => {
-    const { slack, joins } = fakeSlack({});
-    await joinOnEvent(env(), { team_id: 'T2', event: { type: 'channel_unarchive', channel: 'C8' } }, { slack });
+  it('joins an unarchived channel, looked up by its id', async () => {
+    const { slack, joins } = fakeSlack({}, {}, info);
+    await joinOnEvent(env(), unarchived('T2', 'C8'), { slack });
     assert.deepEqual(joins(), ['C8']);
   });
 
-  it('leaves other workspaces, ignored channels and other events alone', async () => {
-    const { slack, calls } = fakeSlack({});
-    assert.equal(await joinOnEvent(env(), created('T3', { id: 'C9', name: 'aem-acme' }), { slack }), null);
-    assert.equal(await joinOnEvent(env(), created('T1', { id: 'C9', name: 'random' }), { slack }), null);
-    assert.equal(await joinOnEvent(env(), { team_id: 'T1', event: { type: 'message', channel: 'C9' } }, { slack }), null);
-    assert.equal(calls.length, 0);
+  it('applies the ignore rules to unarchived channels too: id, name, Slack Connect team', async () => {
+    const { slack, joins } = fakeSlack({}, {}, info);
+    for (const id of ['C7', 'C6', 'C5']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal(await joinOnEvent(env(), unarchived('T1', id), { slack }), null);
+    }
+    const r = await joinOnEvent(env(), created('T1', { id: 'C6', name: 'random' }), { slack });
+    assert.equal(r, null);
+    assert.deepEqual(joins(), []);
+  });
+
+  it('leaves other workspaces, private channels and other events alone', async () => {
+    const { slack, joins, calls } = fakeSlack({}, {}, info);
+    const other = await joinOnEvent(env(), created('T1', { id: 'C4', name: 'aem-delta' }), { slack });
+    assert.equal(other, null);
+    assert.equal(await joinOnEvent(env(), unarchived('T1', 'C3'), { slack }), null);
+    assert.deepEqual(joins(), []);
+    const before = calls.length;
+    const message = { team_id: 'T1', event: { type: 'message', channel: 'C9' } };
+    assert.equal(await joinOnEvent(env(), message, { slack }), null);
+    const off = env({ SLACK_JOIN_TEAMS: '' });
+    assert.equal(await joinOnEvent(off, unarchived('T1', 'C9'), { slack }), null);
+    assert.equal(calls.length, before);
   });
 
   it('reports a refusal without throwing', async () => {
-    const { slack } = fakeSlack({}, { C9: 'missing_scope' });
+    const { slack } = fakeSlack({}, { C9: 'missing_scope' }, info);
     const { warn } = console;
     console.warn = () => {};
     try {
