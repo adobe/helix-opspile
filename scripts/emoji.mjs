@@ -12,7 +12,8 @@
  */
 
 /**
- * Writes src/emoji.js, Slack's standard emoji names and the characters they stand for.
+ * Writes src/emoji.js, Slack's standard emoji names and the characters they stand for, the
+ * names GitHub, Discord and Teams give the same emoji, and keywords for each.
  *
  *   node scripts/emoji.mjs                       # from emoji-datasource on npm
  *   node scripts/emoji.mjs --check slack.json    # and compare with Slack's own table
@@ -22,14 +23,27 @@
  * table the Slack web client ships with (which serves 16.0 emoji images). To compare
  * with a newer client, save that table (a `{ name: { unicode, skinVariations } }` JSON
  * object in the client bundle) and pass it to --check.
+ *
+ * Aliases, other names for an emoji Slack has (`facepalm` for `face_palm`): GitHub's, from
+ * emojibase-data (MIT), Discord's, from terminal-discord/discord-emoji (MIT, the table of
+ * Discord's client), and the names of Teams reactions. Keywords (CLDR's name and tags, from
+ * emojibase-data) help pick candidates for a name nobody has (src/shortcodes.js).
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { emojiLookup } from '../src/emojinames.js';
 
 const VERSION = '16.0.0';
 const SOURCE = `https://cdn.jsdelivr.net/npm/emoji-datasource@${VERSION}/emoji.json`;
+const EMOJIBASE = 'https://cdn.jsdelivr.net/npm/emojibase-data@16.0.3/en';
+const DISCORD_COMMIT = 'd8c126d67a475c65dcee27f8f3fcfc4c288e19ee';
+const DISCORD = `https://raw.githubusercontent.com/terminal-discord/discord-emoji/${DISCORD_COMMIT}/discord_emojis.json`;
+// Teams reaction types, as they are stored, by the Slack name of their emoji.
+const TEAMS = {
+  like: '+1', heart: 'heart', laugh: 'laughing', surprised: 'open_mouth', sad: 'cry', angry: 'angry',
+};
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'emoji.js');
 const TONES = ['1f3fb', '1f3fc', '1f3fd', '1f3fe', '1f3ff'];
 
@@ -44,14 +58,26 @@ function withTone(hex, tone) {
   return [first, tone, ...rest].join('-');
 }
 
-const res = await fetch(SOURCE);
-if (!res.ok) {
-  throw new Error(`${SOURCE}: ${res.status}`);
+async function load(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`${url}: ${res.status}`);
+  }
+  return res.json();
 }
-const data = await res.json();
+
+const [data, emojibase, github, discord] = await Promise.all([
+  load(SOURCE), load(`${EMOJIBASE}/data.json`), load(`${EMOJIBASE}/shortcodes/github.json`),
+  load(DISCORD),
+]);
+/** Code points without variation selectors, to match emoji across the tables. */
+const bare = (hex) => hex.toLowerCase().split('-').filter((h) => h !== 'fe0f').join('-');
+const charsBare = (c) => bare([...c].map((x) => x.codePointAt(0).toString(16)).join('-'));
 
 const names = {};
 const skin = [];
+// The Slack name of each emoji (its first), by code points.
+const slackName = new Map();
 for (const e of data.sort((a, b) => a.sort_order - b.sort_order)) {
   const hex = e.unified.toLowerCase();
   const variations = Object.keys(e.skin_variations || {});
@@ -63,6 +89,9 @@ for (const e of data.sort((a, b) => a.sort_order - b.sort_order)) {
     if (withTone(hex, v.toLowerCase()) !== expected) {
       throw new Error(`${e.short_name}: ${v} is ${expected}, not ${withTone(hex, v)}`);
     }
+  }
+  if (!slackName.has(bare(hex))) {
+    slackName.set(bare(hex), e.short_name);
   }
   for (const name of e.short_names) {
     names[name] = chars(hex);
@@ -94,6 +123,41 @@ if (check > 0) {
   console.log(`matches Slack's table: ${Object.keys(slack).length} names`);
 }
 
+// Other names, for the Slack name of the same emoji. A name Slack gives one emoji is never an
+// alias for another; GitHub's go before Discord's. Left out: names the inbox finds without
+// them, by leaving out separators (`man_facepalming` for `man-facepalming`).
+const aliases = {};
+const loose = emojiLookup(names);
+function alias(name, hex) {
+  const to = slackName.get(bare(hex));
+  const a = String(name).toLowerCase();
+  if (to && !Object.hasOwn(names, a) && !Object.hasOwn(aliases, a) && /^[a-z0-9_+-]+$/.test(a)
+    && names[loose(a)] !== names[to]) {
+    aliases[a] = to;
+  }
+}
+for (const [hex, list] of Object.entries(github)) {
+  [list].flat().forEach((n) => alias(n, hex));
+}
+for (const e of Object.values(discord).flat()) {
+  e.names.forEach((n) => alias(n, charsBare(e.surrogates)));
+}
+for (const [type, to] of Object.entries(TEAMS)) {
+  if (!Object.hasOwn(names, type)) {
+    aliases[type] = to;
+  }
+}
+
+// CLDR's name and tags of each emoji, by its Slack name.
+const keywords = {};
+for (const e of emojibase) {
+  const to = slackName.get(bare(e.hexcode));
+  if (to && !keywords[to]) {
+    const tags = (e.tags || []).filter((t) => /^[\p{L}\p{N}' -]+$/u.test(t) && !e.label.includes(t));
+    keywords[to] = [e.label, ...tags].join(', ').replace(/'/g, '’');
+  }
+}
+
 const key = (name) => (/^([a-z_][a-z0-9_]*|[1-9][0-9]*)$/.test(name) ? name : `'${name}'`);
 const lines = Object.entries(names).map(([name, c]) => `  ${key(name)}: '${c}',`);
 await writeFile(OUT, `/*
@@ -119,5 +183,16 @@ ${lines.join('\n')}
 export const SKIN_TONES = [
 ${skin.map((n) => `  '${n}',`).join('\n')}
 ];
+
+/** GitHub's, Discord's and Teams' other names for an emoji, and its Slack name. */
+export const EMOJI_ALIASES = {
+${Object.entries(aliases).map(([a, to]) => `  ${key(a)}: '${to}',`).join('\n')}
+};
+
+/** What each emoji is (CLDR's name, then its tags), by Slack name. */
+export const EMOJI_KEYWORDS = {
+${Object.entries(keywords).map(([n, k]) => `  ${key(n)}: '${k}',`).join('\n')}
+};
 `);
-console.log(`wrote ${OUT}: ${lines.length} names, ${skin.length} with skin tones`);
+console.log(`wrote ${OUT}: ${lines.length} names, ${skin.length} with skin tones, `
+  + `${Object.keys(aliases).length} aliases, ${Object.keys(keywords).length} with keywords`);

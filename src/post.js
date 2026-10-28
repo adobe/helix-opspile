@@ -16,6 +16,7 @@ import { rankMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
 import { teamsOf } from './shares.js';
 import { refreshMembers } from './suggest.js';
+import { resolveShortcodes } from './shortcodes.js';
 
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
@@ -663,8 +664,9 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
 /**
  * POST /api/post `{ thread, text, mentions? }`: replies in the thread as the signed-in
  * person. `mentions` are account ids from /api/mentionable; each `@Name` of one of them in
- * the text becomes a real platform mention, so the person is notified. The reply then
- * arrives like any other message, through the platform's events.
+ * the text becomes a real platform mention, so the person is notified. Emoji `:names:` go
+ * as the platform knows them (src/shortcodes.js); `text` in the answer is the reply as sent.
+ * The reply then arrives like any other message, through the platform's events.
  */
 export async function post(env, me, request, inTeam) {
   const { thread: key, text, mentions: ids } = request || {};
@@ -688,12 +690,14 @@ export async function post(env, me, request, inTeam) {
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
   }
   const mentions = await knownMentions(env, t, ids);
+  // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
+  const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
   if (t.source === 'slack') {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
       body: JSON.stringify({
-        channel: t.channel_id, thread_ts: t.root_id, text: slackText(body, mentions),
+        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
       }),
     });
     const data = await res.json();
@@ -701,7 +705,9 @@ export async function post(env, me, request, inTeam) {
       const reconnect = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'].includes(data.error);
       return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
     }
-    return json({ ok: true, platform: 'slack', id: data.ts });
+    return json({
+      ok: true, platform: 'slack', id: data.ts, text: sent,
+    });
   }
   if (!t.group_id) {
     return json({ error: 'the Teams team of this channel is not known yet' }, 409);
@@ -711,7 +717,7 @@ export async function post(env, me, request, inTeam) {
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify(teamsMessage(body, mentions)),
+    body: JSON.stringify(teamsMessage(sent, mentions)),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -720,7 +726,9 @@ export async function post(env, me, request, inTeam) {
       connect: res.status === 401 ? 'teams' : undefined,
     }, 502);
   }
-  return json({ ok: true, platform: 'teams', id: data.id });
+  return json({
+    ok: true, platform: 'teams', id: data.id, text: sent,
+  });
 }
 
 export async function disconnect(env, me, platform) {

@@ -259,7 +259,8 @@ function wireCards() {
 
 // Emoji names to characters: Slack's standard names, filled in from src/emoji.js where the page
 // is served (src/page.js), then Teams reaction types and names workspaces give their own
-// emoji. Anything else is shown by name.
+// emoji. Other platforms' names and spellings of them (`facepalm`, `thumbs-up`) are found too
+// (src/emojinames.js). Anything else is shown by name.
 const SLACK_EMOJI = /* SLACK_EMOJI */ { names: {}, skin: [] };
 const EMOJI = Object.assign(Object.create(null), {
   like: '👍', heart: '❤️', laugh: '😆', surprised: '😮', sad: '😢', angry: '😠', facepalm: '🤦', rofl: '🤣',
@@ -269,11 +270,12 @@ const EMOJI = Object.assign(Object.create(null), {
   grinning: '😀', rocket: '🚀', ring_buoy: '🛟', joy: '😂', open_mouth: '😮', tada: '🎉',
 }, SLACK_EMOJI.names);
 const SKIN_TONES = new Set(SLACK_EMOJI.skin);
+const emojiCanonical = Markdown.emojiLookup(EMOJI, SLACK_EMOJI.aliases || {}, SKIN_TONES);
 // `wave::skin-tone-3`: the tone modifier goes after the first code point, in place of a VS16.
 function emojiByName(name) {
-  const [base, tone] = String(name).split('::skin-tone-');
+  const [base, tone] = String(emojiCanonical(name) || '').split('::skin-tone-');
   const c = EMOJI[base];
-  if (!c || !/^[2-6]$/.test(tone || '') || !SKIN_TONES.has(base)) return c;
+  if (!c || !tone) return c;
   const [first, ...rest] = [...c];
   if (rest[0] === '\uFE0F') rest.shift();
   return [first, String.fromCodePoint(0x1f3fb + Number(tone) - 2), ...rest].join('');
@@ -1919,11 +1921,15 @@ async function deliver(p) {
     return false;
   }
   const now = Date.now();
+  // The reply as sent: emoji names as the platform knows them (src/shortcodes.js), e.g. the
+  // emoji Clef picked for a name nobody has.
+  const reworded = typeof data.text === 'string' && data.text !== p.body;
   Object.assign(p, {
-    postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
+    body: reworded ? data.text : p.body, postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
-  if (p.status === 'delivered') showSending(p.thread); else animateSending();
+  if (p.status === 'delivered' || reworded) showSending(p.thread);
+  if (p.status !== 'delivered') animateSending();
   return true;
 }
 

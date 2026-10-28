@@ -169,6 +169,15 @@ describe('editing sent messages', () => {
     });
   });
 
+  it('edits emoji names into the platform\'s, as a reply sends them', async () => {
+    const e = env();
+    await connect(e, 1, 'slack', 'U1', 'xoxp-ada', 'chat:write');
+    const res = await editing(e, ADA, { thread: SLACK, id: '1.2', text: 'oops :facepalm:' });
+    assert.equal(res.status, 200);
+    const sent = calls.find((c) => c.u.endsWith('/chat.update'));
+    assert.equal(sent.body.text, 'oops :face_palm:');
+  });
+
   it('only edits your own messages, from the account that posted them', async () => {
     const e = env();
     await connect(e, 1, 'slack', 'U1', 'xoxp-ada', 'chat:write');

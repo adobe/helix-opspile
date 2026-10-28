@@ -536,6 +536,16 @@ Leaving the page while a reply is still on its way (a reload, closing the tab) a
 with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
 off.
 
+**Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
+Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling
+is Slack's (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`, from the GitHub and
+Discord names in `src/emoji.js` and by leaving out separators, `src/emojinames.js`), and a
+workspace's own emoji (one somebody reacted with) stays. For any other name, Clef picks the
+closest emoji from at most 16 candidates (the most alike by name and CLDR keywords, then common
+ones), at most three names per reply, within 2.5 seconds; it needs a probability of 0.5, else
+the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
+way. The inbox shows every platform's names as emoji the same way.
+
 The one exception is posting **as the opspile app** (`POST /api/post/app`, `src/postapp.js`,
 used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the same post as a
 thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in
