@@ -1462,6 +1462,7 @@ function threadRows() {
   }
   // The end of the list: older threads, while there are any.
   let older = list.querySelector(':scope > .older');
+  const more = state.data.page?.next;
   const label = paging ? 'Loading older threads…' : 'Load older threads';
   if (more) {
     if (!older) older = toNode('<button class="older" data-older></button>');
