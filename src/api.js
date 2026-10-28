@@ -533,7 +533,7 @@ export function editableAs(meta, mine, asApp) {
  * key opens its group (a root that is folded later was opened, linked or kept in a tab under
  * its own key): `thread.thread` is the entry's key.
  */
-export async function thread(env, me, asked, wanted = null) {
+export async function thread(env, me, asked, wanted = null, { waitUntil = null } = {}) {
   // The thread's group: the thread itself, or the group it was re-threaded into, with every
   // member, in one round trip.
   const { results: memberRows } = await env.DB.prepare(`SELECT * FROM threads
@@ -568,7 +568,8 @@ export async function thread(env, me, asked, wanted = null) {
   ] = await Promise.all([
     env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
-    Promise.all(group.map((m) => folderFiles(env.CHANNELS, m.path))).then((lists) => lists.flat()),
+    Promise.all(group.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
+      .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
@@ -906,7 +907,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     // Whether the viewer may send as the opspile app here (POST /api/post/app): asked
     // alongside the thread, not after it.
     const [result, app] = await Promise.all([
-      thread(env, me, key, team),
+      thread(env, me, key, team, { waitUntil }),
       me.readonly || !isStaffDomain(env, me.email) ? null : appPostCheck(env, key),
     ]);
     if (!result) {

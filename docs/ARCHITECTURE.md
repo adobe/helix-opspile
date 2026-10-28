@@ -168,6 +168,16 @@ and Teams HTML are converted), so keeping each message in its own file avoids ne
 document inside another, and makes every file a natural retrieval chunk. There is no
 per-thread rollup file; reading a thread means listing its folder.
 
+**Folder snapshots** are a read cache beside the folders, not part of pile 2's record:
+`snapshots/<folder>.json` holds every file of one folder, parsed, with its R2 version
+(`src/filecache.js`). A Worker may wait on only six R2 calls at a time, so an isolate that had
+not read a thread before read a thread of 300 messages in some fifty rounds (three seconds);
+with the snapshot it lists the folder, reads the snapshot, and reads only the files whose
+version the snapshot does not have, then writes the snapshot again behind the answer. A file
+is never taken from a snapshot for a version it does not have, so a stale or missing snapshot
+costs reads, never correctness; re-filing a folder deletes its snapshot, and emptying pile 2
+may drop them all.
+
 ```markdown
 ---
 source: slack
@@ -374,6 +384,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   mentions people it did not mention before (a new message, or an edit that adds a mention)
   names them in its announcement, with who wrote it, for their notifications; a backfill, a
   replay or a late catch-up names nobody.
+  An inbox on screen reloads its first page (and the open thread, if it changed) half a second
+  after an announcement. A tab in the background does not: it notes which threads changed and
+  catches up when it is shown again, unless a bell watches the inbox it shows (bells are checked
+  on its reloads). The thread agent's status is not polled from the background either.
 - The index is derived: a `messages` row per pile-2 file, and a `threads` row recomputed from
   its messages on every write (last activity by a person, last speaker and whether they are
   staff, title, message count), so it is the same in any replay order. Alert threads use the

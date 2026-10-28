@@ -1479,7 +1479,12 @@ async function loadAgent(key, { latest = null } = {}) {
   // seconds for more): ask again, while the thread stays open.
   const waiting = res.enabled && last && (!turn || turn.startedAt < last) && Date.now() - Date.parse(last) < AGENT_WAIT_MS;
   if (turn?.state === 'working' || waiting) {
-    entry.timer = setTimeout(() => { if (state.open === key) loadAgent(key); }, AGENT_POLL_MS);
+    // Not while the tab is in the background: asked again once it is shown (visibilitychange).
+    entry.timer = setTimeout(() => {
+      if (state.open !== key) return;
+      if (hidden()) entry.due = true;
+      else loadAgent(key);
+    }, AGENT_POLL_MS);
   }
 }
 
@@ -2928,19 +2933,44 @@ function markRead(t) {
   t.attention = applies['mentioned-team'] ? 'mentioned-team' : null;
   render();
 }
+// Live updates reload the inbox (and the open thread, when it changed) half a second after the
+// room's announcement. A tab in the background does not: most inbox loads were tabs nobody was
+// looking at, several per person, each reloading on every message. It keeps the threads that
+// changed and catches up when it is shown again; only a bell on the inbox on screen keeps it
+// reloading, because bells are checked on its reloads (checkBells).
 let reload;
+const changed = new Set();
+const hidden = () => document.visibilityState === 'hidden';
+const belled = () => notifying() && (state.settings?.bells || []).some((b) => b.view === scopeKey());
 function reloadSoon(thread) {
+  if (thread) changed.add(thread);
   clearTimeout(reload);
-  reload = setTimeout(async () => {
-    // The open thread itself changed: fetch it alongside the inbox, not after it.
-    const early = state.open && state.open === thread ? state.open : null;
-    if (early) openThread(early, { live: true });
-    await loadInbox();
-    if (state.open && state.open !== early && (state.open === thread || state.data.threads.find((t) => t.thread === state.open)?.members?.some((m) => m.thread === thread))) {
-      openThread(state.open, { live: true });
-    }
-  }, 500);
+  reload = hidden() && !belled() ? null : setTimeout(reloadChanged, 500);
 }
+async function reloadChanged() {
+  reload = null;
+  const threads = new Set(changed);
+  changed.clear();
+  const touched = (key) => threads.has(key) || state.data?.threads.find((t) => t.thread === key)?.members?.some((m) => threads.has(m.thread));
+  // The open thread itself changed: fetch it alongside the inbox, not after it.
+  const early = state.open && threads.has(state.open) ? state.open : null;
+  if (early) openThread(early, { live: true });
+  await loadInbox();
+  if (state.open && state.open !== early && touched(state.open)) openThread(state.open, { live: true });
+}
+document.addEventListener('visibilitychange', () => {
+  if (hidden() || !state.data) return;
+  const open = state.open;
+  const agent = open && state.agents.get(open);
+  // Shown again: what changed meanwhile, and the agent's turn if it was due to be asked (and
+  // the thread's reload did not ask already).
+  const caught = changed.size && !reload ? reloadChanged() : null;
+  if (agent?.due) {
+    Promise.resolve(caught).then(() => {
+      if (state.open === open && state.agents.get(open) === agent) loadAgent(open);
+    });
+  }
+});
 /** The teams of whoever the inbox is shown for (you, or the person you view as). */
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
@@ -3041,7 +3071,20 @@ function loadOlder() {
 const inflight = new Map(); // key -> the request, resolving with the thread or null
 const queued = [];
 const PREFETCH_AT_ONCE = 6;
-const fresh = (key) => { const hit = state.cache.get(key); return hit && Date.now() - hit.at < 60000; };
+// A fetched thread stays fresh for a minute, and for ten while its inbox entry says nothing
+// happened in it (activity, messages, reactions, draft): rows that scroll into view again do not
+// fetch their threads again (one person's tab fetched a thread 17 times in 40 minutes). Opening
+// one fetches it again anyway, behind the copy (openThread).
+const entrySig = (key) => {
+  const t = searchEntry(key);
+  return t ? [t.any_at, t.last_at, t.messages, (t.reactions || []).reduce((n, r) => n + r.count, 0), t.draft?.updated_at].join('|') : null;
+};
+const fresh = (key) => {
+  const hit = state.cache.get(key);
+  if (!hit) return false;
+  const age = Date.now() - hit.at;
+  return age < 60000 || (age < 600000 && hit.sig != null && hit.sig === entrySig(key));
+};
 function prefetch(key, { urgent = false } = {}) {
   if (!key || inflight.has(key) || fresh(key)) return;
   const at = queued.indexOf(key);
@@ -3053,9 +3096,11 @@ function pump() {
   while (inflight.size < PREFETCH_AT_ONCE && queued.length) {
     const key = queued.shift();
     if (inflight.has(key) || fresh(key)) continue;
+    // What the entry said when it was asked for: a change after that makes the copy stale.
+    const sig = entrySig(key);
     inflight.set(key, get(threadUrl(key))
       .then((data) => {
-        if (!fresh(key)) state.cache.set(key, { data, at: Date.now() });
+        if (!fresh(key)) state.cache.set(key, { data, at: Date.now(), sig });
         if (design === 'a' || design === 'b') previewSoon();
         return data;
       })

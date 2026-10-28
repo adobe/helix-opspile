@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { snapshotKey } from './filecache.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { loadRules, toChannel } from './lookup.js';
 import { segment } from './raw.js';
@@ -142,6 +143,10 @@ async function moveFolder(bucket, from, to, budget) {
       moved += 1;
     }
     if (!page.truncated || !page.objects.length) {
+      // The folder's snapshot (src/filecache.js) names files that are gone: the new place
+      // gets its own on its first read.
+      // eslint-disable-next-line no-await-in-loop
+      await bucket.delete(snapshotKey(from));
       return { moved, done: true };
     }
     if (moved >= budget) {
