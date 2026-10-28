@@ -13,6 +13,11 @@
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
+// The pages' scripts, as text (src/page.js inlines them).
+import inboxJs from '../ui/inbox.js' with { type: 'text' };
+import adminJs from '../ui/admin.js' with { type: 'text' };
+import kbJs from '../ui/kb.js' with { type: 'text' };
+import appJs from '../ui/app.js' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { refreshMirrors } from './agent/repos.js';
@@ -29,7 +34,7 @@ import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth } from './oauth.js';
 import { consume } from './normalizer.js';
-import { inboxPage } from './page.js';
+import { inboxPage, page } from './page.js';
 import { slackEvents } from './slack.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
@@ -38,7 +43,12 @@ import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
 
-const INBOX_PAGE = inboxPage(inboxHtml);
+const SCRIPTS = {
+  'inbox.js': inboxJs, 'admin.js': adminJs, 'kb.js': kbJs, 'app.js': appJs,
+};
+const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
+const ADMIN_PAGE = page(adminHtml, SCRIPTS);
+const KB_PAGE = page(kbHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -133,14 +143,14 @@ export default {
     }
     if (pathname === '/inbox/admin') {
       // Teams and orgs (admin team; the API checks), under /inbox like the editor.
-      return new Response(adminHtml, {
+      return new Response(ADMIN_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
     if (pathname === '/inbox/kb') {
       // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same
       // Access application covers it.
-      return new Response(kbHtml, {
+      return new Response(KB_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }

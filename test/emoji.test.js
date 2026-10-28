@@ -11,11 +11,11 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { inboxPage } from '../src/page.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
-const html = readFileSync(new URL('../ui/inbox.html', import.meta.url), 'utf8');
+const html = PAGES['inbox.html'];
 
 /** The page's emoji helpers, as served, run outside a browser. */
 function helpers(page) {
@@ -26,7 +26,7 @@ function helpers(page) {
 }
 
 describe('emoji names', () => {
-  const { emoji, emojiByName, EMOJI_CODE } = helpers(inboxPage(html));
+  const { emoji, emojiByName, EMOJI_CODE } = helpers(inboxPage(html, SCRIPTS));
   const text = (s) => s.replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
 
   it('knows Slack\'s standard names and aliases', () => {
@@ -63,7 +63,7 @@ describe('emoji names', () => {
   });
 
   it('is filled in where the page is served', () => {
-    assert.equal(helpers(html).emoji('laughing'), ':laughing:');
-    assert.throws(() => inboxPage('<html></html>'), /placeholder/);
+    assert.equal(helpers(SCRIPTS['inbox.js']).emoji('laughing'), ':laughing:');
+    assert.throws(() => inboxPage('<html></html>', SCRIPTS), /placeholder/);
   });
 });

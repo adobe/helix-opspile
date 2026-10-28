@@ -11,34 +11,44 @@
  */
 
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { Linter } from 'eslint';
-import browserGlobals from 'globals';
+import { inboxPage, page } from '../src/page.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
-// `npm run lint` only sees .js and .mjs files, not the scripts inside the pages: a name a page
-// uses but no longer defines would only show as a ReferenceError in the browser.
-const dir = new URL('../ui/', import.meta.url);
-const pages = readdirSync(dir).filter((f) => f.endsWith('.html'));
+const TAGS = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
+const NAMED = /^<script( type="module")? src="([a-z-]+\.js)"><\/script>$/;
+const served = (name) => (name === 'inbox.html' ? inboxPage : page)(PAGES[name], SCRIPTS);
 
+// The pages' scripts live in ui/*.js, which `npm run lint` checks; a script written into a
+// page would be checked by nothing.
 describe('page scripts', () => {
-  for (const page of pages) {
-    it(`${page} uses no undefined names`, () => {
-      const html = readFileSync(new URL(page, dir), 'utf8');
-      const problems = [];
-      for (const [, module, src] of html.matchAll(/<script( type="module")?>([\s\S]*?)<\/script>/g)) {
-        problems.push(...new Linter().verify(src, {
-          languageOptions: {
-            ecmaVersion: 'latest',
-            sourceType: module ? 'module' : 'script',
-            // `Markdown` is the bundled renderer, src/ui-markdown.bundle.js, in the script before.
-            globals: { ...browserGlobals.browser, Markdown: 'readonly' },
-          },
-          linterOptions: { reportUnusedDisableDirectives: 'off' },
-          rules: { 'no-undef': 'error' },
-        }).map((p) => `${p.line}: ${p.message}`));
+  it('are in ui/*.js, named by the pages, not written into them', () => {
+    const used = new Set();
+    for (const [name, html] of Object.entries(PAGES)) {
+      for (const [tag] of html.matchAll(TAGS)) {
+        const named = NAMED.exec(tag);
+        assert.ok(named, `${name}: ${tag.slice(0, 60)} is not <script src="name.js"></script>`);
+        assert.ok(named[2] === 'markdown.js' || SCRIPTS[named[2]], `${name}: no ui/${named[2]}`);
+        used.add(named[2]);
       }
-      assert.deepEqual(problems, []);
-    });
-  }
+    }
+    assert.deepEqual(Object.keys(SCRIPTS).filter((f) => !used.has(f)), [], 'scripts no page uses');
+  });
+
+  it('are inlined where the pages are served', () => {
+    for (const name of Object.keys(PAGES)) {
+      const html = served(name);
+      assert.doesNotMatch(html, /<script[^>]* src=/, name);
+      for (const [tag, code] of html.matchAll(TAGS)) {
+        assert.ok(code.trim(), `${name}: ${tag.slice(0, 40)} is empty`);
+      }
+    }
+    assert.ok(served('admin.html').includes(`>\n${SCRIPTS['admin.js']}</script>`));
+  });
+
+  it('cannot end the script early, and must exist', () => {
+    const html = page('<script src="a.js"></script>', { 'a.js': "const s = '</script><b>';\n" });
+    assert.equal(html, "<script>\nconst s = '<\\/script><b>';\n</script>");
+    assert.throws(() => page('<script type="module" src="nope.js"></script>', SCRIPTS), /nope\.js/);
+  });
 });

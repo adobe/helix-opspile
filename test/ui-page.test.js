@@ -11,11 +11,11 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { transform } from 'esbuild';
+import { SCRIPTS } from './ui.js';
 
-const html = readFileSync(new URL('../ui/inbox.html', import.meta.url), 'utf8');
+const html = SCRIPTS['inbox.js'];
 
 /** A piece of the page's script, from the line starting with `from` up to `to`, run in Node. */
 function piece(from, to, expose, globals = {}) {
@@ -30,8 +30,7 @@ function piece(from, to, expose, globals = {}) {
 
 describe('inbox page', () => {
   it('is a valid module script', async () => {
-    const script = /<script type="module">([\s\S]*?)<\/script>/.exec(html)[1];
-    await transform(script, { loader: 'js', format: 'esm' });
+    await transform(html, { loader: 'js', format: 'esm' });
   });
 
   it('formats times and days as toLocale*String did', () => {
