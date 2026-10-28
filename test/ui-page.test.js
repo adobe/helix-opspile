@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { transform } from 'esbuild';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
-import { SCRIPTS } from './ui.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
 
@@ -102,5 +102,22 @@ describe('inbox page', () => {
     assert.equal(bellKey(a), serverBellKey(stored));
     assert.notEqual(bellKey(a), bellKey({ ...a, view: '~personal' }));
     assert.notEqual(bellKey(a), bellKey({ ...a, not: {} }));
+  });
+
+  it('names a filter row by its label, also in its tooltip, the folded rail\'s only text', () => {
+    const { rowLabel } = piece('const rowLabel', 'function facetRows', 'rowLabel');
+    const customer = { labelFn: (v) => (v === 'acme' ? 'Acme Corp' : null) };
+    assert.equal(rowLabel(customer, 'acme'), 'Acme Corp');
+    assert.equal(rowLabel(customer, 'unknown'), 'unknown');
+    assert.equal(rowLabel({ label: { open: 'Unresolved' } }, 'open'), 'Unresolved');
+    assert.equal(rowLabel({}, 'Slack'), 'Slack');
+    const rows = html.slice(html.indexOf('function facetRows'), html.indexOf('const mentionBadge'));
+    assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
+  });
+
+  it('shows every exclusion button of the slid-out rail on a touch screen', () => {
+    const css = PAGES['inbox.html'];
+    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n {2}\}/g)].map((m) => m[1]).join('\n');
+    assert.match(touch, /main\.rail\.railopen #filters[^{]*\.fr \.not \{[^}]*pointer-events: auto/);
   });
 });

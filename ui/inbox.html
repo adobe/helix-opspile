@@ -126,7 +126,8 @@
   .menu .item[hidden] { display: none; }
   .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
   .menu .keys dd { margin: 0; text-align: right; }
-  main { flex: 1; display: grid; grid-template-columns: 270px minmax(380px, 34%) 1fr; min-height: 0; }
+  main { flex: 1; display: grid; grid-template-columns: var(--filters-w) minmax(380px, 34%) 1fr; min-height: 0; }
+  :root { --filters-w: 270px; --rail: 68px; }
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 
   /* Filters: one card per facet, as in klickhaus. */
@@ -176,6 +177,8 @@
   .c-silent { background: var(--purple) !important; }
   .c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
   .fr .ico.em { font-size: 13px; line-height: 16px; text-align: center; }
+  .fr .ico.av { font-size: 9px; font-weight: 700; line-height: 1; border-radius: 4px; }
+  .fr .ico.av.round { font-size: 7px; border-radius: 50%; }
   .c-accent { background: var(--accent) !important; }
   /*
    * Facet colours beyond status. Who: me blue, my teams green, their members light green,
@@ -328,6 +331,48 @@
   /* Room for the filter cards' overhang, so they never cover a status dot. */
   .t { padding-left: 18px; }
   #threads .count { padding-left: 18px; }
+  /*
+   * The filter column folded to a rail (`main.rail`, see syncRail): each row shows its colour,
+   * its icon and its unread mentions, nothing else. Under the pointer (or, on a touch screen,
+   * once tapped: `main.railopen`) the cards slide out to their full width, over the thread
+   * list, and fold back a moment after the pointer leaves, so crossing the gap between two
+   * cards does not fold them. The rows keep their full width while the cards fold: a card
+   * clips them, so nothing reflows as it slides. --rail is the rail's width.
+   */
+  main.rail { grid-template-columns: var(--rail) minmax(380px, 34%) 1fr; }
+  main.rail #filters { transition: margin-right 0s .34s; }
+  main.rail #filters .card { width: calc(var(--rail) + var(--r) * 4 / 3); flex: none; overflow: hidden; padding-left: calc(var(--r) + 8px);
+    transition: transform .18s ease-out, width .2s ease-in .12s; }
+  main.rail #filters .card > * { width: calc(var(--filters-w) + var(--r) / 3 - 21px); }
+  main.rail #filters .fg { width: auto; white-space: nowrap; }
+  main.rail #filters h3 > *, main.rail #filters .fg, main.rail #filters .fr .lab, main.rail #filters .fr .n,
+  main.rail #filters .fr .bar, main.rail #filters .fr .not { opacity: 0; transition: opacity .12s .12s; }
+  main.rail #filters h3 { color: transparent; transition: color .12s .12s; }
+  main.rail #filters .fr .lw { gap: 0; }
+  main.rail #filters .fr .lab { max-width: 0; margin-right: 0; transition: opacity .12s .12s, max-width .2s ease-in .12s, margin .2s .12s; }
+  main.rail #filters .fr .not { pointer-events: none; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) { margin-right: calc(var(--rail) - var(--filters-w) - var(--fg));
+    transition: none; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .card { width: calc(var(--filters-w) + var(--r) * 4 / 3);
+    transition: transform .18s ease-out, width .2s ease-out; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) :is(h3 > *, .fg, .fr .lab, .fr .n, .fr .bar) { opacity: 1;
+    transition: opacity .15s .05s; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) h3 { color: inherit; transition: color .15s .05s; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .lab { max-width: 100%; margin-right: 6px;
+    transition: opacity .15s .05s, max-width .2s ease-out, margin .2s; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr :is(.not, .men) { transition: none; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr:hover .not { opacity: 1; pointer-events: auto; }
+  :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr.off .not { opacity: 1; pointer-events: auto; }
+  /* On a touch screen, as in the full column: every row's exclusion button shows once it is out. */
+  @media (hover: none) {
+    :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
+  }
+  /* Folded, the card under the pointer does not nudge out on its own: they all slide out. */
+  main.rail #filters .card:hover { transform: none; }
+  main.rail #filters .card.active, main.rail #filters .card.active:hover { transform: translateX(calc(var(--r) / 3)); }
+  @media (prefers-reduced-motion: reduce) {
+    main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
+  }
   #lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
   #lift .t { position: absolute; margin: 0; border: 1px solid var(--accent); border-radius: 10px;
     content-visibility: visible;
