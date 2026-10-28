@@ -248,6 +248,8 @@ a hash of the text its vector was made from (`messages.embedded`), so only new a
 messages are embedded again, and a deleted one loses its vector. The cron enqueues the
 threads whose vectors are older than their latest message (`threads.vectorized_through`),
 which also fills the index the first time. Alert threads (a bot's posts) get no vectors here.
+A re-filed thread's vectors are made again (its hashes cleared, a vectorize job queued), so
+that they carry its new team and org; re-filed as an alert or ignored, it loses them.
 
 ### 3. Knowledge bases
 
@@ -356,6 +358,19 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
+- **Search** is the box over the thread list (`/` jumps to it): one search over the view on
+  screen, a team's inbox or the personal view (`view=personal`), on every platform at once, Slack, Teams and Discord alike (`GET /api/search`,
+  [src/search.js](../src/search.js)). It looks two ways and adds them up. By meaning: the
+  query is embedded (bge, with its instruction for short queries) and the `CONTENT` index
+  answers with the team's message and thread vectors and those of the channels shared with it;
+  a match needs a similarity of 0.6 and to be within 0.12 of the best one. By words: every
+  word of the query in the title, the channel or the customer (the more of them in the title,
+  the better), or in a fact (a URL, ticket, CVE, site, the problem). Members of a re-threaded
+  group count for its entry, and D1 decides what the viewer sees, as for the inbox. The results
+  take the list's place, best match first, each with the message that matched (its words
+  marked); opening one scrolls the thread to that message. The filter cards count and filter
+  the results, j and k step through them, and Esc or **Clear** brings the inbox back.
+  Words in message bodies are found through their vectors only: the text stays in pile 2.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; an

@@ -271,6 +271,32 @@ describe('mcp tools', () => {
     assert.match(team.body.result.content[0].text, /Your teams: helix/);
   });
 
+  it('search_threads finds threads by words and by topic, with the message that matched', async () => {
+    const e = env();
+    let r = structured(await callTool(e, 'search_threads', { query: 'site down' }));
+    assert.deepEqual(r.threads.map((t) => [t.thread, t.matched, t.customer]), [[SLACK, ['title'], 'acme']]);
+    // By meaning: the message vector of the second message.
+    e.AI = { run: async () => ({ data: [[1, 0]] }) };
+    e.CONTENT = {
+      query: async (v, { filter }) => ({
+        matches: filter.team === 'helix' ? [{
+          score: 0.8,
+          metadata: {
+            type: 'message', thread: SLACK, channel: 'slack:E1:C1', message: 'slack:E1:C1:1.2',
+          },
+        }] : [],
+      }),
+    };
+    r = structured(await callTool(e, 'search_threads', { query: 'outage' }));
+    assert.deepEqual(r.threads.map((t) => [t.thread, t.matched, t.snippet]), [[SLACK, ['topic'], {
+      message: `${SLACK}|1.2`, from: 'Cy', at: '2026-10-21T10:05:00Z', text: 'Still down, @Ada?',
+    }]]);
+    const empty = await callTool(e, 'search_threads', { query: ' ' });
+    assert.equal(empty.body.result.isError, true);
+    const team = await callTool(e, 'search_threads', { query: 'x', team: 'other' });
+    assert.match(team.body.result.content[0].text, /Your teams: helix/);
+  });
+
   it('list_threads leaves out what `exclude` names, and explains bad values there too', async () => {
     const n = async (args) => structured(await callTool(env(), 'list_threads', args)).matched;
     assert.equal(await n({ exclude: { platform: ['discord'] } }), 1);
