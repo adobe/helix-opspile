@@ -154,8 +154,8 @@ function renderBases() {
     return `<h2>${title}</h2>${list.map((b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}">
       <span>${esc(b.name)}</span>${b.agents ? `<span class="tag agent" title="Thread agents are on in ${b.agents} channel${b.agents === 1 ? '' : 's'}">agent${b.agents > 1 ? ` · ${b.agents}` : ''}</span>` : ''}<span class="sub">${esc(b.repo)}</span></div>`).join('')}`;
   };
-  $('bases').innerHTML = `<input id="filter" placeholder="Filter" value="${esc(state.filter)}" aria-label="Filter knowledge bases">`
-    + (group('team', 'Ops teams') + group('org', 'Customers and vendors') || '<div class="empty">No knowledge bases.</div>');
+  $('bases').innerHTML = `<input id="filter" placeholder="Filter" value="${esc(state.filter)}" aria-label="Filter knowledge bases">${
+    group('team', 'Ops teams') + group('org', 'Customers and vendors') || '<div class="empty">No knowledge bases.</div>'}`;
   $('filter').oninput = (e) => {
     state.filter = e.target.value;
     const at = e.target.selectionStart;
@@ -315,7 +315,7 @@ function renderAgents(note) {
   }).join('');
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Thread agents in ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
-    : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
+  : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
     <div class="channels">${list ? rows || '<div class="empty">No channels yet.</div>' : '<div class="empty">Could not list the channels.</div>'}</div>`;
   for (const el of $('editor').querySelectorAll('[data-channel]')) {
     el.onclick = () => switchAgent(state.channels.find((c) => c.channelId === el.dataset.channel));
@@ -673,7 +673,7 @@ function renderMcp(note) {
     : `opspile's own, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
-    : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
+  : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
     <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
@@ -875,7 +875,7 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
     const { ok, body } = await call(`/api/kb/file?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`);
     if (!ok) {
       $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
-      return;
+      return true;
     }
     state.file = { path, hash: body.hash, baseline: body.text, readonly: GENERATED.has(path.split('/').pop()) };
   }
@@ -964,6 +964,7 @@ function schedule() {
 /** Saves now, if there is anything to save; one save at a time, the latest text wins. */
 async function flush() {
   clearTimeout(state.timer);
+  // eslint-disable-next-line no-await-in-loop -- waits for the save in flight, and any after it
   while (state.saving) await state.saving;
   const f = state.file;
   if (!f || f.readonly || f.conflict || !edited()) return;
@@ -1083,10 +1084,11 @@ async function showHistory({ force = false, nav = 'push' } = {}) {
   toUrl(nav);
   $('editor').innerHTML = '<div class="empty">Loading…</div>';
   const { ok, body } = await call(`/api/kb/log?repo=${encodeURIComponent(state.repo)}`);
-  if (!ok) { $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the history.')}</div>`; return; }
+  if (!ok) { $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the history.')}</div>`; return true; }
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="path">History of ${esc(state.repo)}</span></div>
     <div class="log">${body.commits.map((c) => `<div class="c"><div class="h">${esc(c.hash)} · ${esc(new Date(c.at).toLocaleString())} · ${esc(c.author)}</div>
       <div class="m">${esc(c.message)}</div></div>`).join('') || '<div class="empty">No commits yet.</div>'}</div>`;
+  return true;
 }
 
 // ---- start ------------------------------------------------------------------------------

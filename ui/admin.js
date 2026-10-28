@@ -120,17 +120,21 @@ function serial(fn) {
  * sending it twice cannot do a thing twice (`idempotent`). Answers `ok: false` on failure,
  * never throws.
  */
+// eslint-disable-next-line default-param-last -- call(path) reads, call(path, 'POST', body) writes
 async function call(path, method = 'GET', body, { parallel = false, idempotent = method !== 'POST' } = {}) {
   const attempt = async () => {
     for (let i = 0; ; i += 1) {
       let r;
       try {
+        // The attempts are one after the other, with a pause between them.
+        // eslint-disable-next-line no-await-in-loop
         r = await send(path, method, body);
       } catch (e) {
         r = { ok: false, status: 0, body: { error: `no answer (${e.message}), it may not have been saved` } };
       }
       const again = r.status === 429 || (idempotent && (r.status === 0 || r.status === 503));
       if (!again || i >= 3) return r;
+      // eslint-disable-next-line no-await-in-loop
       await sleep(500 * 2 ** i);
     }
   };
@@ -600,7 +604,7 @@ function renderChannels() {
     if (c.left) {
       return `<tr class="left"><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
         <td colspan="${triage ? 5 : 4}" class="sub">${c.left.unshared ? `Out of this team's inbox; it stays filed under ${esc(teamLabel(c.left.team))}.`
-    : `Moved to ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))}${c.left.kind !== 'channel' ? ` (${esc(c.left.kind)})` : ''}; its threads are re-filed in the background.`}</td></tr>`;
+  : `Moved to ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))}${c.left.kind !== 'channel' ? ` (${esc(c.left.kind)})` : ''}; its threads are re-filed in the background.`}</td></tr>`;
     }
     const manual = c.manual[target];
     const shares = c.sharedWith || [];
@@ -706,6 +710,8 @@ function wireChannelPicker() {
     picks.hidden = false;
     placePicks(input, picks);
     for (const el of picks.querySelectorAll('[data-i]')) {
+      // The list shown when the row is picked.
+      // eslint-disable-next-line no-loop-func
       el.onmousedown = (e) => { e.preventDefault(); pickIt(list[Number(el.dataset.i)]); };
     }
     const on = picks.querySelector('.on');
@@ -898,6 +904,7 @@ function wireMemberPicker() {
     picks.hidden = false;
     placePicks(input, picks);
     for (const el of picks.querySelectorAll('[data-i]')) {
+      // eslint-disable-next-line no-loop-func
       el.onmousedown = (e) => { e.preventDefault(); add(list[Number(el.dataset.i)]); };
     }
   };
@@ -1265,12 +1272,12 @@ function askFor(c) {
   $('askCancel').onclick = () => { $('askSlot').innerHTML = ''; $('pick').focus(); };
   $('askForm').onsubmit = (e) => {
     e.preventDefault();
-    const note = $('askNote').value.trim();
+    const why = $('askNote').value.trim();
     $('askSlot').innerHTML = '';
     return once(`ask:${v.value}:${c.channelId}`, async () => {
       // The same request twice is refused as a duplicate: safe to send again.
       const res = await call('/api/admin/requests', 'POST', {
-        team: v.value, source: c.source, channelId: c.channelId, note: note || undefined,
+        team: v.value, source: c.source, channelId: c.channelId, note: why || undefined,
       }, { idempotent: true });
       if (res.body.request) updateRequest(res.body.request);
       if (!res.ok) failed(`Ask for ${plainName(c)}`, res);

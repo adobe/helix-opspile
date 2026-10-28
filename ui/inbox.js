@@ -673,6 +673,7 @@ function filterCards() {
 // `:name:` to the character, for titles (the body renderer does the same).
 const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
 /** Text without what platforms rewrite: emoji (characters or :codes:), markup, spacing. */
+// eslint-disable-next-line no-misleading-character-class -- the joiner on its own, too
 const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu, '')
   .replace(/<@[^>]+>|@\S+/g, '').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ')
   .trim();
@@ -1071,9 +1072,9 @@ function composer(thread, draft, resolve = '') {
   if (p === 'discord') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
-    const connect = state.me.connectable?.discord && !state.me.connected?.discord
-      ? ` <a href="/api/auth/discord/start">Connect your Discord account</a> so opspile knows which posts are yours.` : '';
-    return `<div class="composer">${draftLine(draft)}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${connect}</span></div>`;
+    const link = state.me.connectable?.discord && !state.me.connected?.discord
+      ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so opspile knows which posts are yours.' : '';
+    return `<div class="composer">${draftLine(draft)}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span></div>`;
   }
   if (!state.me.connected?.[p]) {
     return `<div class="composer">${draftLine(draft)}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
@@ -1188,12 +1189,13 @@ async function openThread(key, { live = false, cached = false } = {}) {
     state.open = entryKey;
     toUrl(false);
     // The group has messages the member did not: shown as opened, not as new arrivals.
-    return openThread(entryKey, { cached: true });
+    await openThread(entryKey, { cached: true });
+    return;
   }
   mergeProfiles(data.profiles);
   // Shown from the preload: fetch the current state behind it.
   if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
-  const { thread, members = [], messages, watermarks, label, model, reviews, facts, resolution } = data;
+  const { thread, members = [], messages, watermarks, model, reviews, facts, resolution } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
   const t = state.data?.threads.find((x) => x.thread === key) || {};
@@ -1378,18 +1380,18 @@ function composerFor(key, draft) {
 }
 
 function renderDraftBar(key) {
-  const bar = $('draftbar');
-  if (!bar || state.open !== key) return;
+  const el = $('draftbar');
+  if (!el || state.open !== key) return;
   const d = state.cache.get(key)?.data?.draft;
   const c = state.composers.get(key);
-  if (!d) { bar.hidden = true; bar.innerHTML = ''; return; }
+  if (!d) { el.hidden = true; el.innerHTML = ''; return; }
   const differs = c && c.text !== d.body;
   const stale = c && c.base && c.base !== d.updated_at;
-  bar.hidden = false;
-  bar.innerHTML = `<span class="pen">✎ Draft</span>
+  el.hidden = false;
+  el.innerHTML = `<span class="pen">✎ Draft</span>
     <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}${differs ? (stale ? ` · changed since you started: ${esc(d.body)}` : ' · your text differs') : ''}</span>
     <span class="act">${differs ? '<button data-draft="load" title="Replace your text with the draft">Load draft</button>' : ''}<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button></span>`;
-  bar.onclick = (e) => {
+  el.onclick = (e) => {
     const b = e.target.closest('[data-draft]');
     if (!b) return;
     if (b.dataset.draft === 'load') loadDraft(key);
@@ -1834,7 +1836,7 @@ function backfill(limit = BACKFILL) {
     while (state.data?.team === team && state.data.as === as && state.data.page?.next
       && state.data.threads.length < limit) {
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 1500 }) : setTimeout(r, 50)));
+      await new Promise((r) => { if (window.requestIdleCallback) requestIdleCallback(r, { timeout: 1500 }); else setTimeout(r, 50); });
       // eslint-disable-next-line no-await-in-loop
       const p = await get(pageUrl(state.data.page.next)).catch(() => null);
       if (!p || state.data?.team !== team || state.data.as !== as) break;
@@ -2089,10 +2091,10 @@ async function start() {
   };
   $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
-    const card = e.target.closest('.card');
-    if (!card) return;
+    const el = e.target.closest('.card');
+    if (!el) return;
     if (e.target.dataset.clear) {
-      for (const f of cardFacets(card.dataset.f)) delete state.sel[f.id];
+      for (const f of cardFacets(el.dataset.f)) delete state.sel[f.id];
       render(); toUrl(); return;
     }
     const r = e.target.closest('.fr');
@@ -2106,8 +2108,8 @@ async function start() {
   };
   // A row under the pointer is about to be opened: fetch it first.
   $('threads').addEventListener('pointerover', (e) => {
-    const row = e.target.closest('.t');
-    if (row) prefetch(row.dataset.thread, { urgent: true });
+    const t = e.target.closest('.t');
+    if (t) prefetch(t.dataset.thread, { urgent: true });
   });
   $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
   $('threads').onclick = (e) => {
@@ -2153,11 +2155,12 @@ async function start() {
     // "All correct" confirms Clef's answers; "Apply" sends the picks.
     const model = state.cache.get(state.open)?.data?.model;
     const answers = b.dataset.confirm && model
-      ? Object.fromEntries(Object.keys(QUESTION_LABEL).map((q) => [q, modelValue(model, q)]).filter(([, v]) => v != null))
+      ? Object.fromEntries(Object.keys(QUESTION_LABEL).map((k) => [k, modelValue(model, k)]).filter(([, v]) => v != null))
       : staged;
     for (const [question, value] of Object.entries(answers)) {
       // eslint-disable-next-line no-await-in-loop
       const res = await fetch('/api/review', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question, value }) });
+      // eslint-disable-next-line no-await-in-loop
       if (!res.ok) { toast((await res.json()).error || res.status); return; }
     }
     delete state.staged[thread];
@@ -2528,6 +2531,8 @@ const WEBMCP_TOOLS = [
       required: ['text'],
     },
     annotations: { consequentialHint: true },
+    // WebMCP calls execute(input, client).
+    // eslint-disable-next-line default-param-last
     execute: async ({ thread, text } = {}, client) => {
       const body = String(text || '').trim();
       if (!body) return fail('The reply is empty. Provide the reply text.');
@@ -2561,6 +2566,7 @@ const WEBMCP_TOOLS = [
       required: ['text'],
     },
     annotations: { consequentialHint: true },
+    // eslint-disable-next-line default-param-last
     execute: async ({ thread, text, draft } = {}, client) => {
       if (state.data?.me?.readonly) return fail(READONLY);
       const body = String(text || '').trim();
@@ -2706,6 +2712,7 @@ async function registerTools() {
       // eslint-disable-next-line no-await-in-loop
       await mc.registerTool(tool);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.warn(`WebMCP: could not register ${tool.name}`, e);
     }
   }

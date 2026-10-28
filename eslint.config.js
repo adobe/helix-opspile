@@ -51,4 +51,43 @@ export default [
       'import/no-extraneous-dependencies': ['error', { devDependencies: true }],
     },
   },
+  {
+    // The pages' scripts (src/page.js inlines them into ui/*.html): browser code. The pages'
+    // own are module scripts; app.js, which every page runs, is a classic one.
+    ...recommended,
+    files: ['ui/**/*.js'],
+    languageOptions: {
+      ...recommended.languageOptions,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        // The markdown renderer, src/ui-markdown.js, bundled (`markdown.js` in the page).
+        Markdown: 'readonly',
+      },
+    },
+    rules: {
+      ...recommended.rules,
+      // The pages' layout: one-line ifs and objects, several statements on a line, helpers
+      // after the code that calls them, DOM nodes' own __fields. Correctness rules stay on.
+      curly: 'off',
+      'max-statements-per-line': 'off',
+      'object-property-newline': 'off',
+      'object-curly-newline': 'off',
+      'newline-per-chained-call': 'off',
+      'no-use-before-define': ['error', { functions: false, classes: false, variables: false }],
+      'no-underscore-dangle': 'off',
+      'no-nested-ternary': 'off',
+      'no-continue': 'off',
+      'no-plusplus': 'off',
+      'no-bitwise': 'off',
+      'prefer-destructuring': 'off',
+      'no-param-reassign': ['error', { props: false }],
+      'max-len': 'off',
+    },
+  },
+  {
+    files: ['ui/app.js'],
+    languageOptions: { sourceType: 'script' },
+  },
 ];
