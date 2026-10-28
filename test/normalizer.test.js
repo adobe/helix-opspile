@@ -36,7 +36,11 @@ const PEOPLE = [{
 }];
 const USERS = {
   U1: {
-    id: 'U1', real_name: 'Ada', profile: { email: 'ada@staff.example' }, team_id: 'T1',
+    id: 'U1',
+    name: 'alove',
+    real_name: 'Ada',
+    profile: { email: 'ada@staff.example', display_name: 'Countess' },
+    team_id: 'T1',
   },
   U2: {
     id: 'U2', real_name: 'Cy', profile: { email: 'cy@customer.example', title: 'CTO' }, team_id: 'T9',
@@ -251,6 +255,9 @@ describe('processKey', () => {
     await processKey(e, k1);
     await processKey(e, k2);
     assert.deepEqual(calls, ['/api/conversations.info', '/api/users.info']);
+    // The login and the display name, which people type after @ to mention her.
+    const { aliases } = e.DB.sqlite.prepare("SELECT aliases FROM identities WHERE user_id = 'U1'").get();
+    assert.deepEqual(JSON.parse(aliases), ['alove', 'Countess']);
     const reply = parse(e.CHANNELS.objects.get('channels/acme/helix/slack-C1/1.1/1.2.md').body);
     assert.deepEqual(reply.meta.author, {
       kind: 'person', name: 'Ada Staff', org: 'staff.example', staff: true,

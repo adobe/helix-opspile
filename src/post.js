@@ -12,8 +12,10 @@
 
 import { json } from './http.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
+import { rankMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
 import { teamsOf } from './shares.js';
+import { refreshMembers } from './suggest.js';
 
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
@@ -461,47 +463,136 @@ async function knownMentions(env, t, ids) {
   return [...people, ...(bots || []).map((r) => ({ ...r, kind: 'bot' }))];
 }
 
+// Channel members are listed again when that is a week old (as for the channel suggestions),
+// and up to this many members opspile has never seen are looked up each time.
+const MEMBERS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_MEMBER_LOOKUPS = 60;
+const MEMBER_LOOKUPS_AT_ONCE = 4;
+// Accounts of one workspace or tenant considered for a suggestion; far more than there are.
+const MAX_ACCOUNTS = 5000;
+
+/** The channels whose members count as the thread's: on Teams, every channel of its team. */
+async function channelsOf(env, t) {
+  if (t.source !== 'teams' || !t.group_id) {
+    return [t.channel_id];
+  }
+  const { results } = await env.DB.prepare(`SELECT channel_id FROM channels
+    WHERE source = 'teams' AND tenant = ? AND group_id = ?`).bind(t.tenant, t.group_id).all();
+  return [...new Set([t.channel_id, ...(results || []).map((r) => r.channel_id)])];
+}
+
+/**
+ * Lists the members of the thread's channel when that is a week old or was never done, and
+ * looks up the members opspile has never seen (Slack lists ids only), so people who are in
+ * the channel but never posted can be mentioned too. One request claims the listing (it
+ * moves `members_at` first), so typing does not list the channel once per letter.
+ */
+export async function learnMembers(env, t, { now = Date.now(), ...deps } = {}) {
+  if (t.source !== 'slack' && t.source !== 'teams') {
+    return { skipped: 'members are not listed here' };
+  }
+  const at = new Date(now).toISOString();
+  const claim = await env.DB.prepare(`UPDATE channels SET members_at = ?
+    WHERE source = ? AND tenant = ? AND channel_id = ? AND (members_at IS NULL OR members_at < ?)`)
+    .bind(at, t.source, t.tenant, t.channel_id, new Date(now - MEMBERS_MAX_AGE_MS).toISOString())
+    .run();
+  if (!claim.meta || !claim.meta.changes) {
+    return { skipped: 'listed recently' };
+  }
+  const ch = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')
+    .bind(t.source, t.tenant, t.channel_id).first();
+  const listed = await refreshMembers(env, ch, deps, now);
+  if (listed.error) {
+    return listed;
+  }
+  const { results: unknown } = await env.DB.prepare(`SELECT cm.user_id FROM channel_members cm
+    LEFT JOIN identities i ON i.source = cm.source AND i.tenant = cm.tenant AND i.user_id = cm.user_id
+    WHERE cm.source = ? AND cm.tenant = ? AND cm.channel_id = ? AND i.user_id IS NULL LIMIT ?`)
+    .bind(t.source, t.tenant, t.channel_id, MAX_MEMBER_LOOKUPS).all();
+  const ids = (unknown || []).map((r) => r.user_id);
+  const lookup = deps.getIdentity || getIdentity;
+  for (let i = 0; i < ids.length; i += MEMBER_LOOKUPS_AT_ONCE) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(ids.slice(i, i + MEMBER_LOOKUPS_AT_ONCE).map((userId) => lookup(env, {
+      source: t.source, tenant: t.tenant, userId,
+    }, now).catch(() => null)));
+  }
+  return { members: listed.members, looked_up: ids.length };
+}
+
+const parseAliases = (s) => {
+  try {
+    const a = JSON.parse(s || '[]');
+    return Array.isArray(a) ? a.map(String) : [];
+  } catch {
+    return [];
+  }
+};
+
 /**
  * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1
  * for the thread's platform and workspace. Whoever posted in the thread comes first, then
- * staff, then everyone else, by name. `q` matches the start of any word of the name. On
- * Teams, the bots seen in the thread's Teams team are offered as well.
+ * the members of its channel (on Teams: of its team, or who posted there), then everyone
+ * else; among them by how well `q` matches (src/mention-match.js: the start of any word of
+ * the name, the Slack login or display name, or the mail address, in any case), staff first,
+ * by name. On Teams, the bots seen in the thread's Teams team are offered as well.
+ *
+ * `waitUntil`, where given, lists the channel's members in the background (`learnMembers`)
+ * when the suggestions open (an empty `q`: the @ was just typed), so they show up from then on.
  */
-export async function mentionable(env, key, q, inTeam) {
+export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
   const t = key && await target(env, key);
   if (!t || !inTeam(await teamsOf(env, t))) {
     return json({ error: 'not found' }, 404);
   }
-  const like = String(q || '').trim().slice(0, 60).replace(/[\\%_]/g, '\\$&');
+  const typed = String(q || '').trim().slice(0, 60);
+  if (waitUntil && !typed) {
+    waitUntil(learnMembers(env, t).catch((e) => console.warn(JSON.stringify({
+      route: 'mentionable', members: t.source, error: e.message,
+    }))));
+  }
   const { results: botRows } = t.source === 'teams' && t.group_id
-    ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.avatar ${BOTS}
-      AND (? = '' OR ${BOT_NAME} LIKE ? || '%' ESCAPE '\\'
-        OR ${BOT_NAME} LIKE '% ' || ? || '%' ESCAPE '\\'
-        OR ${BOT_NAME} LIKE '%-' || ? || '%' ESCAPE '\\')
-      ORDER BY b.at DESC LIMIT ${MAX_BOTS}`)
-      .bind(t.tenant, t.group_id, like, like, like, like).all()
+    ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
+        i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
     : { results: [] };
-  const bots = (botRows || []).map((r) => ({
-    id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
-  }));
-  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.avatar,
-      MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff, EXISTS (SELECT 1 FROM messages m
-        WHERE m.thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)
-        AND m.author_key = i.source || ':' || i.tenant || ':' || i.user_id) AS here
-    ${ACCOUNTS} AND (? = '' OR ${NAME} LIKE ? || '%' ESCAPE '\\'
-      OR ${NAME} LIKE '% ' || ? || '%' ESCAPE '\\')
-    ORDER BY here DESC, staff DESC, ${NAME} COLLATE NOCASE LIMIT ${MAX_SUGGESTIONS * 2}`)
-    .bind(key, key, t.source, t.tenant, like, like, like).all();
-  const seen = new Set();
-  const people = (results || []).filter((r) => !seen.has(r.id) && seen.add(r.id))
-    .slice(0, MAX_SUGGESTIONS - bots.length).map((r) => ({
-      id: r.id,
-      name: r.name,
-      avatar: r.avatar || null,
-      here: Boolean(r.here),
-      staff: Boolean(r.staff),
-      kind: 'person',
+  const bots = rankMentions((botRows || []).map((r) => ({ ...r, aliases: [r.posts_as] })), typed)
+    .slice(0, MAX_BOTS).map((r) => ({
+      id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
     }));
+  const channels = JSON.stringify(await channelsOf(env, t));
+  const [{ results: accounts }, { results: posters }, { results: members }] = await Promise.all([
+    env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.name AS account_name, i.aliases,
+        COALESCE(i.email, p.email) AS email, i.avatar,
+        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
+      ${ACCOUNTS} LIMIT ${MAX_ACCOUNTS}`).bind(t.source, t.tenant).all(),
+    env.DB.prepare(`SELECT DISTINCT author_key FROM messages
+      WHERE thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)`)
+      .bind(key, key).all(),
+    env.DB.prepare(`SELECT user_id FROM channel_members
+        WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))
+      UNION SELECT DISTINCT SUBSTR(author_key, LENGTH(source || ':' || tenant || ':') + 1) FROM messages
+        WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))
+          AND author_key IS NOT NULL`)
+      .bind(t.source, t.tenant, channels, t.source, t.tenant, channels).all(),
+  ]);
+  const prefix = `${t.source}:${t.tenant}:`;
+  const here = new Set((posters || []).map((r) => String(r.author_key || ''))
+    .filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)));
+  const inChannel = new Set((members || []).map((r) => r.user_id));
+  const people = rankMentions((accounts || []).map((r) => ({
+    ...r,
+    aliases: [r.account_name, ...parseAliases(r.aliases), r.email],
+    here: here.has(r.id),
+    member: inChannel.has(r.id),
+  })), typed, MAX_SUGGESTIONS - bots.length).map((r) => ({
+    id: r.id,
+    name: r.name,
+    avatar: r.avatar || null,
+    here: r.here,
+    member: r.member,
+    staff: Boolean(r.staff),
+    kind: 'person',
+  }));
   return json({ platform: t.source, people: [...people, ...bots] });
 }
 

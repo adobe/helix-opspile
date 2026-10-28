@@ -53,6 +53,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
+import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
@@ -733,20 +734,27 @@ async function api(req, res, url) {
     return json(res, { enabled: true, turn });
   }
   if (url.pathname === '/api/mentionable') {
-    // As D1 would answer: known people, those who posted in the thread first, then staff.
+    // As D1 would answer (src/post.js): the accounts of the platform, ranked as the Worker
+    // ranks them, those who posted in the thread first, then the channel's members.
     const entry = store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
-    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
     const here = new Set(thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
-    const found = [...store.people.values()]
-      .filter((p) => !q || p.name.toLowerCase().startsWith(q) || p.name.toLowerCase().includes(` ${q}`))
-      .map((p) => ({
-        id: `${entry.row.source}-${p.key}`, name: p.name, avatar: null, here: here.has(p.name), staff: p.staff,
-      }))
-      .sort((a, b) => (b.here - a.here) || (b.staff - a.staff) || a.name.localeCompare(b.name))
-      .slice(0, 8);
+    const posted = new Set([...store.threads.values()]
+      .filter((t) => t.ch.channelId === entry.ch.channelId)
+      .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
+    const listed = new Set(entry.ch.members || []);
+    const found = rankMentions([...store.people.values(), ...store.members].map((p) => ({
+      id: `${entry.row.source}-${p.key}`,
+      name: p.name,
+      aliases: [p.login, p.email],
+      avatar: null,
+      here: here.has(p.name),
+      member: listed.has(p.key) || posted.has(p.name),
+      staff: p.staff,
+      kind: 'person',
+    })), url.searchParams.get('q'), 8).map((p) => ({ ...p, aliases: undefined }));
     return json(res, { platform: entry.row.source, people: found });
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
