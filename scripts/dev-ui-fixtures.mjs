@@ -60,6 +60,17 @@ const PEOPLE = [
   },
 ];
 
+/**
+ * Accounts known only as members of a channel (Slack's conversations.members, see
+ * `CHANNELS[…].members`): they never posted, and the login is not the name, so "@K", "@sel"
+ * and "@kse" must all find Kira in ACME's channel (src/mention-match.js).
+ */
+const MEMBERS = [
+  {
+    key: 'kira', name: 'Kira Selby', login: 'kselby', email: 'kselby@example.com', staff: true,
+  },
+];
+
 /** The `partner_domains` table: mail domain -> partner name. */
 const PARTNERS = new Map([['agency.example', 'Agency Co']]);
 
@@ -79,7 +90,12 @@ const APP = {
 /** Channels: where a thread lives. `org` and `team` are what the rules would file it under. */
 const CHANNELS = {
   aemAcme: {
-    source: 'slack', channelId: 'C0ACMEAEM', name: 'aem-acme', org: 'acme', team: 'platform',
+    source: 'slack',
+    channelId: 'C0ACMEAEM',
+    name: 'aem-acme',
+    org: 'acme',
+    team: 'platform',
+    members: ['kira'],
   },
   aemGlobex: {
     source: 'slack', channelId: 'C0GLOBEX01', name: 'aem-globex', org: 'globex', team: 'platform',
@@ -634,6 +650,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     teams: TEAMS,
     partners: PARTNERS,
     people,
+    members: MEMBERS,
     threads,
     files,
     watermarks,

@@ -15,8 +15,8 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  checkState, connections, finishAuth, makeState, mentionable, post, seal, slackText, splitMentions,
-  teamsMessage, unseal,
+  checkState, connections, finishAuth, learnMembers, makeState, mentionable, post, seal, slackText,
+  splitMentions, teamsMessage, unseal,
 } from '../src/post.js';
 import { d1 } from './d1.js';
 
@@ -139,6 +139,111 @@ describe('mentions', () => {
       id: 'b-help', name: 'helper', avatar: null, here: false, staff: false, kind: 'bot',
     });
     assert.equal((await mentionable(e, 'slack:E1:C1:1.1', 'b', () => false)).status, 404);
+  });
+
+  // Made-up: a colleague who never posted in the thread, with a login unlike her name.
+  function withColleagues(e) {
+    const insert = e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      email, aliases, staff, fetched_at) VALUES ('slack', 'E1', ?, 'person', ?, ?, ?, ?,
+      '2026-10-21T10:00:00Z')`);
+    const add = (id, name, { email = null, aliases = null, staff = false } = {}) => insert
+      .run(id, name, email, aliases && JSON.stringify(aliases), staff ? 1 : null);
+    add('U10', 'Kira Selby', { email: 'kira.s@staff.example', aliases: ['kselby', 'Kiki'], staff: true });
+    // Staff whose last name starts with K, sorted before her by name.
+    ['Ann Kahn', 'Ben Katz', 'Cy Kehl', 'Di Kerr', 'Ed Kidd', 'Flo Kim', 'Gus Klee', 'Hal Knox']
+      .forEach((name, i) => add(`U2${i}`, name, { staff: true }));
+    return e;
+  }
+
+  it('finds a colleague by any case, the start of any name, her login or her mail', async () => {
+    const e = withColleagues(withAccounts(env()));
+    const names = async (q) => (await (await mentionable(e, 'slack:E1:C1:1.1', q, inTeam)).json())
+      .people.map((p) => p.name);
+    const typed = ['K', 'k', 'KI', 'kira', 'Kira S', 'sel', 'SELBY', 'kse', 'KSEL', 'kiki', 'kira.s',
+      'selby k'];
+    const found = await Promise.all(typed.map(names));
+    typed.forEach((q, i) => assert.ok(found[i].includes('Kira Selby'), q));
+    // Her first name starts with K: she comes before the eight whose last name does.
+    assert.equal((await names('K'))[0], 'Kira Selby');
+    assert.deepEqual(await names('kse'), ['Kira Selby']);
+    // The mail's domain is no name.
+    assert.deepEqual(await names('staff'), []);
+  });
+
+  it('puts the members of the channel after the thread, before everyone else', async () => {
+    const e = withColleagues(withAccounts(env()));
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U27')`).run();
+    // Posted in another thread of the channel: a member too.
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
+      VALUES ('slack', 'E1', 'C1', '2.1', 'slack:E1:C1:2.1', '2026-10-21T10:00:00Z', 'slack:E1:U26')`).run();
+    const { people } = await (await mentionable(e, 'slack:E1:C1:1.1', 'k', inTeam)).json();
+    assert.deepEqual(people.slice(0, 3).map((p) => [p.name, p.member]), [
+      ['Gus Klee', true], ['Hal Knox', true], ['Kira Selby', false],
+    ]);
+    const { people: blank } = await (await mentionable(e, 'slack:E1:C1:1.1', '', inTeam)).json();
+    assert.deepEqual(blank.slice(0, 3).map((p) => [p.name, p.here, p.member]), [
+      ['Bea Bunny', true, true], ['Gus Klee', false, true], ['Hal Knox', false, true],
+    ]);
+  });
+
+  it('counts whoever posted anywhere in the Teams team as a member', async () => {
+    const e = withAccounts(env());
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', 'T', 'u-zed', 'person', 'Bo Zed', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, group_id, fetched_at)
+      VALUES ('teams', 'T', '19:other', 'G1', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
+      VALUES ('teams', 'T', '19:other', '9', 'teams:T:G:19:other:9', '2026-10-21T10:00:00Z',
+        'teams:T:u-zed')`).run();
+    const { people } = await (await mentionable(e, 'teams:T:G:19:c:5', 'B', inTeam)).json();
+    assert.deepEqual(people.map((p) => [p.name, p.member]), [['Bo Zed', true], ['Bob Builder', false]]);
+  });
+
+  it('lists the channel\'s members once a week, and looks up the ones it never saw', async () => {
+    const e = withAccounts(env());
+    e.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, fetched_at)
+      VALUES ('slack', 'E1', 'C1', '2026-10-21T10:00:00Z')`).run();
+    const listed = [];
+    const slack = async (method, params) => {
+      listed.push([method, params.channel]);
+      return { ok: true, members: ['U2', 'U-NEW'] };
+    };
+    const looked = [];
+    const getIdentity = async (env2, ref) => {
+      looked.push(ref.userId);
+      env2.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, aliases,
+        fetched_at) VALUES (?, ?, ?, 'person', 'Nia Quiet', '["nquiet"]', '2026-10-21T10:00:00Z')`)
+        .run(ref.source, ref.tenant, ref.userId);
+    };
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    const now = Date.parse('2026-10-22T10:00:00Z');
+    assert.deepEqual(await learnMembers(e, t, { now, slack, getIdentity }), {
+      members: 2, looked_up: 1,
+    });
+    assert.deepEqual(listed, [['conversations.members', 'C1']]);
+    assert.deepEqual(looked, ['U-NEW']);
+    // Never posted, now found by login, as a member of the channel.
+    const { people } = await (await mentionable(e, 'slack:E1:C1:1.1', 'nqu', inTeam)).json();
+    assert.deepEqual(people.map((p) => [p.name, p.member]), [['Nia Quiet', true]]);
+    // A day later: still fresh. Eight days later: listed again.
+    assert.deepEqual(await learnMembers(e, t, { now: now + 86400000, slack, getIdentity }), {
+      skipped: 'listed recently',
+    });
+    await learnMembers(e, t, { now: now + 8 * 86400000, slack, getIdentity });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(looked, ['U-NEW']);
+    assert.deepEqual(await learnMembers(e, { ...t, source: 'discord' }), { skipped: 'members are not listed here' });
+  });
+
+  it('lists the members in the background when the suggestions open', async () => {
+    const e = withAccounts(env());
+    const waited = [];
+    await mentionable(e, 'slack:E1:C1:1.1', 'b', inTeam, { waitUntil: (p) => waited.push(p) });
+    assert.equal(waited.length, 0);
+    await mentionable(e, 'slack:E1:C1:1.1', '', inTeam, { waitUntil: (p) => waited.push(p) });
+    assert.equal(waited.length, 1);
+    await waited[0];
   });
 });
 

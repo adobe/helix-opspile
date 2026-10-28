@@ -1759,8 +1759,10 @@ async function sendAsApp(key, text, base) {
 }
 
 // ---------------------------------------------------------------- mentions
-// Typing @ suggests people opspile already knows on the thread's platform (D1 accounts),
-// those in the thread first, and on Teams the bots of the thread's Teams team.
+// Typing @ suggests people opspile knows on the thread's platform (D1 accounts), those in the
+// thread first, then the channel's members, and on Teams the bots of the thread's Teams team.
+// What follows the @ matches the start of any word of the name, login or mail, in any case
+// (src/mention-match.js).
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
 const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
@@ -1800,7 +1802,7 @@ function renderMentions(key) {
   if (!ul || !box) return;
   if (!mention.list.length) { closeMentions(); return; }
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
+    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);

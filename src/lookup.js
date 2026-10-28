@@ -189,6 +189,12 @@ export async function gravatar(email) {
     : '';
 }
 
+/** Other names of an account, without blanks or repeats (`identities.aliases`). */
+function aliasesOf(...names) {
+  const out = [...new Set(names.map((n) => String(n || '').trim()).filter(Boolean))];
+  return out.length ? out : null;
+}
+
 async function fetchSlackUser(env, userId) {
   const { user: u } = await slackApi(env, 'users.info', { user: userId });
   const p = u.profile || {};
@@ -201,6 +207,8 @@ async function fetchSlackUser(env, userId) {
     home: u.team_id || null,
     title: p.title || null,
     company: null,
+    // The login and the display name: what people type after @ in Slack.
+    aliases: aliasesOf(u.name, p.display_name, p.display_name_normalized),
   };
 }
 
@@ -265,6 +273,7 @@ async function fetchDiscordUser(env, guild, userId, fallbackName) {
     title: null,
     company: null,
     staff: Boolean(member && (member.roles || []).some((r) => staffRoles.has(r))),
+    aliases: aliasesOf(user.username, user.global_name),
   };
 }
 
@@ -312,14 +321,16 @@ export async function getIdentity(env, ref, now = Date.now()) {
     person = await env.DB.prepare('SELECT id, staff, name FROM people WHERE id = ?').bind(row.person).first();
   }
   const home = f.home || ref.home || null;
+  const aliases = f.aliases ? JSON.stringify(f.aliases) : null;
   await env.DB.prepare(`INSERT INTO identities
     (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company,
-     staff)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     staff, aliases)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
       person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
-      title = excluded.title, company = excluded.company, staff = excluded.staff`)
+      title = excluded.title, company = excluded.company, staff = excluded.staff,
+      aliases = COALESCE(excluded.aliases, identities.aliases)`)
     .bind(
       ref.source,
       ref.tenant,
@@ -334,6 +345,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       f.title || null,
       f.company || null,
       f.staff ? 1 : null,
+      aliases,
     )
     .run();
   return {

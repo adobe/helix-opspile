@@ -170,7 +170,9 @@ export default {
         return appResponse;
       }
     }
-    const apiResponse = await api(request, env, url);
+    const apiResponse = await api(request, env, url, {
+      waitUntil: ctx && ((p) => ctx.waitUntil(p)),
+    });
     if (apiResponse) {
       return apiResponse;
     }

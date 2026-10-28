@@ -696,7 +696,7 @@ function room(env, team) {
 }
 
 /** `/api/*` with the viewer known; see `api`. */
-async function route(request, env, url, { viewer: injected } = {}, timing = null) {
+async function route(request, env, url, { viewer: injected, waitUntil } = {}, timing = null) {
   // `viewer` can be injected by tests; in the Worker it always comes from Access.
   const me = injected || await viewer(request, env);
   timing?.mark('auth');
@@ -792,7 +792,9 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
     return resolve(env, me, body, (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/mentionable') {
-    return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t));
+    return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t), {
+      waitUntil,
+    });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
     return json(await inbox(env, me, null, {

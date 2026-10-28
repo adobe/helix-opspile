@@ -550,6 +550,17 @@ through ingestion). A bot is mentioned by the name people use for it (`handle`, 
 which can differ from the name it posts under; for an installed bot that is the app's name,
 which is what Teams writes when someone mentions it.
 
+What follows the `@` matches, in any case and without accents, the start of any word of a
+person's name, of their other names (`identities.aliases`: the Slack login and display name,
+the Discord username) or of their mail address before the @ (`src/mention-match.js`). People who
+posted in the thread come first, then the members of its channel, then everyone else; among
+those, a match at the start of the name before one further in, then staff, then by name. The
+members are `channel_members`: Slack's `conversations.members` (on Teams, the team's members
+from Graph, where the app may list them) and whoever posted in the channel (on Teams, in any
+channel of the team). Opening the suggestions lists a channel's members when that is a week
+old, and looks up the members opspile has never seen (`users.info`), so a colleague who is in
+the channel but never posted anywhere opspile reads can be mentioned too.
+
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
 the platform accepts it, exactly as the platform's event will, so it shows at once; the event
