@@ -349,6 +349,15 @@ const KIND_EMOJI = {
   incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', alert: '🚨', other: '💬',
 };
 const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
+// Every filter row has an icon, so the folded filter column (the rail) still tells them apart.
+const STATUS_ICON = {
+  critical: '‼️', hot: '❗', you: '🫵', waiting: '⏰', silent: '🔇', team: '🤝', quiet: '🍃',
+};
+const RESOLVED_ICON = { open: '⭕', resolved: '✅', '(none)': '◌' };
+const DRAFT_ICON = { mine: '✍️', team: '📝', none: '📭' };
+const WAITING_ICON = { Us: '🛎️', Customer: '⏳', Nobody: '💤' };
+const TYPE_ICON = { conversation: '💬', alert: '🚨' };
+const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
 const resolvedOf = (t) => t.resolution?.verdict
@@ -513,6 +522,15 @@ function personKind(id) {
   const top = Object.entries(n).sort((x, y) => y[1] - x[1])[0]?.[0];
   return top === 'vendor' || top === 'partner' ? top : 'customer';
 }
+/** A filter row's icon for a name without one: its initial on its colour, as avatars have. */
+const tile = (name) => `<span class="ico av" style="background:${hue(name)}" aria-hidden="true">${esc(initials(name).slice(0, 1))}</span>`;
+/** Involves: you and the people as their avatars (round), your teams as tiles. */
+function involvesFace(v) {
+  if (v.startsWith('team:')) return tile(involvesLabel(v));
+  const name = v === 'me' ? state.me?.name || involvesLabel(v) : involvesLabel(v);
+  const p = (state.data?.threads || []).flatMap((t) => t.participants || []).find((x) => x.name === name && x.avatar);
+  return avatar(name, p?.avatar, 'ico round').replace(/ title="[^"]*"/, ' aria-hidden="true"');
+}
 const involvesColor = (v) => {
   if (v === 'me') return 'c-me';
   if (v.startsWith('team:')) return 'c-team';
@@ -541,29 +559,34 @@ const colorOf = (map) => (v) => map[v] || 'c-none';
 
 // The cards in this order. A facet with `into` is shown in that facet's card, below its own
 // rows, and still filters on its own (both must match).
+const customerName = (v) => { const t = [...listed(), ...(state.data?.threads || [])].find((x) => x.org === v); return t ? orgName(t) : v; };
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
-    color: (v) => `c-${v}` },
+    emoji: (v) => STATUS_ICON[v], color: (v) => `c-${v}` },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
     emoji: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
   { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' }, color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
+    label: { open: 'Unresolved', resolved: 'Resolved' }, emoji: (v) => RESOLVED_ICON[v],
+    color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
   { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
-    emoji: (v) => (v === 'none' ? '' : '✎'), color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
+    emoji: (v) => DRAFT_ICON[v], color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
-    labelFn: (v) => { const t = [...listed(), ...(state.data?.threads || [])].find((x) => x.org === v); return t ? orgName(t) : v; }, limit: 12,
+    labelFn: customerName, limit: 12, face: (v) => tile(customerName(v)),
     group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
   { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
     order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'],
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], emoji: (v) => WAITING_ICON[v],
     color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
+    face: involvesFace,
     order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' }, color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
+    label: { conversation: 'Conversations', alert: 'Alerts' }, emoji: (v) => TYPE_ICON[v],
+    color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
+    icon: (v) => PLATFORM_SITE[v],
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
 ];
 // The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
@@ -648,6 +671,12 @@ function bar(f, v, n, max, m, color) {
   return `<span class="bar stack" style="width:${width}">${seg}</span>`;
 }
 
+/**
+ * A facet row's label: a name for a customer or someone involved, not their slug or id. It is
+ * also the row's tooltip, all the folded filter column shows of it, unless the facet has a hint.
+ */
+const rowLabel = (f, v) => (f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v;
+
 function facetRows(f) {
   const all = listed();
   const pool = all.filter((t) => passes(t, f.id));
@@ -683,15 +712,17 @@ function facetRows(f) {
     const color = f.color ? f.color(v) : 'c-accent';
     const ic = f.icon && f.icon(v, all);
     const em = f.emoji && f.emoji(v);
+    const face = !ic && !em && f.face && f.face(v);
     const g = f.group && f.group(v);
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
     group = g;
     const out = off.has(v);
     const not = out ? 'Stop excluding' : 'Exclude (or Shift-click the row)';
-    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || v)}${out ? ' (excluded)' : ''}">
+    const label = rowLabel(f, v);
+    return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (em ? `<span class="ico em">${em}</span>` : '<span></span>')}
-      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc((f.labelFn && f.labelFn(v)) || (f.label && f.label[v]) || v)}</span>${mentionBadge(mentions.get(v))}</span>
+      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico em">${em}</span>` : '<span></span>'))}
+      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
       <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
@@ -1049,7 +1080,7 @@ function threadRows() {
   state.order = shown.map((t) => t.thread);
   state.prevKeys = known;
 }
-function render() { inPass(() => { renderFilters(); renderThreads(); }); }
+function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
 
 // The open thread's row, lifted out of its column: a copy of it over the real one, wider by
 // LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
@@ -2669,6 +2700,41 @@ function setFiltering(on) {
   renderThreads();
 }
 
+/*
+ * The filter column folded to a rail (`main.rail`), between the drawer and room for all of it:
+ * always in the personal view, and in a team's view under 1440px. `<html data-rail="on|off">`
+ * overrides that (the width controls of `npm run ui:dev` set it). The rail slides out under
+ * the pointer; on a touch screen, a tap on it slides it out (`main.railopen`) instead of
+ * filtering, and a tap beside it folds it again.
+ */
+const RAIL_BAND = matchMedia('(min-width: 1100px) and (max-width: 1439px)');
+const WIDE = matchMedia('(min-width: 1100px)');
+let lastPointer = 'mouse';
+function syncRail() {
+  const main = document.querySelector('main');
+  const force = document.documentElement.dataset.rail;
+  const on = WIDE.matches && (force ? force === 'on' : personal() || RAIL_BAND.matches);
+  main.classList.toggle('rail', on);
+  if (!on) main.classList.remove('railopen');
+}
+function wireRail() {
+  const main = document.querySelector('main');
+  for (const mq of [RAIL_BAND, WIDE]) mq.addEventListener('change', syncRail);
+  window.addEventListener('resize', syncRail);
+  addEventListener('pointerdown', (e) => { lastPointer = e.pointerType; }, { capture: true });
+  // Before the filter cards' own click: a tap on the folded rail only slides it out.
+  $('filters').addEventListener('click', (e) => {
+    if (!main.classList.contains('rail') || main.classList.contains('railopen') || lastPointer === 'mouse') return;
+    if (!e.target.closest('.card')) return;
+    e.stopImmediatePropagation();
+    main.classList.add('railopen');
+  }, { capture: true });
+  document.addEventListener('click', (e) => {
+    if (main.classList.contains('railopen') && !e.target.closest('#filters')) main.classList.remove('railopen');
+  }, { capture: true });
+  syncRail();
+}
+
 // The filter drawer's swipes: one to the right over the list pulls it in, one to the left over
 // it (or over the dimmed page beside it) pushes it out. The drawer follows the finger; when it
 // lifts, a flick goes the way it went, a slow drag to the nearer end. Safari keeps a swipe from
@@ -2822,6 +2888,7 @@ async function start() {
     if (e.target === e.currentTarget && state.filtering) setFiltering(false);
   });
   wireDrawerSwipes();
+  wireRail();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     const msg = e.target.closest('.msg');

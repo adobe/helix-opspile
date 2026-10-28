@@ -1111,11 +1111,50 @@ async function scripts() {
   return Object.fromEntries(await Promise.all(names.map(async (f) => [f, await readFile(join(uiDir, f), 'utf8')])));
 }
 
+/*
+ * Controls for the filter rail (see syncRail in ui/inbox.js), in the inbox only: fold it or not,
+ * its width and the open column's, and keep it slid out. Kept in localStorage.
+ */
+const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:9999;
+  font:12px system-ui;padding:6px 10px;border-radius:8px;background:#222a;color:#fff;backdrop-filter:blur(6px);
+  display:grid;grid-template-columns:auto auto 3.5em;gap:3px 8px;align-items:center">
+  <b style="grid-column:1/-1">Filter rail <span id="dev-rail-w" style="font-weight:400;opacity:.7"></span></b>
+  <label for="dev-rail-mode">fold</label><select id="dev-rail-mode" style="font:inherit;padding:0 4px">
+    <option value="">auto</option><option value="on">always</option><option value="off">never</option></select><span></span>
+  <label for="dev-rail-rail">rail</label><input id="dev-rail-rail" type="range" min="36" max="140"><output></output>
+  <label for="dev-rail-open">open</label><input id="dev-rail-open" type="range" min="200" max="380"><output></output>
+  <label for="dev-rail-pin">slid out</label><input id="dev-rail-pin" type="checkbox" style="justify-self:start"><span></span>
+</div><script>(() => {
+  const KEY = 'dev-rail';
+  const s = { mode: '', rail: 68, open: 270, pin: false, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+  const $ = (id) => document.getElementById('dev-rail-' + id);
+  const apply = () => {
+    const root = document.documentElement;
+    if (s.mode) root.dataset.rail = s.mode; else delete root.dataset.rail;
+    root.style.setProperty('--rail', s.rail + 'px');
+    root.style.setProperty('--filters-w', s.open + 'px');
+    $('rail').nextElementSibling.textContent = s.rail + 'px';
+    $('open').nextElementSibling.textContent = s.open + 'px';
+    dispatchEvent(new Event('resize'));
+    document.querySelector('main')?.classList.toggle('railopen', s.pin);
+    localStorage.setItem(KEY, JSON.stringify(s));
+  };
+  const width = () => { $('w').textContent = innerWidth + 'px wide'; };
+  $('mode').value = s.mode; $('rail').value = s.rail; $('open').value = s.open; $('pin').checked = s.pin;
+  $('mode').onchange = (e) => { s.mode = e.target.value; apply(); };
+  $('rail').oninput = (e) => { s.rail = Number(e.target.value); apply(); };
+  $('open').oninput = (e) => { s.open = Number(e.target.value); apply(); };
+  $('pin').onchange = (e) => { s.pin = e.target.checked; apply(); };
+  addEventListener('resize', width);
+  width(); apply();
+})();</script>`;
+
 /** ui/<name>.html as the Worker serves it, with the banner and live reload. */
 async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
   const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
-  return served.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`);
+  const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
+  return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
 
 function reloadStream(req, res) {
