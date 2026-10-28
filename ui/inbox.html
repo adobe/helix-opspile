@@ -492,6 +492,19 @@
   .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
   .msg .quick button[aria-pressed="true"] { background: var(--sel); }
   .msg .quick .more { font-size: 14px; color: var(--mute); }
+  .msg .quick .edit { font-size: 14px; color: var(--ink); }
+  .msg .quick .edit:not(:last-child) { margin-right: 2px; border-radius: 7px 0 0 7px; box-shadow: 1px 0 0 var(--line); }
+  /* Editing one of your messages in place: the bubble is the editor. */
+  .msg.editing .col { width: min(74%, 760px); }
+  .bubble.editing { position: relative; width: 100%; box-sizing: border-box; padding: 6px 8px 6px; }
+  .bubble.editing textarea { display: block; width: 100%; box-sizing: border-box; resize: none; min-height: 38px; max-height: 320px;
+    font: inherit; line-height: 1.5; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 6px 10px; outline: none; }
+  .bubble.editing textarea:focus { border-color: var(--accent); }
+  .bubble.editing .mentions { left: 0; }
+  .edithint { font-size: 11.5px; margin: 5px 4px 0; opacity: .85; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .edithint button { font-size: 11.5px; padding: 1px 9px; border-radius: 9px; }
+  .edithint button[data-edit-save] { background: var(--card); color: var(--ink); border: 1px solid var(--line); margin-left: auto; }
   .ph .resolved { color: var(--green); }
   .ph .reopened { color: var(--yellow); }
   .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }

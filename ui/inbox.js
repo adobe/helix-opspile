@@ -25,6 +25,10 @@ const state = {
   search: { q: '', words: [], data: null, loading: false, error: null, seq: 0 },
   // The message a search hit opens the thread at: { key, id }.
   jump: null,
+  // The message being edited in place: { id: '<thread>|<message id>', key, text, as }.
+  editing: null,
+  // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
+  edits: new Map(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -1148,6 +1152,14 @@ function reviewPanel(thread, model, reviews) {
 const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system'
   && m.source !== 'discord';
 
+/**
+ * Whether the viewer may edit a message from here (the server says how, `m.editable`): as
+ * themselves with a token that may (`me.edit`; Discord lets people edit only in Discord), or
+ * as the opspile app, which posted it for them.
+ */
+const canEdit = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt
+  && (m.editable === 'app' || (m.editable === 'user' && Boolean(state.me?.edit?.[m.source])));
+
 /** What the ✅ says, for the thread header's second line. */
 function resolveNote(r) {
   const names = (r?.by || []).join(', ');
@@ -1193,16 +1205,27 @@ function message(m, prev, fresh, followed = false) {
     return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
       : `<span title="${tip}">${chip}</span>`;
   }).join('');
-  const quick = can ? `<div class="quick" role="toolbar" aria-label="React, as you">${QUICK.map((n) => {
+  const editing = state.editing?.id === id;
+  // Your own messages: ✎ edits them in place, as they were sent (as you, or as the app).
+  const pen = canEdit(m) && !editing
+    ? `<button class="edit" data-edit="1" title="${m.editable === 'app' ? 'Edit, as the opspile app' : 'Edit your message'}" aria-label="Edit">✎</button>` : '';
+  const picks = can ? `${QUICK.map((n) => {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
-  }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button></div>` : '';
-  return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
+  }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button>` : '';
+  const quick = (can && !editing) || pen ? `<div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${editing ? '' : picks}</div>` : '';
+  // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
+  const bubble = editing
+    ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
+      <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the opspile app' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
+    : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>`;
+  const notes = [m.pending ? 'sending…' : '', m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
+  return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col">${quick}<div class="who">${who}</div>
-      <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
+      ${bubble}
       ${rx ? `<div class="rx">${rx}</div>` : ''}
-      ${m.editedAt || m.pending ? `<div class="meta">${m.pending ? 'sending… ' : ''}${m.editedAt ? 'edited' : ''}</div>` : ''}
+      ${notes ? `<div class="meta"${m.editedAt ? ` title="Edited ${esc(new Date(m.editedAt).toLocaleString())}"` : ''}>${notes}</div>` : ''}
     </div></div>`;
 }
 
@@ -1417,7 +1440,19 @@ async function openThread(key, { live = false, cached = false } = {}) {
   state.sending = state.sending.filter((p) => p.thread === key && Date.now() - p.sentAt < 60000
     && !messages.some((m) => (p.postedId ? String(m.id) === String(p.postedId)
       : m.author?.name === state.me.name && looseText(m.body) === looseText(p.body))));
-  const shown = [...messages, ...state.sending.map((p) => ({
+  // Edits saved here and not back from the platform yet show their new text, until a message
+  // has it (compared loosely, as replies are), is edited after it, or a minute has passed.
+  for (const [id, e] of state.edits) {
+    const m = messages.find((x) => `${x.thread}|${x.id}` === id);
+    if (!m) { if (Date.now() - e.sentAt > 60000) state.edits.delete(id); continue; }
+    if (Date.now() - e.sentAt > 60000 || (!e.saving && (looseText(m.body) === looseText(e.body)
+      || (m.editedAt && Date.parse(m.editedAt) >= e.sentAt - 2000)))) state.edits.delete(id);
+  }
+  const withEdit = (m) => {
+    const e = state.edits.get(`${m.thread}|${m.id}`);
+    return e ? { ...m, body: e.body, editedAt: new Date(e.sentAt).toISOString(), saving: e.saving } : m;
+  };
+  const shown = [...messages.map(withEdit), ...state.sending.map((p) => ({
     ...p, author: { kind: 'person', name: state.me.name, staff: true }, pending: true,
   }))];
   // Who they are: the server's answer for the names the messages mention, then what the
@@ -1498,6 +1533,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     else scroller.scrollTop = scroller.scrollHeight;
     if (found) { found.classList.add('found'); setTimeout(() => found.classList.remove('found'), 2400); }
   }
+  wireEditor(key);
   const box = $('reply');
   if (box) {
     const c = composerFor(key, data.draft);
@@ -1758,6 +1794,92 @@ async function sendAsApp(key, text, base) {
   return null;
 }
 
+// ---------------------------------------------------------------- editing
+// ✎ on one of your messages turns its bubble into an editor: Enter saves (as it was sent: as
+// you, or as the opspile app), Escape cancels, @ suggests people as in the reply box. The new
+// text shows at once, "(edited)", while the platform's own edit event is on its way.
+const messageOf = (key, id) => (state.cache.get(key)?.data?.messages || []).find((x) => `${x.thread}|${x.id}` === id);
+const repaint = (key) => { if (state.open === key) openThread(key, { live: true, cached: true }); };
+
+function startEdit(id) {
+  const key = state.open;
+  const m = messageOf(key, id);
+  if (!m || !canEdit(m)) return;
+  closePicker();
+  const pending = state.edits.get(id);
+  state.editing = {
+    id, key, text: pending ? pending.body : m.body, as: m.editable, focus: true,
+  };
+  repaint(key);
+}
+
+function cancelEdit() {
+  const ed = state.editing;
+  if (!ed) return;
+  state.editing = null;
+  closeMentions();
+  repaint(ed.key);
+  // Back to where typing goes on.
+  $('reply')?.focus({ preventScroll: true });
+}
+
+async function saveEdit() {
+  const ed = state.editing;
+  const m = ed && messageOf(ed.key, ed.id);
+  if (!ed) return;
+  const body = ed.text.trim();
+  if (!body) { toast('Write something, or press Esc to keep the message as it is.'); return; }
+  closeMentions();
+  if (!m || body === String(m.body || '').trim()) { cancelEdit(); return; }
+  const at = ed.id.indexOf('|');
+  const mentions = mentionsIn(ed.key, body);
+  state.editing = null;
+  state.edits.set(ed.id, { body, sentAt: Date.now(), saving: true });
+  repaint(ed.key);
+  const res = await write('/api/edit', {
+    thread: ed.id.slice(0, at), id: ed.id.slice(at + 1), text: body, mentions,
+  });
+  if (res.failed) {
+    // The message as it was, and the editor again with the text, to try again or cancel.
+    state.edits.delete(ed.id);
+    if (!state.editing) state.editing = { ...ed, text: body, focus: true };
+  } else {
+    const e = state.edits.get(ed.id);
+    if (e) e.saving = false;
+  }
+  repaint(ed.key);
+}
+
+/** Fills and wires the editor once it is shown (again, after the message was rebuilt). */
+function wireEditor(key) {
+  const ed = state.editing;
+  if (!ed || ed.key !== key) return;
+  const box = $('pane').querySelector('.msg.editing .editbox');
+  if (!box) { state.editing = null; return; }
+  if (box.__wired) return;
+  box.__wired = true;
+  box.value = ed.text;
+  const grow = () => { box.style.height = 'auto'; box.style.height = `${Math.min(320, box.scrollHeight)}px`; };
+  grow();
+  // Focused when it opens, or when a live update rebuilt it while it had the focus.
+  const active = document.activeElement;
+  if (ed.focus || !active || active === document.body || !active.isConnected) {
+    ed.focus = false;
+    box.focus({ preventScroll: true });
+    const end = ed.caret ?? box.value.length;
+    box.setSelectionRange(end, end);
+    box.closest('.msg').scrollIntoView({ block: 'nearest' });
+  }
+  box.oninput = () => { ed.text = box.value; ed.caret = box.selectionStart; grow(); suggest(key); };
+  box.onclick = () => suggest(key);
+  box.onblur = () => setTimeout(closeMentions, 150);
+  box.onkeydown = (e) => {
+    if (mentionKey(e, key)) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(); return; }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); saveEdit(); }
+  };
+}
+
 // ---------------------------------------------------------------- mentions
 // Typing @ suggests people opspile knows on the thread's platform (D1 accounts), those in the
 // thread first, then the channel's members, and on Teams the bots of the thread's Teams team.
@@ -1766,6 +1888,10 @@ async function sendAsApp(key, text, base) {
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
 const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
+// The box suggestions are for: the reply box, or the message being edited, whichever has the
+// focus; the list of suggestions next to it.
+const mentionBox = () => (document.activeElement?.classList?.contains('editbox') ? document.activeElement : $('reply'));
+const mentionList = () => mentionBox()?.parentElement?.querySelector(':scope > ul.mentions') || null;
 const MENTION_AT = /(?:^|[\s(])@([\p{L}\p{N}._'-]*(?: [\p{L}\p{N}._'-]*){0,2})$/u;
 
 function mentionQuery(box, key) {
@@ -1778,7 +1904,7 @@ function mentionQuery(box, key) {
 }
 
 function suggest(key) {
-  const box = $('reply');
+  const box = mentionBox();
   const hit = box && mentionQuery(box, key);
   clearTimeout(mention.timer);
   if (!hit) { closeMentions(); return; }
@@ -1797,8 +1923,8 @@ function suggest(key) {
 }
 
 function renderMentions(key) {
-  const ul = $('mention-list');
-  const box = $('reply');
+  const ul = mentionList();
+  const box = mentionBox();
   if (!ul || !box) return;
   if (!mention.list.length) { closeMentions(); return; }
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
@@ -1814,10 +1940,11 @@ function closeMentions() {
   mention.list = [];
   mention.seq += 1;
   clearTimeout(mention.timer);
-  const ul = $('mention-list');
-  if (ul) { ul.hidden = true; ul.innerHTML = ''; }
-  $('reply')?.setAttribute('aria-expanded', 'false');
-  $('reply')?.removeAttribute('aria-activedescendant');
+  for (const ul of document.querySelectorAll('#pane ul.mentions')) { ul.hidden = true; ul.innerHTML = ''; }
+  for (const box of document.querySelectorAll('#reply, #pane .editbox')) {
+    box.setAttribute('aria-expanded', 'false');
+    box.removeAttribute('aria-activedescendant');
+  }
 }
 
 /** Keys while suggestions show: arrows move, Enter or Tab picks, Escape closes. */
@@ -1839,7 +1966,7 @@ function mentionKey(e, key) {
 }
 
 function pickMention(key, i) {
-  const box = $('reply');
+  const box = mentionBox();
   const p = mention.list[i];
   if (!box || !p) return;
   const insert = `@${p.name} `;
@@ -1851,8 +1978,11 @@ function pickMention(key, i) {
   mention.picked.get(key).set(p.name, p);
   mention.names.add(p.name);
   closeMentions();
+  if (box.classList.contains('editbox') && state.editing) {
+    Object.assign(state.editing, { text: box.value, caret: at });
+  }
   box.style.height = 'auto';
-  box.style.height = `${Math.min(180, box.scrollHeight)}px`;
+  box.style.height = `${Math.min(box.classList.contains('editbox') ? 320 : 180, box.scrollHeight)}px`;
 }
 
 /** Accounts picked for this reply whose @Name is still in the text. */
@@ -2697,6 +2827,9 @@ async function start() {
     const msg = e.target.closest('.msg');
     const pick = e.target.closest('[data-pick]');
     const chip = e.target.closest('.rx button');
+    if (msg && e.target.closest('[data-edit]')) { startEdit(msg.dataset.id); return; }
+    if (msg && e.target.closest('[data-edit-save]')) { saveEdit(); return; }
+    if (msg && e.target.closest('[data-edit-cancel]')) { cancelEdit(); return; }
     if (msg && e.target.closest('[data-picker]')) { openPicker(e.target.closest('[data-picker]')); return; }
     if (msg && pick) {
       const same = [...msg.querySelectorAll('.rx button')].find((b) => emoji(b.dataset.emoji) === emoji(pick.dataset.pick));

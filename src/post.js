@@ -33,6 +33,11 @@ export const SLACK_SCOPE = 'chat:write,reactions:write';
 // theirs. Discord lets only bots post through its API, so opspile does not reply there.
 const DISCORD_SCOPE = 'identify';
 const TEAMS_SCOPE = 'offline_access https://graph.microsoft.com/ChannelMessage.Send https://graph.microsoft.com/User.Read';
+// Editing one's own Teams messages needs `ChannelMessage.ReadWrite`, which takes the tenant's
+// admin consent; it is asked for once TEAMS_EDITS says the tenant has given it.
+export const TEAMS_EDIT_SCOPE = 'ChannelMessage.ReadWrite';
+const teamsScope = (env) => (env.TEAMS_EDITS
+  ? `${TEAMS_SCOPE} https://graph.microsoft.com/${TEAMS_EDIT_SCOPE}` : TEAMS_SCOPE);
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_TEXT = 8000;
 
@@ -128,6 +133,29 @@ export async function reactable(env, person) {
   };
 }
 
+const scopes = (scope) => String(scope || '').split(/[\s,]+/);
+
+/**
+ * Whether the person's tokens may edit their own messages: `true`, `'reconnect'` (the
+ * deployment asks for the scope now, their token is from before), or false. Slack's
+ * `chat:write` already may (`chat.update`); Teams needs `ChannelMessage.ReadWrite`
+ * (TEAMS_EDITS); Discord lets only bots edit through its API.
+ */
+export async function editable(env, person) {
+  const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
+    .bind(person).all();
+  const by = new Map((results || []).map((r) => [r.platform, r.scope]));
+  let teams = false;
+  if (by.has('teams')) {
+    if (scopes(by.get('teams')).some((s) => s.endsWith(TEAMS_EDIT_SCOPE))) {
+      teams = true;
+    } else if (env.TEAMS_EDITS) {
+      teams = 'reconnect';
+    }
+  }
+  return { slack: by.has('slack'), teams, discord: false };
+}
+
 export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
@@ -164,7 +192,7 @@ export async function startAuth(env, me, platform) {
       response_type: 'code',
       response_mode: 'query',
       redirect_uri: redirectUri(env, 'teams'),
-      scope: TEAMS_SCOPE,
+      scope: teamsScope(env),
       login_hint: me.email,
       state,
     });
@@ -205,13 +233,13 @@ async function slackCallback(env, me, code) {
   });
 }
 
-async function msToken(env, params) {
+async function msToken(env, params, scope = teamsScope(env)) {
   const res = await fetch(`https://login.microsoftonline.com/${env.MS_TENANT_ID}/oauth2/v2.0/token`, {
     method: 'POST',
     body: new URLSearchParams({
       client_id: env.MS_CLIENT_ID,
       client_secret: env.MS_CLIENT_SECRET,
-      scope: TEAMS_SCOPE,
+      scope,
       ...params,
     }),
   });
@@ -338,8 +366,14 @@ export async function personalToken(env, person, platform) {
   if (!row.refresh_token || platform !== 'teams') {
     return null;
   }
-  const data = await msToken(env, {
-    grant_type: 'refresh_token', refresh_token: await unseal(env, row.refresh_token),
+  const refresh = { grant_type: 'refresh_token', refresh_token: await unseal(env, row.refresh_token) };
+  // Asking for the edit scope on refresh upgrades a token from before it; where the tenant has
+  // not consented to it after all, the token is refreshed as it was.
+  const data = await msToken(env, refresh).catch((e) => {
+    if (!env.TEAMS_EDITS) {
+      throw e;
+    }
+    return msToken(env, refresh, TEAMS_SCOPE);
   });
   await saveToken(env, person, platform, {
     userId: row.user_id,
@@ -444,7 +478,7 @@ export async function target(env, key) {
  * the thread's Teams team. The name is D1's, so the text of a mention is the same `@Name`
  * the message shows when it comes back.
  */
-async function knownMentions(env, t, ids) {
+export async function knownMentions(env, t, ids) {
   const wanted = [...new Set((Array.isArray(ids) ? ids : [])
     .map((m) => String((m && m.id) || m || '')).filter(Boolean))].slice(0, MAX_MENTIONS);
   if (!wanted.length) {
@@ -528,6 +562,36 @@ const parseAliases = (s) => {
     return [];
   }
 };
+
+/**
+ * Accounts by the names an earlier version of a message mentioned them by (`@Name` in its
+ * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
+ * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
+ */
+export async function mentionsByName(env, t, names) {
+  const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
+  if (!wanted.length) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
+    AND ${NAME} IN (SELECT value FROM json_each(?))`)
+    .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
+  const { results: bots } = t.source === 'teams' && t.group_id
+    ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name ${BOTS}
+      AND ${BOT_NAME} IN (SELECT value FROM json_each(?))`)
+      .bind(t.tenant, t.group_id, JSON.stringify(wanted)).all()
+    : { results: [] };
+  const found = [
+    ...(results || []).map((r) => ({ ...r, kind: 'person' })),
+    ...(bots || []).map((r) => ({ ...r, kind: 'bot' })),
+  ];
+  const count = new Map();
+  for (const a of found) {
+    count.set(a.name, new Set([...(count.get(a.name) || []), a.id]));
+  }
+  const seen = new Set();
+  return found.filter((a) => count.get(a.name).size === 1 && !seen.has(a.name) && seen.add(a.name));
+}
 
 /**
  * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1

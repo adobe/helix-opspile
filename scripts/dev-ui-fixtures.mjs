@@ -293,6 +293,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   const labels = new Map(); // thread -> Clef label, as the labels table holds it
   const facts = new Map(); // thread -> [{ field, value, ... }]
   const mentions = []; // { thread, person, at }
+  // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
+  const appPosts = new Set();
   let seq = 100000;
 
   const author = (key) => {
@@ -426,7 +428,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
 
   /**
    * Seeds a thread. `messages` are `[who, minutesAgo, body, extra?]` in chronological order;
-   * `who` is a person key or 'bot'. `extra`: `{ subject, editedAgo, deleted, predates }`.
+   * `who` is a person key, 'bot' or 'app'. `extra`: `{ subject, editedAgo, deleted, predates,
+ * appBy }`; `appBy: 'dana'` says the viewer posted an 'app' message as the opspile app.
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
@@ -462,6 +465,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
         editedAt: extra.editedAgo ? new Date(now - extra.editedAgo * MIN).toISOString() : undefined,
         deletedAt: extra.deleted ? at : undefined,
       });
+      if (extra.appBy) {
+        appPosts.add(`${key}|${ids[i]}`);
+      }
     });
     Object.assign(entry, { row: deriveRow(entry) });
     for (const [who, when] of Object.entries(reads)) {
@@ -627,6 +633,22 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // Your own messages can be edited in place (✎ on hover): one already edited, one with a
+  // typo, and one the viewer posted as the opspile app, which she may edit as the app.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 90, 'The sitemap still lists the old /archive pages.'],
+      ['dana', 85, 'Thanks, I will regenerate it after the next publish.', { editedAgo: 84 }],
+      ['app', 60, 'The sitemap was regenerated: 1,204 pages, none under `/archive`.', { appBy: 'dana' }],
+      ['dana', 58, 'Can you check it on your side? Teh crawler may cache it for an hour.'],
+    ],
+    reads: { dana: 'latest', mei: 'latest' },
+    label: {
+      kind: 'request', next_actor: 'customer', urgency: 0.5, resolved_p: 0.5,
+    },
+  });
+
   seed({
     ch: CHANNELS.edgeQ,
     messages: [
@@ -657,6 +679,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     labels,
     facts,
     mentions,
+    appPosts,
 
     /** Adds a live message to a thread, as the normalizer would. Returns the thread key. */
     post(key, who, body, at = new Date().toISOString(), given = null) {
@@ -665,7 +688,20 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       put(entry, {
         id, at, author: author(who), body,
       });
+      if (who === 'app') {
+        appPosts.add(`${key}|${id}`);
+      }
       return key;
+    },
+
+    /** Replaces a message's text, as an edit arriving from the platform would. */
+    edit(key, id, body, at = new Date().toISOString()) {
+      const entry = threads.get(key);
+      const m = entry && entry.messages.find((x) => x.id === id);
+      if (m) {
+        put(entry, { ...m, body, editedAt: at });
+      }
+      return Boolean(m);
     },
 
     /** A platform message id for a new message, as Slack or Teams would assign it. */

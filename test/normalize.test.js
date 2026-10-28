@@ -76,6 +76,23 @@ describe('normalize (slack)', () => {
     assert.equal(message.editedAt, undefined);
   });
 
+  it('marks a bot\'s update that changes the text as edited (chat.update)', () => {
+    const change = (text) => normalize(SKEY, slack({
+      type: 'message',
+      subtype: 'message_changed',
+      channel: 'C1',
+      event_ts: '1792584100.000000',
+      message: {
+        bot_id: 'B1', ts: '1792584000.000100', text,
+      },
+      previous_message: { bot_id: 'B1', ts: '1792584000.000100', text: 'before' },
+    })).message;
+    assert.equal(change('after').editedAt, '2026-10-21T12:01:40.000Z');
+    assert.equal(change('after').version, slackVersion('1792584100.000000'));
+    // The same text with an unfurl added is no edit.
+    assert.equal(change('before').editedAt, undefined);
+  });
+
   it('turns message_deleted into a tombstone', () => {
     const { op, message } = normalize(SKEY, slack({
       type: 'message',

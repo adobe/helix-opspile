@@ -113,6 +113,8 @@ describe('inbox page', () => {
       clock: () => '10:00',
       md: (x) => x,
       canReact: () => false,
+      canEdit: () => false,
+      state: {},
       QUICK: [],
       emoji: (x) => x,
       SIGNAL_HINT: {},
@@ -127,6 +129,40 @@ describe('inbox page', () => {
     // A colleague: on Adobe's side, but not blue.
     assert.deepEqual(classes({ author: { ...staff, name: 'Bo' }, mine: false }), ['msg', 'adobe']);
     assert.deepEqual(classes({ author: { name: 'Cy', kind: 'person', staff: false } }), ['msg']);
+  });
+
+  it('offers ✎ on messages you may edit, and turns the bubble into the editor', () => {
+    const state = { editing: null };
+    const { message } = piece('const continues', '// ---------------------------------------------------------------- the thread agent', 'message', {
+      dayLabel: () => 'Today',
+      profileKey: () => 'k',
+      avatar: () => '',
+      esc: (x) => String(x ?? ''),
+      clock: () => '10:00',
+      md: (x) => x,
+      canReact: () => true,
+      canEdit: (m) => Boolean(m.editable),
+      state,
+      QUICK: ['eyes'],
+      emoji: (x) => x,
+      SIGNAL_HINT: {},
+      favicon: (x) => x,
+    });
+    const staff = { name: 'Ada', kind: 'person', staff: true };
+    const m = {
+      thread: 't', id: '1', at: '2026-10-21T10:00:00Z', body: 'hi', author: staff, mine: true,
+    };
+    assert.doesNotMatch(message(m, null, false), /data-edit=/);
+    assert.match(message({ ...m, editable: 'user' }, null, false), /data-edit="1"[^>]*title="Edit your message"/);
+    assert.match(message({ ...m, editable: 'app' }, null, false), /title="Edit, as the opspile app"/);
+    // Edited on the platform, or here: "(edited)" under it.
+    assert.match(message({ ...m, editedAt: '2026-10-21T10:05:00Z' }, null, false), /class="meta"[^>]*>\(edited\)</);
+    state.editing = { id: 't|1' };
+    const open = message({ ...m, editable: 'user' }, null, false);
+    assert.match(open, /class="msg [^"]*editing/);
+    assert.match(open, /<textarea class="editbox"/);
+    // While editing: no reactions, no second ✎, and not the old text (the editor gets it).
+    assert.doesNotMatch(open, /data-pick=|data-edit="1"|>hi</);
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {

@@ -18,9 +18,10 @@ import {
   discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
 import { refreshAttachment } from './discord.js';
+import { edit } from './edit.js';
 import { cachedGraph } from './graph.js';
 import {
-  connections, disconnect, finishAuth, mentionable, post, reactable, startAuth,
+  connections, disconnect, editable, finishAuth, mentionable, post, reactable, startAuth,
 } from './post.js';
 import { postApp } from './postapp.js';
 import { react, resolve } from './react.js';
@@ -502,6 +503,20 @@ export async function searchInbox(env, me, team, q, { limit, personal = false } 
 }
 
 /**
+ * How the viewer may edit a message: `'app'` (they posted it as the opspile app), `'user'`
+ * (they posted it, on a platform that lets people edit through its API), or null.
+ */
+export function editableAs(meta, mine, asApp) {
+  if (meta.deletedAt || !meta.author || meta.author.kind === 'system') {
+    return null;
+  }
+  if (asApp.has(`${meta.thread}|${meta.id}`)) {
+    return 'app';
+  }
+  return mine && meta.author.kind === 'person' && meta.source !== 'discord' ? 'user' : null;
+}
+
+/**
  * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
  * every member's messages in order. Each message carries its platform `thread`. A member's
  * key opens its group (a root that is folded later was opened, linked or kept in a tab under
@@ -538,6 +553,7 @@ export async function thread(env, me, asked, wanted = null) {
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
+    { results: appPosts },
   ] = await Promise.all([
     env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
@@ -572,7 +588,11 @@ export async function thread(env, me, asked, wanted = null) {
       .bind(keys).all(),
     draftsFor(env, entryKeys),
     orgsOf(env, [row.org]),
+    // What the viewer posted as the opspile app: theirs to edit, as the app.
+    env.DB.prepare(`SELECT thread, id FROM app_posts
+      WHERE thread IN (SELECT value FROM json_each(?)) AND person = ?`).bind(keys, me.id).all(),
   ]);
+  const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
   row.permalink = link ? link.permalink : null;
   const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
   const reactionsBy = new Map();
@@ -602,6 +622,8 @@ export async function thread(env, me, asked, wanted = null) {
         authorKey: m.author_key || null,
         // Posted by the viewer: the UI shows their own messages apart from colleagues'.
         mine: Boolean(m.mine),
+        // Whether, and as whom, the viewer may edit it (src/edit.js).
+        editable: editableAs(meta, Boolean(m.mine), asApp),
         reactions: reactionsBy.get(m.mkey) || [],
       };
     })
@@ -710,6 +732,8 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       ...me,
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
+      // Whose tokens may edit their own messages (src/edit.js).
+      edit: me.readonly ? {} : await editable(env, me.id),
       // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
@@ -782,6 +806,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/agent/seed' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return seedAgent(env, me, body, (t) => inTeam(me, t));
+  }
+  if (url.pathname === '/api/edit' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return edit(env, me, body, (t) => inTeam(me, t));
   }
   if (url.pathname === '/api/react' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
