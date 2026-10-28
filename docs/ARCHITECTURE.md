@@ -555,6 +555,26 @@ ones), at most three names per reply, within 2.5 seconds; it needs a probability
 the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
 way. The inbox shows every platform's names as emoji the same way.
 
+**Files.** A reply can carry files (`src/attach.js`): the 📎 button beside the reply box,
+files dropped anywhere on the open thread (which shows where they go, or why they cannot), or
+an image pasted into the reply box (a screenshot, named for when it was taken). They wait as
+thumbnails and chips above the box, each with an ×, and go in the same message as the text,
+up to 10 at a time. What a platform takes is a rule the Worker sends with `GET /api/me`, which
+the page checks before a file is added and the Worker again before it uploads:
+
+| | as the person | as the opspile app |
+|---|---|---|
+| Slack | any file up to 20 MB, 25 MB in all, with the user scope `files:write` (`files.getUploadURLExternal`, then `files.completeUploadExternal` in the thread, the text as `initial_comment`) | the same, with the bot token (bot scope `files:write`) |
+| Teams | images (PNG, JPEG, GIF) inline as hosted contents of the reply, up to 3 MB in all (Graph takes 4 MB of base64); other files and larger images uploaded to the channel's SharePoint folder and attached by reference, with the delegated `Files.ReadWrite.All` | images inline only (Bot Framework data URIs, up to 1 MB): Teams lets bots send other files in personal chats only |
+| Discord | none: opspile does not post as the person | any file, 10 MB in all, in the message (`files[n]`) |
+
+The scopes for uploads are asked for when they are first needed: a person whose token lacks
+them is told why when they attach a file, with a link that connects the account again with
+file access (`/api/auth/<platform>/start?files=1`); a Microsoft token is refreshed with the
+scopes it was granted. Where nothing can be attached the button is dimmed and says why. The
+reply shows its files while it is being sent, and once it comes back through ingestion, as any
+message's files are shown.
+
 The one exception is posting **as the opspile app** (`POST /api/post/app`, `src/postapp.js`,
 used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the same post as a
 thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in

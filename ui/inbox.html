@@ -403,6 +403,36 @@
   .mentions li.on { background: var(--sel); }
   .mentions .av { width: 22px; height: 22px; font-size: 9px; border-radius: 6px; }
   .mentions .hint { margin-left: auto; color: var(--faint); font-size: 11px; }
+  /* Files that go with the reply: the 📎 button, the tray of chips, the pane as a drop target. */
+  .composer .attach { flex: none; width: 38px; height: 38px; border-radius: 19px; border: 0; background: none; color: var(--mute);
+    display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; }
+  .composer .attach svg { width: 20px; height: 20px; }
+  .composer .attach:hover, .composer .attach:focus-visible { background: var(--hover); color: var(--ink); }
+  .composer .attach[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+  .tray { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+  .tray[hidden] { display: none; }
+  .tray .chip { position: relative; height: 64px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+    display: flex; align-items: center; gap: 8px; max-width: 240px; }
+  .tray .chip.img { width: 64px; overflow: visible; }
+  .tray .chip.img img { width: 100%; height: 100%; object-fit: cover; border-radius: 9px; display: block; }
+  .tray .chip.file { padding: 0 26px 0 8px; }
+  .tray .chip .ico { flex: none; width: 36px; height: 44px; border-radius: 6px; background: var(--sel); color: var(--accent);
+    font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+  .tray .chip .nm { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tray .chip .sz { font-size: 11px; color: var(--faint); white-space: nowrap; }
+  .tray .chip .x { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border-radius: 10px; padding: 0;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 13px; line-height: 1; cursor: pointer; }
+  .tray .chip .x:hover, .tray .chip .x:focus-visible { background: var(--red); border-color: var(--red); color: #fff; }
+  .tray .attach-error { flex-basis: 100%; color: var(--red); font-size: 12px; }
+  #pane { position: relative; }
+  #pane .dropzone { position: absolute; inset: 8px; z-index: 6; display: flex; align-items: center; justify-content: center;
+    border: 2px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--pane) 86%, transparent);
+    backdrop-filter: blur(2px); pointer-events: none; }
+  #pane .dropzone > div { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 360px; color: var(--mute); font-size: 13px; }
+  #pane .dropzone b { color: var(--ink); font-size: 16px; }
+  #pane .dropzone svg { width: 32px; height: 32px; color: var(--accent); }
+  #pane .dropzone.refused { border-color: var(--red); }
+  #pane .dropzone.refused svg { color: var(--red); }
   .composer .connect { color: var(--mute); font-size: 13px; }
   .composer .connect a { color: var(--link); }
   dialog.confirm { max-width: min(560px, 92vw); background: var(--card); color: var(--ink); border: 1px solid var(--line);

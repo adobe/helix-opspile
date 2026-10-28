@@ -18,7 +18,7 @@ const state = {
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, keep: new Set(), scores: new Map(),
-  cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -1413,7 +1413,7 @@ function message(m, prev, fresh, followed = false) {
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
       <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the opspile app' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
-    : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}</div>`;
+    : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}${m.pending && m.files?.length ? pendingFiles(m.files) : ''}</div>`;
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
@@ -1508,6 +1508,7 @@ function composer(thread, resolve = '') {
     return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${DRAFT_LINE}</div>`;
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+    <div class="tray" id="tray" hidden></div>${attachButton(thread)}
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="Reply in thread"></textarea>
     <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${DRAFT_LINE}</div>`;
@@ -1642,7 +1643,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (Date.now() - p.sentAt >= 60000) return false;
     if (p.thread !== key) return true;
     const m = messages.find((x) => (p.postedId ? String(x.id) === String(p.postedId)
-      : x.author?.name === p.author.name && looseText(x.body) === looseText(p.body)));
+      : x.author?.name === p.author.name
+        && looseText(p.files?.length ? withoutAttachments(x.body) : x.body) === looseText(p.body)));
     if (m) settled.add(`${m.thread}|${m.id}`);
     return !m;
   });
@@ -1772,6 +1774,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     };
     $('send').onclick = (e) => { if (!sendHold.held) send(key, thread); e.preventDefault(); };
     wireHoldMenu(key, thread);
+    wireAttach(key, thread);
   }
   renderDraftBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
@@ -1825,7 +1828,7 @@ function wireHoldMenu(key, thread) {
   if (!btn) return;
   btn.onclick = async () => {
     hide();
-    if (!btn.dataset.mine && $('reply')?.value.trim() && !(await send(key, thread))) return;
+    if (!btn.dataset.mine && ($('reply')?.value.trim() || state.attachments.get(key)?.length) && !(await send(key, thread))) return;
     toggleResolve();
   };
 }
@@ -2254,14 +2257,18 @@ async function deliver(p) {
   let res = null;
   let data = {};
   try {
-    res = await fetch('/api/post', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread: p.thread, text: p.body, mentions: p.mentions, ...(p.base ? { draft: p.base } : {}) }) });
-    data = await res.json().catch(() => ({}));
+    // With files, as multipart (src/attach.js).
+    res = await postWith('/api/post', { thread: p.thread, text: p.body, mentions: p.mentions, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
+    data = res.data || {};
   } catch { /* offline, or the connection dropped */ }
   if (!res?.ok) {
     p.status = 'failed';
-    p.error = data.error || (res ? `could not send (${res.status})` : 'could not reach opspile');
+    p.error = data.error || (res?.status ? `could not send (${res.status})` : 'could not reach opspile');
     state.sendError = p.error;
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
+    // The account may upload once it is connected again with file access.
+    const again = data.files && (data.reconnect || data.connect);
+    if (again) toast(p.error, { label: 'Connect again', href: `/api/auth/${again}/start?files=1` });
     // Somewhere else by now: say so there.
     if (state.open !== p.thread) toast(`A reply was not sent: ${p.error}`, { label: 'Show', run: () => openThread(p.thread) });
     // The reply box offers to connect the account.
@@ -2289,8 +2296,10 @@ async function deliver(p) {
 async function send(key, thread, draft = null) {
   const box = $('reply');
   const body = (draft ? draft.body : box.value).trim();
+  // The files in the tray go with the reply box, not with a draft sent from its line.
+  const attached = draft ? [] : state.attachments.get(key) || [];
   state.sendError = null;
-  if (!body) return false;
+  if (!body && !attached.length) return false;
   closeMentions();
   const mentions = draft ? (draft.mentions || []) : mentionsIn(key, body);
   // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
@@ -2298,6 +2307,12 @@ async function send(key, thread, draft = null) {
   const base = draft ? draft.updated_at : c?.base;
   // Shown at once, as it will look once sent; the box is free for the next one (a draft sent
   // from its line leaves the box alone, unless the box holds that draft).
+  // The files go with it (`uploads`), and show in its bubble (`files`) until it arrives.
+  const files = attached.map((a) => ({ name: a.file.name, type: a.file.type, url: a.url }));
+  if (attached.length) {
+    state.attachments.delete(key);
+    renderTray(key);
+  }
   if (!draft || (c?.base === base && c.text.trim() === body)) {
     box.value = '';
     growReply(box);
@@ -2306,7 +2321,7 @@ async function send(key, thread, draft = null) {
   }
   sendSeq += 1;
   const p = {
-    thread: key, body, mentions, base, at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
+    thread: key, body, mentions, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
   };
   state.sending.push(p);
   showSending(key);
@@ -2346,8 +2361,8 @@ window.addEventListener('beforeunload', (e) => {
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Resolves
  * to null, or the error.
  */
-async function sendAsApp(key, text, base) {
-  const res = await request('POST', '/api/post/app', { thread: key, text, ...(base ? { draft: base } : {}) });
+async function sendAsApp(key, text, base, files = []) {
+  const res = await postWith('/api/post/app', { thread: key, text, ...(base ? { draft: base } : {}) }, files);
   if (!res.ok) return res.data.error || `could not send (${res.status})`;
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -2373,7 +2388,8 @@ function startEdit(id) {
   closePicker();
   const pending = state.edits.get(id);
   state.editing = {
-    id, key, text: pending ? pending.body : m.body, as: m.editable, focus: true,
+    // The text only: the files listed at its end are not part of it, and stay as they are.
+    id, key, text: pending ? pending.body : withoutAttachments(m.body).trim(), as: m.editable, focus: true,
   };
   repaint(key);
 }
@@ -2395,7 +2411,7 @@ async function saveEdit() {
   const body = ed.text.trim();
   if (!body) { toast('Write something, or press Esc to keep the message as it is.'); return; }
   closeMentions();
-  if (!m || body === String(m.body || '').trim()) { cancelEdit(); return; }
+  if (!m || body === withoutAttachments(m.body).trim()) { cancelEdit(); return; }
   const at = ed.id.indexOf('|');
   const mentions = mentionsIn(ed.key, body);
   state.editing = null;
@@ -2443,6 +2459,242 @@ function wireEditor(key) {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(); return; }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); saveEdit(); }
   };
+}
+
+// ---------------------------------------------------------------- attachments
+// Files go with a reply: the 📎 button, dropped on the thread, or pasted (screenshots). They
+// wait in the tray above the reply box, per thread, until it is sent. What may go is the
+// rule the Worker sends for each platform (GET /api/me `attach`, src/attach.js): Slack takes
+// files once the account may upload, Teams inline images (and other files with access to the
+// channel's files); the Worker checks again.
+const PAPERCLIP = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 7.5l-5.3 5.3a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.7 11.3a1.1 1.1 0 0 1-1.5-1.5l4.9-4.9"/></svg>';
+const MB = 1024 * 1024;
+let attachSeq = 0;
+const fileSize = (n) => (n >= MB ? `${(n / MB).toFixed(1).replace(/\.0$/, '')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const NO_RULE = { count: 0, why: 'replies here cannot carry files' };
+/** The rule for replying as yourself in `thread`. */
+const attachRule = (thread) => (thread && state.me.attach?.[thread.source]) || NO_RULE;
+const imageUnder = (rule, f) => (rule.types ? rule.types.includes(f.type) : /^image\//.test(f.type || ''));
+/** Why `files` cannot go together under `rule`, or null (as src/attach.js checks them). */
+function attachProblem(rule, files) {
+  if (!files.length) return null;
+  if (!rule.count) return `Cannot attach files here: ${rule.why}.`;
+  if (files.length > rule.count) return `Up to ${rule.count} files per message.`;
+  let total = 0;
+  for (const f of files) {
+    if (!imageUnder(rule, f) && !rule.other) return `Cannot attach ${f.name}: ${rule.why}.`;
+    if (!f.size) return `${f.name} is empty.`;
+    if (f.size > rule.file) return `${f.name} is ${fileSize(f.size)}: files here take up to ${fileSize(rule.file)}.`;
+    total += f.size;
+  }
+  return total > rule.total ? `The files are ${fileSize(total)} together: up to ${fileSize(rule.total)} per message.` : null;
+}
+/** What the 📎 button says it takes. */
+function attachHint(rule) {
+  if (!rule.count) return `Cannot attach files here: ${rule.why}`;
+  const what = rule.other ? 'files' : 'images';
+  return `Attach ${what}, or drop or paste them here (up to ${rule.count}, ${fileSize(rule.total)} in all)`;
+}
+const attachButton = (thread) => {
+  const rule = attachRule(thread);
+  const accept = rule.other || !rule.types ? '' : ` accept="${rule.types.join(',')}"`;
+  return `<button class="attach" id="attach" type="button" aria-label="${esc(attachHint(rule))}" title="${esc(attachHint(rule))}"${rule.count ? '' : ' aria-disabled="true"'}>${PAPERCLIP}</button><input type="file" id="attach-input" multiple hidden${accept}>`;
+};
+
+/**
+ * A pasted screenshot is called "image.png" by the browser: give it a name that says what
+ * and when, as Slack does.
+ */
+function named(f) {
+  if (f.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(f.name)) return f;
+  const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
+  return new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified });
+}
+
+/** Explains why nothing can be attached, with a way to connect again where that helps. */
+function attachRefused(rule, text) {
+  toast(text, rule.reconnect ? { label: 'Connect again', href: `/api/auth/${rule.reconnect}/start?files=1` } : null);
+}
+
+function showAttachError(key, text) {
+  const tray = state.open === key && $('tray');
+  if (!tray) return;
+  tray.querySelector('.attach-error')?.remove();
+  const el = document.createElement('div');
+  el.className = 'attach-error';
+  el.setAttribute('role', 'alert');
+  el.textContent = text;
+  tray.append(el);
+  tray.hidden = false;
+}
+
+/** Adds files to the thread's tray, if they may go with the ones already there. */
+function addFiles(key, thread, list) {
+  const files = [...list].filter((f) => f && typeof f.size === 'number').map(named);
+  if (!files.length) return;
+  const rule = attachRule(thread);
+  const now = state.attachments.get(key) || [];
+  const problem = attachProblem(rule, [...now.map((a) => a.file), ...files]);
+  if (problem) {
+    attachRefused(rule, problem);
+    renderTray(key);
+    if (now.length) showAttachError(key, problem);
+    return;
+  }
+  state.attachments.set(key, [...now, ...files.map((file) => {
+    attachSeq += 1;
+    return { id: `a${attachSeq}`, file, url: /^image\//.test(file.type) ? URL.createObjectURL(file) : null };
+  })]);
+  renderTray(key);
+  $('reply')?.focus();
+}
+
+function removeFile(key, id) {
+  const list = state.attachments.get(key) || [];
+  const gone = list.find((a) => a.id === id);
+  if (gone?.url) URL.revokeObjectURL(gone.url);
+  const rest = list.filter((a) => a.id !== id);
+  if (rest.length) state.attachments.set(key, rest); else state.attachments.delete(key);
+  renderTray(key);
+}
+
+const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" title="${esc(`${a.file.name} · ${fileSize(a.file.size)}`)}">
+    ${a.url ? `<img src="${esc(a.url)}" alt="">` : `<span class="ico" aria-hidden="true">${esc((a.file.name.split('.').pop() || 'file').slice(0, 4).toUpperCase())}</span><span class="nm">${esc(a.file.name)}</span><span class="sz">${fileSize(a.file.size)}</span>`}
+    <button type="button" class="x" data-rm="${a.id}" aria-label="Remove ${esc(a.file.name)}" title="Remove">×</button></div>`;
+
+/** The tray: the files waiting to go with the reply, each with an × to take it off. */
+function renderTray(key) {
+  const tray = $('tray');
+  if (!tray || state.open !== key) return;
+  const list = state.attachments.get(key) || [];
+  tray.hidden = !list.length;
+  tray.innerHTML = list.map(fileChip).join('');
+  tray.onclick = (e) => {
+    const b = e.target.closest('[data-rm]');
+    if (b) { removeFile(key, b.dataset.rm); $('reply')?.focus(); }
+  };
+}
+
+/** The files of a reply being sent, as the message will show them once it arrives. */
+function pendingFiles(files) {
+  const images = files.filter((f) => f.url).map((f) => `<img class="att" src="${esc(f.url)}" alt="${esc(f.name)}">`).join('');
+  const others = files.filter((f) => !f.url).map((f) => `<li>${esc(f.name)}</li>`).join('');
+  return `<p>Attachments:</p>${images ? `<p>${images}</p>` : ''}${others ? `<ul>${others}</ul>` : ''}`;
+}
+
+/** Messages' bodies without the list of files the platforms put at their end. */
+const withoutAttachments = (body) => String(body || '').replace(/(^|\n)\s*(<p>)?Attachments:(<\/p>)?[\s\S]*$/, '');
+
+/** The 📎 button, paste in the reply box. Dropping is wired once, on the pane (wireDrop). */
+function wireAttach(key, thread) {
+  const btn = $('attach');
+  const input = $('attach-input');
+  const box = $('reply');
+  if (!btn || !input || !box) return;
+  renderTray(key);
+  btn.onclick = () => {
+    const rule = attachRule(thread);
+    if (!rule.count) { attachRefused(rule, `Cannot attach files here: ${rule.why}.`); return; }
+    input.click();
+  };
+  input.onchange = () => { addFiles(key, thread, input.files); input.value = ''; };
+  box.onpaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    // Text that comes with files is their name (a file copied in the Finder), or the text
+    // itself (a picture of it from a word processor): only the first is taken for the files.
+    const text = e.clipboardData.getData('text/plain').trim();
+    if (text && !files.some((f) => f.name === text || text.endsWith(f.name))) return;
+    e.preventDefault();
+    addFiles(key, thread, files);
+  };
+}
+
+/**
+ * Files dragged over the open thread: the pane shows where they go (or why they cannot), and
+ * dropping them anywhere on it adds them to the reply.
+ */
+function wireDrop() {
+  const pane = $('pane');
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  // The open thread, and what its reply may carry; without a reply box, why there is none.
+  const target = () => {
+    const key = state.open;
+    const thread = key && state.cache.get(key)?.data?.thread;
+    if (!thread) return null;
+    let rule = attachRule(thread);
+    if (!$('reply')) {
+      let why = `connect your ${accountOf(thread.source)} account to reply here first`;
+      if (state.data?.me?.readonly) why = 'this inbox is read-only while you view it as someone else';
+      else if (thread.source === 'discord') why = 'replies to Discord are written in Discord, where opspile cannot post as you';
+      rule = { count: 0, why };
+    }
+    return { key, thread, rule };
+  };
+  const hide = () => { depth = 0; pane.querySelector(':scope > .dropzone')?.remove(); pane.classList.remove('dropping'); };
+  const show = ({ rule }) => {
+    let zone = pane.querySelector(':scope > .dropzone');
+    if (!zone) {
+      zone = document.createElement('div');
+      zone.className = 'dropzone';
+      pane.append(zone);
+    }
+    zone.classList.toggle('refused', !rule.count);
+    zone.innerHTML = `<div>${PAPERCLIP}<b>${rule.count ? `Drop to attach ${rule.other ? 'files' : 'images'}` : 'Cannot attach files here'}</b><span>${esc(rule.count ? `Up to ${rule.count}, ${fileSize(rule.total)} in all; they go with your reply.` : `${rule.why[0].toUpperCase()}${rule.why.slice(1)}.`)}</span></div>`;
+    pane.classList.add('dropping');
+  };
+  pane.addEventListener('dragenter', (e) => {
+    const t = hasFiles(e) && target();
+    if (!t) return;
+    e.preventDefault();
+    depth += 1;
+    if (depth === 1) show(t);
+  });
+  pane.addEventListener('dragover', (e) => {
+    const t = hasFiles(e) && target();
+    if (!t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = t.rule.count ? 'copy' : 'none';
+  });
+  pane.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) hide();
+  });
+  pane.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    const t = target();
+    hide();
+    if (!t) return;
+    e.preventDefault();
+    if (!t.rule.count) { attachRefused(t.rule, `Cannot attach files here: ${t.rule.why}.`); return; }
+    addFiles(t.key, t.thread, e.dataTransfer.files);
+  });
+  // Files dropped next to the pane would open in the tab, and the reply would be lost.
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop', (e) => { if (hasFiles(e)) { e.preventDefault(); hide(); } });
+}
+
+/**
+ * POSTs `payload` as the signed-in person, as JSON, or with `files` as multipart (the JSON as
+ * `payload`, each file as `files`). `{ ok, status, data }`.
+ */
+async function postWith(path, payload, files = []) {
+  if (!files.length) return request('POST', path, payload);
+  const form = new FormData();
+  form.append('payload', JSON.stringify(payload));
+  for (const f of files) form.append('files', f, f.name);
+  const headers = state.as ? { 'x-opspile-as': String(state.as) } : {};
+  try {
+    const res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: form });
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: `could not send: ${e.message}` } };
+  }
 }
 
 // ---------------------------------------------------------------- mentions
@@ -3500,6 +3752,7 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
+  wireDrop();
   window.addEventListener('popstate', async (e) => {
     // Safari's edge swipe has already slid the list or the thread into view: no second slide.
     const main = document.querySelector('main');

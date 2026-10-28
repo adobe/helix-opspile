@@ -168,6 +168,21 @@ const CHANNELS = {
   },
 };
 
+/**
+ * A made-up screenshot: a chart with a title, as an SVG, for the messages with attachments.
+ */
+function screenshot(title, color, bars) {
+  const w = 640;
+  const h = 360;
+  const bar = (v, i) => `<rect x="${60 + i * 52}" y="${300 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
+  return new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <rect width="${w}" height="${h}" fill="#f6f7f9"/><rect width="${w}" height="44" fill="#1f2937"/>
+  <circle cx="22" cy="22" r="6" fill="#ef4444"/><circle cx="42" cy="22" r="6" fill="#f59e0b"/><circle cx="62" cy="22" r="6" fill="#10b981"/>
+  <text x="90" y="28" font-family="sans-serif" font-size="15" fill="#e5e7eb">${title}</text>
+  <line x1="50" y1="300" x2="610" y2="300" stroke="#9ca3af"/>${bars.map(bar).join('')}
+</svg>`);
+}
+
 // ---- a prod-sized inbox (`--big`), for performance work --------------------------------
 
 const SYLLABLES = ['ar', 'bel', 'cor', 'dan', 'el', 'fi', 'gor', 'hal', 'is', 'jo', 'kar', 'lum',
@@ -319,6 +334,13 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
   const appPosts = new Set();
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
+  // Files attached to messages, served by the preview at /__dev/files/<id>/<name>.
+  const uploads = new Map(); // id -> { name, type, bytes }
+  const upload = (name, type, bytes) => {
+    const id = `f${uploads.size + 1}`;
+    uploads.set(id, { name, type, bytes });
+    return `/__dev/files/${id}/${encodeURIComponent(name)}`;
+  };
   let seq = 100000;
 
   const author = (key) => {
@@ -683,13 +705,28 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ch: CHANNELS.cdn,
     messages: [
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
-      ['mei', 65, 'Reproduced on two regions, attaching the headers.'],
+      ['mei', 65, `Reproduced on two regions, attaching the headers.\n\nAttachments:\n![headers.png](${upload('headers.png', 'image/svg+xml', screenshot('Response headers, two regions', '#6366f1', [40, 90, 60, 120, 30]))} "640x360")`],
       // A screenshot attached in Teams (a SharePoint file), copied into pile 1 and shown
       // inline; the other file stays a link.
       ['mei', 64, '![Screenshot 2026-10-21 at 10.02.11 AM.png](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/Screenshot%202026-10-21%20at%2010.02.11%E2%80%AFAM.png "1280x720")\n\nAttachments:\n\n- [headers.har](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/headers.har)'],
     ],
     // Puts a Teams channel in the personal view, so its platform card has more than Slack.
     mentioned: ['dana'],
+  });
+
+  // Files sent with replies: a customer's screenshot, and a reply from the inbox with a
+  // screenshot and a log file (as the message lists them once it arrives).
+  seed({
+    ch: CHANNELS.aemAcme,
+    messages: [
+      ['sam', 140, `The publish queue looks stuck, see the dashboard.\n\nAttachments:\n![dashboard.png](${upload('dashboard.png', 'image/svg+xml', screenshot('Publish queue', '#ef4444', [20, 35, 60, 95, 120, 130, 135]))} "640x360")`],
+      ['dana', 128, `It drained after the restart. Before and after, and the worker log:\n\nAttachments:\n![after-restart.png](${upload('after-restart.png', 'image/svg+xml', screenshot('Publish queue after the restart', '#10b981', [130, 90, 50, 20, 8, 4, 2]))} "640x360")\n\n- [publish-worker.log](${upload('publish-worker.log', 'text/plain', new TextEncoder().encode('12:00:01 restart\n12:00:04 queue draining\n'))})`],
+      ['sam', 120, 'Confirmed, publishing works again. Thanks!'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'incident', next_actor: 'nobody', urgency: 0.8, resolved_p: 0.7,
+    },
   });
 
   seed({
@@ -822,6 +859,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     mentions,
     appPosts,
     drafts,
+    uploads,
+    upload,
 
     /** Adds a live message to a thread, as the normalizer would. Returns the thread key. */
     post(key, who, body, at = new Date().toISOString(), given = null) {

@@ -21,10 +21,12 @@ import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
 import { cachedGraph } from './graph.js';
 import {
-  connections, disconnect, editable, finishAuth, mentionable, post, reactable, startAuth,
+  attachable, connections, disconnect, editable, finishAuth, mentionable, post, reactable,
+  startAuth,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { isStaffDomain } from './lookup.js';
+import { appRule, readPost } from './attach.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
@@ -756,6 +758,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       react: me.readonly ? {} : await reactable(env, me.id),
       // Whose tokens may edit their own messages (src/edit.js).
       edit: me.readonly ? {} : await editable(env, me.id),
+      // What a reply may carry (src/attach.js): as the person, by connected platform, and as
+      // the opspile app, by platform.
+      attach: me.readonly ? {} : {
+        ...await attachable(env, me.id),
+        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+      },
       // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
@@ -788,7 +796,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (auth) {
     const [, platform, step] = auth;
     if (step === '/start') {
-      return startAuth(env, me, platform);
+      return startAuth(env, me, platform, { files: url.searchParams.get('files') === '1' });
     }
     if (step === '/callback') {
       return finishAuth(env, me, platform, url);
@@ -799,11 +807,21 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if ((url.pathname === '/api/post' || url.pathname === '/api/post/app')
     && request.method === 'POST') {
-    const body = await request.json().catch(() => ({}));
+    // JSON, or multipart with files (src/attach.js).
+    const read = await readPost(request);
+    if (read.error) {
+      return json({ error: read.error }, read.status);
+    }
+    const { body, files } = read;
     const inMine = (t) => inTeam(me, t);
     // As the person, or as the opspile app (where it may post in the channel).
     const res = url.pathname === '/api/post'
-      ? await post(env, me, body, inMine) : await postApp(env, me, body, inMine);
+      ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
+    if (files.length) {
+      console.log(JSON.stringify({
+        route: 'post', action: 'files', count: files.length, ok: res.ok, status: res.status,
+      }));
+    }
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     if (res.ok && typeof body.draft === 'string') {
       await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine);
