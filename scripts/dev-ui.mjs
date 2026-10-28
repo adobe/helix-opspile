@@ -22,6 +22,9 @@
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
  *
+ * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
+ * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
+ *
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does.
  *
@@ -1017,9 +1020,43 @@ function simulate(key) {
 
 // ---- server ----------------------------------------------------------------------------
 
+// Signed out (POST /__dev/signout): /api/* redirects to the sign-in page, as Access does.
+let signedOut = false;
+const SIGNIN_HOST = `127.0.0.1:${PORT}`;
+const SIGNIN_PAGE = (back) => `<!doctype html><meta charset="utf-8"><title>Sign in</title>
+<body style="font:15px system-ui;display:grid;place-items:center;height:90vh">
+<form method="post"><p>Cloudflare Access (preview)</p><input type="hidden" name="back" value="${back.replace(/"/g, '&quot;')}">
+<button>Sign in</button></form></body>`;
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (url.pathname === '/__dev/signout' && req.method === 'POST') {
+      signedOut = true;
+      res.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/__dev/access-login') {
+      if (req.method === 'POST') {
+        signedOut = false;
+        const back = new URLSearchParams(await new Promise((r) => {
+          let b = '';
+          req.on('data', (c) => {
+            b += c;
+          }).on('end', () => r(b));
+        })).get('back');
+        res.writeHead(302, { location: `http://localhost:${PORT}${back?.startsWith('/') ? back : '/api/me'}` }).end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(SIGNIN_PAGE(url.searchParams.get('redirect_url') || '/api/me'));
+      return;
+    }
+    if (signedOut && url.pathname.startsWith('/api/')) {
+      const back = encodeURIComponent(`${url.pathname}${url.search}`);
+      res.writeHead(302, { location: `http://${SIGNIN_HOST}/__dev/access-login?redirect_url=${back}` }).end();
+      return;
+    }
     await refreshBackend();
     if (url.pathname === '/') {
       res.writeHead(302, { location: '/inbox' }).end();
@@ -1076,7 +1113,7 @@ const server = createServer(async (req, res) => {
 
 server.on('upgrade', (req, socket) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (url.pathname === '/api/live') {
+  if (url.pathname === '/api/live' && !signedOut) {
     upgrade(req, socket, url);
   } else {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
