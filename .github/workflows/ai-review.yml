@@ -1,0 +1,28 @@
+name: AI Review
+
+on:
+  pull_request:
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    # TODO: pin to a release once adobe/helix-shared's ai-review workflow is merged
+    uses: adobe/helix-shared/.github/workflows/ai-review.yml@ai-review-workflow
+    secrets:
+      AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    with:
+      test: >-
+        npm test --
+        --test-reporter=spec --test-reporter-destination=stdout
+        --test-reporter=junit --test-reporter-destination="$REVIEW_RESULTS/junit.xml"
+      review-prompt: >-
+        helix-opspile is a Cloudflare Worker. `npm run lint` lints it and
+        `npx cf deploy --dry-run` builds it without deploying.
