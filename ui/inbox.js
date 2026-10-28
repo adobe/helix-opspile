@@ -3246,18 +3246,20 @@ function setFiltering(on) {
 
 /*
  * The filter column folded to a rail (`main.rail`), between the drawer and room for all of it:
- * always in the personal view, and in a team's view under 1440px. `<html data-rail="on|off">`
- * overrides that (the width controls of `npm run ui:dev` set it). The rail slides out under
+ * in every view, from 1100px up to the width of a 13" MacBook's screen (1440px on a Pro,
+ * 1470px on an Air), so the full column only shows on bigger screens. Under 1100px it is the
+ * drawer (phones, tablets upright). `<html data-rail="on|off">` overrides that (the width
+ * controls of `npm run ui:dev` set it). The rail slides out under
  * the pointer; on a touch screen, a tap on it slides it out (`main.railopen`) instead of
  * filtering, and a tap beside it folds it again.
  */
-const RAIL_BAND = matchMedia('(min-width: 1100px) and (max-width: 1439px)');
+const RAIL_BAND = matchMedia('(min-width: 1100px) and (max-width: 1470px)');
 const WIDE = matchMedia('(min-width: 1100px)');
 let lastPointer = 'mouse';
 function syncRail() {
   const main = document.querySelector('main');
   const force = document.documentElement.dataset.rail;
-  const on = WIDE.matches && (force ? force === 'on' : personal() || RAIL_BAND.matches);
+  const on = WIDE.matches && (force ? force === 'on' : RAIL_BAND.matches);
   main.classList.toggle('rail', on);
   if (!on) main.classList.remove('railopen');
 }
