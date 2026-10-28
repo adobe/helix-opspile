@@ -36,6 +36,7 @@ import { oauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import { inboxPage, page } from './page.js';
 import { slackEvents } from './slack.js';
+import { joinPublicChannels } from './autojoin.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
@@ -82,7 +83,7 @@ export default {
     }
 
     if (request.method === 'POST' && pathname === '/slack/events') {
-      return slackEvents(request, env);
+      return slackEvents(request, env, ctx);
     }
     if (request.method === 'POST' && (pathname === '/teams/notify' || pathname === '/teams/lifecycle')) {
       return teamsNotify(request, url, env, ctx);
@@ -189,7 +190,8 @@ export default {
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
  * MCP servers' tools once a day, classify a batch of the admin team's channels for the
- * channel suggestions, and enqueue the threads whose message and thread vectors are behind.
+ * channel suggestions, join the public Slack channels the app is not in (SLACK_JOIN_TEAMS), and
+ * enqueue the threads whose message and thread vectors are behind.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -218,6 +220,9 @@ export default {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    ctx.waitUntil(joinPublicChannels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));

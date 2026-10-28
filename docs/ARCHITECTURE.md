@@ -800,6 +800,11 @@ Two new apps:
 - A **Slack app**, installed into the enterprise grid, subscribed to message, edit, deletion,
   and reaction events. Slack only delivers message events for channels the app is a member
   of, so the app has to be added to every ingested channel, including Slack Connect channels.
+  With `SLACK_JOIN_TEAMS` it adds itself to every public channel of those workspaces
+  (`src/autojoin.js`, bot scope `channels:join`): a channel as it is created or unarchived,
+  and on the cron, at most 40 a run, every other public channel it is not in. Channels Slack
+  refuses (`app_cannot_join_channel`, say) are tried again after a week (`slack_joins`).
+  Private channels still need an invite; channels the rules mark `ignore` are not joined.
 - A **Microsoft Entra app registration** in the support tenant with application permissions
   to read teams, channels and channel messages. One tenant-wide change-notification
   subscription on `/teams/getAllMessages` delivers root messages and replies. It carries no

@@ -38,6 +38,8 @@ const NAMES: Record<string, string> = {
 // STAFF_DOMAINS: comma-separated mail domains whose people count as staff.
 // ACCESS_TEAM_DOMAIN, ACCESS_AUD: the Cloudflare Access app in front of /inbox and /api.
 // SLACK_CLIENT_ID: the Slack app's client id, for people connecting their Slack account.
+// SLACK_JOIN_TEAMS (optional, below): comma-separated Slack workspace ids whose public channels
+// the app joins by itself (src/autojoin.js).
 const VARS = [
   'MS_CLIENT_ID', 'MS_TENANT_ID', 'PUBLIC_ORIGIN', 'STAFF_DOMAINS', 'ACCESS_TEAM_DOMAIN', 'ACCESS_AUD',
   'SLACK_CLIENT_ID',
@@ -55,6 +57,8 @@ const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_I
 // RETIRED_ORIGINS: comma-separated origins the Worker answered on before PUBLIC_ORIGIN; pages
 // opened there are redirected, and Graph subscriptions still pointing there are removed.
 const MOVE_VARS = ['RETIRED_ORIGINS'] as const;
+
+const SLACK_VARS = ['SLACK_JOIN_TEAMS'] as const;
 
 // Discord, optional: DISCORD_GUILDS (comma-separated server ids) turns the poller on, with the
 // secret DISCORD_BOT_TOKEN. DISCORD_STAFF_ROLES: role ids whose members count as staff;
@@ -139,7 +143,7 @@ function vars(deployed: boolean) {
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
-    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS, ...DISCORD_VARS]
+    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS, ...SLACK_VARS, ...DISCORD_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
