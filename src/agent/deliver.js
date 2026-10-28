@@ -123,21 +123,3 @@ export function deliveryText(entry, fresh, verdicts, { first }) {
     : `New message${fresh.length === 1 ? '' : 's'} in the thread:`;
   return `${lead}\n\n${blocks.join('\n\n')}`;
 }
-
-/**
- * The input for a draft of the agent's that a person discarded (`by`, `body`): feedback, so
- * it learns which drafts the team does not want. `now` is the draft the thread has since, if
- * a colleague saved one.
- */
-export function discardText({ by, body }, now) {
-  const since = now
-    ? ` ${(now.by && now.by.name) || 'A colleague'} has saved another draft since: leave it alone.`
-    : '';
-  return `${by} (Adobe staff) discarded the shared draft you saved, without sending it.${since}`
-    + ' Take it as feedback on your draft. Look at the thread for why it was not wanted: Adobe'
-    + ' staff answering themselves, nothing to reply to yet, or something in it that was'
-    + ' wrong, premature or not what the team would say. Do not save it again, and save a new'
-    + ' draft only when something new in the thread calls for one. If there is a lesson that'
-    + ' holds beyond this thread, file it in kb-team; if you cannot tell why, file nothing.'
-    + `\n\n<discarded-draft>\n${body}\n</discarded-draft>`;
-}

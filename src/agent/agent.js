@@ -19,11 +19,12 @@ import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
-import { draftOf, draftsFor, entryOf } from '../drafts.js';
+import { entryOf } from '../drafts.js';
 import {
-  agentEnabled, deliveryText, discardText, entryMessages, markOf, screen, untrusted,
+  agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
 import { toolsFor } from './agenttools.js';
+import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -55,8 +56,6 @@ import { latestTurn } from './turn.js';
  */
 
 export const IDLE_SECONDS = 24 * 60 * 60;
-// A discarded draft is told after the inbox's Undo (8 s) has run out.
-export const DISCARD_SECONDS = 30;
 const TARGET_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
@@ -383,35 +382,14 @@ export class ThreadAgent extends Agent {
     return { ok: true, accepted: receipt.accepted };
   }
 
-  /** A person discarded the agent's draft: it is told so once Undo is no longer possible. */
-  async discarded({ by, body, version }) {
-    const problem = modelProblem(this.env);
-    if (problem) {
-      return { error: problem };
-    }
-    await this.schedule(DISCARD_SECONDS, 'discardNote', { by, body, version });
-    return { ok: true };
+  /** A person discarded the agent's draft (src/agent/discard.js). */
+  async discarded(note) {
+    return discarded(this, note);
   }
 
   /** Schedule callback: tells the agent who discarded its draft, unless it came back. */
   async discardNote(payload) {
-    const t = await this.target();
-    if (!payload || !t.key || modelProblem(this.env)
-      || !await agentEnabled(this.env, t.channelId)) {
-      return;
-    }
-    const keys = [t.key, ...(t.threads || [])];
-    const now = draftOf(await draftsFor(this.env, keys), keys);
-    if (now && now.body === payload.body) {
-      // Undone.
-      return;
-    }
-    await this.syncTools();
-    await this.syncMcp();
-    await this.harness.submit(discardText(payload, now), {
-      operationId: `discard:${payload.version}`,
-      whenBusy: 'followUp',
-    });
+    return discardNote(this, payload);
   }
 
   /**

@@ -772,7 +772,7 @@ draft. Staff notes are trusted and not checked by Clef.
 inbox's **Discard**), the agent is told who did and what the draft said, as feedback: it looks
 for why it was not wanted, does not save it again, and files a lesson in kb-team when there is
 one. It hears it 30 seconds later, after the inbox's Undo has run out, and not at all when the
-draft came back. Drafts a person saved last, and drafts a reply used up, are not told.
+draft came back (the same text saved again by a person; src/agent/discard.js). Drafts a person saved last, and drafts a reply used up, are not told.
 
 **The model.** Claude Opus 5.5 on Amazon Bedrock (the inference profile
 `us.anthropic.claude-opus-5-5` in `us-east-2`), through Cloudflare AI Gateway: Bedrock's
