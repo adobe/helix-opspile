@@ -56,6 +56,7 @@ import { pwa } from '../src/pwa.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
+import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { readState, waitingOn } from '../src/threads.js';
 import { createAdmin } from './dev-ui-admin.mjs';
@@ -312,7 +313,7 @@ function myChannels() {
 }
 
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
-function inbox(team, before = null, personal = false) {
+function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
   const channels = personal ? myChannels() : null;
@@ -321,12 +322,12 @@ function inbox(team, before = null, personal = false) {
     : r.team === team);
   const all = [...store.threads.values()]
     .map((e) => e.row)
-    .filter((r) => inScope(r) && r.kind !== 'ignore')
+    .filter((r) => inScope(r) && r.kind !== 'ignore' && (!only || only.has(r.thread)))
     .sort((a, b) => latest(b).localeCompare(latest(a)) || b.thread.localeCompare(a.thread));
   const [at, key] = before ? String(before).split('|') : [null, null];
   const after = at === null ? all
     : all.filter((r) => latest(r) < at || (latest(r) === at && r.thread < key));
-  const pageRows = after.slice(0, INBOX_PAGE);
+  const pageRows = only ? after : after.slice(0, INBOX_PAGE);
   const lastRow = pageRows[pageRows.length - 1];
   const page = { next: after.length > INBOX_PAGE && lastRow ? `${latest(lastRow)}|${lastRow.thread}` : null };
   const rows = pageRows
@@ -382,6 +383,62 @@ function inbox(team, before = null, personal = false) {
     members: members(...scope),
     threads,
     page,
+  };
+}
+
+/**
+ * GET /api/search, made up: words in the title, channel or customer as src/search.js finds
+ * them, and words in the messages for what the vectors would find, the best message as the
+ * snippet.
+ */
+function search(team, q, personal = false) {
+  const query = String(q || '').replace(/\s+/g, ' ').trim();
+  const words = terms(query);
+  const share = (s) => {
+    const t = String(s || '').toLowerCase();
+    return words.length ? words.filter((w) => t.includes(w)).length / words.length : 0;
+  };
+  const hits = [];
+  const rows = [...store.threads.values()].map((e) => e.row)
+    .filter((r) => (personal
+      ? store.teams.some((t) => t.slug === r.team && t.members.includes(ME)) : r.team === team)
+      && r.kind !== 'ignore' && words.length);
+  for (const r of rows) {
+    const title = share(r.title);
+    const all = share(`${r.title} ${r.channel_name} ${r.org}`) === 1;
+    const best = [...store.files.entries()]
+      .filter(([path]) => path.startsWith(r.path))
+      .map(([, body]) => parse(body))
+      .filter((f) => f && f.meta.author?.kind === 'person' && !f.meta.deletedAt)
+      .map((f) => ({ f, score: share(f.body) }))
+      .sort((a, b) => b.score - a.score)[0];
+    const topic = best && best.score > 0 ? 0.6 + 0.2 * best.score : 0;
+    const fact = (store.facts.get(r.thread) || []).find((x) => share(x.value) === 1);
+    if (!all && !topic && !fact) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    const score = topic + (all ? 0.8 * title + 0.5 * (1 - title) : 0) + (fact ? 0.4 : 0);
+    hits.push({
+      thread: r.thread,
+      score: Math.round(score * 1000) / 1000,
+      matched: [all && title > 0 && 'title', all && title < 1 && 'place', fact && 'fact', topic && 'topic'].filter(Boolean),
+      ...(fact ? { fact: { field: fact.field, value: fact.value } } : {}),
+      ...(topic ? {
+        snippet: {
+          message: `${best.f.meta.thread}|${best.f.meta.id}`,
+          author: best.f.meta.author.name,
+          at: best.f.meta.at,
+          text: snippet(best.f.body, words),
+        },
+      } : {}),
+    });
+  }
+  hits.sort((a, b) => b.score - a.score);
+  const view = inbox(team, null, personal, new Set(hits.map((h) => h.thread)));
+  const shown = new Set(view.threads.map((t) => t.thread));
+  return {
+    ...view, q: query, words, hits: hits.filter((h) => shown.has(h.thread)).slice(0, 30),
   };
 }
 
@@ -631,6 +688,15 @@ async function api(req, res, url) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
     return json(res, inbox(team, url.searchParams.get('before')));
+  }
+  if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
+    return json(res, search(null, url.searchParams.get('q'), true));
+  }
+  if (url.pathname === '/api/search') {
+    if (!inTeam(team)) {
+      return json(res, { error: 'not a member of this team' }, 403);
+    }
+    return json(res, search(team, url.searchParams.get('q')));
   }
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));

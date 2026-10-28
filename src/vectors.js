@@ -138,6 +138,31 @@ const defined = (o) => Object.fromEntries(Object.entries(o)
   .filter(([, v]) => v !== null && v !== undefined));
 
 /**
+ * Takes away the vectors of a thread that is no longer a channel thread (re-filed as an alert
+ * or ignored): `{ removed }`, or nothing when it had none.
+ */
+async function dropVectors(env, thread) {
+  if (!env.CONTENT) {
+    return {};
+  }
+  const { results } = await env.DB.prepare(`SELECT id FROM messages
+    WHERE thread = ? AND embedded IS NOT NULL`).bind(thread.thread).all();
+  const rows = results || [];
+  if (!rows.length && !thread.embedded) {
+    return {};
+  }
+  const channel = `${thread.source}:${thread.tenant}:${thread.channel_id}`;
+  await remove(env, [
+    ...await Promise.all(rows.map((r) => messageVectorId(`${channel}:${r.id}`))),
+    ...(thread.embedded ? [await threadVectorId(thread.thread)] : []),
+  ]);
+  await env.DB.prepare('UPDATE messages SET embedded = NULL WHERE thread = ?').bind(thread.thread).run();
+  await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL
+    WHERE thread = ?`).bind(thread.thread).run();
+  return { removed: rows.length + (thread.embedded ? 1 : 0) };
+}
+
+/**
  * Brings the vectors of thread `key` and of its messages up to date. Only channel threads
  * (an alert thread is a bot's post) and only what a person wrote.
  */
@@ -148,7 +173,7 @@ export async function vectorizeThread(env, key) {
     return { result: 'missing' };
   }
   if (thread.kind !== 'channel') {
-    return { result: 'skip', reason: thread.kind };
+    return { result: 'skip', reason: thread.kind, ...await dropVectors(env, thread) };
   }
   const { results } = await env.DB.prepare(`SELECT id, at, person, staff, counted, deleted,
       author_key, embedded FROM messages WHERE thread = ?`).bind(key).all();

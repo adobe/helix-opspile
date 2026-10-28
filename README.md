@@ -44,6 +44,7 @@ still answer.
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `check { server }` connects to it and lists its tools again. |
 | `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. `PUT /api/kb/github/installation { id, approved }` allows an installation (agents read only allowed ones) or revokes it. |
 | `GET /api/me`, `/api/inbox?team=`, `/api/inbox?view=personal`, `/api/thread?thread=` | The signed-in person, a team's threads with read state, unread mentions of the viewer (`unreadMentions`) and who each waits on (`waiting_on`: Clef's next actor, but never `us` when Adobe posted last), the personal view's threads (the conversations of all the viewer's teams, in the channels they posted or were mentioned in), one thread's messages from pile 2. Both lists carry `profiles`: a profile card per author (Adobe, partner, customer or bot, title, mail domain, ops teams), keyed by platform account. A thread also carries `mentioned`: who the people its messages `@`-mention are (Adobe, partner, customer or bot), by name, so the page sets mentions of people outside Adobe apart. Behind Access; the Worker also verifies the Access JWT and ties the email to a person in D1. |
+| `GET /api/search?team=&q=`, `/api/search?view=personal&q=` | Search over a team's inbox (or the personal view), on every platform at once (`src/search.js`): threads about `q` by meaning (the `CONTENT` vectors of their messages and of the threads as a whole) and threads whose title, channel, customer or facts have its words, best match first. The entries come as `/api/inbox` shapes them, with `hits` in order: why each matched (`title`, `place`, `fact`, `topic`) and the message that matched best (`snippet`). |
 | `GET /api/review/queue`, `GET /api/review/stats`, `POST /api/review` | Label review for members of the `admin` team: unreviewed labels (least confident first), Clef's agreement per question, and a correction for one question of one label. |
 | `POST /api/post` | Reply in a thread **as the signed-in person**, through their own Slack or Microsoft account. `409` with `connect` when they have not connected it yet. Only staff, only in their teams. `mentions` (account ids) turn each `@Name` of those accounts into a real Slack (`<@U…>`) or Teams (`<at>`) mention, so the person is notified. |
 | `POST /api/post/app` | Reply in a thread **as the opspile app** (the Slack app, the Teams bot, the Discord bot) instead of as the signed-in person, `{ thread, text, draft? }`: the same post as a thread agent's `post_message`, and only where that may post, in channels whose **Post messages** switch (team or channel, knowledge-base editor) is on and whose platform's bot is set up (`409` otherwise). Only staff, only in their teams. No mentions. |
@@ -147,8 +148,9 @@ Slack app's redirect URLs and the Entra app's web redirect URIs.
 ### MCP server
 
 `/mcp` lets an agent outside the browser (Claude, an IDE, a CLI) work the inbox as the person
-signed in, with nine tools: `whoami`, `list_threads`, `get_thread`, `post_draft`,
-`post_as_user`, `post_as_bot`, `react_to_message`, `resolve_thread` and `seed_agent`. A thread
+signed in, with ten tools: `whoami`, `list_threads`, `search_threads` (what `/api/search`
+finds, in all of the person's teams), `get_thread`, `post_draft`, `post_as_user`,
+`post_as_bot`, `react_to_message`, `resolve_thread` and `seed_agent`. A thread
 is answered three ways, as in the inbox: `post_draft` saves its shared draft (`PUT /api/draft`;
 `base` names the version it replaces), which the team sees and sends; `post_as_user` posts as
 the person (`POST /api/post`); `post_as_bot` posts as the opspile app (`POST /api/post/app`),
@@ -396,6 +398,7 @@ a click, as that person. A read-only "view as" refuses writes.
 | `get_inbox_state` | Viewer, team, filters, open thread, and counts per filter value |
 | `filter_threads` | Set filters (and values to exclude), sort and team |
 | `list_threads` | The threads shown, most relevant first |
+| `search_threads` | Search on screen, as the search box does; the results, best match first, with the message that matched |
 | `open_thread` | Open a thread (marks it read) and return its latest messages |
 | `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |
 | `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces) |

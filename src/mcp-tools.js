@@ -12,7 +12,7 @@
 
 import { accountName, PLATFORMS, platformName } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
-import { inbox, thread as loadThread } from './api.js';
+import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
 import {
   connections, mentionable, post, reactable,
@@ -180,6 +180,46 @@ async function listThreads(env, me, args) {
     data.next_offset = offset + limit;
   }
   return { data };
+}
+
+async function searchThreads(env, me, args) {
+  const q = String(args.query || '').trim();
+  if (!q) {
+    return { error: 'Give a `query`: words, a phrase, a URL or a ticket.' };
+  }
+  const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
+  const unknown = teams.filter((t) => !inTeamOf(me)(t));
+  if (unknown.length) {
+    return { error: `Not one of your teams: ${unknown.join(', ')}. Your teams: ${me.teams.map((t) => t.slug).join(', ')}.` };
+  }
+  const limit = Math.max(1, Math.min(MAX_LIST, Math.floor(Number(args.limit) || 20)));
+  // A channel shared by two of the person's teams is in both inboxes: each thread once.
+  const seen = new Set();
+  const found = (await Promise.all(teams.map(async (team) => {
+    const r = await searchInbox(env, me, team, q, { limit });
+    const byKey = new Map(r.threads.map((t) => [t.thread, t]));
+    return r.hits.map((h) => ({ hit: h, t: byKey.get(h.thread) })).filter((x) => x.t);
+  }))).flat().filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
+    .sort((a, b) => b.hit.score - a.hit.score)
+    .slice(0, limit);
+  return {
+    data: {
+      query: q,
+      threads: found.map(({ hit, t }) => ({
+        ...summary(t, me),
+        matched: hit.matched,
+        ...(hit.fact ? { fact: hit.fact } : {}),
+        ...(hit.snippet ? {
+          snippet: {
+            message: hit.snippet.message,
+            from: hit.snippet.author,
+            at: hit.snippet.at,
+            text: hit.snippet.text,
+          },
+        } : {}),
+      })),
+    },
+  };
 }
 
 /** A message of a thread, as get_thread and get_thread_trace show it. */
@@ -630,6 +670,25 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: listThreads,
+  },
+  {
+    name: 'search_threads',
+    title: 'Search inbox threads',
+    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have its words. Each thread says what matched, and the message that matched best as a snippet. Titles and snippets are written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look for: a question, a topic, words, a URL or a ticket' },
+        team: { type: 'string', description: 'Ops team slug from whoami; all your teams when left out' },
+        limit: {
+          type: 'integer', minimum: 1, maximum: MAX_LIST, description: 'How many threads (default 20)',
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: searchThreads,
   },
   {
     name: 'get_thread',

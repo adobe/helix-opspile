@@ -151,6 +151,30 @@ async function moveFolder(bucket, from, to, budget) {
 }
 
 /**
+ * The message and thread vectors (CONTENT) carry the team and org a thread was filed under,
+ * and search asks for a team's: those of re-filed threads are made again, under the new ones.
+ * A thread that is no longer a channel thread (`kind`, now an alert or ignored) loses them:
+ * its hashes stay, so the job knows which to take away.
+ */
+async function revectorize(env, threads, kind) {
+  if (!threads.length || !env.CONTENT || !env.NORMALIZE.sendBatch) {
+    return;
+  }
+  const keys = JSON.stringify(threads);
+  if (kind === 'channel') {
+    await env.DB.prepare(`UPDATE messages SET embedded = NULL
+      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
+    await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL
+      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
+  }
+  for (let i = 0; i < threads.length; i += 100) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.sendBatch(threads.slice(i, i + 100)
+      .map((t) => ({ body: { vectorize: t } })));
+  }
+}
+
+/**
  * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]] } }`: files
  * the channel's threads where the rules say now. Runs again for the threads it did not get
  * to, so a large channel moves in several jobs.
@@ -167,10 +191,12 @@ export async function refile(env, job) {
   }
   const cls = classify(await loadRules(env), toChannel(row, job.source, job.channelId));
   await ensureChannelKnowledgeBases(env, cls);
-  const { results: current } = await env.DB.prepare(`SELECT thread, path FROM threads
+  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind FROM threads
     WHERE source = ? AND tenant = ? AND channel_id = ?`)
     .bind(job.source, job.tenant, job.channelId).all();
+  const rowOf = new Map((current || []).map((r) => [r.thread, r]));
   const pathOf = new Map((current || []).map((r) => [r.thread, r.path]));
+  const refiled = [];
   let budget = MAX_OBJECTS;
   let threads = 0;
   let objects = 0;
@@ -196,10 +222,15 @@ export async function refile(env, job) {
       await env.DB.prepare('UPDATE threads SET org = ?, team = ?, kind = ?, path = ? WHERE thread = ?')
         .bind(cls.org, cls.team, cls.kind, to || folder, thread).run();
       threads += 1;
+      const was = rowOf.get(thread);
+      if (was && (was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind)) {
+        refiled.push(thread);
+      }
     } else {
       left.push([thread, folder]);
     }
   }
+  await revectorize(env, refiled, cls.kind);
   if (left.length) {
     await env.NORMALIZE.send({ refile: { ...job, threads: left } });
   }

@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { inbox, thread } from '../src/api.js';
+import { inbox, searchInbox, thread } from '../src/api.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
@@ -63,6 +63,15 @@ describe('inbox queries', () => {
     const threadScans = (await plans((env) => inbox(env, me, 'helix')))
       .filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d)));
     assert.deepEqual(threadScans, []);
+  });
+
+  it('search threads by team, and identities and messages by index, when searching', async () => {
+    const asked = await plans((env) => searchInbox(env, me, 'helix', 'acme'));
+    // The words (titles, facts), then the entries found, as the inbox has them.
+    assert.ok(asked.some((p) => p.sql.startsWith('SELECT f.thread')));
+    assert.ok(asked.some((p) => p.sql.startsWith('SELECT COALESCE(logical_thread, thread) AS g')));
+    assert.deepEqual(scans(asked), []);
+    assert.deepEqual(asked.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
   });
 
   it('search identities, messages and threads by index when loading the personal view', async () => {

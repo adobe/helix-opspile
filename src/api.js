@@ -38,6 +38,7 @@ import {
 } from './shares.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
+import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
 
 /**
@@ -279,10 +280,12 @@ export function fold(threads) {
 /**
  * A page of a team's inbox, or with `personal` (and no team) of the viewer's personal view.
  * `before` is the `next` cursor of the previous page (`<latest>|<group>`): the groups whose
- * latest activity comes after it in the newest-first order.
+ * latest activity comes after it in the newest-first order. With `groups` (inbox entry keys,
+ * as search finds them), those entries of the inbox instead, and no page: a key that is not
+ * in it is left out.
  */
 export async function inbox(env, me, team, {
-  before = null, limit = INBOX_PAGE, personal = false,
+  before = null, limit = INBOX_PAGE, personal = false, groups: only = null,
 } = {}) {
   const scope = inboxTeams(me, team, personal);
   const size = Math.max(1, Math.min(MAX_PAGE, Number(limit) || INBOX_PAGE));
@@ -308,12 +311,15 @@ export async function inbox(env, me, team, {
       -- are not shown: no person posted, and no message has an author account (bots do).
       AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
         WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
+      ${only ? 'AND COALESCE(logical_thread, thread) IN (SELECT value FROM json_each(?6))' : ''}
     GROUP BY g
     HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
     ORDER BY latest DESC, g DESC LIMIT ?4`)
-    .bind(...[scope.value, beforeAt, beforeG, size + 1, personal ? me.id : []].flat()).all();
+    .bind(...[scope.value, only ? null : beforeAt, beforeG, only ? only.length + 1 : size + 1]
+      .concat(personal || only ? [personal ? me.id : null] : [])
+      .concat(only ? [JSON.stringify(only)] : [])).all();
   // One more than the page says whether there is another.
-  const more = (groups || []).length > size;
+  const more = !only && (groups || []).length > size;
   if (more) {
     groups.pop();
   }
@@ -457,6 +463,41 @@ export async function inbox(env, me, team, {
       const draft = draftSummary(draftOf(drafts, [t.thread, ...t.members.map((m) => m.thread)]));
       return { ...sized, waiting_on: waitingOn(sized), draft };
     }),
+  };
+}
+
+/**
+ * Search over team `team`'s inbox, or with `personal` (and no team) the viewer's personal view
+ * (src/search.js): the entries about `q` the viewer sees, as the inbox shapes them, and `hits`,
+ * best first, saying why each matched and which message did.
+ */
+export async function searchInbox(env, me, team, q, { limit, personal = false } = {}) {
+  const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || 30));
+  const teams = personal ? (me.teams || []).map((t) => t.slug) : [team];
+  const found = await find(env, teams, q, { limit: n });
+  if (!found.hits.length) {
+    return {
+      team: personal ? null : team,
+      personal,
+      q: found.q,
+      words: found.words,
+      hits: [],
+      threads: [],
+      page: { next: null },
+    };
+  }
+  const data = await inbox(env, me, team, {
+    personal, groups: found.hits.map((h) => h.thread),
+  });
+  const shown = new Set(data.threads.map((t) => t.thread));
+  const hits = found.hits.filter((h) => shown.has(h.thread)).slice(0, n);
+  const kept = new Set(hits.map((h) => h.thread));
+  return {
+    ...data,
+    q: found.q,
+    words: found.words,
+    threads: data.threads.filter((t) => kept.has(t.thread)),
+    hits: await withSnippets(env, hits, found.words),
   };
 }
 
@@ -762,6 +803,19 @@ async function route(request, env, url, { viewer: injected } = {}, timing = null
     }
     return json(await inbox(env, me, team, {
       before: url.searchParams.get('before'), limit: url.searchParams.get('limit'),
+    }));
+  }
+  if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
+    return json(await searchInbox(env, me, null, url.searchParams.get('q'), {
+      personal: true, limit: url.searchParams.get('limit'),
+    }));
+  }
+  if (url.pathname === '/api/search') {
+    if (!inTeam(me, team)) {
+      return json({ error: 'not a member of this team' }, 403);
+    }
+    return json(await searchInbox(env, me, team, url.searchParams.get('q'), {
+      limit: url.searchParams.get('limit'),
     }));
   }
   if (url.pathname === '/api/thread') {
