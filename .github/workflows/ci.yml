@@ -45,6 +45,8 @@ jobs:
       ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
       ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+      # The app joins every public channel of these workspaces (optional; off while empty).
+      SLACK_JOIN_TEAMS: ${{ secrets.SLACK_JOIN_TEAMS }}
       # Thread agents (optional; off while AGENT_MODEL is empty).
       AGENT_MODEL: ${{ secrets.AGENT_MODEL }}
       AGENT_CHANNELS: ${{ secrets.AGENT_CHANNELS }}

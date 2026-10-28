@@ -82,6 +82,7 @@ Nothing below is committed; set it on the Worker.
 | `ACCESS_API_TOKEN` | secret | API token with *Access: Apps and Policies Write*, for that sync. Required when `ACCESS_APP_ID` is set |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
+| `SLACK_JOIN_TEAMS` | var | Optional, comma-separated Slack workspace (team) ids: the app joins every public channel there by itself, a new one when it is created and the rest on the cron (40 a run). Needs the bot scope `channels:join` and the `channel_created` and `channel_unarchive` events. Private channels still need an invite; channels the rules mark `ignore` are left out |
 | `MS_TENANT_ID` | var | Directory (tenant) id |
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `RETIRED_ORIGINS` | var | Optional, comma-separated origins the Worker answered on before `PUBLIC_ORIGIN`: pages opened there (`/`, `/inbox…`, the OAuth consent and connect pages) get a 301 to `PUBLIC_ORIGIN`; Slack events, Graph notifications, `/mcp` and the API still answer; the cron deletes Graph subscriptions that still point there |
