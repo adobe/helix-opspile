@@ -15,6 +15,7 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { api, inbox } from '../src/api.js';
+import { render } from '../src/channels.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -271,6 +272,35 @@ describe('shared drafts', () => {
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), { ok: true, platform: 'slack', id: '1.9' });
       assert.equal(await draftOf(e, ADA), null);
+    });
+  });
+});
+
+describe('own messages', () => {
+  /** A reply in ROOT's folder, by `person` (a known person's id, or null). */
+  const reply = async (e, id, person) => {
+    const at = `2026-10-21T10:0${id}:00Z`;
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff,
+      counted, person) VALUES ('slack', 'E1', 'C1', ?, ?, ?, 1, 1, ?)`).run(`1.${id}`, ROOT, at, person);
+    await e.CHANNELS.put(`p/1.1/1.${id}.md`, render({
+      source: 'slack', thread: ROOT, id: `1.${id}`, at,
+    }, `reply ${id}`));
+  };
+  const mine = async (e, who) => {
+    const { messages } = await (await call(e, who, 'GET', `/api/thread?thread=${ROOT}`)).json();
+    return Object.fromEntries(messages.map((m) => [m.id, m.mine]));
+  };
+
+  it('says which messages the viewer posted, also when an admin views as them', async () => {
+    const e = env();
+    await reply(e, 2, 1); // Ada
+    await reply(e, 3, 2); // Bo
+    await reply(e, 4, null); // nobody known
+    assert.deepEqual(await mine(e, ADA), { 1.2: true, 1.3: false, 1.4: false });
+    assert.deepEqual(await mine(e, BO), { 1.2: false, 1.3: true, 1.4: false });
+    // "View as" Bo: `viewer()` makes Bo the viewer, read-only.
+    assert.deepEqual(await mine(e, { ...BO, readonly: true, viewer: { id: 1, name: 'Ada' } }), {
+      1.2: false, 1.3: true, 1.4: false,
     });
   });
 });
