@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { transform } from 'esbuild';
+import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
@@ -193,6 +194,45 @@ describe('inbox page', () => {
     assert.match(sendState({ id: 'x', status: 'sending' }), /role="progressbar"/);
     assert.match(sendState({ id: 'x', status: 'failed', error: 'Slack: is_archived' }), /Not sent: Slack: is_archived[\s\S]*data-retry="x"/);
     assert.equal(sendState({ id: 'x', status: 'delivered' }), '');
+  });
+
+  it('refuses the attachments the Worker would refuse, before they are sent', () => {
+    const { attachProblem, withoutAttachments } = piece('const MB = 1024 * 1024;', '/** The 📎 button, paste', 'attachProblem, withoutAttachments', {
+      state: { me: {} }, esc: (x) => String(x), toast: () => {}, $: () => null,
+    });
+    const MB = 1024 * 1024;
+    const f = (name, type, size) => ({ name, type, size });
+    const rules = [
+      personRule('slack', 'chat:write'), personRule('slack', 'files:write'), personRule('teams', ''),
+      personRule('teams', 'Files.ReadWrite.All'), appRule('teams'), appRule('discord'),
+    ];
+    const sets = [
+      [f('a.png', 'image/png', 1000)],
+      [f('a.pdf', 'application/pdf', 1000)],
+      [f('a.webp', 'image/webp', 1000)],
+      [f('big.png', 'image/png', 4 * MB)],
+      [f('a.png', 'image/png', 9 * MB), f('b.png', 'image/png', 9 * MB)],
+      [f('huge.mov', 'video/quicktime', 30 * MB)],
+      Array(11).fill(f('a.png', 'image/png', 10)),
+    ];
+    for (const rule of rules) {
+      for (const files of sets) {
+        const server = checkFiles(rule, files);
+        const page = attachProblem(rule, files);
+        assert.equal(Boolean(page), Boolean(server), `${JSON.stringify(rule)} ${files.map((x) => x.name)}`);
+        if (server) {
+          assert.equal(page.toLowerCase().replace(/\.$/, ''), server.toLowerCase());
+        }
+      }
+    }
+    // A reply that arrived with its files matches the one being sent, by its text.
+    assert.equal(withoutAttachments('See this\n\nAttachments:\n![a.png](https://x/a.png)').trim(), 'See this');
+    assert.equal(withoutAttachments('\n\nAttachments:\n- [a.txt](https://x/a.txt)').trim(), '');
+    assert.equal(withoutAttachments('Two\n\nAttachments:\n![a.png](https://x/a.png "10x10")\n![b.png](https://x/b.png)\n\n- [c.txt](https://x/c.txt)').trim(), 'Two');
+    // A heading of the person's own is text, not a list of files.
+    const own = 'Review note\n\nAttachments:\nThe logs are in the ticket.';
+    assert.equal(withoutAttachments(own), own);
+    assert.equal(withoutAttachments('No files here'), 'No files here');
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {

@@ -82,7 +82,7 @@ export async function installInTeam(env, groupId, { graph } = {}) {
   throw new Error(`install ${res.status} ${(data.error && data.error.code) || ''}`.trim());
 }
 
-async function send(env, conversation, text) {
+async function send(env, conversation, text, attachments = []) {
   const base = String(env.TEAMS_BOT_SERVICE_URL || SERVICE_URL).replace(/\/*$/, '/');
   return fetch(`${base}v3/conversations/${encodeURIComponent(conversation)}/activities`, {
     method: 'POST',
@@ -90,7 +90,9 @@ async function send(env, conversation, text) {
       authorization: `Bearer ${await botToken(env)}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ type: 'message', text, textFormat: 'markdown' }),
+    body: JSON.stringify({
+      type: 'message', text, textFormat: 'markdown', ...(attachments.length ? { attachments } : {}),
+    }),
   });
 }
 
@@ -110,22 +112,23 @@ const wait = (ms) => new Promise((r) => {
 
 /**
  * Replies in a Teams channel thread as the opspile bot: `{ ok, platform, id }` (the id is the
- * Teams message id), or `{ error }`. `t` is the thread row, with its team's `group_id`.
+ * Teams message id), or `{ error }`. `t` is the thread row, with its team's `group_id`;
+ * `attachments` are Bot Framework attachments (inline images, src/attach.js).
  */
-export async function postToTeams(env, t, text, { sleep = wait } = {}) {
+export async function postToTeams(env, t, text, { sleep = wait, attachments = [] } = {}) {
   if (!teamsBotEnabled(env)) {
     return { error: 'the opspile Teams bot is not set up here' };
   }
   const conversation = `${t.channel_id};messageid=${t.root_id}`;
   try {
-    let res = await send(env, conversation, text);
+    let res = await send(env, conversation, text, attachments);
     if (await notInTeam(res)) {
       if (!t.group_id) {
         return { error: 'the Teams team of this channel is not known yet' };
       }
       await installInTeam(env, t.group_id);
       await sleep(INSTALL_SETTLE_MS);
-      res = await send(env, conversation, text);
+      res = await send(env, conversation, text, attachments);
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

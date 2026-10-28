@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { botImages, discordForm, slackUpload } from '../attach.js';
 import { discordApi, discordEnabled } from '../discord.js';
 import { slackText, target as replyTarget } from '../post.js';
 import { editInTeams, postToTeams } from '../teamsbot.js';
@@ -26,6 +27,9 @@ import { editInTeams, postToTeams } from '../teamsbot.js';
  * - Teams: the opspile bot (src/teamsbot.js), a Bot Framework bot, in the channel thread;
  *   Microsoft Graph lets no app post to a channel.
  *
+ * A person posting as the app (src/postapp.js) can attach files: Slack `files:write` uploads
+ * with the bot token, Discord multipart, and on Teams inline images (src/attach.js).
+ *
  * The reply then arrives like any other message, through the platform's events.
  */
 
@@ -33,14 +37,16 @@ export const MAX_POST = { slack: 8000, discord: 2000, teams: 8000 };
 
 /**
  * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`.
+ * `options.files` (src/attach.js, checked against `appRule` already) go in the same message.
  */
 export async function postAsApp(env, key, text, options = {}) {
+  const { files = [], ...rest } = options;
   const body = String(text || '').trim();
   const t = key && await replyTarget(env, key);
   if (!t) {
     return { error: 'the thread is not known' };
   }
-  if (!body) {
+  if (!body && !files.length) {
     return { error: 'write something' };
   }
   if (MAX_POST[t.source] && body.length > MAX_POST[t.source]) {
@@ -49,6 +55,20 @@ export async function postAsApp(env, key, text, options = {}) {
   if (t.source === 'slack') {
     if (!env.SLACK_BOT_TOKEN) {
       return { error: 'the opspile Slack app is not set up here' };
+    }
+    if (files.length) {
+      // The text as the files' message, in mrkdwn: files.completeUploadExternal takes no blocks.
+      const up = await slackUpload(env.SLACK_BOT_TOKEN, {
+        channel: t.channel_id, threadTs: t.root_id, comment: body && slackText(body),
+      }, files);
+      if (up.error) {
+        return {
+          error: up.error === 'missing_scope'
+            ? 'Slack: the opspile Slack app cannot upload files yet (it needs the bot scope files:write)'
+            : `Slack: ${up.error}`,
+        };
+      }
+      return { ok: true, platform: 'slack', id: null };
     }
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
@@ -76,19 +96,21 @@ export async function postAsApp(env, key, text, options = {}) {
       return { error: 'the opspile Discord bot is not set up here' };
     }
     const message = { content: body, allowed_mentions: { parse: [] } };
+    // With files, the message goes as multipart: `payload_json` and `files[n]`.
+    const request = (m) => (files.length ? { form: discordForm(m, files) } : { body: m });
     try {
       // A Discord thread's id is that of the message it was started from, the conversation's
       // root; without such a thread, the root is a message of the channel.
       let sent = await discordApi(env, `/channels/${t.root_id}/messages`, {
-        method: 'POST', body: message, allow: [404],
+        method: 'POST', ...request(message), allow: [404],
       });
       if (!sent) {
         sent = await discordApi(env, `/channels/${t.channel_id}/messages`, {
           method: 'POST',
-          body: {
+          ...request({
             ...message,
             message_reference: { message_id: t.root_id, fail_if_not_exists: false },
-          },
+          }),
         });
       }
       return { ok: true, platform: 'discord', id: sent.id };
@@ -97,7 +119,7 @@ export async function postAsApp(env, key, text, options = {}) {
     }
   }
   if (t.source === 'teams') {
-    return postToTeams(env, t, body, options);
+    return postToTeams(env, t, body, { ...rest, attachments: botImages(files) });
   }
   return { error: `opspile cannot post to ${t.source}` };
 }

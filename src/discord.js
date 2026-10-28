@@ -95,7 +95,9 @@ const sleep = (ms) => new Promise((resolve) => {
  * times; any other error throws with the status and Discord's error code, never the body.
  * `allow` lists statuses that are answered with null instead (e.g. 404 for a lookup).
  */
-export async function discordApi(env, path, { method = 'GET', body, allow = [] } = {}) {
+export async function discordApi(env, path, {
+  method = 'GET', body, form, allow = [],
+} = {}) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     // eslint-disable-next-line no-await-in-loop
     const res = await fetch(`${API}${path}`, {
@@ -105,7 +107,8 @@ export async function discordApi(env, path, { method = 'GET', body, allow = [] }
         'user-agent': 'DiscordBot (https://github.com/adobe/helix-opspile, 1)',
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      // `form`: multipart (files), which fetch serializes anew for each attempt.
+      body: form || (body ? JSON.stringify(body) : undefined),
     });
     if (res.status === 429) {
       // eslint-disable-next-line no-await-in-loop

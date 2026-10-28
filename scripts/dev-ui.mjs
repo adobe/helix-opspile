@@ -55,6 +55,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  appRule, checkFiles, cleanName, personRule,
+} from '../src/attach.js';
 import { parse } from '../src/channels.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
@@ -526,6 +529,28 @@ async function readJson(req) {
   }
 }
 
+/** A post's body: JSON, or multipart with `payload` and `files`, as the Worker reads it. */
+async function readPost(req) {
+  const type = req.headers['content-type'] || '';
+  if (!/^multipart\/form-data/i.test(type)) {
+    return { body: await readJson(req), files: [] };
+  }
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  const form = await new Request('http://localhost/', {
+    method: 'POST', headers: { 'content-type': type }, body: Buffer.concat(chunks),
+  }).formData();
+  const files = await Promise.all(form.getAll('files').filter((f) => typeof f !== 'string').map(async (f) => {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    return {
+      name: cleanName(f.name), type: f.type || 'application/octet-stream', size: bytes.length, bytes,
+    };
+  }));
+  return { body: JSON.parse(String(form.get('payload') || '{}')), files };
+}
+
 /** Forwards a GET to production with the session cookie. Nothing is written there. */
 async function proxyApi(req, res, url, b) {
   if (req.method !== 'GET') {
@@ -676,6 +701,13 @@ async function api(req, res, url) {
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
       edit: { slack: true, teams: true },
+      // Slack takes any file; Teams only images, as before the Microsoft account is connected
+      // again with access to the channel files, so the explanation can be seen too.
+      attach: {
+        slack: personRule('slack', 'chat:write,files:write'),
+        teams: personRule('teams', 'ChannelMessage.Send'),
+        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+      },
       settings,
     });
   }
@@ -843,9 +875,11 @@ async function api(req, res, url) {
   if ((url.pathname === '/api/post' || url.pathname === '/api/post/app') && req.method === 'POST') {
     // /api/post/app: as the opspile app (src/postapp.js), where the channel lets it.
     const app = url.pathname === '/api/post/app';
+    // JSON, or multipart with files, as src/attach.js reads it.
+    const { body: posted, files } = await readPost(req);
     const {
       thread: key, text: reply, mentions = [], draft: base,
-    } = await readJson(req);
+    } = posted;
     if (app && !store.threads.get(key)?.ch.appPosting) {
       return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
     }
@@ -856,8 +890,18 @@ async function api(req, res, url) {
       console.log(`post mentions ${JSON.stringify(mentions)}`);
     }
     const entry = store.threads.get(key);
-    if (!entry || !inTeam(entry.row.team) || !String(reply || '').trim()) {
+    if (!entry || !inTeam(entry.row.team) || (!String(reply || '').trim() && !files.length)) {
       return json(res, { error: 'not found' }, 404);
+    }
+    const rule = app ? appRule(entry.row.source)
+      : personRule(entry.row.source, entry.row.source === 'slack' ? 'files:write' : '');
+    const refused = checkFiles(rule, files);
+    if (refused) {
+      const again = rule.reconnect ? { reconnect: rule.reconnect, files: true } : {};
+      return json(res, { error: refused, ...again }, 400);
+    }
+    if (files.length) {
+      console.log(`post with ${files.length} file(s): ${files.map((f) => `${f.name} (${f.size} bytes)`).join(', ')}`);
     }
     if (!app) {
       await new Promise((r) => {
@@ -881,8 +925,17 @@ async function api(req, res, url) {
       ? sent.replace(/🤖/g, ':robot_face:').replace(/🥁/g, ':drum_with_drumsticks:')
         .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1_$2_')
       : sent;
+    // The files as the platform's message lists them, served by this preview.
+    const attached = files.map((f) => {
+      const href = store.upload(f.name, f.type, f.bytes);
+      return /^image\//.test(f.type) ? `![${f.name}](${href})` : `- [${f.name}](${href})`;
+    });
+    const listed = attached.length ? `\n\nAttachments:\n${[
+      attached.filter((a) => a.startsWith('!')).join('\n'),
+      attached.filter((a) => a.startsWith('-')).join('\n'),
+    ].filter(Boolean).join('\n\n')}` : '';
     setTimeout(() => {
-      store.post(key, app ? 'app' : 'dana', arrived, at.toISOString(), id);
+      store.post(key, app ? 'app' : 'dana', `${arrived}${listed}`.trim(), at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, app ? 1200 : ARRIVE_MS);
     return json(res, {
@@ -1368,6 +1421,13 @@ const server = createServer(async (req, res) => {
       back.searchParams.set('state', url.searchParams.get('state') || '');
       back.searchParams.set('iss', 'https://wiki.mcp.example');
       res.writeHead(302, { location: back.href }).end();
+      return;
+    }
+    // Files attached to messages: the fixtures' and what was sent with a reply.
+    const upload = /^\/__dev\/files\/([\w-]+)/.exec(url.pathname);
+    if (upload && store.uploads.has(upload[1])) {
+      const f = store.uploads.get(upload[1]);
+      res.writeHead(200, { 'content-type': f.type, 'x-content-type-options': 'nosniff' }).end(Buffer.from(f.bytes));
       return;
     }
     if (url.pathname === '/__dev/reload') {

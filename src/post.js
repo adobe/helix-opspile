@@ -10,6 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
+import {
+  FILES_SCOPE, checkFiles, hasScope, personRule, slackUpload, teamsAttachments,
+} from './attach.js';
 import { json } from './http.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { rankMentions } from './mention-match.js';
@@ -37,8 +40,15 @@ const TEAMS_SCOPE = 'offline_access https://graph.microsoft.com/ChannelMessage.S
 // Editing one's own Teams messages needs `ChannelMessage.ReadWrite`, which takes the tenant's
 // admin consent; it is asked for once TEAMS_EDITS says the tenant has given it.
 export const TEAMS_EDIT_SCOPE = 'ChannelMessage.ReadWrite';
-const teamsScope = (env) => (env.TEAMS_EDITS
-  ? `${TEAMS_SCOPE} https://graph.microsoft.com/${TEAMS_EDIT_SCOPE}` : TEAMS_SCOPE);
+// Attaching files asks for more, once, when the person first wants to (`?files=1`): Slack's
+// `files:write`, and on Microsoft access to the channels' SharePoint files (images go inline
+// without it). Tokens keep what was granted; a Microsoft token is refreshed with it.
+const slackScope = (files) => (files ? `${SLACK_SCOPE},${FILES_SCOPE.slack}` : SLACK_SCOPE);
+const teamsScope = (env, files = false) => [
+  TEAMS_SCOPE,
+  ...(env.TEAMS_EDITS ? [`https://graph.microsoft.com/${TEAMS_EDIT_SCOPE}`] : []),
+  ...(files ? [`https://graph.microsoft.com/${FILES_SCOPE.teams}`] : []),
+].join(' ');
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_TEXT = 8000;
 
@@ -81,20 +91,30 @@ async function hmac(env, data) {
   return b64u(await crypto.subtle.sign('HMAC', key, enc.encode(data)));
 }
 
-/** OAuth state: who started the sign-in, for which platform, until when. Signed. */
-export async function makeState(env, person, platform, now = Date.now()) {
-  const claims = { p: person, pl: platform, exp: now + STATE_TTL_MS };
+/**
+ * OAuth state: who started the sign-in, for which platform, until when (and `f`: with file
+ * access). Signed.
+ */
+export async function makeState(env, person, platform, now = Date.now(), extra = {}) {
+  const claims = {
+    p: person, pl: platform, exp: now + STATE_TTL_MS, ...extra,
+  };
   const body = b64u(enc.encode(JSON.stringify(claims)));
   return `${body}.${await hmac(env, body)}`;
 }
 
-export async function checkState(env, state, person, platform, now = Date.now()) {
+/** The claims of a state that is signed, the person's, for `platform` and fresh; else null. */
+export async function stateClaims(env, state, person, platform, now = Date.now()) {
   const [body, sig] = String(state || '').split('.');
   if (!body || !sig || sig !== await hmac(env, body)) {
-    return false;
+    return null;
   }
   const s = JSON.parse(new TextDecoder().decode(unb64u(body)));
-  return s.p === person && s.pl === platform && s.exp > now;
+  return s.p === person && s.pl === platform && s.exp > now ? s : null;
+}
+
+export async function checkState(env, state, person, platform, now = Date.now()) {
+  return Boolean(await stateClaims(env, state, person, platform, now));
 }
 
 const origin = (env) => String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
@@ -157,6 +177,18 @@ export async function editable(env, person) {
   return { slack: by.has('slack'), teams, discord: false };
 }
 
+/**
+ * What the person's replies may carry on each platform they connected (src/attach.js): the
+ * rule for their token's scopes, e.g. none on Slack until they connect again with
+ * `files:write`.
+ */
+export async function attachable(env, person) {
+  const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
+    .bind(person).all();
+  return Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
+    .map((r) => [r.platform, personRule(r.platform, r.scope)]));
+}
+
 export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
@@ -164,15 +196,18 @@ export async function connections(env, person) {
   return { slack: set.has('slack'), teams: set.has('teams'), discord: set.has('discord') };
 }
 
-/** GET /api/auth/<platform>/start: off to the platform's consent screen. */
-export async function startAuth(env, me, platform) {
-  const state = await makeState(env, me.id, platform);
+/**
+ * GET /api/auth/<platform>/start: off to the platform's consent screen; `files` asks for file
+ * uploads as well.
+ */
+export async function startAuth(env, me, platform, { files = false } = {}) {
+  const state = await makeState(env, me.id, platform, Date.now(), files ? { f: 1 } : {});
   let url;
   if (platform === 'slack') {
     url = new URL('https://slack.com/oauth/v2/authorize');
     url.search = new URLSearchParams({
       client_id: env.SLACK_CLIENT_ID,
-      user_scope: SLACK_SCOPE,
+      user_scope: slackScope(files),
       redirect_uri: redirectUri(env, 'slack'),
       state,
     });
@@ -193,7 +228,7 @@ export async function startAuth(env, me, platform) {
       response_type: 'code',
       response_mode: 'query',
       redirect_uri: redirectUri(env, 'teams'),
-      scope: teamsScope(env),
+      scope: teamsScope(env, files),
       login_hint: me.email,
       state,
     });
@@ -251,10 +286,10 @@ async function msToken(env, params, scope = teamsScope(env)) {
   return data;
 }
 
-async function teamsCallback(env, me, code) {
+async function teamsCallback(env, me, code, claims) {
   const data = await msToken(env, {
     grant_type: 'authorization_code', code, redirect_uri: redirectUri(env, 'teams'),
-  });
+  }, teamsScope(env, Boolean(claims && claims.f)));
   const select = 'id,mail,userPrincipalName,otherMails';
   const meRes = await fetch(`https://graph.microsoft.com/v1.0/me?$select=${select}`, {
     headers: { authorization: `Bearer ${data.access_token}` },
@@ -339,11 +374,12 @@ export async function finishAuth(env, me, platform, url) {
     if (url.searchParams.get('error')) {
       throw new Error(url.searchParams.get('error_description') || url.searchParams.get('error'));
     }
-    if (!await checkState(env, url.searchParams.get('state'), me.id, platform)) {
+    const claims = await stateClaims(env, url.searchParams.get('state'), me.id, platform);
+    if (!claims) {
       throw new Error('sign-in expired, please try again');
     }
     const code = url.searchParams.get('code');
-    await CALLBACK[platform](env, me, code);
+    await CALLBACK[platform](env, me, code, claims);
     back.searchParams.set('connected', platform);
   } catch (e) {
     back.searchParams.set('connect_error', e.message.slice(0, 200));
@@ -368,14 +404,25 @@ export async function personalToken(env, person, platform) {
     return null;
   }
   const refresh = { grant_type: 'refresh_token', refresh_token: await unseal(env, row.refresh_token) };
-  // Asking for the edit scope on refresh upgrades a token from before it; where the tenant has
-  // not consented to it after all, the token is refreshed as it was.
-  const data = await msToken(env, refresh).catch((e) => {
-    if (!env.TEAMS_EDITS) {
-      throw e;
+  // Asking for the edit scope on refresh upgrades a token from before it; a token with access
+  // to the channel files keeps it. Where the tenant (or the person) has not consented to
+  // either after all, the token is refreshed without it, so replies keep working.
+  const files = hasScope(row.scope, FILES_SCOPE.teams);
+  const tries = [...new Set([
+    teamsScope(env, files), teamsScope({}, files), teamsScope(env), TEAMS_SCOPE,
+  ])];
+  let data;
+  for (const [i, scope] of tries.entries()) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      data = await msToken(env, refresh, scope);
+      break;
+    } catch (e) {
+      if (i === tries.length - 1) {
+        throw e;
+      }
     }
-    return msToken(env, refresh, TEAMS_SCOPE);
-  });
+  }
   await saveToken(env, person, platform, {
     userId: row.user_id,
     access: data.access_token,
@@ -661,17 +708,21 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
   return json({ platform: t.source, people: [...people, ...bots] });
 }
 
+/** Slack errors that a new connection (with file access: `files`) would fix. */
+const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'];
+
 /**
- * POST /api/post `{ thread, text, mentions? }`: replies in the thread as the signed-in
- * person. `mentions` are account ids from /api/mentionable; each `@Name` of one of them in
- * the text becomes a real platform mention, so the person is notified. Emoji `:names:` go
- * as the platform knows them (src/shortcodes.js); `text` in the answer is the reply as sent.
- * The reply then arrives like any other message, through the platform's events.
+ * POST /api/post `{ thread, text, mentions? }`, and `files` (src/attach.js): replies in the
+ * thread as the signed-in person. `mentions` are account ids from /api/mentionable; each
+ * `@Name` of one of them in the text becomes a real platform mention, so the person is
+ * notified. Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the
+ * answer is the reply as sent. Files go with the text, in the same message. The reply then
+ * arrives like any other message, through the platform's events.
  */
-export async function post(env, me, request, inTeam) {
+export async function post(env, me, request, inTeam, files = []) {
   const { thread: key, text, mentions: ids } = request || {};
   const body = String(text || '').trim();
-  if (!body || body.length > MAX_TEXT) {
+  if ((!body && !files.length) || body.length > MAX_TEXT) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
   const t = key && await target(env, key);
@@ -684,15 +735,46 @@ export async function post(env, me, request, inTeam) {
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: opspile cannot post there as you' }, 409);
   }
-  const { token } = await personalToken(env, me.id, t.source) || {};
+  const { token, scope } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
+  }
+  const rule = personRule(t.source, scope);
+  const refused = checkFiles(rule, files);
+  if (refused) {
+    // Connecting again with file access would let it through: say so.
+    const again = Boolean(rule.reconnect)
+      && !checkFiles(personRule(t.source, FILES_SCOPE[t.source]), files);
+    return json({
+      error: refused, ...(again ? { reconnect: t.source, files: true } : {}),
+    }, again ? 409 : 400);
   }
   const mentions = await knownMentions(env, t, ids);
   // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
   const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
   if (t.source === 'slack') {
+    if (files.length) {
+      const up = await slackUpload(token, {
+        channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
+      }, files);
+      if (up.error === 'missing_scope') {
+        // A token from before files:write, or one it was taken from.
+        return json({
+          error: 'Slack: opspile needs your permission to upload files: connect your Slack account again',
+          reconnect: 'slack',
+          files: true,
+        }, 409);
+      }
+      if (up.error) {
+        const connect = SLACK_RECONNECT.includes(up.error) ? 'slack' : undefined;
+        return json({ error: `Slack: ${up.error}`, connect }, 502);
+      }
+      // Slack names the files, not the message, which arrives through the events.
+      return json({
+        ok: true, platform: 'slack', id: null, files: up.files, text: sent,
+      });
+    }
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
@@ -702,7 +784,7 @@ export async function post(env, me, request, inTeam) {
     });
     const data = await res.json();
     if (!data.ok) {
-      const reconnect = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'].includes(data.error);
+      const reconnect = SLACK_RECONNECT.includes(data.error);
       return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
     }
     return json({
@@ -712,19 +794,35 @@ export async function post(env, me, request, inTeam) {
   if (!t.group_id) {
     return json({ error: 'the Teams team of this channel is not known yet' }, 409);
   }
+  const message = teamsMessage(sent, mentions);
+  if (files.length) {
+    const att = await teamsAttachments(token, t, files, rule);
+    if (att.error) {
+      return json({
+        error: att.error, ...(att.status === 409 ? { reconnect: 'teams', files: true } : {}),
+      }, att.status || 502);
+    }
+    message.body.content = [message.body.content, att.html].filter(Boolean).join('<br>');
+    if (att.hostedContents.length) {
+      message.hostedContents = att.hostedContents;
+    }
+    if (att.attachments.length) {
+      message.attachments = att.attachments;
+    }
+  }
   const path = `/teams/${encodeURIComponent(t.group_id)}/channels/${encodeURIComponent(t.channel_id)}`
     + `/messages/${encodeURIComponent(t.root_id)}/replies`;
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify(teamsMessage(sent, mentions)),
+    body: JSON.stringify(message),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     return json({
       error: `Teams: ${(data.error && data.error.code) || res.status}`,
       connect: res.status === 401 ? 'teams' : undefined,
-    }, 502);
+    }, res.status === 413 ? 413 : 502);
   }
   return json({
     ok: true, platform: 'teams', id: data.id, text: sent,

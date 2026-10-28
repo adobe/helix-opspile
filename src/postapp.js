@@ -14,6 +14,7 @@ import {
   onPlatform, switchedOn, toolProblem, toolSwitches,
 } from './agent/agenttools.js';
 import { postAsApp } from './agent/posting.js';
+import { appRule, checkFiles } from './attach.js';
 import { entryOf } from './drafts.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
@@ -73,15 +74,15 @@ export async function recordAppPost(env, me, t, id) {
 }
 
 /**
- * POST /api/post/app `{ thread, text }`: posts `text` in the thread as the opspile app, for a
- * staff member of one of the thread's teams, with its emoji `:names:` as the platform knows
- * them (`text` in the answer). The reply arrives like any other message, through the
- * platform's events, by the app.
+ * POST /api/post/app `{ thread, text }`, and `files` (src/attach.js, what the platform's bot
+ * can attach): posts `text` in the thread as the opspile app, for a staff member of one of the
+ * thread's teams, with its emoji `:names:` as the platform knows them (`text` in the answer).
+ * The reply arrives like any other message, through the platform's events, by the app.
  */
-export async function postApp(env, me, request, inTeam) {
+export async function postApp(env, me, request, inTeam, files = []) {
   const { thread: key, text } = request || {};
   const body = String(text || '').trim();
-  if (!body) {
+  if (!body && !files.length) {
     return json({ error: 'write something' }, 400);
   }
   const check = await appPostCheck(env, key);
@@ -94,10 +95,14 @@ export async function postApp(env, me, request, inTeam) {
   if (check.problem) {
     return json({ error: check.problem }, check.status);
   }
+  const refused = checkFiles(appRule(check.target.source), files);
+  if (refused) {
+    return json({ error: refused }, 400);
+  }
   const { text: sent } = await resolveShortcodes(env, body, {
     source: check.target.source, tenant: check.target.tenant,
   });
-  const res = await postAsApp(env, check.entry.key, sent);
+  const res = await postAsApp(env, check.entry.key, sent, { files });
   if (res.error) {
     return json({ error: res.error }, /^too long/.test(res.error) ? 400 : 502);
   }
