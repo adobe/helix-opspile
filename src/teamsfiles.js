@@ -239,7 +239,6 @@ export async function withTeamsFiles(env, key, payload, { graph } = {}) {
   for (const a of refs) {
     const url = canonicalUrl(a.contentUrl);
     // eslint-disable-next-line no-await-in-loop
-    // eslint-disable-next-line no-await-in-loop
     const fileKey = await teamsFileKey(where, url);
     // eslint-disable-next-line no-await-in-loop
     const info = await mirror(env, getGraph, fileKey, url, a.name, a.contentUrl);

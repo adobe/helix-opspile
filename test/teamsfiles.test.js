@@ -16,8 +16,10 @@ import {
   canonicalUrl, hostedImages, isTeamsFileKey, keptTeamsFile, shareId, teamsFileKey,
   threadChannel, withTeamsFiles,
 } from '../src/teamsfiles.js';
-import { media } from '../src/api.js';
+import { api, media } from '../src/api.js';
+import { indexMessage } from '../src/threads.js';
 import { readThreadFile } from '../src/agent/files.js';
+import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids only.
@@ -156,6 +158,36 @@ describe('Teams files', () => {
     assert.equal((await media({ RAW }, url)).status, 404);
     assert.equal((await media({ RAW }, url, 'teams:tenant-1:team-1:19:other@thread.tacv2:1')).status, 404);
     assert.equal(await keptTeamsFile({ RAW }, 'slack:E1:C1:1.1', url), null);
+  });
+
+  it('serves a copy at /api/media only to those who may see its thread', async () => {
+    const RAW = fakeBucket();
+    const { graph } = fakeGraph();
+    await withDownloads(() => withTeamsFiles({ RAW }, KEY, message(), { graph }));
+    const DB = d1({ teams: [{ slug: 'private-ops', name: 'Private' }, { slug: 'other-ops', name: 'Other' }] });
+    await indexMessage(DB, {
+      source: 'teams',
+      tenant: 'tenant-1',
+      channelId: '19:c@thread.tacv2',
+      org: 'acme',
+      team: 'private-ops',
+      kind: 'channel',
+      counted: true,
+      rootId: '1',
+      id: '2',
+      thread: THREAD,
+      at: '2026-10-28T16:00:00Z',
+      title: 'shot',
+      path: 'p/',
+    });
+    const get = (teams, t = THREAD) => {
+      const url = new URL(`https://opspile.test/api/media?u=${encodeURIComponent(canonicalUrl(SHOT))}${t ? `&t=${encodeURIComponent(t)}` : ''}`);
+      return api(new Request(url), { DB, RAW }, url, { viewer: { id: 1, name: 'A', teams: teams.map((slug) => ({ slug, name: slug })) } });
+    };
+    assert.equal((await get(['private-ops'])).status, 200);
+    assert.equal((await get(['other-ops'])).status, 404, 'another team');
+    assert.equal((await get(['other-ops'], 'teams:tenant-1:team-1:19:c@thread.tacv2:9')).status, 404, 'an unknown thread');
+    assert.equal((await get(['other-ops'], null)).status, 404, 'no thread');
   });
 
   it('lets agents read the copies', async () => {

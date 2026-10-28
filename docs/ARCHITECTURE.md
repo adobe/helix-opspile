@@ -63,8 +63,8 @@ are removed before an event is stored.
   `teams/<tenant>/<team>/<channel>/files/<sha256 of the URL>` with their content type and name
   (`src/teamsfiles.js`). The normalizer copies them when it first sees the message; the message
   keeps the platform's link, and an image attached as a file is shown where Teams shows it. The
-  inbox's media proxy serves the copies (SharePoint files only from there, since the app could
-  read any of them), and agents' `read_file` reads them. They are not events and are skipped;
+  inbox's media proxy serves the copies, only to those who may see the message's thread
+  (SharePoint files only from there, since the app could read any of them), and agents' `read_file` reads them. They are not events and are skipped;
   one Graph does not hand over is not kept, and the file stays a link.
 - **Discord** is polled (see [Ingestion](#ingestion)): one Durable Object (`DiscordPoller`)
   stores each state of a message it reads (new, edited, other reactions) and each deletion it

@@ -174,6 +174,13 @@ export async function viewer(request, env, options) {
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
 
+/** Whether the viewer may see thread `key`, as `/api/thread` decides: a team whose inbox has it. */
+async function canSee(env, me, key) {
+  const row = await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+    .bind(key).first();
+  return Boolean(row) && (inTeam(me, await teamsOf(env, row)) || isAdmin(me));
+}
+
 /**
  * Whose inbox it is, as SQL: `team_members.team` (or any column of team slugs) is in it with
  * `in(column)`, bound to `value`: the team, or for the personal view the viewer's teams.
@@ -869,7 +876,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return result ? json(result) : json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/media') {
-    return media(env, url.searchParams.get('u'), url.searchParams.get('t'));
+    // A thread's files (the copies of Teams files) only for those who may see the thread.
+    const t = url.searchParams.get('t');
+    if (t && !await canSee(env, me, t)) {
+      return json({ error: 'not found' }, 404);
+    }
+    return media(env, url.searchParams.get('u'), t);
   }
   // The admin pages and the editor: the admin team, and team managers for their teams (the
   // routes check which).
