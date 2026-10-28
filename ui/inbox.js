@@ -29,7 +29,29 @@ const state = {
   editing: null,
   // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
   edits: new Map(),
+  // Design C: the threads this page has shown unread, whose rows keep two lines once read.
+  tall: new Set(),
 };
+
+// ---------------------------------------------------------------- design explorations
+// Three ways the thread list could set unread threads apart, to compare before one is picked:
+// `?design=a` (unread rows white), `b` (iMessage-like rows) or `c` (read rows recede to one
+// line). The choice is kept in this browser; `?design=` goes back to the list as it is.
+const DESIGNS = ['a', 'b', 'c'];
+const design = (() => {
+  const asked = new URLSearchParams(location.search).get('design');
+  try {
+    if (asked !== null) {
+      if (DESIGNS.includes(asked)) localStorage.setItem('opspile.design', asked);
+      else localStorage.removeItem('opspile.design');
+    }
+    const kept = localStorage.getItem('opspile.design');
+    return DESIGNS.includes(kept) ? kept : null;
+  } catch {
+    return DESIGNS.includes(asked) ? asked : null;
+  }
+})();
+if (design) document.documentElement.dataset.design = design;
 
 // ---------------------------------------------------------------- helpers
 async function get(path) {
@@ -786,6 +808,8 @@ function moods(t) {
 }
 
 function row(t, hit = null) {
+  if (design === 'b') return rowB(t, hit);
+  if (design === 'c') return rowC(t, hit);
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -794,16 +818,112 @@ function row(t, hit = null) {
   const fresh = !hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
   const n = t.occurrences || (t.members || []).length;
   const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
-  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
+  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}${flags(t)}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
     <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
       ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
-      <span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
-      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
+      ${design ? resolvedMark(t) : ''}<span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
+      ${design ? mentionMark(t) : ''}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>${design ? '<span class="pip" aria-hidden="true"></span>' : ''}</div>
     <div class="l2">
       <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
       <span class="faces">${faces}</span>
       ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
       <span class="tags">${moods(t)}</span>
+    </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+// The design explorations' rows (see DESIGNS). Each row says, in its classes, what the designs
+// set apart: resolved, an unread mention of you, critical or hot; C also whether it is short.
+const isResolved = (t) => checked(t) || resolvedOf(t) === 'resolved';
+const mentionsMe = (t) => t.unread && (t.unreadMentions > 0 || t.mentionedMe);
+function flags(t) {
+  if (!design) return '';
+  const status = statusOf(t);
+  let out = '';
+  if (isResolved(t)) out += ' resolved';
+  if (mentionsMe(t)) out += ' mention';
+  if (status === 'critical' || status === 'hot') out += ' urgent';
+  return out;
+}
+const resolvedMark = (t) => (isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '');
+function mentionMark(t) {
+  if (!mentionsMe(t)) return '';
+  const n = t.unreadMentions || 1;
+  return `<b class="at" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">@${n > 1 ? n : ''}</b>`;
+}
+const urgencyMark = (t) => {
+  const u = urgencyOf(t);
+  return URGENCY_EMOJI[u] && !isResolved(t) ? `<span class="urg" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>` : '';
+};
+const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
+const draftMark = (t, label = '✎ Draft') => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">${label}</span>` : '');
+const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
+const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
+
+/** Markdown as one line of plain text, for a preview. */
+const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiByName(n) || m)
+  .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, ' [image] ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+  .replace(/^\s*(?:[-*+]|\d+\.|>|#+|\|)\s*/gm, '')
+  .replace(/[*_~`|]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+/**
+ * Design B's preview: the thread's latest message, once the thread is in the cache (rows in view
+ * are fetched ahead, see `preload`), else who wrote last. A preview the list can always show
+ * would need the inbox to send the latest message's text (a column of `threads`).
+ */
+function preview(t) {
+  const ms = (state.cache.get(t.thread)?.data?.messages || [])
+    .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
+  const m = ms[ms.length - 1];
+  if (m) return { who: m.author?.name || '', text: plain(m.body).slice(0, 220) };
+  const replies = Math.max(0, (t.messages || 1) - 1);
+  return { who: t.last_author || '', text: '', replies };
+}
+
+/**
+ * B, after iMessage: the customer's logo, the title, two lines of the latest message, the time
+ * and a chevron; unread is a blue dot at the leading edge. No avatars, reactions or tags: the
+ * status is a small dot on the logo, urgency an emoji before the title, a mention an @.
+ */
+function rowB(t, hit) {
+  const status = statusOf(t);
+  const p = preview(t);
+  const icon = orgIcon(t);
+  const org = orgName(t);
+  const logo = `<span class="ava" style="background:${hue(org)}" aria-hidden="true">${esc(initials(org))}${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.remove()">` : ''}</span>`;
+  const said = p.text ? `${p.who ? `${esc(p.who)}: ` : ''}${emojify(p.text)}`
+    : [p.who && esc(p.who), p.replies ? `${p.replies} ${p.replies === 1 ? 'reply' : 'replies'}` : ''].filter(Boolean).join(' · ');
+  return `${rowOpen(t, hit, '')}
+    <div class="l1"><span class="ud" aria-hidden="true"></span>${status === 'quiet' ? '' : `<span class="st c-${status}${ourMove(t) ? ' ring' : ''}" title="${esc(statusTitle(t, status))}"></span>`}
+      <span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
+      <span class="side">${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>${isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '<span class="chev" aria-hidden="true">›</span>'}</span></div>
+    <div class="l2">${logo}<span class="pv">${draftMark(t, 'Draft')}<b class="org">${esc(org)}</b> ${said}</span>
+    </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+/**
+ * C, dense: a thread this page has shown unread has two lines (the latest author and the
+ * replies under the title); a read one is one line, greyed: title, customer, time. A row
+ * keeps its height once read (`state.tall`), so a click or j / k moves no row.
+ */
+function rowC(t, hit) {
+  const status = statusOf(t);
+  if (t.unread) state.tall.add(t.thread);
+  const short = !hit && !state.tall.has(t.thread);
+  const icon = orgIcon(t);
+  const org = orgName(t);
+  const replies = Math.max(0, (t.messages || 1) - 1);
+  const n = t.occurrences || (t.members || []).length;
+  const count = n > 1 ? `${n}×` : (replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : '');
+  return `${rowOpen(t, hit, short ? ' short' : '')}
+    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
+      ${draftMark(t)}${resolvedMark(t)}<span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
+      <span class="org">${esc(org)}</span>${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
+    <div class="l2">
+      <span class="cust">${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy">` : ''}${esc(org)}</span>
+      ${t.last_author ? `<span class="last">${esc(t.last_author)}</span>` : ''}${count ? `<span class="replies">${count}</span>` : ''}
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -2629,10 +2749,19 @@ function pump() {
     const key = queued.shift();
     if (inflight.has(key) || fresh(key)) continue;
     inflight.set(key, get(threadUrl(key))
-      .then((data) => { if (!fresh(key)) state.cache.set(key, { data, at: Date.now() }); return data; })
+      .then((data) => {
+        if (!fresh(key)) state.cache.set(key, { data, at: Date.now() });
+        if (design === 'b') previewSoon();
+        return data;
+      })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
   }
+}
+/** Design B: the rows again once fetched threads give them their previews, one frame later. */
+let previewFrame = 0;
+function previewSoon() {
+  if (!previewFrame) previewFrame = requestAnimationFrame(() => { previewFrame = 0; renderThreads(); });
 }
 /** The threads just before and after the open one (j / k), first in the queue. */
 function prefetchAround(key) {
@@ -2997,6 +3126,7 @@ function toUrl(push = true, entry = null) {
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
   if (state.search.q) q.set('q', state.search.q);
+  if (design) q.set('design', design);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
   syncPages();

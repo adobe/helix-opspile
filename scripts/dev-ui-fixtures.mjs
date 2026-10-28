@@ -58,6 +58,9 @@ const PEOPLE = [
     title: 'Solution architect',
     company: 'Agency Co',
   },
+  {
+    key: 'ola', id: 9, name: 'Ola Hansen', email: 'ola@umbrella.example', org: 'umbrella', staff: false,
+  },
 ];
 
 /**
@@ -109,6 +112,9 @@ const CHANNELS = {
   },
   initech: {
     source: 'slack', channelId: 'C0INITECH1', name: 'initech-support', org: 'initech', team: 'platform',
+  },
+  aemUmbrella: {
+    source: 'slack', channelId: 'C0UMBRELLA', name: 'aem-umbrella', org: 'umbrella', team: 'platform',
   },
   alerts: {
     source: 'slack',
@@ -632,7 +638,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['sam', 520, 'Can we get a second preview environment for the campaign?'],
       ['priya', 500, 'Sure. Which branch should it build from?'],
     ],
-    reads: { priya: 500 },
+    reads: { priya: 500, dana: 'latest' },
     label: {
       kind: 'request', next_actor: 'us', urgency: 0.8, resolved_p: 0.1,
     },
@@ -645,7 +651,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['mei', 2100, 'Search results show unpublished pages.'],
       ['tom', 2000, 'Can you share one URL where this happens?'],
     ],
-    reads: { tom: 2000 },
+    reads: { tom: 2000, dana: 'latest' },
     // A colleague's draft, in a channel where the opspile app does not post.
     draft: {
       by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
@@ -733,6 +739,59 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['dana', 3990, 'Staging only, ask Tom for access.'],
     ],
     reads: { dana: 3990 },
+  });
+
+  // Read and unread side by side, for the thread list's designs (?design=a|b|c): critical and
+  // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', 9, 'Checkout returns 500 for every visitor in the EU since 09:10. Orders are down to zero.'],
+      ['ola', 4, 'Status page says all green, but our synthetic checks fail on every region.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 3, resolved_p: 0,
+    },
+  });
+  {
+    const key = seed({
+      ch: CHANNELS.aemGlobex,
+      messages: [
+        ['mei', 900, 'The docs host shows a certificate warning since this morning.'],
+        ['lena', 860, 'The certificate had expired; it is renewed now. Can you check again?'],
+        ['mei', 845, 'Works again, thanks!'],
+        ['lena', 840, 'Great, closing this one. :white_check_mark:'],
+      ],
+      reads: { dana: 'latest', priya: 'latest' },
+      label: {
+        kind: 'incident', next_actor: 'nobody', urgency: 1.2, resolved_p: 0.95,
+      },
+    });
+    const entry = threads.get(key);
+    entry.reactionSeeds = [{ id: entry.rootId, emoji: 'white_check_mark', by: 'lena' }];
+  }
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['jonas', 400, 'Can the retired /blog paths redirect to the new magazine section?'],
+      ['dana', 380, 'Yes: add them to redirects.xlsx and publish it. Want me to draft the first rows?'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'customer', urgency: 0.6, resolved_p: 0.3,
+    },
+  });
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', 4400, 'Image renditions look blurry on high-density screens.'],
+      ['priya', 4300, 'Add a 2x width to the picture breakpoints; here is the snippet we use.'],
+      ['ola', 4200, 'That did it.'],
+    ],
+    reads: { dana: 'latest', priya: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8,
+    },
   });
 
   if (big) {
