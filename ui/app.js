@@ -29,3 +29,91 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
 }
+
+// Signing in is Cloudflare Access's, in front of /inbox and /api. When its session ends, it
+// answers every request with a redirect to its sign-in page, on another origin, which fetch
+// cannot follow (CORS) and reports only as "Failed to fetch". So fetches of /api follow no
+// redirects (it makes none): a redirect means signed out, and the page says so, with a button
+// that signs in again in a window of its own, so what is on the page (a reply being written)
+// stays. Signed in again, the page hears `opspile:signedin` and loads what it could not.
+(() => {
+  const native = window.fetch.bind(window);
+  const api = (input) => {
+    try {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      return url.origin === location.origin && url.pathname.startsWith('/api/');
+    } catch {
+      return false;
+    }
+  };
+  let bar = null;
+  let popup = null;
+  const signedIn = () => native('/api/me', { credentials: 'same-origin', redirect: 'manual' })
+    .then((res) => res.ok, () => false);
+  const style = document.createElement('style');
+  style.textContent = `.signedout { position: fixed; z-index: 1000; left: 50%; transform: translateX(-50%);
+    top: calc(10px + env(safe-area-inset-top, 0px)); max-width: calc(100vw - 24px); box-sizing: border-box;
+    display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 14px; font-size: 13px;
+    background: var(--card); color: var(--ink); border: 1px solid var(--yellow); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .signedout button { font: inherit; white-space: nowrap; padding: 4px 10px; border: 0; border-radius: 6px;
+    background: var(--accent); color: #fff; cursor: pointer; }`;
+  document.head.append(style);
+
+  function back() {
+    bar?.remove();
+    bar = null;
+    popup?.close();
+    popup = null;
+    window.dispatchEvent(new Event('opspile:signedin'));
+  }
+  function signIn() {
+    if (popup && !popup.closed) {
+      popup.focus();
+      return;
+    }
+    // /api/me, behind Access like the rest: the window comes back to it once signed in.
+    popup = window.open('/api/me', 'opspile-signin', 'popup,width=520,height=680');
+    if (!popup) {
+      location.reload(); // no window allowed: sign in in this one
+      return;
+    }
+    const watch = setInterval(async () => {
+      let done = popup.closed;
+      try {
+        done ||= popup.location.pathname === '/api/me' && popup.document.readyState === 'complete';
+      } catch {
+        // at the sign-in page, on another origin
+      }
+      if (!done) return;
+      clearInterval(watch);
+      if (await signedIn()) back();
+      else {
+        popup?.close();
+        popup = null;
+      }
+    }, 500);
+  }
+  function signedOut() {
+    if (bar) return;
+    bar = document.createElement('div');
+    bar.className = 'signedout';
+    bar.setAttribute('role', 'alert');
+    bar.innerHTML = '<span>Your sign-in has expired: nothing can be loaded or sent.</span>'
+      + '<button type="button">Sign in again</button>';
+    bar.querySelector('button').onclick = signIn;
+    document.body.append(bar);
+  }
+  // Signed in again in another tab.
+  window.addEventListener('focus', async () => {
+    if (bar && !(popup && !popup.closed) && await signedIn()) back();
+  });
+
+  window.fetch = async (input, init = {}) => {
+    if (!api(input) || init.redirect) return native(input, init);
+    const res = await native(input, { ...init, redirect: 'manual' });
+    if (res.type !== 'opaqueredirect') return res;
+    signedOut();
+    throw new Error('Signed out: sign in again');
+  };
+})();

@@ -25,7 +25,10 @@ code and docs, is the decision model that labels threads and channels.
 
 - `ui/*.html` name their scripts (`<script type="module" src="inbox.js"></script>`), and
   `src/page.js` inlines them where the page is served. Never write a script into a page
-  (`test/ui-scripts.test.js` fails on one). `ui/app.js` is every page's script.
+  (`test/ui-scripts.test.js` fails on one). `ui/app.js` is every page's script. It
+  fetches `/api/*` without following redirects: a redirect is Cloudflare Access's sign-in, so
+  the page shows "Sign in again" instead of "Failed to fetch" (`POST /__dev/signout` in
+  `npm run ui:dev` shows it).
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand) and
   `src/ui-markdown.bundle.js` (from `scripts/ui-markdown.mjs`, not committed). `npm run build`
   builds the bundle, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and
