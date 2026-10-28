@@ -87,7 +87,13 @@ const APP = {
   kind: 'bot', name: 'opspile', org: null, staff: false,
 };
 
-/** Channels: where a thread lives. `org` and `team` are what the rules would file it under. */
+/** The thread agent, which saves shared drafts as this person (src/agent/tools.js). */
+const AGENT = { id: 900, name: 'opspile agent' };
+
+/**
+ * Channels: where a thread lives. `org` and `team` are what the rules would file it under.
+ * `appPosting`: "Post messages" is on, so a person may send as the opspile app there.
+ */
 const CHANNELS = {
   aemAcme: {
     source: 'slack',
@@ -96,6 +102,7 @@ const CHANNELS = {
     org: 'acme',
     team: 'platform',
     members: ['kira'],
+    appPosting: true,
   },
   aemGlobex: {
     source: 'slack', channelId: 'C0GLOBEX01', name: 'aem-globex', org: 'globex', team: 'platform',
@@ -151,7 +158,7 @@ const CHANNELS = {
   },
   // A community server: a forum where every post is a thread.
   forum: {
-    source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge',
+    source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge', appPosting: true,
   },
 };
 
@@ -305,6 +312,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   const mentions = []; // { thread, person, at }
   // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
   const appPosts = new Set();
+  const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
   let seq = 100000;
 
   const author = (key) => {
@@ -443,9 +451,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
+   * `draft`: the thread's shared draft, `{ by, ago, body }`; `by` is a person key or 'agent'.
    */
   function seed({
-    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [],
+    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft,
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -507,6 +516,18 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       const at = ago === undefined ? entry.row.any_at : new Date(now - ago * MIN).toISOString();
       mentions.push({ thread: key, person: byKey.get(who).id, at });
     }
+    if (draft) {
+      const p = draft.by === 'agent' ? AGENT : byKey.get(draft.by);
+      const at = new Date(now - draft.ago * MIN).toISOString();
+      drafts.set(key, {
+        thread: key,
+        body: draft.body,
+        mentions: draft.mentions || [],
+        by: { id: p.id, name: p.name },
+        created_at: at,
+        updated_at: at,
+      });
+    }
     return key;
   }
 
@@ -525,6 +546,16 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       kind: 'incident', next_actor: 'us', urgency: 2.4, resolved_p: 0.1,
     },
     facts: [['ticket', 'OPS-1042'], ['site', 'acme-preview']],
+    // Written by the thread agent, long enough to fold: the draft line shows its first line.
+    draft: {
+      by: 'agent',
+      ago: 8,
+      body: 'Thanks @Sam Reyes, we can reproduce the 503s on /en/* and /de/*; preview is fine, so it '
+        + 'looks like the CDN config from the 14:00 flush.\n\nCould you send us the `x-request-id` '
+        + 'of one failing request? Meanwhile, purging by path is described here: '
+        + 'https://docs.example.com/purge',
+      mentions: [{ id: 'slack-sam', name: 'Sam Reyes' }],
+    },
   });
 
   seed({
@@ -600,6 +631,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['tom', 2000, 'Can you share one URL where this happens?'],
     ],
     reads: { tom: 2000 },
+    // A colleague's draft, in a channel where the opspile app does not post.
+    draft: {
+      by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
+    },
     label: {
       kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1,
     },
@@ -638,6 +673,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['lena', 80, 'It can: the site config names the content source. Which org do you have?'],
       ['jonas', 30, 'Ours is `initech`, the site is in `initech-web`.'],
     ],
+    // Discord takes no replies as yourself: the draft can still go out as the opspile app.
+    draft: {
+      by: 'lena', ago: 12, body: 'Then map `initech` in the site config of `initech-web`: the content source names its own org.',
+    },
     label: {
       kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.2,
     },
@@ -703,6 +742,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     facts,
     mentions,
     appPosts,
+    drafts,
 
     /** Adds a live message to a thread, as the normalizer would. Returns the thread key. */
     post(key, who, body, at = new Date().toISOString(), given = null) {

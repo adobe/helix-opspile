@@ -535,14 +535,34 @@
   .sendwrap .resolve { border: 1px solid var(--green); }
   .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
   .sendwrap .savedraft { border: 1px solid var(--accent); }
-  /* The thread's shared draft, above the reply box. */
+  /* The thread's shared draft, on its own line under the reply box: a dashed card that
+     shows who saved it and how it starts (all of it, opened), and sends it as it is. */
   .composer { flex-wrap: wrap; }
-  .draftbar { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); min-width: 0; }
+  .draftbar { flex-basis: 100%; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); min-width: 0;
+    border: 1px dashed var(--accent); border-radius: 10px; padding: 4px 6px 4px 10px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
   .draftbar[hidden] { display: none; }
   .draftbar .pen { color: var(--accent); font-weight: 600; flex: none; }
-  .draftbar .pv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .draftbar button { font-size: 11.5px; padding: 0 8px; flex: none; }
-  .draftbar .act { display: flex; gap: 6px; flex: none; }
+  .draftbar .pv { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
+    font: inherit; color: inherit; background: none; border: 0; padding: 2px 0; border-radius: 6px; }
+  .draftbar button.pv { cursor: pointer; }
+  .draftbar button.pv:hover .tx, .draftbar button.pv:focus-visible .tx { text-decoration: underline dotted; }
+  .draftbar .pv .by { color: var(--faint); margin-right: .5em; }
+  .draftbar .pv .tx { color: var(--ink); }
+  /* Opened: who and the actions on the first row, all of the draft under them. */
+  .draftbar.open { flex-wrap: wrap; }
+  .draftbar.open .pv { order: 1; flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
+  .draftbar.open .pv .by { display: block; }
+  .draftbar.open .more { margin-left: auto; }
+  .draftbar button { font-size: 11.5px; padding: 1px 9px; flex: none; border-radius: 12px; }
+  .draftbar .more { padding: 1px 6px; }
+  .draftbar .act { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; flex: none; }
+  .draftbar .asme { background: var(--me); color: #fff; border-color: var(--me); }
+  .draftbar .asbot { border-color: var(--accent); color: var(--accent); }
+  .draftbar button:disabled { opacity: .5; cursor: default; }
+  /* The draft shown in the reply box while the pointer rests on (or focus is in) its line. */
+  .composer textarea.previewing { border-style: dashed; border-color: var(--accent); color: var(--mute);
+    background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
   .t .drafted { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
   /* Quick reactions on hovering a message, like Slack. */
   .msg .quick { position: absolute; top: -14px; right: 8px; z-index: 3; display: none; gap: 1px; padding: 2px;
@@ -748,6 +768,9 @@
     .msg .who, .msg .meta { margin-left: 8px; margin-right: 8px; }
     .bubble { padding: 7px 12px; }
     .composer { padding: 8px 12px calc(8px + var(--safe-bottom)); gap: 6px; }
+    /* A phone: the draft's actions go under it. */
+    .draftbar { flex-wrap: wrap; }
+    .draftbar .act { flex-basis: 100%; }
     .composer textarea { padding: 8px 12px; }
     .composer button.send { padding: 7px 14px; }
     .rv { margin: 8px 12px 0; padding: 8px 10px; }

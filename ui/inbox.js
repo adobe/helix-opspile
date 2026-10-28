@@ -1319,16 +1319,18 @@ async function loadAgent(key, { latest = null } = {}) {
   }
 }
 
-/** The thread's draft, read-only: who saved it, when, and how it starts. */
-const draftLine = (d) => (d ? `<div class="draftbar"><span class="pen">✎ Draft</span>
-  <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}: ${esc(d.body)}</span></div>` : '');
+/**
+ * The line of the thread's shared draft (filled by renderDraftBar), under the reply box: the
+ * box grows upwards as it shows the draft, so the line stays under the pointer.
+ */
+const DRAFT_LINE = '<div class="draftbar" id="draftbar" hidden></div>';
 
 // Only a touch screen, no pointer that hovers (phones): no Shift+Enter on the on-screen
 // keyboard, so Enter starts a new line there and Send sends, as in the Slack and Teams apps.
 const TOUCH_ONLY = matchMedia('(any-hover: none)');
 
-function composer(thread, draft, resolve = '') {
-  if (state.data?.me?.readonly) return `<div class="composer">${draftLine(draft)}<span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
+function composer(thread, resolve = '') {
+  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span>${DRAFT_LINE}</div>`;
   const p = thread.source;
   const name = accountOf(p);
   if (p === 'discord') {
@@ -1336,15 +1338,15 @@ function composer(thread, draft, resolve = '') {
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
     const link = state.me.connectable?.discord && !state.me.connected?.discord
       ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so opspile knows which posts are yours.' : '';
-    return `<div class="composer">${draftLine(draft)}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span></div>`;
+    return `<div class="composer"><span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${DRAFT_LINE}</div>`;
   }
   if (!state.me.connected?.[p]) {
-    return `<div class="composer">${draftLine(draft)}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span></div>`;
+    return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${DRAFT_LINE}</div>`;
   }
-  return `<div class="composer"><div class="draftbar" id="draftbar" hidden></div><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="Reply in thread"></textarea>
-    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span></div>`;
+    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${DRAFT_LINE}</div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -1416,6 +1418,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const prevScroller = pane.querySelector('.scroller');
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
+  // A draft shown in the reply box on hover gives the box back first: what it held is what counts.
+  endDraftPreview();
   const typed = $('reply')?.value;
   const focused = document.activeElement === $('reply');
   const caret = focused ? [$('reply').selectionStart, $('reply').selectionEnd] : null;
@@ -1552,7 +1556,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
         ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>
       ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
-  const reply = composer(thread, data.draft, resolveButton(thread, resolution));
+  const reply = composer(thread, resolveButton(thread, resolution));
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
@@ -1581,8 +1585,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     const c = composerFor(key, data.draft);
     box.value = c.text;
     if (focused && !switching) { box.focus(); if (typed === c.text) box.setSelectionRange(...caret); }
-    renderDraftBar(key);
-    const grow = () => { box.style.height = 'auto'; box.style.height = `${Math.min(180, box.scrollHeight)}px`; };
+    const grow = () => growReply(box);
     box.oninput = () => {
       // Saving, loading or discarding replaces the thread's composer state: update the current one.
       const now = state.composers.get(key);
@@ -1593,13 +1596,20 @@ async function openThread(key, { live = false, cached = false } = {}) {
     box.onblur = () => setTimeout(closeMentions, 150);
     grow();
     box.onkeydown = (e) => {
+      // Typing while the pointer rests on the draft line: the box is yours again, until the
+      // pointer comes back to the line.
+      if (draftPreview.key || draftPreview.over) {
+        Object.assign(draftPreview, { over: false, focus: false });
+        endDraftPreview();
+      }
       if (mentionKey(e, key)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); send(key, thread); }
-      if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value); }
+      if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value, undefined, { fromBox: true }); }
     };
     $('send').onclick = (e) => { if (!sendHold.held) send(key, thread); e.preventDefault(); };
     wireHoldMenu(key, thread);
   }
+  renderDraftBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
 }
 
@@ -1647,7 +1657,7 @@ function wireHoldMenu(key, thread) {
     clearTimeout(sendHold.timer);
     sendHold.hide = setTimeout(hide, 500);
   };
-  save.onclick = () => { hide(); saveDraft(key, $('reply')?.value || ''); };
+  save.onclick = () => { hide(); saveDraft(key, $('reply')?.value || '', undefined, { fromBox: true }); };
   if (!btn) return;
   btn.onclick = async () => {
     hide();
@@ -1658,53 +1668,221 @@ function wireHoldMenu(key, thread) {
 
 // ---------------------------------------------------------------- drafts
 // A thread carries at most one draft, which everyone on the team that owns the channel sees
-// and may change, send or discard. Each thread also remembers what you typed in it and did
-// not save (in this tab only). The composer of a thread is "untouched" while its text is the
-// draft it was loaded from: then it follows the draft as colleagues change or discard it.
-/** The composer state of a thread: its text, and the draft version it was written from. */
+// and may change, send or discard. It waits on its own line under the reply box, not in it:
+// the reply box is yours, and a draft never replaces what you typed. Resting the pointer on
+// the line, or moving the keyboard focus into it, shows the draft in the box, in place, and
+// gives the box back as it was when the pointer or focus leaves. Clicking the line (tapping
+// it, on touch) takes the draft into the box to edit, after anything you had typed there. The
+// line also sends the draft as it is: as you, or as the opspile app where the channel lets it
+// post. Each thread remembers what you typed in it and did not save (in this tab only). A box
+// that took the draft in (`base`, its version) and still holds it unchanged follows it as
+// colleagues change or discard it.
+/** The composer state of a thread: its text, and the draft version it took in. */
 function composerFor(key, draft) {
   let c = state.composers.get(key);
-  if (!c || c.text === c.from) {
-    c = { text: draft?.body || '', from: draft?.body || '', base: draft?.updated_at || null };
+  if (c && c.base && c.text === c.from && c.base !== draft?.updated_at) {
+    // It holds the draft unchanged, and the draft changed or went: it follows.
+    if (!draft) mention.picked.delete(key);
+    c = draft ? takeDraft(key, draft, '') : { text: '', from: '', base: null };
     state.composers.set(key, c);
-    if (draft?.mentions?.length) {
-      mention.picked.set(key, new Map(draft.mentions.map((m) => [m.name, m])));
-      for (const m of draft.mentions) mention.names.add(m.name);
-    }
+  }
+  if (!c) {
+    c = { text: '', from: '', base: null };
+    state.composers.set(key, c);
   }
   return c;
 }
 
-function renderDraftBar(key) {
-  const el = $('draftbar');
-  if (!el || state.open !== key) return;
-  const d = state.cache.get(key)?.data?.draft;
-  const c = state.composers.get(key);
-  if (!d) { el.hidden = true; el.innerHTML = ''; return; }
-  const differs = c && c.text !== d.body;
-  const stale = c && c.base && c.base !== d.updated_at;
-  el.hidden = false;
-  el.innerHTML = `<span class="pen">✎ Draft</span>
-    <span class="pv" title="${esc(d.body)}">by ${esc(draftBy(d))}, ${ago(d.updated_at)}${differs ? (stale ? ` · changed since you started: ${esc(d.body)}` : ' · your text differs') : ''}</span>
-    <span class="act">${differs ? '<button data-draft="load" title="Replace your text with the draft">Load draft</button>' : ''}<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button></span>`;
-  el.onclick = (e) => {
-    const b = e.target.closest('[data-draft]');
-    if (!b) return;
-    if (b.dataset.draft === 'load') loadDraft(key);
-    else discardDraft(key);
-  };
+/** `text` with draft `d` in it: the draft alone in an empty box, else after what is there. */
+const withDraft = (text, d) => (text.trim() && text !== d.body ? `${text.trimEnd()}\n\n${d.body}` : d.body);
+
+/** The composer state once draft `d` is taken into `text`; its mentions come along. */
+function takeDraft(key, d, text) {
+  if (d.mentions?.length) {
+    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+    for (const m of d.mentions) {
+      mention.picked.get(key).set(m.name, m);
+      mention.names.add(m.name);
+    }
+  }
+  return { text: withDraft(text, d), from: d.body, base: d.updated_at };
 }
 
-function loadDraft(key) {
-  const d = state.cache.get(key)?.data?.draft;
-  state.composers.delete(key);
-  const c = composerFor(key, d);
+/** The composer took this version of the draft in (and was not emptied since). */
+const tookDraft = (c, d) => Boolean(c && d && c.base === d.updated_at && c.text.trim());
+
+function growReply(box) {
+  box.style.height = 'auto';
+  box.style.height = `${Math.min(180, box.scrollHeight)}px`;
+}
+
+// The draft shown in the reply box while the pointer rests on its line (`over`) or the
+// keyboard focus is in it (`focus`), and what the box held before (`value`, `sel`).
+const draftPreview = {
+  key: null, value: '', sel: [0, 0], over: false, focus: false,
+};
+// Threads whose draft line shows all of the draft, not only how it starts.
+const draftOpen = new Set();
+
+function startDraftPreview(key) {
   const box = $('reply');
-  if (box && state.open === key) {
-    box.value = c.text;
-    box.dispatchEvent(new Event('input'));
-    box.focus();
+  const d = state.cache.get(key)?.data?.draft;
+  if (!box || !d || draftPreview.key || state.open !== key) return;
+  if (tookDraft(state.composers.get(key), d)) return;
+  const shown = withDraft(box.value, d);
+  if (shown === box.value) return;
+  Object.assign(draftPreview, { key, value: box.value, sel: [box.selectionStart, box.selectionEnd] });
+  closeMentions();
+  box.value = shown;
+  box.readOnly = true;
+  box.classList.add('previewing');
+  growReply(box);
+  box.scrollTop = box.scrollHeight;
+}
+
+/** Gives the reply box back as it was before the draft was shown in it. */
+function endDraftPreview() {
+  const { key, value, sel } = draftPreview;
+  if (!key) return;
+  draftPreview.key = null;
+  const box = $('reply');
+  if (!box?.classList.contains('previewing')) return;
+  box.readOnly = false;
+  box.classList.remove('previewing');
+  if (state.open !== key) return;
+  box.value = value;
+  box.setSelectionRange(...sel);
+  growReply(box);
+}
+
+function syncDraftPreview(key) {
+  if (draftPreview.over || draftPreview.focus) startDraftPreview(key);
+  else endDraftPreview();
+}
+
+/** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
+function renderDraftBar(key, force = false) {
+  const el = $('draftbar');
+  if (!el || state.open !== key) return;
+  const data = state.cache.get(key)?.data;
+  const d = data?.draft;
+  const box = $('reply');
+  const readonly = state.data?.me?.readonly;
+  const c = state.composers.get(key);
+  let html = '';
+  if (d) {
+    const took = box && tookDraft(c, d);
+    const own = box && !took && c?.text.trim();
+    const open = draftOpen.has(key);
+    let note = '';
+    if (took) note = c.text === d.body ? ' · in the reply box' : ' · in the reply box, edited';
+    else if (own && c.base) note = ' · changed since you took it';
+    const editable = box && !took && !readonly;
+    const acts = [];
+    if (editable) acts.push(`<button data-draft="edit" title="${own ? 'Add the draft after what you wrote, to edit it' : 'Put the draft in the reply box, to edit it'}">${own ? 'Add to reply' : 'Edit'}</button>`);
+    if (box && !readonly) acts.push('<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">Send as me</button>');
+    if (data.can_post_as_bot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the opspile app">Send as bot</button>');
+    if (!readonly) acts.push('<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button>');
+    const tag = editable ? 'button' : 'span';
+    const long = d.body.length > 80 || d.body.includes('\n');
+    html = `<span class="pen">✎ Draft</span>
+      <${tag} class="pv"${editable ? ` data-draft="edit" title="${own ? 'Hover to see it after your text; click to add it to your reply' : 'Hover to see it in the reply box; click to edit it'}"` : ''}><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span><span class="tx">${esc(d.body)}</span></${tag}>
+      ${long ? `<button class="more" data-draft="more" aria-expanded="${open}" title="${open ? 'Show how it starts' : 'Show all of it'}" aria-label="${open ? 'Show less of the draft' : 'Show all of the draft'}">${open ? '▴' : '▾'}</button>` : ''}
+      ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}`;
   }
+  if (force || el.__html !== html) {
+    // A new line under a resting pointer (the reply box was rebuilt) is hovered too.
+    if (el.__html === undefined) draftPreview.over = !TOUCH_ONLY.matches && el.matches(':hover');
+    el.__html = html;
+    el.innerHTML = html;
+    el.hidden = !d;
+    el.classList.toggle('open', draftOpen.has(key));
+    if (!el.contains(document.activeElement)) draftPreview.focus = false;
+    // The draft changed while shown in the box: show the new one.
+    endDraftPreview();
+  }
+  if (d) syncDraftPreview(key); else endDraftPreview();
+  el.__key = key;
+  if (!el.__wired) wireDraftBar(el);
+}
+
+/** What the draft line answers: clicks, the pointer resting on it, focus moving through it. */
+function wireDraftBar(el) {
+  el.__wired = true;
+  const sync = () => syncDraftPreview(el.__key);
+  el.addEventListener('click', (e) => {
+    const key = el.__key;
+    const b = e.target.closest('[data-draft]');
+    if (!b || b.disabled) return;
+    const act = b.dataset.draft;
+    if (act === 'more') {
+      if (draftOpen.has(key)) draftOpen.delete(key); else draftOpen.add(key);
+      renderDraftBar(key);
+      el.querySelector('.more')?.focus();
+      return;
+    }
+    Object.assign(draftPreview, { over: false, focus: false });
+    endDraftPreview();
+    if (act === 'edit') adoptDraft(key);
+    else if (act === 'discard') discardDraft(key);
+    else sendDraft(key, act === 'bot');
+  });
+  el.addEventListener('pointerenter', (e) => {
+    if (e.pointerType === 'touch') return;
+    draftPreview.over = true;
+    sync();
+  });
+  el.addEventListener('pointerleave', () => {
+    draftPreview.over = false;
+    sync();
+  });
+  el.addEventListener('focusin', (e) => {
+    // Keyboard focus, not the focus a click leaves behind.
+    draftPreview.focus = e.target.matches(':focus-visible');
+    sync();
+  });
+  el.addEventListener('focusout', (e) => {
+    if (el.contains(e.relatedTarget)) return;
+    draftPreview.focus = false;
+    sync();
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !draftPreview.key) return;
+    e.preventDefault();
+    Object.assign(draftPreview, { over: false, focus: false });
+    endDraftPreview();
+    $('reply')?.focus();
+  });
+}
+
+/** Takes the draft into the reply box, to edit: after what you typed, if anything. */
+function adoptDraft(key) {
+  const d = state.cache.get(key)?.data?.draft;
+  const box = $('reply');
+  if (!d || !box || state.open !== key) return;
+  endDraftPreview();
+  const c = takeDraft(key, d, box.value);
+  state.composers.set(key, c);
+  box.value = c.text;
+  box.dispatchEvent(new Event('input'));
+  box.focus();
+  box.setSelectionRange(c.text.length, c.text.length);
+  box.scrollTop = box.scrollHeight;
+}
+
+/** Sends the draft as it is, as you or as the opspile app: that uses it up. */
+async function sendDraft(key, asApp) {
+  const data = state.cache.get(key)?.data;
+  const d = data?.draft;
+  if (!d) return;
+  $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  if (asApp) {
+    const error = await sendAsApp(key, d.body, d.updated_at);
+    toast(error ? `Nothing was sent: ${error}.` : 'Sent as the opspile app.');
+  } else {
+    await send(key, data.thread, d);
+  }
+  renderDraftBar(key, true);
 }
 
 /** The draft as the inbox list shows it, without fetching the inbox again. */
@@ -1721,7 +1899,11 @@ function setCachedDraft(key, d) {
   renderDraftBar(key);
 }
 
-async function saveDraft(key, text, base) {
+/**
+ * Saves `text` as the thread's draft; `base` is the version it replaces (by default, the one the
+ * reply box took in). Saved from the reply box (`fromBox`), the box holds the draft it saved.
+ */
+async function saveDraft(key, text, base, { fromBox = false } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
   const res = await request('PUT', '/api/draft', {
@@ -1730,7 +1912,7 @@ async function saveDraft(key, text, base) {
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
     setCachedDraft(key, res.data.draft);
-    toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at) });
+    toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at, { fromBox }) });
     return { error: res.data.error, conflict: res.data.draft };
   }
   if (!res.ok) {
@@ -1740,9 +1922,10 @@ async function saveDraft(key, text, base) {
   }
   const d = res.data.draft;
   // What the box holds now (it may have changed while saving) stays; the draft is the base.
+  // Saved from elsewhere (the page's agent), the box is left alone.
   const now = state.composers.get(key);
-  state.composers.set(key, { text: now ? now.text : text, from: text, base: d.updated_at });
-  const box = state.open === key && $('reply');
+  if (fromBox) state.composers.set(key, { text: now ? now.text : text, from: text, base: d.updated_at });
+  const box = fromBox && state.open === key && $('reply');
   if (box && box.value !== state.composers.get(key).text) {
     box.value = state.composers.get(key).text;
     box.dispatchEvent(new Event('input'));
@@ -1766,6 +1949,7 @@ async function discardDraft(key) {
   }
   if (!res.ok) { toast(res.data.error || `could not discard the draft (${res.status})`); return; }
   const c = state.composers.get(key);
+  const held = Boolean(c && c.base && c.text.trim() && c.text === c.from);
   // An untouched composer empties with it; your own text stays.
   if (c && c.text === c.from) {
     state.composers.set(key, { text: '', from: '', base: null });
@@ -1778,10 +1962,10 @@ async function discardDraft(key) {
   toast('Draft discarded.', {
     label: 'Undo',
     run: () => {
-      // An untouched composer gets the draft back too.
-      const now = state.composers.get(key);
-      if (!now || now.text === now.from) state.composers.delete(key);
-      saveDraft(key, d.body, null);
+      // A reply box that held it (and was not written in since) gets it back too.
+      const refill = held && !state.composers.get(key)?.text.trim();
+      if (refill) state.composers.delete(key);
+      saveDraft(key, d.body, null, { fromBox: refill });
     },
   });
 }
@@ -1927,19 +2111,28 @@ async function deliver(p) {
   return true;
 }
 
-async function send(key, thread) {
+/**
+ * Sends the reply box as you, or the shared draft `draft` as it is (its line's "Send as me"),
+ * which leaves the reply box alone unless it holds that draft.
+ */
+async function send(key, thread, draft = null) {
   const box = $('reply');
-  const body = box.value.trim();
+  const body = (draft ? draft.body : box.value).trim();
   state.sendError = null;
   if (!body) return false;
   closeMentions();
-  const mentions = mentionsIn(key, body);
+  const mentions = draft ? (draft.mentions || []) : mentionsIn(key, body);
   // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
-  const base = state.composers.get(key)?.base;
-  // Shown at once, as it will look once sent; the box is free for the next one.
-  box.value = '';
-  state.composers.set(key, { text: '', from: '', base: null });
-  mention.picked.delete(key);
+  const c = state.composers.get(key);
+  const base = draft ? draft.updated_at : c?.base;
+  // Shown at once, as it will look once sent; the box is free for the next one (a draft sent
+  // from its line leaves the box alone, unless the box holds that draft).
+  if (!draft || (c?.base === base && c.text.trim() === body)) {
+    box.value = '';
+    growReply(box);
+    state.composers.set(key, { text: '', from: '', base: null });
+    mention.picked.delete(key);
+  }
   sendSeq += 1;
   const p = {
     thread: key, body, mentions, base, at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
@@ -3295,6 +3488,7 @@ function replyBlocked(data) {
 }
 
 function fillReply(text) {
+  endDraftPreview();
   const box = $('reply');
   box.value = text;
   box.dispatchEvent(new Event('input'));
@@ -3476,7 +3670,7 @@ const WEBMCP_TOOLS = [
       return out({
         thread, title: clip(t.title || '(no text)', 120), customer: t.org, channel: t.channel_name, platform: platform(t).toLowerCase(),
         resolution: data.resolution?.state || resolvedOf(teamThread(thread)) || 'open', earlier_messages: Math.max(0, data.messages.length - n),
-        can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, messages: msgs,
+        can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, can_post_as_bot: Boolean(data.can_post_as_bot), messages: msgs,
         ...(data.draft ? { shared_draft: { by: draftBy(data.draft), saved: data.draft.updated_at, text: data.draft.body } } : {}),
       });
     },
