@@ -562,6 +562,21 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
   });
 
+  // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a
+  // `_toneN`): shown as emoji all the same (src/emojinames.js).
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['jonas', 160, 'The redirect for /old-pricing loops on stage again.'],
+      ['dana', 150, 'Wrong rule order, my bad :facepalm: Fixed on stage, please check :thumbs-up:'],
+      ['jonas', 145, 'Works now :white_check_mark: thanks :thumbsup_tone3:'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'incident', next_actor: 'nobody', urgency: 0.6, resolved_p: 0.8,
+    },
+  });
+
   // Two messages mention the viewer since she last read it, one before: the customer card
   // shows 2 unread mentions on ACME, and the personal view has ACME's channel.
   seed({

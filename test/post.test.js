@@ -328,6 +328,23 @@ describe('connecting and posting', () => {
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
   });
 
+  it('sends emoji names as the platform knows them, and says what it sent', async () => {
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'never mind :facepalm:' }, inTeam);
+    const sent = JSON.parse(calls.find((c) => c.u.endsWith('/chat.postMessage')).init.body);
+    assert.equal(sent.text, 'never mind :face_palm:');
+    assert.equal((await res.json()).text, 'never mind :face_palm:');
+
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'teams', 'u-ada', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'ms-ada'));
+    const teams = await post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'done :white_check_mark:' }, inTeam);
+    assert.equal(teams.status, 200);
+    const reply = JSON.parse(calls.find((c) => c.u.includes('/replies')).init.body);
+    assert.equal(reply.body.content, 'done ✅');
+  });
+
   it('turns picked @Names into Slack mentions, only for accounts in D1', async () => {
     const e = withAccounts(env());
     await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,

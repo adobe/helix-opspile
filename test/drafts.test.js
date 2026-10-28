@@ -270,7 +270,9 @@ describe('shared drafts', () => {
       // No personal account needed: it goes out with the bot token.
       const res = await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: 'one', draft: d.updated_at });
       assert.equal(res.status, 200);
-      assert.deepEqual(await res.json(), { ok: true, platform: 'slack', id: '1.9' });
+      assert.deepEqual(await res.json(), {
+        ok: true, platform: 'slack', id: '1.9', text: 'one',
+      });
       assert.equal(await draftOf(e, ADA), null);
     });
   });

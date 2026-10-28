@@ -57,6 +57,7 @@ import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
+import { resolveShortcodes } from '../src/shortcodes.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { snippet, terms } from '../src/search.js';
@@ -157,6 +158,18 @@ const PICKER_TEAMS = {
   thumbsup: '👍', heart: '❤️', joy: '😂', open_mouth: '😮', eyes: '👀', pray: '🙏', tada: '🎉', white_check_mark: '✅',
 };
 const CHECKS = new Set(['white_check_mark', '✅']);
+/**
+ * Clef for the preview: the first candidate for an emoji name nobody has
+ * (src/shortcodes.js), when its keywords have the name.
+ */
+const DEV_CLEF = {
+  async run(model, { state, questions }) {
+    const code = (/:([^:]+):/.exec(state) || [])[1] || '';
+    const e0 = questions.emoji.criteria.e0 || '';
+    const choice = code && e0.includes(code) ? 'e0' : 'none';
+    return { answers: { emoji: { choice, probabilities: { [choice]: 0.9 } } } };
+  },
+};
 const personNamed = (name) => [...store.people.values()].find((p) => p.name === name);
 {
   const tom = personNamed('Tom Okafor');
@@ -844,19 +857,26 @@ async function api(req, res, url) {
     if (entry.ch.rejects && !app) {
       return json(res, { error: `Slack: ${entry.ch.rejects}` }, 502);
     }
-    // As the real reply would: it arrives a while later, like a platform event, with the
-    // platform's id, and on Slack with emoji as :shortcodes: and _italics_ as Slack writes them.
+    // As the real reply would: emoji names as the platform knows them (src/shortcodes.js,
+    // with a stand-in for Clef), and it arrives a while later, like a platform event, with
+    // the platform's id, and on Slack with emoji as :shortcodes: and _italics_ as Slack
+    // writes them.
+    const { text: sent } = await resolveShortcodes({ AI: DEV_CLEF }, String(reply).trim(), {
+      source: entry.row.source,
+    });
     const at = new Date();
     const id = store.newId(key, at.getTime());
     const arrived = entry.row.source === 'slack'
-      ? String(reply).trim().replace(/🤖/g, ':robot_face:').replace(/🥁/g, ':drum_with_drumsticks:')
+      ? sent.replace(/🤖/g, ':robot_face:').replace(/🥁/g, ':drum_with_drumsticks:')
         .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, '$1_$2_')
-      : String(reply).trim();
+      : sent;
     setTimeout(() => {
       store.post(key, app ? 'app' : 'dana', arrived, at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, app ? 1200 : ARRIVE_MS);
-    return json(res, { ok: true, platform: entry.row.source, id });
+    return json(res, {
+      ok: true, platform: entry.row.source, id, text: sent,
+    });
   }
   if (url.pathname === '/api/edit' && req.method === 'POST') {
     // As src/edit.js: the platform takes the edit, and its event brings it back a moment later.

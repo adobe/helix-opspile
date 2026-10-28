@@ -19,6 +19,7 @@ import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
 import { platformName } from './platforms.js';
 import { target as replyTarget } from './post.js';
+import { resolveShortcodes } from './shortcodes.js';
 
 /**
  * A person posting as the opspile app (the Slack app, the Teams bot, the Discord bot) instead
@@ -73,8 +74,9 @@ export async function recordAppPost(env, me, t, id) {
 
 /**
  * POST /api/post/app `{ thread, text }`: posts `text` in the thread as the opspile app, for a
- * staff member of one of the thread's teams. The reply arrives like any other message, through
- * the platform's events, by the app.
+ * staff member of one of the thread's teams, with its emoji `:names:` as the platform knows
+ * them (`text` in the answer). The reply arrives like any other message, through the
+ * platform's events, by the app.
  */
 export async function postApp(env, me, request, inTeam) {
   const { thread: key, text } = request || {};
@@ -92,7 +94,10 @@ export async function postApp(env, me, request, inTeam) {
   if (check.problem) {
     return json({ error: check.problem }, check.status);
   }
-  const res = await postAsApp(env, check.entry.key, body);
+  const { text: sent } = await resolveShortcodes(env, body, {
+    source: check.target.source, tenant: check.target.tenant,
+  });
+  const res = await postAsApp(env, check.entry.key, sent);
   if (res.error) {
     return json({ error: res.error }, /^too long/.test(res.error) ? 400 : 502);
   }
@@ -101,5 +106,7 @@ export async function postApp(env, me, request, inTeam) {
   console.log(JSON.stringify({
     route: 'post', action: 'app', platform: res.platform, team: check.entry.team,
   }));
-  return json({ ok: true, platform: res.platform, id: res.id });
+  return json({
+    ok: true, platform: res.platform, id: res.id, text: sent,
+  });
 }

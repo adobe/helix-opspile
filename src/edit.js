@@ -21,6 +21,7 @@ import {
 import { mentionCandidates } from './profiles.js';
 import { segment } from './raw.js';
 import { teamsOf } from './shares.js';
+import { resolveShortcodes } from './shortcodes.js';
 
 /**
  * Editing a sent message from the inbox, the way it was sent (src/post.js, src/postapp.js):
@@ -135,7 +136,7 @@ async function editAsUser(env, me, t, msg, body, ids) {
  * POST /api/edit `{ thread, id, text, mentions? }`: replaces the text of message `id` in
  * platform thread `thread` (as /api/react names a message), as it was sent: as the signed-in
  * person if they posted it, as the opspile app if they posted it as the app. `mentions` are
- * account ids from /api/mentionable, as for /api/post.
+ * account ids from /api/mentionable, as for /api/post; emoji `:names:` go as for a reply.
  */
 export async function edit(env, me, request, inTeam) {
   const {
@@ -153,10 +154,14 @@ export async function edit(env, me, request, inTeam) {
   if (!isStaffDomain(env, me.email)) {
     return json({ error: 'only staff can edit' }, 403);
   }
-  const body = String(text || '').trim();
-  if (!body || body.length > MAX_TEXT) {
+  const typed = String(text || '').trim();
+  if (!typed || typed.length > MAX_TEXT) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
+  // Emoji names as the platform knows them, as for a reply (src/shortcodes.js).
+  const { text: body } = await resolveShortcodes(env, typed, {
+    source: t.source, tenant: t.tenant,
+  });
   const app = await env.DB.prepare(`SELECT person FROM app_posts
     WHERE source = ? AND tenant = ? AND channel_id = ? AND id = ?`)
     .bind(t.source, t.tenant, t.channel_id, msg.id).first();

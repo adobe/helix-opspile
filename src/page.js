@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { SKIN_TONES, SLACK_EMOJI } from './emoji.js';
+import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from './emoji.js';
 import MARKDOWN from './ui-markdown.bundle.js';
 
 const PLACEHOLDER = '/* SLACK_EMOJI */ { names: {}, skin: [] }';
@@ -38,12 +38,15 @@ export function page(html, scripts) {
   });
 }
 
-/** ui/inbox.html as served (see `page`), with Slack's emoji names filled in. */
+/**
+ * ui/inbox.html as served (see `page`), with Slack's emoji names filled in, and the names
+ * GitHub, Discord and Teams give them.
+ */
 export function inboxPage(html, scripts) {
   const served = page(html, scripts);
   if (!served.includes(PLACEHOLDER)) {
     throw new Error('ui/inbox.js has no SLACK_EMOJI placeholder');
   }
-  const emoji = JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES });
+  const emoji = JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES, aliases: EMOJI_ALIASES });
   return served.replace(PLACEHOLDER, () => emoji);
 }

@@ -18,7 +18,8 @@
  * - a single line break is a break, as in Slack and Teams
  * - no raw HTML (shown as text), no indented code (chat indents prose), no footnotes
  * - links open in a new tab; Slack and Teams images go through the inbox's media proxy
- * - `@Full Name` mentions and `:emoji:` codes, outside code
+ * - `@Full Name` mentions and `:emoji:` codes, outside code; `emojiLookup`
+ *   (src/emojinames.js) finds an emoji by any platform's name for it
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`.
@@ -31,6 +32,8 @@ import {
 import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-strikethrough';
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
+
+export { emojiLookup } from './emojinames.js';
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
