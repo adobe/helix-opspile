@@ -14,20 +14,36 @@ import { SKIN_TONES, SLACK_EMOJI } from './emoji.js';
 import MARKDOWN from './ui-markdown.bundle.js';
 
 const PLACEHOLDER = '/* SLACK_EMOJI */ { names: {}, skin: [] }';
-const MARKDOWN_PLACEHOLDER = '<script>/* MARKDOWN */</script>';
+
+/** `<script src="name.js"></script>`, with or without `type="module"`, in a page of ui/. */
+const SCRIPT = /<script( type="module")? src="([a-z-]+\.js)"><\/script>/g;
 
 /**
- * ui/inbox.html as served: with Slack's emoji names filled in, and the markdown renderer
- * (src/ui-markdown.js) as the global `Markdown`.
+ * A page of ui/ as served: its scripts, ui/*.js and `markdown.js` (the markdown renderer,
+ * src/ui-markdown.js, as the global `Markdown`), inlined where the page names them. The
+ * scripts live in their own files, which lint checks, but the page stays one request.
+ *
+ * @param {string} html the page, ui/<name>.html
+ * @param {Record<string, string>} scripts ui/*.js by file name
  */
-export function inboxPage(html) {
-  if (!html.includes(PLACEHOLDER)) {
-    throw new Error('ui/inbox.html has no SLACK_EMOJI placeholder');
+export function page(html, scripts) {
+  const files = { ...scripts, 'markdown.js': MARKDOWN };
+  return html.replace(SCRIPT, (tag, module, name) => {
+    if (typeof files[name] !== 'string') {
+      throw new Error(`no script ${name} for the page`);
+    }
+    // In an inline <script>, `</script` would end it.
+    const code = files[name].replace(/<\/(script)/gi, '<\\/$1');
+    return `<script${module || ''}>\n${code}</script>`;
+  });
+}
+
+/** ui/inbox.html as served (see `page`), with Slack's emoji names filled in. */
+export function inboxPage(html, scripts) {
+  const served = page(html, scripts);
+  if (!served.includes(PLACEHOLDER)) {
+    throw new Error('ui/inbox.js has no SLACK_EMOJI placeholder');
   }
-  if (!html.includes(MARKDOWN_PLACEHOLDER)) {
-    throw new Error('ui/inbox.html has no MARKDOWN placeholder');
-  }
-  return html
-    .replace(PLACEHOLDER, () => JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES }))
-    .replace(MARKDOWN_PLACEHOLDER, () => `<script>${MARKDOWN}</script>`);
+  const emoji = JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES });
+  return served.replace(PLACEHOLDER, () => emoji);
 }

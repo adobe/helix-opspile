@@ -345,8 +345,8 @@ reactions within about five.
 ### Iterate on the inbox UI
 
 `npm run ui:dev` serves the inbox at <http://localhost:8787/inbox> with fake data and live
-reload: saving `ui/inbox.html` reloads the page, and saving anything under `scripts/` or `src/`
-restarts the server with fresh data. The page is the same file the Worker serves, and the fake
+reload: saving a page or script under `ui/` reloads the page, and saving anything under `scripts/`
+or `src/` restarts the server with fresh data. The pages are the same files the Worker serves, and the fake
 API uses the same `readState`, `parse` and `render` helpers. D1, R2, the team's Durable Object
 and Access are replaced by an in-memory store in
 [scripts/dev-ui-fixtures.mjs](scripts/dev-ui-fixtures.mjs), and you are signed in as Dana.

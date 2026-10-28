@@ -21,6 +21,8 @@ export default [
     files: ['src/**/*.js', 'test/**/*.js', 'scripts/**/*.mjs'],
     languageOptions: {
       ...recommended.languageOptions,
+      // Import attributes: src/index.js imports the pages' scripts as text.
+      ecmaVersion: 'latest',
       globals: {
         ...recommended.languageOptions.globals,
         ...globals.serviceworker,

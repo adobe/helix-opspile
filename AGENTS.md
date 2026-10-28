@@ -37,11 +37,11 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/shares.js` — channels shared by several teams: filed under their first team, in the
   others' inboxes too (`channel_teams`)
 - `src/kb.js` — pile 3: creates the org and team knowledge-base repos in Artifacts
-- `src/admin.js` and `ui/admin.html` — the admin team's pages for teams, members, rules and
+- `src/admin.js` and `ui/admin.html`, `ui/admin.js` — the admin team's pages for teams, members, rules and
   orgs at `/inbox/admin` (team managers: their teams' members, and requests for channels,
   `src/requests.js`, which the admin team confirms or declines); `src/refile.js` moves channels a rule change re-files;
   `src/suggest.js` suggests the admin team's channels to the teams (members' activity, Clef per channel, cron)
-- `src/kbadmin.js` and `ui/kb.html` — the admin team's knowledge-base editor at `/inbox/kb`
+- `src/kbadmin.js` and `ui/kb.html`, `ui/kb.js` — the admin team's knowledge-base editor at `/inbox/kb`
   (including each knowledge base's `systemprompt.md` for the agents, and the per-channel switch
   of the thread agents, `src/agent/enabled.js`)
 - `src/agent/` — thread agents: `agent.js` (the `ThreadAgent` Durable Object, Pi via
@@ -67,7 +67,11 @@ changing anything: it defines the four piles and the on-disk layout of pile 2.
 - `src/timing.js` — the `Server-Timing` header on every `/api/*` answer (D1, R2, auth, total;
   durations and counts only); `src/filecache.js` — thread files kept per isolate by R2 version
 - `src/mcp.js` — `/mcp` MCP server (transport, protocol); `src/mcp-tools.js` — its tools
-- `src/page.js` — serves `ui/inbox.html` with Slack's emoji names from `src/emoji.js`, which
+- `ui/` — the pages (`*.html`) and their scripts (`*.js`, linted as browser code; `app.js` is
+  every page's). A page names its scripts, `<script type="module" src="inbox.js"></script>`,
+  and `src/page.js` inlines them where it is served; never write a script into a page
+  (`test/ui-scripts.test.js` fails on one)
+- `src/page.js` — serves `ui/inbox.html` and `ui/inbox.js` with Slack's emoji names from `src/emoji.js`, which
   `scripts/emoji.mjs` generates (do not edit it by hand), and with the page's markdown renderer
   `src/ui-markdown.js` (micromark), which `scripts/ui-markdown.mjs` bundles into
   `src/ui-markdown.bundle.js` (generated, not committed: `npm run build`; `cf deploy`, `cf dev`,

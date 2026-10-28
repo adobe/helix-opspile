@@ -17,6 +17,7 @@ import { bundle } from '../scripts/ui-markdown.mjs';
 import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
 import { mentionPattern, render } from '../src/ui-markdown.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
 // Made-up names and addresses only.
 const proxy = (u) => (/^https:\/\/files\.slack\.com\//.test(u) ? `/api/media?u=${encodeURIComponent(u)}` : u);
@@ -132,9 +133,9 @@ describe('ui markdown', () => {
     const file = readFileSync(new URL('../src/ui-markdown.bundle.js', import.meta.url), 'utf8');
     assert.equal(file, await bundle(), 'run node scripts/ui-markdown.mjs');
     assert.ok(BUNDLE.startsWith('var Markdown='));
-    const html = readFileSync(new URL('../ui/inbox.html', import.meta.url), 'utf8');
-    const page = inboxPage(html);
-    const script = page.slice(page.indexOf('<script>var Markdown=') + 8, page.indexOf('</script>', page.indexOf('<script>var Markdown=')));
+    const served = inboxPage(PAGES['inbox.html'], SCRIPTS);
+    const at = served.indexOf('var Markdown=');
+    const script = served.slice(at, served.indexOf('</script>', at));
     // In the browser, entities are decoded by the DOM.
     const document = {
       createElement: () => {
@@ -148,6 +149,5 @@ describe('ui markdown', () => {
     // eslint-disable-next-line no-new-func
     const Markdown = new Function('document', `${script}\nreturn Markdown;`)(document);
     assert.equal(Markdown.render('**hi**\nthere &copy;'), '<p><strong>hi</strong><br />\nthere ©</p>');
-    assert.throws(() => inboxPage(html.replace('<script>/* MARKDOWN */</script>', '')), /MARKDOWN/);
   });
 });

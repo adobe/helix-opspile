@@ -25,8 +25,9 @@
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does.
  *
- * What is shared with the Worker: `ui/inbox.html`, served from disk on every request (the
- * Worker imports the same file), and the pure helpers `readState`, `waitingOn`, `titleOf`
+ * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
+ * disk on every request (the Worker imports the same files) as src/page.js puts them together,
+ * and the pure helpers `readState`, `waitingOn`, `titleOf`
  * (src/threads.js) and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the
  * TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
  * (dev-ui-fixtures.mjs) and "signed in as Dana".
@@ -34,21 +35,21 @@
  * With a production session (see scripts/dev-ui-session.mjs), `/api/*` is proxied to the
  * production Worker instead, read-only, and the page's banner says so.
  *
- * Saving `ui/inbox.html` reloads the page. `npm run ui:dev` runs this file under
+ * Saving a page or script under `ui/` reloads the page. `npm run ui:dev` runs this file under
  * `node --watch`, so saving anything under `scripts/` or `src/` restarts the server with
  * fresh fake data, and the page reloads once it is back.
  */
 
 import { createHash } from 'node:crypto';
 import { watch } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '../src/channels.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
-import { inboxPage as withEmoji } from '../src/page.js';
+import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { readState, waitingOn } from '../src/threads.js';
@@ -949,9 +950,17 @@ function banner() {
     + `${label}</div>`;
 }
 
-async function inboxPage() {
-  const html = withEmoji(await readFile(join(uiDir, 'inbox.html'), 'utf8'));
-  return html.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`);
+/** The pages' scripts, ui/*.js, read again on every page load (src/index.js imports them). */
+async function scripts() {
+  const names = (await readdir(uiDir)).filter((f) => f.endsWith('.js'));
+  return Object.fromEntries(await Promise.all(names.map(async (f) => [f, await readFile(join(uiDir, f), 'utf8')])));
+}
+
+/** ui/<name>.html as the Worker serves it, with the banner and live reload. */
+async function uiPage(name) {
+  const html = await readFile(join(uiDir, name), 'utf8');
+  const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
+  return served.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`);
 }
 
 function reloadStream(req, res) {
@@ -968,7 +977,7 @@ function reloadStream(req, res) {
 function watchUi() {
   let timer;
   watch(uiDir, (event, file) => {
-    if (file && !['inbox.html', 'kb.html', 'admin.html'].includes(file)) {
+    if (file && !/\.(html|js)$/.test(file)) {
       return;
     }
     clearTimeout(timer);
@@ -976,7 +985,7 @@ function watchUi() {
       for (const res of reloadClients) {
         res.write('data: reload\n\n');
       }
-      console.log(`[ui] ${file || 'inbox.html'} changed, reloading ${reloadClients.size} page(s)`);
+      console.log(`[ui] ${file || 'ui/'} changed, reloading ${reloadClients.size} page(s)`);
     }, 100);
   });
 }
@@ -1017,14 +1026,14 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/inbox/kb' || url.pathname === '/inbox/admin') {
-      const html = await readFile(join(uiDir, url.pathname === '/inbox/kb' ? 'kb.html' : 'admin.html'), 'utf8');
+      const html = await uiPage(url.pathname === '/inbox/kb' ? 'kb.html' : 'admin.html');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-      res.end(html.replace('</body>', `${banner()}${RELOAD_CLIENT}\n</body>`));
+      res.end(html);
       return;
     }
     if (url.pathname === '/inbox') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-      res.end(await inboxPage());
+      res.end(await uiPage('inbox.html'));
       return;
     }
     if (ICONS[url.pathname]) {
