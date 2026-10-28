@@ -822,12 +822,13 @@ function threadRows() {
   if (!box.querySelector('.rows')) box.innerHTML = '<div class="count"></div><div class="rows"></div>';
   const mine = personal();
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
-  // Each of the viewer's teams, then the personal view: one switch, the active one highlighted.
-  const views = [...(state.teams || []).map((t) => ({
-    slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
-  })), {
+  // The personal view (the default), then each of the viewer's teams: one switch, the active
+  // one highlighted.
+  const views = [{
     slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, in all your teams, latest activity first',
-  }];
+  }, ...(state.teams || []).map((t) => ({
+    slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
+  }))];
   const sorter = `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
@@ -1032,6 +1033,8 @@ function message(m, prev, fresh, followed = false) {
   const enter = fresh ? 'enter' : '';
   if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body)} · ${clock(m.at)}</div>`;
   const adobe = Boolean(a.staff);
+  // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage.
+  const own = Boolean(m.mine || m.pending);
   const cont = continues(prev, m);
   const key = profileKey(m.authorKey, {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
@@ -1050,7 +1053,7 @@ function message(m, prev, fresh, followed = false) {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button></div>` : '';
-  return `<div class="msg ${adobe ? 'adobe' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
+  return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col">${quick}<div class="who">${who}</div>
       <div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body)}</div>
@@ -2037,6 +2040,12 @@ function syncPages() {
   $('inbox').href = `${location.pathname}${location.search}`;
   $('kb').href = kbHref();
 }
+/**
+ * Whether an address asks for the personal view: it is the default, so any address without a
+ * team does. `sort=personal` (and `recent`, before it) is how it was asked for before.
+ */
+const personalAsked = (q) => q.get('view') === 'personal' || ['personal', 'recent'].includes(q.get('sort'))
+  || !q.get('team');
 function fromUrl() {
   const q = new URLSearchParams(location.search);
   const team = q.get('team');
@@ -2054,8 +2063,7 @@ function fromUrl() {
       if (!state.sel[id]?.size) delete state.sel[id];
     }
   }
-  // `sort=personal` (and `recent`, before it) is how the personal view was asked for before.
-  state.sort = q.get('view') === 'personal' || ['personal', 'recent'].includes(q.get('sort')) ? 'personal' : 'team';
+  state.sort = personalAsked(q) ? 'personal' : 'team';
   onePick();
   setUnread(q.get('unread') === '1', q.get('t'));
   state.as = Number(q.get('as')) || null;
@@ -2172,14 +2180,12 @@ async function switchView(slug) {
 }
 
 async function start() {
-  // The team is in the address (after the first visit): its inbox is fetched alongside
-  // /api/me instead of after it. Viewing as someone else waits, as their teams decide.
+  // The view is known from the address (personal, unless it names a team): its inbox is
+  // fetched alongside /api/me instead of after it. Viewing as someone else waits, as their
+  // teams decide.
   const asked = new URLSearchParams(location.search);
-  const forMe = asked.get('view') === 'personal' || ['personal', 'recent'].includes(asked.get('sort'));
-  let early = null;
-  if (!asked.get('as') && (forMe || asked.get('team'))) {
-    early = get(forMe ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null);
-  }
+  const early = asked.get('as') ? null
+    : get(personalAsked(asked) ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null);
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   const q = new URLSearchParams(location.search);

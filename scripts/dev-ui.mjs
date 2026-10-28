@@ -396,6 +396,8 @@ function thread(key) {
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,
       ),
+      // As src/api.js: posted by the viewer (messages.person).
+      mine: meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name,
       reactions: reactionsOn(key, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));

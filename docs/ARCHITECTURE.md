@@ -349,22 +349,24 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
 - The UI is one static page, served by the Worker at `/inbox` behind Cloudflare Access: facet
   cards (status, type, next actor, urgency, kind, customer, platform) on the left, threads in
   fixed-height rows in the middle, and the thread as a chat on the right (customers on the
-  left, Adobe on the right, with reactions and images). Avatars are the Slack profile picture
+  left, Adobe on the right, with reactions and images; only your own messages are blue,
+  colleagues' are grey like the customer's). Avatars are the Slack profile picture
   or the Gravatar for the email; the customer's icon is the favicon of their mail domain.
   Reactions are kept in D1 (`reactions`) from Slack's reaction events and from the reactions
   Teams reports on each message.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
-  cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; an
-  excluded value is struck through, and a plain click stops excluding it.
-- The thread list has a view per team the viewer is in, and the personal view, switched above
-  the list (for a member of two teams: *Admin · Helix · Personal*). A **team's** view
-  (`team=<slug>`) puts what needs you most first and has every facet card. **Personal**
-  (`view=personal`) has the conversations of all your teams in the channels you posted or
+  cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; a
+  picked value is tinted and outlined in the accent colour, an excluded one is struck
+  through, and a plain click stops excluding it.
+- The thread list has the personal view and a view per team the viewer is in, switched above
+  the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
+  (`view=personal`, and the default: any address without `team=`) has the conversations of all your teams in the channels you posted or
   were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
   latest activity first and keeps only the customer card, on which one customer is picked at a
   time; filters on the cards it does not show do not apply there, and are kept for the team
-  views. Its live updates come from the rooms of all your teams. A facet value with threads
+  views. Its live updates come from the rooms of all your teams. A **team's** view
+  (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.

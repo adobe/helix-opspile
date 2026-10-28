@@ -501,9 +501,9 @@ export async function thread(env, me, asked, wanted = null) {
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
     Promise.all(group.map((m) => folderFiles(env.CHANNELS, m.path))).then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key
+        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
-      .bind(keys).all(),
+      .bind(me.id, keys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
         COALESCE(p.name, i.name) AS name, i.person = ? AS mine
       FROM reactions r
@@ -558,6 +558,8 @@ export async function thread(env, me, asked, wanted = null) {
         body,
         avatar: m.avatar || null,
         authorKey: m.author_key || null,
+        // Posted by the viewer: the UI shows their own messages apart from colleagues'.
+        mine: Boolean(m.mine),
         reactions: reactionsBy.get(m.mkey) || [],
       };
     })
