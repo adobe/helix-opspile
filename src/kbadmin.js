@@ -10,9 +10,11 @@
  * governing permissions and limitations under the License.
  */
 
-import { agentChannels, agentStates, setAgent } from './agent/enabled.js';
+import {
+  agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
+} from './agent/enabled.js';
 import { writeKnowledge } from './agent/kbwrite.js';
-import { SYSTEM_PROMPT } from './agent/okf.js';
+import { isEntry, SYSTEM_PROMPT } from './agent/okf.js';
 import { commitLog, listFiles, readText } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
@@ -45,41 +47,116 @@ async function knownRepo(env, repo) {
 }
 
 /**
- * How many channels with an agent on each knowledge base learns from, by `<kind>:<slug>`.
- * The channels with an agent are few, so this reads their threads by channel.
+ * The team and the customer of each channel in `ids` (its kind-`channel` threads), as rows
+ * `{ channel_id, team, org }`; a channel being re-filed has two for a while.
  */
-async function agentCounts(env) {
-  const { results: set } = await env.DB.prepare('SELECT channel_id, enabled FROM agent_channels').all();
-  const on = new Set(agentChannels(env));
-  for (const r of set || []) {
-    on[r.enabled === 1 ? 'add' : 'delete'](r.channel_id);
-  }
-  const ids = [...on];
-  const pairs = new Set();
-  for (let i = 0; i < ids.length; i += 90) {
-    const part = ids.slice(i, i + 90);
+async function homesOf(env, ids) {
+  const list = [...new Set(ids)];
+  const out = [];
+  for (let i = 0; i < list.length; i += 90) {
+    const part = list.slice(i, i + 90);
     // eslint-disable-next-line no-await-in-loop
     const { results } = await env.DB.prepare(`SELECT DISTINCT channel_id, team, org FROM threads
       WHERE channel_id IN (${part.map(() => '?').join(', ')}) AND kind = 'channel'`).bind(...part).all();
-    for (const r of results || []) {
-      pairs.add(`team:${r.team}\n${r.channel_id}`).add(`org:${r.org}\n${r.channel_id}`);
-    }
+    out.push(...(results || []));
   }
-  const counts = new Map();
-  for (const pair of pairs) {
-    const key = pair.split('\n')[0];
-    counts.set(key, (counts.get(key) || 0) + 1);
+  return out;
+}
+
+/** Counts `value`s once per key: `{ add(key, value), size(key) }`. */
+function tally() {
+  const sets = new Map();
+  return {
+    add(key, value) {
+      if (!sets.has(key)) {
+        sets.set(key, new Set());
+      }
+      sets.get(key).add(value);
+    },
+    size: (key) => (sets.has(key) ? sets.get(key).size : 0),
+  };
+}
+
+/**
+ * How many channels with an agent each knowledge base learns from, by `<kind>:<slug>`: those
+ * switched on, those of AGENT_CHANNELS and those of the teams with agents by default that
+ * nobody switched off. Only the teams with agents by default are read by team.
+ */
+async function agentCounts(env) {
+  const [{ results: set }, { results: teams }] = await Promise.all([
+    env.DB.prepare('SELECT channel_id, enabled FROM agent_channels').all(),
+    env.DB.prepare('SELECT team FROM agent_teams WHERE enabled = 1').all(),
+  ]);
+  const explicit = new Map((set || []).map((r) => [r.channel_id, r.enabled === 1]));
+  const deployment = agentChannels(env);
+  const teamsOn = (teams || []).map((r) => r.team);
+  const switchedOn = [...explicit].filter(([, on]) => on).map(([id]) => id);
+  const rows = await homesOf(env, [...deployment, ...switchedOn]);
+  for (let i = 0; i < teamsOn.length; i += 90) {
+    const part = teamsOn.slice(i, i + 90);
+    // eslint-disable-next-line no-await-in-loop
+    const { results } = await env.DB.prepare(`SELECT DISTINCT channel_id, team, org FROM threads
+      WHERE team IN (${part.map(() => '?').join(', ')}) AND kind = 'channel'`).bind(...part).all();
+    rows.push(...(results || []));
+  }
+  const on = new Set(teamsOn);
+  const counts = tally();
+  for (const r of rows) {
+    const enabled = explicit.has(r.channel_id) ? explicit.get(r.channel_id)
+      : deployment.has(r.channel_id) || on.has(r.team);
+    if (enabled) {
+      counts.add(`team:${r.team}`, r.channel_id);
+      counts.add(`org:${r.org}`, r.channel_id);
+    }
   }
   return counts;
 }
 
-/** GET /api/kb: every knowledge base, teams first, with the team's or customer's name. */
+/**
+ * How many tools and MCP servers the agents of each knowledge base's threads have turned on,
+ * by `<kind>:<slug>`, as the editor's "Tools and MCP servers" counts them: the switchable
+ * tools and the global servers on for the team or in any of its channels, and its own servers.
+ */
+async function toolCounts(env) {
+  const [{ results: servers }, { results: switches }] = await Promise.all([
+    env.DB.prepare('SELECT scope, slug, id FROM mcp_servers WHERE enabled = 1').all(),
+    env.DB.prepare(`SELECT 'tool:' || tool AS name, scope, target FROM agent_tool_switches WHERE enabled = 1
+      UNION ALL SELECT 'mcp:' || server, scope, target FROM mcp_global_switches WHERE enabled = 1`).all(),
+  ]);
+  const counts = tally();
+  for (const r of servers || []) {
+    counts.add(`${r.scope}:${r.slug}`, `server:${r.id}`);
+  }
+  const byChannel = new Map();
+  for (const r of switches || []) {
+    if (r.scope === 'team') {
+      counts.add(`team:${r.target}`, r.name);
+    } else {
+      byChannel.set(r.target, [...(byChannel.get(r.target) || []), r.name]);
+    }
+  }
+  for (const r of await homesOf(env, [...byChannel.keys()])) {
+    for (const name of byChannel.get(r.channel_id)) {
+      counts.add(`team:${r.team}`, name);
+      counts.add(`org:${r.org}`, name);
+    }
+  }
+  return counts;
+}
+
+/**
+ * GET /api/kb: every knowledge base, teams first, with the team's or customer's name, its
+ * entries (null until counted), and how many channels with agents and tools it has.
+ */
 async function listBases(env, me) {
-  const counts = await agentCounts(env);
-  const { results } = await env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at,
-      t.name AS team_name
-    FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
-    ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all();
+  const [agents, tools, { results }] = await Promise.all([
+    agentCounts(env),
+    toolCounts(env),
+    env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at, k.entries,
+        t.name AS team_name
+      FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
+      ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all(),
+  ]);
   return json({
     systemPrompt: SYSTEM_PROMPT,
     bases: (results || []).filter((r) => mayEdit(me, r)).map((r) => ({
@@ -88,9 +165,53 @@ async function listBases(env, me) {
       slug: r.slug,
       name: r.team_name || r.slug,
       created_at: r.created_at,
-      agents: counts.get(`${r.kind}:${r.slug}`) || 0,
+      entries: r.entries ?? null,
+      agents: agents.size(`${r.kind}:${r.slug}`),
+      tools: tools.size(`${r.kind}:${r.slug}`),
     })),
   });
+}
+
+/** Records how many entries a knowledge base has, when it changed. */
+async function recordEntries(env, repo, n) {
+  await env.DB.prepare(`UPDATE knowledge_bases SET entries = ?1
+    WHERE repo = ?2 AND (entries IS NULL OR entries != ?1)`).bind(n, repo).run();
+}
+
+/**
+ * Cron: counts the entries of knowledge bases not counted yet (`knowledge_bases.entries` is
+ * NULL), `limit` at a time; writes keep the count after that (src/agent/kbwrite.js).
+ */
+export async function countEntries(env, { limit = 60, parallel = 6 } = {}) {
+  if (!env.ARTIFACTS) {
+    return { counted: 0 };
+  }
+  const { results } = await env.DB.prepare(`SELECT repo FROM knowledge_bases
+    WHERE entries IS NULL ORDER BY RANDOM() LIMIT ?`).bind(limit).all();
+  const repos = (results || []).map((r) => r.repo);
+  const count = async (repo) => {
+    try {
+      const res = await listFiles(env, repo, '', { recursive: true });
+      if (res.error) {
+        return false;
+      }
+      await recordEntries(env, repo, (res.entries || [])
+        .filter((e) => e.type !== 'tree' && isEntry(e.path)).length);
+      return true;
+    } catch (e) {
+      console.error(JSON.stringify({
+        route: 'cron', kb: 'count', repo, error: e.message,
+      }));
+      return false;
+    }
+  };
+  const done = [];
+  for (let i = 0; i < repos.length; i += parallel) {
+    // eslint-disable-next-line no-await-in-loop
+    done.push(...await Promise.all(repos.slice(i, i + parallel).map(count)));
+  }
+  const counted = done.filter(Boolean).length;
+  return { counted, failed: repos.length - counted };
 }
 
 /** GET /api/kb/files?repo=: every file, and whether `systemprompt.md` exists. */
@@ -101,6 +222,9 @@ async function files(env, repo) {
   }
   const list = (res.entries || []).filter((e) => e.type !== 'tree')
     .map((e) => ({ path: e.path, hash: e.hash }));
+  if (!res.truncated) {
+    await recordEntries(env, repo, list.filter((f) => isEntry(f.path)).length);
+  }
   return json({
     repo,
     commit: res.commit || null,
@@ -172,10 +296,17 @@ async function channels(env, me, base) {
   // A channel being re-filed has threads in two places for a while: its latest place counts.
   const seen = new Set();
   const rows = (results || []).filter((r) => !seen.has(r.channel_id) && seen.add(r.channel_id));
-  const states = await agentStates(env, rows.map((r) => r.channel_id));
+  const states = await agentStates(env, rows.map((r) => r.channel_id), {
+    // Alert channels have no agents: their team's default does not turn them on.
+    teams: new Map(rows.filter((r) => r.kind === 'channel').map((r) => [r.channel_id, r.team])),
+  });
   return json({
     repo: base.repo,
     configured: agentsConfigured(env),
+    // A team's knowledge base: whether the channels nobody switched have agents.
+    teamDefault: base.kind === 'team' ? {
+      ...await teamDefault(env, base.slug), may: managesTeam(me, base.slug),
+    } : null,
     channels: rows.map((r) => ({
       source: r.source,
       channelId: r.channel_id,
@@ -197,11 +328,25 @@ async function channels(env, me, base) {
  * PUT /api/kb/agent `{ channel, enabled }`: turns a channel's thread agent on or off. For the
  * admin team, and managers of the team that owns the channel (the team of its latest
  * thread). Running agents notice at their next message, or their wrap-up a day later.
+ * `{ team, enabled }` sets the team's default instead: whether its channels that nobody
+ * switched have agents (for the admin team and the team's managers).
  */
 async function switchAgent(env, me, body) {
   const channel = String(body.channel || '');
-  if (typeof body.enabled !== 'boolean' || !channel) {
-    return json({ error: 'give a channel and enabled: true or false' }, 400);
+  const team = String(body.team || '');
+  if (typeof body.enabled !== 'boolean' || !(channel || team)) {
+    return json({ error: 'give a channel or a team, and enabled: true or false' }, 400);
+  }
+  if (team) {
+    const known = await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(team).first();
+    if (!known || !managesTeam(me, team)) {
+      return json({ error: 'no such team' }, 404);
+    }
+    const teamDefaults = await setTeamDefault(env, team, body.enabled, me.name || me.email);
+    console.log(JSON.stringify({
+      route: 'kb', action: 'agent', team, enabled: teamDefaults.enabled,
+    }));
+    return json({ ok: true, team, teamDefault: { ...teamDefaults, may: true } });
   }
   const owner = await env.DB.prepare(`SELECT team, kind FROM threads WHERE channel_id = ?
     ORDER BY COALESCE(last_at, any_at) DESC LIMIT 1`).bind(channel).first();

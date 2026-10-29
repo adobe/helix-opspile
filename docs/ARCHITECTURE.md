@@ -336,13 +336,24 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
+The list of knowledge bases has the ops teams first, then the customers and vendors, by
+activity (the default: most entries first, then most tools and MCP servers turned on for their
+threads) or by name, as the person last chose in that browser. An entry is a file other than
+`index.md`, `log.md` and `systemprompt.md`; `knowledge_bases.entries` keeps the count, which
+every write updates (and opening a knowledge base in the editor), and the cron counts the
+knowledge bases not counted yet, a batch per run.
+
 **Thread agents per channel.** The editor shows, for each knowledge base, the channels it
 learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
 each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
 an agent in any of their channels. The admin team, and the managers of the team that owns a
-channel (the team of its latest thread), turn its agent on or off there, after a question in
-the page. The switch is a row in `agent_channels` with who set it and when; a channel nobody
-has switched yet follows `AGENT_CHANNELS`, the deployment's default. Alert channels have no
+channel (the team of its latest thread), turn its agent on or off there, right away (no
+question: it is one channel, and switches back as easily). The switch is a row in
+`agent_channels` with who set it and when. A team's knowledge base also has the team's
+default, **On by default** (`agent_teams`, after a question in the page, since it switches many
+channels at once): on, every channel of the team that nobody switched has an agent, the
+channels it gets later too. A channel nobody switched has an agent when its team's default or
+`AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
 
@@ -354,7 +365,9 @@ name, an `https://` URL, what it is for (the agents are told), request headers f
 credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
 only tools agents may call. Adding or changing one connects to it and lists its tools. Above
 them are the [global servers](#global-mcp-servers), with a switch for the team (in a team's
-knowledge base) and one per channel the knowledge base learns from.
+knowledge base) and one per channel the knowledge base learns from. In a team's knowledge base
+the per-channel switches fold, the channels switched on their own first and then by name, with a
+filter when there are many; in a customer's they are all there is, so they are shown unfolded.
 
 For admins and team managers, every page has the same header (`ui/header.js`,
 `ui/header.css`): a switch between **Inbox**, **Agents** (this editor: the agents' knowledge
@@ -758,7 +771,7 @@ inbox, on any message of the thread:
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
 in the channels where agents are on: the admin team and team managers switch them per channel
-in the knowledge-base editor, and `AGENT_CHANNELS` is the default for the rest. Each is a Durable Object
+in the knowledge-base editor, and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.

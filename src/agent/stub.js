@@ -50,11 +50,11 @@ async function threadTarget(env, key) {
   if (!entry) {
     return null;
   }
-  const row = await env.DB.prepare('SELECT channel_id, kind FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT channel_id, team, kind FROM threads WHERE thread = ?')
     .bind(entry.key).first();
   return {
     entry,
-    enabled: Boolean(row && row.kind === 'channel' && await agentEnabled(env, row.channel_id)),
+    enabled: Boolean(row && row.kind === 'channel' && await agentEnabled(env, row.channel_id, row.team)),
   };
 }
 

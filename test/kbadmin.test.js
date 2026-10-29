@@ -14,7 +14,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { checkChanges } from '../src/agent/kbwrite.js';
 import { asSystemPrompt, systemPromptBody } from '../src/agent/okf.js';
+import { agentEnabled } from '../src/agent/enabled.js';
 import { api } from '../src/api.js';
+import { countEntries } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
 import { gitServer, hasGit } from './git-server.js';
 
@@ -113,9 +115,18 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       });
       const concept = await res.json();
       assert.equal(res.status, 200);
+      // Each write counts the entries: not the index, the log or the system prompt.
+      const entries = () => DB.rows("SELECT entries FROM knowledge_bases WHERE repo = 'kb-team-helix'")[0].entries;
+      assert.equal(entries(), 1);
+      DB.sqlite.exec('UPDATE knowledge_bases SET entries = NULL');
+      assert.deepEqual(await countEntries(env), { counted: 2, failed: 0 });
+      assert.deepEqual(DB.rows('SELECT repo, entries FROM knowledge_bases ORDER BY repo'), [
+        { repo: 'kb-org-acme', entries: 0 }, { repo: 'kb-team-helix', entries: 1 },
+      ]);
       res = await call(env, ADMIN, 'DELETE', '/api/kb/file', { repo: 'kb-team-helix', path: 'notes/x.md', base: concept.hash });
       assert.equal(res.status, 200);
       assert.deepEqual(srv.files('kb-team-helix'), ['index.md', 'log.md', 'systemprompt.md']);
+      assert.equal(entries(), 0);
 
       const { commits } = await (await call(env, ADMIN, 'GET', '/api/kb/log?repo=kb-team-helix')).json();
       assert.deepEqual(commits.map((c) => c.message), ['Delete notes/x.md', 'Update notes/x.md', 'Update systemprompt.md', 'Add agent instructions']);
@@ -182,7 +193,7 @@ describe('thread agents in the knowledge-base editor', () => {
     res = await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: true }));
     assert.equal(res.status, 200);
     assert.deepEqual((await res.json()).agent, {
-      enabled: true, set: true, by: 'Bo', at: DB.rows('SELECT changed_at FROM agent_channels')[0].changed_at,
+      enabled: true, set: true, by: 'Bo', at: DB.rows('SELECT changed_at FROM agent_channels')[0].changed_at, via: null,
     });
     bases = await (await call(env, ADMIN, 'GET', '/api/kb')).json();
     assert.deepEqual(bases.bases.map((b) => [b.repo, b.agents]), [['kb-team-edge', 1], ['kb-team-helix', 1], ['kb-org-acme', 2]]);
@@ -205,5 +216,57 @@ describe('thread agents in the knowledge-base editor', () => {
     assert.equal(res.status, 200);
     res = await (await call(env, ADMIN, 'GET', '/api/kb/channels?repo=kb-team-edge')).json();
     assert.deepEqual(res.channels.map((c) => [c.channelId, c.agent.enabled, c.agent.set]), [['C2', false, true]]);
+
+    // A team's default: its channels nobody switched have agents, the switched ones keep theirs.
+    res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-team-helix')).json();
+    assert.deepEqual(res.teamDefault, {
+      enabled: false, by: null, at: null, may: true,
+    });
+    assert.equal((await (await call(env, ADMIN, 'GET', '/api/kb/channels?repo=kb-org-acme')).json()).teamDefault, null);
+    DB.sqlite.exec(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, path, last_at, any_at, updated_at) VALUES
+      ('slack:E1:C5:1', 'slack', 'E1', 'C5', '1', 'initech', 'helix', 'channel', 'aem-initech', 'p',
+        '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z')`);
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { team: 'edge', enabled: true })).status, 404);
+    assert.equal((await call(env, MANAGER, 'PUT', '/api/kb/agent', { team: 'helix', enabled: 'yes' })).status, 400);
+    res = await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { team: 'helix', enabled: true }));
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).teamDefault.enabled, true);
+    res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-team-helix')).json();
+    assert.equal(res.teamDefault.by, 'Bo');
+    assert.deepEqual(res.channels.map((c) => [c.channelId, c.agent.enabled, c.agent.via]), [
+      ['C5', true, 'team'], ['C1', false, null], ['C3', false, null],
+    ]);
+    assert.equal(await agentEnabled(env, 'C5', 'helix'), true);
+    assert.equal(await agentEnabled(env, 'C5'), true);
+    assert.equal(await agentEnabled(env, 'C1', 'helix'), false);
+    bases = await (await call(env, ADMIN, 'GET', '/api/kb')).json();
+    assert.deepEqual(bases.bases.map((b) => [b.repo, b.agents]), [['kb-team-edge', 0], ['kb-team-helix', 1], ['kb-org-acme', 0]]);
+    await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { team: 'helix', enabled: false }));
+    assert.equal(await agentEnabled(env, 'C5', 'helix'), false);
+  });
+
+  it('list the knowledge bases with their entries and the tools turned on', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix ops' }, { slug: 'admin', name: 'Admin' }] });
+    DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, entries) VALUES
+        ('kb-org-acme', 'org', 'acme', 'r', '2026-10-22T00:00:00Z', 3),
+        ('kb-org-initech', 'org', 'initech', 'r', '2026-10-22T00:00:00Z', NULL),
+        ('kb-team-helix', 'team', 'helix', 'r', '2026-10-22T00:00:00Z', 0);
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name,
+          path, last_at, any_at, updated_at) VALUES
+        ('slack:E1:C1:1', 'slack', 'E1', 'C1', '1', 'acme', 'helix', 'channel', 'aem-acme', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z'),
+        ('slack:E1:C2:1', 'slack', 'E1', 'C2', '1', 'initech', 'helix', 'channel', 'aem-initech', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z');
+      INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at) VALUES
+        ('computer', 'team', 'helix', 1, 'x'), ('post_message', 'channel', 'C2', 1, 'x'),
+        ('computer', 'channel', 'C2', 1, 'x'), ('post_message', 'channel', 'C1', 0, 'x');
+      INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_at) VALUES
+        ('browser', 'channel', 'C1', 1, 'x');
+      INSERT INTO mcp_servers (scope, slug, name, url, enabled, updated_at) VALUES
+        ('org', 'acme', 'status', 'https://s.example/mcp', 0, 'x'),
+        ('org', 'initech', 'docs', 'https://d.example/mcp', 1, 'x')`);
+    const bases = await (await call({ DB }, ADMIN, 'GET', '/api/kb')).json();
+    assert.deepEqual(bases.bases.map((b) => [b.repo, b.entries, b.tools]), [
+      ['kb-team-helix', 0, 3], ['kb-org-acme', 3, 1], ['kb-org-initech', null, 3],
+    ]);
   });
 });

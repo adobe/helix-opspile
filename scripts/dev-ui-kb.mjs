@@ -13,7 +13,7 @@
 import git from 'isomorphic-git';
 import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
-import { SYSTEM_PROMPT } from '../src/agent/okf.js';
+import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
 
 /**
  * Fake knowledge bases for `npm run ui:dev`: real git repos in memory, written by the same
@@ -39,6 +39,17 @@ const SEED = {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
     },
   },
+  // More customers, so that the list's sort (by activity: entries, then tools) has something to do.
+  'kb-org-initech': {
+    name: 'initech',
+    kind: 'org',
+    files: {
+      'sites/support.md': '---\ntype: Site\ntitle: support\ndescription: Their support portal.\n---\n\nOn the legacy stack until the migration.\n',
+      'people/contacts.md': '---\ntype: Reference\ntitle: Contacts\ndescription: Who to ask at Initech.\n---\n\nThe release manager, for anything about go-lives.\n',
+    },
+  },
+  'kb-org-globex': { name: 'globex', kind: 'org', files: {} },
+  'kb-org-umbrella': { name: 'umbrella', kind: 'org', files: {} },
 };
 
 export async function createKnowledgeBases() {
@@ -56,7 +67,7 @@ export async function createKnowledgeBases() {
         message: 'Seed', by: 'human:dana@staff.example', at: '2026-10-20T09:00:00.000Z', logEntry: '**Creation**: seed',
       });
     }
-    repos.set(repo, { ...seed, fs });
+    repos.set(repo, { ...seed, fs, entries: changes.filter((c) => isEntry(c.path)).length });
   }
 
   const blobHash = async (fs, path) => (await git.hashBlob({
@@ -77,6 +88,7 @@ export async function createKnowledgeBases() {
       slug: repo.replace(/^kb-(team|org)-/, ''),
       name: r.name,
       created_at: '2026-10-20T09:00:00.000Z',
+      entries: r.entries,
     })).sort((x, y) => y.kind.localeCompare(x.kind) || x.slug.localeCompare(y.slug)),
     has: (repo) => repos.has(repo),
     async files(repo) {
