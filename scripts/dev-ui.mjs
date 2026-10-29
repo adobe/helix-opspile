@@ -337,10 +337,9 @@ function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
   const channels = personal ? myChannels() : null;
-  // On no team: every team's channels.
+  // Whichever team the channels are filed under.
   const inScope = (r) => (personal
-    ? (!mine.length || mine.includes(r.team)) && r.kind !== 'alert'
-      && channels.has(`${r.source}:${r.channel_id}`)
+    ? r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
     : r.team === team);
   const all = [...store.threads.values()]
     .map((e) => e.row)
@@ -422,10 +421,9 @@ function search(team, q, personal = false) {
     return words.length ? words.filter((w) => t.includes(w)).length / words.length : 0;
   };
   const hits = [];
-  // On no team, the channels of the personal view, of every team.
+  // The channels of the personal view, of every team.
   const channels = myChannels();
-  const inPersonal = (r) => (NO_TEAM ? channels.has(`${r.source}:${r.channel_id}`)
-    : store.teams.some((t) => t.slug === r.team && t.members.includes(ME)));
+  const inPersonal = (r) => channels.has(`${r.source}:${r.channel_id}`);
   const rows = [...store.threads.values()].map((e) => e.row)
     .filter((r) => (personal ? inPersonal(r) : r.team === team)
       && r.kind !== 'ignore' && words.length);
@@ -714,11 +712,10 @@ async function api(req, res, url) {
       teams: MANAGER ? teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
-      // The rooms of the teams of the personal view's channels, on no team (src/shares.js).
-      rooms: teams.length ? teams.map((t) => t.slug)
-        : [...new Set([...store.threads.values()]
-          .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
-          .map((e) => e.row.team))].sort(),
+      // The person's teams and the teams of the personal view's channels (src/shares.js).
+      rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
+        .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
+        .map((e) => e.row.team)])].sort(),
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
       edit: { slack: true, teams: true },

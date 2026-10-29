@@ -16,6 +16,7 @@ import {
   api, inbox, personByEmail, personById,
 } from '../src/api.js';
 import { withEmails } from '../src/accesssync.js';
+import { recipients } from '../src/shares.js';
 import { TOOLS } from '../src/mcp-tools.js';
 import { advanceWatermark, indexMessage, recordMentions } from '../src/threads.js';
 import { d1 } from './d1.js';
@@ -158,29 +159,76 @@ describe('no-team mode', () => {
     assert.deepEqual(reads, [['other', { person: 2, thread: 'mentioned', at: at(9) }]]);
   });
 
-  it('listens to the rooms of the teams their channels are filed under', async () => {
+  it('listens to their teams\' rooms, and to those of the teams their channels are filed under', async () => {
     const DB = fresh();
     await channels(DB);
     const me = await (await call({ DB }, '/api/me', SOLO)).json();
     assert.deepEqual(me.rooms, ['helix', 'other']);
-    const member = await (await call({ DB }, '/api/me', {
+    // A posted in C2 (other) and C3 (helix): their own team first, then the other one.
+    const A = {
       id: 1, email: 'a@staff.example', name: 'A', teams: [{ slug: 'helix', name: 'Helix' }],
-    })).json();
-    assert.deepEqual(member.rooms, ['helix']);
+    };
+    const member = await (await call({ DB }, '/api/me', A)).json();
+    assert.deepEqual(member.rooms, ['helix', 'other']);
     const connected = [];
     const ROOMS = {
       idFromName: (name) => name,
       get: (name) => ({
-        fetch: async () => {
-          connected.push(name);
+        fetch: async (r) => {
+          connected.push([name, r.headers.get('x-opspile-scoped')]);
           return new Response('ok');
         },
       }),
     };
-    const live = (team) => call({ DB, ROOMS }, `/api/live?team=${team}`, SOLO, { headers: { upgrade: 'websocket' } });
+    const live = (team, who = SOLO) => call({ DB, ROOMS }, `/api/live?team=${team}`, who, { headers: { upgrade: 'websocket' } });
     assert.equal((await live('other')).status, 200);
     assert.equal((await live('nobody')).status, 400);
-    assert.deepEqual(connected, ['other']);
+    assert.equal((await live('helix', A)).status, 200);
+    assert.equal((await live('other', A)).status, 200);
+    // In a room not of their team they hear only about their channels (src/room.js).
+    assert.deepEqual(connected, [['other', '1'], ['helix', '0'], ['other', '1']]);
+  });
+
+  it('tells someone in a room not of their team only about the channels of their personal view', async () => {
+    const DB = fresh();
+    await channels(DB);
+    await say(DB, {
+      thread: 'unrelated', channelId: 'C9', team: 'helix', person: 1, minute: 6,
+    });
+    const sockets = [{ person: 1, scoped: false }, { person: 2, scoped: true }];
+    const to = async (event) => (await recipients({ DB }, event, sockets)).map((x) => x.person);
+    assert.deepEqual(await to({ type: 'thread', thread: 'same-channel' }), [1, 2]);
+    assert.deepEqual(await to({
+      type: 'thread', thread: 'unrelated', mentions: [1], author: 'A',
+    }), [1]);
+    assert.deepEqual(await to({
+      type: 'read', person: 1, thread: 'elsewhere', at: at(9),
+    }), [1]);
+    assert.deepEqual(await to({ type: 'draft', thread: 'mentioned' }), [1, 2]);
+    // Nothing about a thread in particular: the team only.
+    assert.deepEqual(await to({ type: 'other' }), [1]);
+    // Only team members in the room: nothing asked.
+    assert.deepEqual((await recipients({}, { thread: 'x' }, [sockets[0]])).length, 1);
+  });
+
+  it('lets team members work the threads of other teams\' channels they are in', async () => {
+    const DB = fresh();
+    await channels(DB);
+    const CHANNELS = { list: async () => ({ objects: [] }), get: async () => null };
+    const B = {
+      id: 3, email: 'b@staff.example', name: 'B', teams: [{ slug: 'helix', name: 'Helix' }],
+    };
+    DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (3, 'b@staff.example', 'B', 1)").run();
+    DB.sqlite.prepare("INSERT INTO team_members (team, person) VALUES ('helix', 3)").run();
+    const open = (t, who) => call({ DB, CHANNELS }, `/api/thread?thread=${t}`, who);
+    // B is on helix only and never was in C2 (other): not theirs.
+    assert.equal((await open('mentioned', B)).status, 404);
+    await say(DB, {
+      thread: 'mentioned', channelId: 'C2', team: 'other', person: 3, minute: 7,
+    });
+    assert.equal((await open('mentioned', B)).status, 200);
+    const personal = await inbox({ DB }, B, null, { personal: true });
+    assert.ok(personal.threads.some((t) => t.thread === 'mentioned'));
   });
 
   it('lists their personal view over MCP, and says there is no team to pick', async () => {

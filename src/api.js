@@ -39,7 +39,7 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  mayWork, memberOf, personalChannels, roomsOf, sharedWith, teamless, teamsOf, viewTeam,
+  inPersonalView, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
@@ -232,22 +232,17 @@ async function members(env, teams) {
 /**
  * SQL: the thread row `alias` is in the inbox, with `?1` bound to `inboxTeams(…).value`. A
  * team's inbox has its own channels and the channels shared with it. The personal view has
- * the conversations of all the viewer's teams in the channels they posted or were mentioned
- * in (`me`: the parameter bound to their id), and for someone on no team (`anyTeam`) those of
- * every team; alerts are not in it.
+ * the conversations in the channels the viewer posted or was mentioned in (`me`: the parameter
+ * bound to their id), whichever team they are filed under, on a team or not; alerts are not
+ * in it.
  */
-function inInbox(alias, personal, me, anyTeam = false) {
+function inInbox(alias, personal, me) {
   if (!personal) {
     return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')})`;
   }
-  const teams = '(SELECT value FROM json_each(?1))';
-  // Someone on no team: ?1 is the empty list of their teams.
-  const ofTeams = anyTeam ? 'json_array_length(?1) = 0'
-    : `(${alias}.team IN ${teams} OR (${alias}.source, ${alias}.channel_id) IN (
-      SELECT source, channel_id FROM channel_teams WHERE team IN ${teams}))`;
-  return `${ofTeams}
-    AND ${alias}.kind != 'alert'
-    AND (${alias}.source, ${alias}.channel_id) IN (${personalChannels(me)})`;
+  // ?1 (the viewer's teams) is not needed here, but is bound: say so, so it stays numbered.
+  return `?1 IS NOT NULL AND ${alias}.kind != 'alert'
+    AND ${inPersonalView(alias, me)}`;
 }
 
 const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
@@ -325,8 +320,6 @@ export async function inbox(env, me, team, {
   before = null, limit = INBOX_PAGE, personal = false, groups: only = null,
 } = {}) {
   const scope = inboxTeams(me, team, personal);
-  // Someone on no team: their personal view is of every team's channels.
-  const anyTeam = personal && teamless(me);
   const size = Math.max(1, Math.min(MAX_PAGE, Number(limit) || INBOX_PAGE));
   const cursor = before ? String(before).split('|') : null;
   const [beforeAt, beforeG] = cursor && cursor.length === 2 ? cursor : [null, null];
@@ -337,15 +330,19 @@ export async function inbox(env, me, team, {
     JOIN teams t ON t.slug = m.team
     WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
   const membersP = members(env, scope);
+  // The personal view's rooms (as /api/me's): they grow when the viewer is first in a channel
+  // of another team, and the inbox listens there from then on.
+  const roomsP = personal ? roomsOf(env, me) : Promise.resolve(null);
   // Settled either way, so a failure elsewhere does not leave these rejections unhandled.
   teamRowsP.catch(() => {});
   membersP.catch(() => {});
+  roomsP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
       COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
     -- The team's own channels, and the channels shared with it (migration 0024).
-    FROM threads WHERE ${inInbox('threads', personal, '?5', anyTeam)} AND kind != 'ignore'
+    FROM threads WHERE ${inInbox('threads', personal, '?5')} AND kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
       AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
@@ -374,14 +371,19 @@ export async function inbox(env, me, team, {
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
         FROM threads t
-        WHERE ${inInbox('t', personal, '?3', anyTeam)} AND t.kind != 'ignore'
+        WHERE ${inInbox('t', personal, '?3')} AND t.kind != 'ignore'
           AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
     WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
     .bind(...[scope.value, groupKeys, personal ? me.id : []].flat()).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
     return {
-      team: personal ? null : team, personal, members: await membersP, threads: [], page,
+      team: personal ? null : team,
+      personal,
+      members: await membersP,
+      threads: [],
+      page,
+      ...(personal ? { rooms: await roomsP } : {}),
     };
   }
   const threadKeys = threads.map((t) => t.thread);
@@ -474,6 +476,7 @@ export async function inbox(env, me, team, {
     team: personal ? null : team,
     personal,
     page,
+    ...(personal ? { rooms: await roomsP } : {}),
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
@@ -516,7 +519,7 @@ export async function inbox(env, me, team, {
  */
 export async function searchInbox(env, me, team, q, { limit, personal = false } = {}) {
   const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || 30));
-  // Someone on no team searches the teams their channels are filed under.
+  // The personal view's channels are filed under the teams of its rooms.
   const teams = personal ? await roomsOf(env, me) : [team];
   const found = teams.length ? await find(env, teams, q, { limit: n })
     : { q: String(q || '').trim(), words: [], hits: [] };
@@ -806,8 +809,8 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
       settings: me.readonly ? DEFAULTS : await readSettings(env, me),
-      // The rooms the inbox listens to (GET /api/live): the person's teams, or for someone on
-      // no team the teams of the channels in their personal view.
+      // The rooms the inbox listens to (GET /api/live): the person's teams, and the teams of
+      // the channels in their personal view.
       rooms: await roomsOf(env, me),
     });
   }
@@ -1011,14 +1014,17 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return new Response(null, { status: 204 });
   }
   if (url.pathname === '/api/live') {
-    // Someone on no team listens to the rooms of the teams their channels are filed under.
-    const mine = inTeam(me, team) || (teamless(me) && (await roomsOf(env, me)).includes(team));
-    if (!mine || request.headers.get('upgrade') !== 'websocket') {
+    // A team's room, or the room of a team whose channels are in the personal view, which
+    // tells only about those (`scoped`, src/room.js).
+    const member = inTeam(me, team);
+    const scoped = !member && Boolean(team) && (await roomsOf(env, me)).includes(team);
+    if (!(member || scoped) || request.headers.get('upgrade') !== 'websocket') {
       return text('expected a websocket for one of your teams\n', 400);
     }
     const headers = new Headers(request.headers);
     headers.set('x-opspile-person', String(me.id));
     headers.set('x-opspile-readonly', me.readonly ? '1' : '0');
+    headers.set('x-opspile-scoped', scoped ? '1' : '0');
     return room(env, team).fetch(new Request('https://room/connect', { headers }));
   }
   return json({ error: 'not found' }, 404);

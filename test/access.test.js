@@ -164,7 +164,7 @@ describe('personal view', () => {
     }).then(() => `slack:E1:${channelId}:${thread}.${n}`);
   };
 
-  it('has the threads of my teams\' channels that I posted or was mentioned in', async () => {
+  it('has the threads of the channels I posted or was mentioned in, whichever team has them', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
     await say(DB, {
@@ -187,14 +187,19 @@ describe('personal view', () => {
     await say(DB, {
       thread: 'admin', channelId: 'C4', team: 'admin', person: 1, at: at(6),
     });
-    // Not one of my teams' channels: not mine to see, though I posted there.
+    // Not one of my teams' channels, but I posted there: in Personal too.
     await say(DB, {
       thread: 'elsewhere', channelId: 'C5', team: 'other', person: 1, at: at(7),
+    });
+    await say(DB, {
+      thread: 'not-mine', channelId: 'C6', team: 'other', person: 2, at: at(8),
     });
     const res = await inbox({ DB }, me, null, { personal: true });
     assert.equal(res.personal, true);
     assert.equal(res.team, null);
-    assert.deepEqual(res.threads.map((t) => t.thread).sort(), ['admin', 'mentioned', 'posted', 'same-channel']);
+    assert.deepEqual(res.threads.map((t) => t.thread).sort(), ['admin', 'elsewhere', 'mentioned', 'posted', 'same-channel']);
+    // And it listens to the other team's room, for that channel.
+    assert.deepEqual(res.rooms, ['admin', 'helix', 'other']);
     assert.deepEqual(res.members.map((x) => x.name), ['A', 'B']);
     // The team inbox is as it was.
     const team = await inbox({ DB }, me, 'helix');
