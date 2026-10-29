@@ -36,7 +36,7 @@
  *
  * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
  * disk on every request (the Worker imports the same files) as src/page.js puts them together,
- * and the pure helpers `readState`, `waitingOn`, `titleOf`
+ * and the pure helpers `readState`, `waitingOn`, `titleOf`, `previewOf`
  * (src/threads.js) and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the
  * TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
  * (dev-ui-fixtures.mjs) and "signed in as Dana".

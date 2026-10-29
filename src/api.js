@@ -264,6 +264,7 @@ export function fold(threads) {
       any_at: max(ms.map((m) => m.any_at)),
       last_author: latest.last_author,
       last_staff: latest.last_staff,
+      last_text: latest.last_text,
       messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
       participants: people,
       label: latest.label || anchor.label || null,
@@ -339,7 +340,8 @@ export async function inbox(env, me, team, {
   const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
-      channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
+      channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
+      messages,
       root_at IS NOT NULL AS root_known, logical_thread,
       (SELECT m.permalink FROM messages m WHERE m.thread = r.thread AND m.deleted = 0
         AND m.permalink IS NOT NULL ORDER BY (m.id = r.root_id) DESC, m.at LIMIT 1)
