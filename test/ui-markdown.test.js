@@ -92,6 +92,23 @@ describe('ui markdown', () => {
     assert.equal(md('[x](javascript:alert(1))'), '<p><a target="_blank" rel="noopener" href="">x</a></p>');
   });
 
+  it('links the channels a message names, by name, to where they are', () => {
+    const channels = {
+      C0AAAAAAAA1: {
+        name: 'acme-ops', href: '/inbox?team=ops&filters=1&f.customer=acme', inbox: true, title: '#acme-ops: Acme in Ops',
+      },
+      'beta-help': { name: 'beta-help', href: 'https://slack.com/archives/C0BBBBBBBB2' },
+    };
+    const html = render('New channel: #C0AAAAAAAA1. Ask in #beta-help, not #other, `#C0AAAAAAAA1` or [#beta-help](https://x.example)', {
+      channel: (token) => channels[token],
+    }).replace(/\n/g, '');
+    assert.equal(html, '<p>New channel: <a class="channel" href="/inbox?team=ops&amp;filters=1&amp;f.customer=acme" data-inbox title="#acme-ops: Acme in Ops">#acme-ops</a>. '
+      + 'Ask in <a class="channel" href="https://slack.com/archives/C0BBBBBBBB2" target="_blank" rel="noopener">#beta-help</a>, not #other, '
+      + '<code>#C0AAAAAAAA1</code> or <a target="_blank" rel="noopener" href="https://x.example">#beta-help</a></p>');
+    // Without channels, the text stays as it was.
+    assert.equal(md('see #C0AAAAAAAA1'), '<p>see #C0AAAAAAAA1</p>');
+  });
+
   it('links bare and bracketed URLs, and strikes through only with two tildes', () => {
     assert.equal(
       md('see <https://example.org> and https://example.com/x. ~~gone~~ ~5 min'),

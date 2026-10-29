@@ -44,6 +44,14 @@ export function mdUrl(url) {
     || encodeURIComponent(c)));
 }
 
+/**
+ * A channel named in a message: `#name`, or `#C…` (a Slack channel id, where Slack sent no
+ * name), not inside a word, a URL (`/#…`), an entity (`&#39;`) or `##`. Names are what the
+ * platforms allow: letters, digits, `-`, `_` and `.`, not ending in `-` or `.` (`#general.`
+ * ends a sentence). src/channelrefs.js resolves them.
+ */
+export const CHANNEL_REF = /(^|[^\p{L}\p{N}_&/#])#([\p{L}\p{N}](?:[\p{L}\p{N}_.-]*[\p{L}\p{N}_])?)/gu;
+
 /** A markdown link: brackets in the label are escaped, the URL is a safe destination. */
 /** Width × height as an image title, so the inbox can reserve the space before it loads. */
 export const sizeTitle = (w, h) => {

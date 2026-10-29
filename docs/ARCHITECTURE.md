@@ -479,7 +479,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
   (`view=personal`, and the default: any address without `team=`) has the conversations in the channels you posted or
   were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts), puts the
-  latest activity first and keeps only the customer and platform cards (one customer is picked
+  latest activity first (a person's last post, or for a thread only bots posted in its last
+  message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
   views. Its live updates come from the rooms of your teams and of the teams those channels are
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
@@ -489,6 +490,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.
+- **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
+  it does for bots) are resolved when the thread is read (`src/channelrefs.js`, the `channels`
+  of `/api/thread`), so channels opspile learned about later are named too: the thread shows
+  `#name`, linked to the inbox that has the channel (the view on screen if it does, else your
+  team's, else Personal) with the channel's customer picked, or to the channel on Slack or
+  Discord when it is in none of yours. Inbox titles and last texts get the names of the ids.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
   in the inbox already open, or in a new one. There are two kinds, settings of the person in

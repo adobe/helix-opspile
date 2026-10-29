@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import { transform } from 'esbuild';
 import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
+import { CHANNEL_REF } from '../src/markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
@@ -292,6 +293,57 @@ describe('inbox page', () => {
       assert.equal(railAt(1512, view), false, `14" MacBook Pro, ${view}`);
       assert.equal(railAt(1920, view), false, `desktop, ${view}`);
     }
+  });
+
+  it('places a thread only bots posted in by its last message, not above every other', () => {
+    const { activityOf } = piece('const lastOf', 'const favicon', 'activityOf');
+    const threads = [
+      { thread: 'person', last_at: '2026-10-29T09:00:00Z', any_at: '2026-10-29T09:00:00Z' },
+      { thread: 'bot', last_at: null, any_at: '2026-10-28T17:00:00Z' },
+      {
+        thread: 'alert', kind: 'alert', last_at: null, any_at: '2026-10-29T10:00:00Z',
+      },
+      { thread: 'nothing', last_at: null, any_at: null },
+    ];
+    // As the personal view sorts its list.
+    const order = [...threads].sort((a, b) => activityOf(b).localeCompare(activityOf(a)));
+    assert.deepEqual(order.map((t) => t.thread), ['alert', 'person', 'bot', 'nothing']);
+    assert.ok(html.includes('if (personal()) shown.sort((a, b) => activityOf(b).localeCompare(activityOf(a)));'));
+  });
+
+  it('links a channel a message names to the view that has it, with its customer picked', () => {
+    let view = 'team';
+    const state = { team: 'ops', teams: [{ slug: 'ops', name: 'Ops' }] };
+    const { setChannelRefs, channelOf, channelNames } = piece('let channelRefs', '// Slack, Teams and Discord images', 'setChannelRefs, channelOf, channelNames', {
+      state,
+      personal: () => view === 'personal',
+      customerName: (org) => org.toUpperCase(),
+      viewName: (slug) => state.teams.find((t) => t.slug === slug)?.name || slug,
+      platform: (t) => ({ slack: 'Slack' }[t.source]),
+      Markdown: { CHANNEL_REF },
+    });
+    const refs = [
+      {
+        id: 'C0AAAAAAAA1', source: 'slack', name: 'acme-ops', org: 'acme', teams: ['ops'], personal: true, url: 'https://slack.com/archives/C0AAAAAAAA1',
+      },
+      {
+        id: 'C0BBBBBBBB2', source: 'slack', name: 'beta', org: 'beta', teams: [], personal: false, url: 'https://slack.com/archives/C0BBBBBBBB2',
+      },
+    ];
+    setChannelRefs(refs);
+    assert.deepEqual(channelOf('C0AAAAAAAA1'), {
+      name: 'acme-ops', href: '/inbox?team=ops&filters=1&f.customer=acme', inbox: true, title: '#acme-ops: ACME in Ops',
+    });
+    assert.equal(channelOf('Acme-Ops'), channelOf('C0AAAAAAAA1'));
+    assert.deepEqual(channelOf('beta'), {
+      name: 'beta', href: 'https://slack.com/archives/C0BBBBBBBB2', title: '#beta is not in your inbox: open it in Slack',
+    });
+    assert.equal(channelOf('unknown'), undefined);
+    assert.equal(channelNames('New channel: #C0AAAAAAAA1, #C0ZZZZZZZZ9.'), 'New channel: #acme-ops, #C0ZZZZZZZZ9.');
+    // In the personal view, a channel it has stays in it.
+    view = 'personal';
+    setChannelRefs(refs);
+    assert.equal(channelOf('acme-ops').href, '/inbox?view=personal&filters=1&f.customer=acme');
   });
 
   it('ranks a thread just resolved below the open ones of its pile', () => {
