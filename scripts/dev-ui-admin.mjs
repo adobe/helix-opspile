@@ -54,6 +54,7 @@ function devFavicon(domain) {
     + `<text x="32" y="44" font-family="sans-serif" font-size="36" font-weight="700" fill="#fff" text-anchor="middle">${d[0].toUpperCase()}</text></svg>`;
   return new Response(svg, { headers: { 'content-type': 'image/svg+xml' } });
 }
+const DEV_SVG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#0f766e"/><path d="M20 34l8 8 16-18" stroke="#fff" stroke-width="6" fill="none"/></svg>')}`;
 /** Suggestions for an org: its website's favicon fits, a look-alike's and a partner's do not. */
 function devIcons(slug) {
   const s = String(slug || 'org');
@@ -66,6 +67,10 @@ function devIcons(slug) {
     },
     {
       icon: 'agency.example', src: 'agency.example', host: 'agency.example', via: 'favicon', p: 0.07,
+    },
+    // An SVG the site names: offered, but Clef does not read SVGs.
+    {
+      icon: `https://www.${s}corp.example/logo.svg`, src: DEV_SVG, host: `www.${s}corp.example`, via: 'site', p: null, svg: true,
     },
   ];
 }
