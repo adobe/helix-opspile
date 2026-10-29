@@ -479,12 +479,16 @@ it stays on your machine):
    go to `.rank/human.jsonl`. It follows a new sample by itself.
 5. `npm run rank -- events` fetches the picks recorded since the last time
    (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
-6. `npm run rank -- train [--l2 3] [--shares human=0.35,…|counts] [--weights …] [--without a,b]
+6. `npm run rank -- train [--l2 30] [--shares human=0.35,…|counts] [--weights …] [--without a,b]
    [--dry-run]` fits the weights on all samples, picks and replies, prints how often the model
    picks the winner of each source's games on threads (or picks) it was not trained on (five
    folds), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
    often each judge agrees with you, and writes the weights into `ui/rank.js` (between
-   `// MODEL:` and `// END MODEL`). `--without` leaves features out, to see what they are worth.
+   `// MODEL:` and `// END MODEL`). A feature seen in fewer than `--min-support` threads is not
+   learned, and the policy's signs (`SIGNS` in `scripts/rank-combo.mjs`: resolved lowers a
+   thread; waiting on us, unseen by Adobe and a first message nobody answered raise it) are
+   kept: a weight the games would turn the other way is held at 0, and the training says which.
+   `--without` leaves features out, to see what they are worth.
    Only feature names and numbers are committed.
 7. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
    browser, the picks, a new sample, the tournament, the Claude judges on part of it, then the

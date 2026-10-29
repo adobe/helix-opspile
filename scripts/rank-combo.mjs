@@ -46,6 +46,22 @@ export const DEFAULT_SHARES = {
   human: 0.35, sonnet: 0.2, haiku: 0.05, click: 0.2, reply: 0.1, clef: 0.1,
 };
 
+/**
+ * The team's policy, as signs the learned weights must keep: resolved lowers a thread, waiting
+ * on us and a customer's first message nobody answered raise it. A weight the games would turn
+ * the other way is held at 0 (and said so), not learned.
+ */
+export const SIGNS = {
+  resolved: -1,
+  checked: -1,
+  resolvedRecent: -1,
+  waitsOnUs: 1,
+  waitsOnUsLong: 1,
+  firstWaiting: 1,
+  firstWaitingLong: 1,
+  unseenByAdobe: 1,
+};
+
 /** Each row's weight scaled so every source adds up to its share (of the rows' count). */
 export function shareOut(list, shares = DEFAULT_SHARES) {
   const total = new Map();

@@ -26,7 +26,7 @@
  *     shows of them) and says which the team should turn to first, asked both ways round.
  *     More rounds add to the games already played. Needs CLOUDFLARE_ACCOUNT_ID (the Worker's
  *     account) and CLOUDFLARE_API_TOKEN, or a `wrangler login` with Workers AI.
- *   npm run rank -- train [--l2 3] [--human 0] [--without <feature>,…] [--dry-run]
+ *   npm run rank -- train [--l2 30] [--shares …|counts] [--min-support 20] [--without …]
  *     Fits the linear model of ui/rank.js to the games, reports how often it, the old score and
  *     recency alone agree with Clef (5-fold cross-validation) and with you, and writes it into
  *     ui/rank.js. `--human <weight>` trains on your answers too, each worth that many of Clef's.
@@ -57,7 +57,7 @@ import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
 import { llm } from './rank-llm.mjs';
 import { behavior } from './rank-behavior.mjs';
 import {
-  DEFAULT_SHARES, DEFAULT_WEIGHTS, rows, samples, shareOut,
+  DEFAULT_SHARES, DEFAULT_WEIGHTS, SIGNS, rows, samples, shareOut,
 } from './rank-combo.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -335,7 +335,7 @@ const vectors = (names, list) => list.map((r) => ({
   ...r, xa: names.map((n) => r.a[n] || 0), xb: names.map((n) => r.b[n] || 0),
 }));
 
-function fitRows(names, list, l2) {
+function fitFree(names, list, l2) {
   const vec = new Map();
   const games = list.map((r, i) => {
     vec.set(`${i}a`, r.xa);
@@ -345,6 +345,26 @@ function fitRows(names, list, l2) {
     };
   });
   return fit(names, (k) => vec.get(k), games, { l2 });
+}
+
+/**
+ * Fitted within the policy's signs (SIGNS): a weight with the wrong sign is held at 0 and the
+ * rest fitted again, until none is. `held` collects the features that were.
+ */
+function fitRows(names, list, l2, held = new Set()) {
+  let free = names.filter((n) => !held.has(n));
+  const pick = (cols, x) => cols.map((i) => x[i]);
+  for (;;) {
+    const cols = free.map((n) => names.indexOf(n));
+    const sub = list.map((r) => ({ ...r, xa: pick(cols, r.xa), xb: pick(cols, r.xb) }));
+    const w = fitFree(free, sub, l2);
+    const wrong = free.filter((n) => SIGNS[n] && Math.sign(w[n]) === -SIGNS[n]);
+    if (!wrong.length) {
+      return Object.fromEntries(names.map((n) => [n, w[n] || 0]));
+    }
+    wrong.forEach((n) => held.add(n));
+    free = free.filter((n) => !wrong.includes(n));
+  }
 }
 
 const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
@@ -394,7 +414,7 @@ async function train(opts) {
   const source = await readFile(RANK_JS, 'utf8');
   const Rank = loadRank(source);
   const without = new Set(String(opts.without || '').split(',').filter(Boolean));
-  const names = Rank.names.filter((n) => !without.has(n));
+  let names = Rank.names.filter((n) => !without.has(n));
   const weights = { ...DEFAULT_WEIGHTS };
   for (const kv of String(opts.weights || '').split(',').filter(Boolean)) {
     const [k, v] = kv.split('=');
@@ -415,6 +435,15 @@ async function train(opts) {
   const raw = rows({
     Rank, samples: all, events: await readEvents(), weights,
   }).filter((r) => r.w > 0);
+  // A feature seen in too few threads (or picks) is not learned: its weight would be a guess.
+  const items = new Set(raw.flatMap((r) => [r.a, r.b]));
+  const support = (n) => [...items].filter((f) => f[n]).length;
+  const minSupport = num(opts['min-support'], 20);
+  const rare = names.filter((n) => support(n) < minSupport);
+  if (rare.length) {
+    console.log(`not learned, in fewer than ${minSupport} threads: ${rare.join(', ')}`);
+  }
+  names = names.filter((n) => !rare.includes(n));
   const list = vectors(names, opts.shares === 'counts' ? raw : shareOut(raw, shares));
   if (list.length < 50) {
     throw new Error(`${list.length} games: run \`npm run rank -- duel\` first`);
@@ -424,7 +453,7 @@ async function train(opts) {
     const c = loadClassic(s.data.pulledAt);
     return [s.data.pulledAt, new Map(s.data.threads.map((t) => [t.key, c(t.entry)]))];
   }));
-  const l2 = num(opts.l2, 3);
+  const l2 = num(opts.l2, 30);
   const sources = [...new Set(list.map((r) => r.source))];
   const count = Object.fromEntries(sources
     .map((k) => [k, list.filter((r) => r.source === k).length]));
@@ -483,7 +512,11 @@ async function train(opts) {
     console.log(`You, ${new Date(smp.data.pulledAt).toISOString().slice(0, 10)}: Clef ${share(you.clef)}, `
       + `${Object.entries(you.judges).map(([k, b]) => `${k} ${share(b)}`).join(', ')}`);
   }
-  const w = fitRows(names, list, l2);
+  const pinned = new Set();
+  const w = fitRows(names, list, l2, pinned);
+  if (pinned.size) {
+    console.log(`held at 0, as the games would turn them against the policy (SIGNS): ${[...pinned].join(', ')}`);
+  }
   console.log('weights (log-odds per unit):');
   for (const [k, v] of Object.entries(w).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
     console.log(`  ${k.padEnd(18)} ${v >= 0 ? ' ' : ''}${v.toFixed(3)}`);
@@ -492,7 +525,7 @@ async function train(opts) {
     trained: new Date().toISOString().slice(0, 10),
     games: Object.fromEntries(Object.entries(count)),
     accuracy: Object.fromEntries(Object.entries(report).map(([k, r]) => [k, r.model])),
-    weights: Object.fromEntries(Object.entries(w).map(([k, v]) => [k, Number(v.toFixed(4))])),
+    weights: Object.fromEntries(Rank.names.map((k) => [k, Number((w[k] || 0).toFixed(4))])),
   };
   if (opts['dry-run']) {
     return model;
