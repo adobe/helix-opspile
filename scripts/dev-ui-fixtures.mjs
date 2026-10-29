@@ -700,6 +700,16 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [['mei', 60, 'Anyone else hungry?']],
   });
 
+  // An Adobe person who knows the preview deploys (the ACME 503 thread is about one): offered
+  // first among staff when someone types @ there, as "Adobe · related" (src/expertise.js).
+  seed({
+    ch: CHANNELS.release,
+    messages: [
+      ['lena', 3000, 'Heads-up: the cache flush job restarts the preview workers after every deploy, so preview can answer 503 for a minute.', { subject: 'Preview restarts after the cache flush' }],
+      ['tom', 2990, 'Noted, thanks.'],
+    ],
+  });
+
   seed({
     ch: CHANNELS.cdn,
     messages: [

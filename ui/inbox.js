@@ -2715,8 +2715,9 @@ async function postWith(path, payload, files = []) {
 }
 
 // ---------------------------------------------------------------- mentions
-// Typing @ suggests people opspile knows on the thread's platform (D1 accounts), those in the
-// thread first, then the channel's members, and on Teams the bots of the thread's Teams team.
+// Typing @ suggests people opspile knows on the thread's platform (D1 accounts): customers in
+// the thread first, then the Adobe people who know what it is about (`expert`), then the rest of
+// the thread and the channel's members, and on Teams the bots of the thread's Teams team.
 // What follows the @ matches the start of any word of the name, login or mail, in any case
 // (src/mention-match.js).
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
@@ -2818,7 +2819,7 @@ function renderMentions(key) {
   if (!mention.list.length) { closeMentions(); return; }
   ul.setAttribute('aria-label', mention.kind === 'emoji' ? 'Emoji' : 'People to mention');
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
+    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);

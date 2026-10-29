@@ -86,11 +86,30 @@ export function mentionScore(q, { name, aliases = [] }) {
 }
 
 /**
- * The accounts `q` matches, best first: those who posted in the thread, then those in the
- * channel (or, on Teams, the team), then by how well they match, Adobe before others, by name.
+ * Where an account goes in the suggestions, first to last: someone outside Adobe who posted in
+ * the thread (the people a reply answers), Adobe people who know what the thread is about
+ * (`affinity`, src/expertise.js), anyone else who posted in it, the members of the channel (or,
+ * on Teams, the team), everyone else.
+ */
+function tier(a) {
+  if (a.here && !a.staff) {
+    return 0;
+  }
+  if (a.staff && a.affinity > 0) {
+    return 1;
+  }
+  if (a.here) {
+    return 2;
+  }
+  return a.member ? 3 : 4;
+}
+
+/**
+ * The accounts `q` matches, best first: by `tier`, the closest affinity first, then by how well
+ * they match, Adobe before others, by name.
  *
  * @template {{ name: string, aliases?: string[], here?: boolean, member?: boolean,
- *   staff?: boolean }} T
+ *   staff?: boolean, affinity?: number }} T
  * @param {T[]} accounts
  * @param {string} q
  * @param {number} [max]
@@ -98,10 +117,12 @@ export function mentionScore(q, { name, aliases = [] }) {
  */
 export function rankMentions(accounts, q, max = Infinity) {
   return accounts
-    .map((a) => ({ a, score: mentionScore(q, a) }))
+    .map((a) => ({
+      a, score: mentionScore(q, a), tier: tier(a), affinity: (a.staff && a.affinity) || 0,
+    }))
     .filter((x) => x.score >= 0)
-    .sort((x, y) => (Number(Boolean(y.a.here)) - Number(Boolean(x.a.here)))
-      || (Number(Boolean(y.a.member)) - Number(Boolean(x.a.member)))
+    .sort((x, y) => (x.tier - y.tier)
+      || (y.affinity - x.affinity)
       || (x.score - y.score)
       || (Number(Boolean(y.a.staff)) - Number(Boolean(x.a.staff)))
       || fold(x.a.name).localeCompare(fold(y.a.name)))

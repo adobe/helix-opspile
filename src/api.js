@@ -919,7 +919,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), working, {
-      waitUntil,
+      waitUntil, me,
     });
   }
   if (url.pathname === '/api/emoji') {
