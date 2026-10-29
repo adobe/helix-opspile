@@ -196,6 +196,146 @@ const cards = (html) => html.replace(QUOTE_CARD, (_, href, at, name) => '<blockq
   + `<p class="quote-by"><a href="${href}" title="Open the quoted message"><b>${name}</b></a>${at ? quotedAt(at) : ''}</p>`);
 
 /**
+ * The list of files ingestion puts at the end of a message (src/normalize.js): an
+ * "Attachments:" line, then only images (`![name](url "WxH")`), links to files
+ * (`- [name](url)`) and files of another Slack workspace the app cannot see. Text of the
+ * person's own that starts a line with "Attachments:" is not one.
+ */
+const ATTACHMENTS = /(^|\n)[ \t]*Attachments:[ \t]*(?=\n|$)/g;
+const FILE_IMAGE = /^!\[(?:\\.|[^\]\\\n])*\]\(\S*(?: "[^"\n]*")?\)$/;
+const FILE_LINK = /^- \[(?:\\.|[^\]\\\n])*\]\(\S*\)$/;
+const FILE_UNSEEN = /^- (.+) \(shared from another workspace; opspile cannot see it\)$/;
+
+/**
+ * A message split into its text and the files listed at its end, or null when it lists none:
+ * `{ text, images, links, unseen }`, the images and links as the markdown lines they are, the
+ * files opspile cannot see by what Slack says they are ("CSV file").
+ *
+ * @param {string} src
+ */
+export function splitAttachments(src) {
+  const text = String(src || '');
+  let at = -1;
+  for (const m of text.matchAll(ATTACHMENTS)) {
+    at = m.index + m[1].length;
+  }
+  if (at < 0) {
+    return null;
+  }
+  const lines = text.slice(at).replace(/^[ \t]*Attachments:[ \t]*/, '').split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const ok = (l) => FILE_IMAGE.test(l) || FILE_LINK.test(l) || FILE_UNSEEN.test(l);
+  if (!lines.length || !lines.every(ok)) {
+    return null;
+  }
+  return {
+    text: text.slice(0, at),
+    images: lines.filter((l) => FILE_IMAGE.test(l)),
+    links: lines.filter((l) => FILE_LINK.test(l)),
+    unseen: lines.map((l) => (FILE_UNSEEN.exec(l) || [])[1]).filter(Boolean),
+  };
+}
+
+/**
+ * What a file is, by its name: `{ kind, label, ext }`. `table` and `text` files can be shown
+ * in the page (ui/table.js, through GET /api/file).
+ */
+const FILE_KINDS = [
+  ['table', /^(csv|tsv)$/, 'Table'],
+  ['text', /^(txt|log|json|ndjson|jsonl|har|md|markdown|ya?ml|xml|ini|conf|cfg|toml|env|properties|sql|sh|diff|patch)$/, 'Text'],
+  ['video', /^(mov|mp4|m4v|webm|avi|mkv|wmv)$/, 'Video'],
+  ['audio', /^(mp3|wav|m4a|aac|ogg|oga|flac)$/, 'Audio'],
+  ['image', /^(png|jpe?g|gif|webp|heic|heif|svg|bmp|tiff?)$/, 'Image'],
+  ['pdf', /^pdf$/, 'PDF'],
+  ['doc', /^(docx?|pages|odt|rtf)$/, 'Document'],
+  ['sheet', /^(xlsx?|xlsm|numbers|ods)$/, 'Spreadsheet'],
+  ['slides', /^(pptx?|key|odp)$/, 'Presentation'],
+  ['archive', /^(zip|gz|tgz|tar|7z|rar|bz2|xz)$/, 'Archive'],
+];
+export function fileKind(name) {
+  const m = /\.([a-z0-9]{1,10})$/i.exec(String(name || '').trim());
+  const ext = m ? m[1].toLowerCase() : '';
+  const [kind, , label] = FILE_KINDS.find(([, re]) => re.test(ext)) || ['file', null, 'File'];
+  return { kind, label, ext };
+}
+
+/** Where a file lives, by its link: what "Open in …" names. */
+function fileHome(href) {
+  const host = (/^https:\/\/([^/]+)/i.exec(href) || [])[1] || '';
+  if (/(^|\.)slack\.com$/i.test(host)) {
+    return 'Slack';
+  }
+  if (/(^|\.)(sharepoint\.com|microsoft\.com)$/i.test(host)) {
+    return 'Teams';
+  }
+  if (/(^|\.)(discordapp\.com|discordapp\.net|discord\.com)$/i.test(host)) {
+    return 'Discord';
+  }
+  return '';
+}
+
+/**
+ * A file as a card: its kind (the extension, in the kind's colour), its name, linked to where
+ * it lives, and for tables and text a Preview button (ui/inbox.js opens it). Without `href`, a
+ * file that is not there to open (one being sent, one opspile cannot see), `note` says why.
+ *
+ * A video or audio file with `fileUrl` (render's option) plays in the card: a `<video>` (with
+ * Slack's still of it as the poster) or an `<audio>`, which load nothing until played.
+ *
+ * @param {{ name: string, href?: string, note?: string, preview?: boolean, type?: string,
+ *   fileUrl?: (href: string, what: string) => string|undefined }} file `name` and `href` as
+ *   HTML (escaped, the link sanitized), as micromark writes them; `type`: its extension, where
+ *   the name has none
+ */
+export function fileCard({
+  name, href = '', note = '', preview = true, type = '', fileUrl = () => undefined,
+}) {
+  const { kind, label, ext } = fileKind(type ? `.${type}` : decode(name));
+  const home = href ? fileHome(decode(href)) : '';
+  const badge = encode((ext || 'file').slice(0, 4).toUpperCase());
+  const title = encode(`${home ? `Open in ${home}` : 'Open'}: ${decode(name)}`);
+  const nm = href
+    ? `<a class="file-name" href="${href}" target="_blank" rel="noopener" title="${title}">${name}</a>`
+    : `<span class="file-name">${name}</span>`;
+  const sub = note || [label, home].filter(Boolean).join(' · ');
+  const viewable = preview && href && (kind === 'table' || kind === 'text');
+  const act = viewable
+    ? `<button type="button" class="file-act" data-preview="${kind}" aria-expanded="false" title="${kind === 'table' ? 'Show the table here' : 'Show the text here'}">Preview</button>`
+    : '';
+  // The same link as the name's, as a button for the eye (the name is the one to tab to).
+  const go = href ? `<a class="file-go" href="${href}" target="_blank" rel="noopener" title="${title}" tabindex="-1" aria-hidden="true">↗</a>` : '';
+  const stream = href && (kind === 'video' || kind === 'audio') ? fileUrl(decode(href), 'stream') : '';
+  // Slack makes a still of a video; the others do not.
+  const poster = stream && kind === 'video' && home === 'Slack' ? fileUrl(decode(href), 'poster') : '';
+  let player = '';
+  if (stream && kind === 'video') {
+    player = `<video class="file-player" controls playsinline preload="none" src="${encode(stream)}"${poster ? ` poster="${encode(poster)}"` : ''} aria-label="${title.replace(/^Open[^:]*: /, 'Play: ')}"></video>`;
+  } else if (stream) {
+    player = `<audio class="file-player" controls preload="none" src="${encode(stream)}" aria-label="${title.replace(/^Open[^:]*: /, 'Play: ')}"></audio>`;
+  }
+  return `<div class="file${player ? ' has-player' : ''}" data-kind="${kind}"${home ? ` data-home="${home}"` : ''}>${player}<span class="file-ico" aria-hidden="true">${badge}</span>`
+    + `<span class="file-nm">${nm}<span class="file-sub">${encode(sub)}</span></span>${act}${go}</div>`;
+}
+
+/** The cards of a message's linked files and the ones opspile cannot see. */
+function fileCards({ links, unseen }, fileUrl) {
+  const list = links.map((line) => {
+    // micromark writes the link, so its address is sanitized as any other link's.
+    const html = micromark(repair(line.slice(2)), OPTIONS);
+    const a = /<a href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/.exec(html);
+    return a ? fileCard({ name: a[2], href: a[1], fileUrl }) : '';
+  });
+  for (const what of unseen) {
+    // Slack says what kind of file it is ("CSV file").
+    const type = (/^([a-z0-9]{1,8}) file$/i.exec(what) || [])[1] || '';
+    list.push(fileCard({ name: encode(what), note: 'Shared from another workspace; opspile cannot see it', type }));
+  }
+  const shown = list.filter(Boolean);
+  return shown.length ? `<div class="files">${shown.join('')}</div>` : '';
+}
+
+/**
  * Markdown to HTML, safe to put in the page.
  *
  * @param {string} src
@@ -208,10 +348,13 @@ const cards = (html) => html.replace(QUOTE_CARD, (_, href, at, name) => '<blockq
  * @param {(token: string) => ({ name: string, href: string, title?: string,
  *   inbox?: boolean })|undefined} [options.channel] the channel a `#name` or `#C…` names: a
  *   link to it, as `#name` (`inbox`: the link is to the inbox, and opens in this tab)
+ * @param {(href: string, what: 'stream'|'poster') => string|undefined} [options.fileUrl]
+ *   where the page loads an attached video or audio file (`stream`) and a video's still
+ *   (`poster`) from: with it, they play in their cards
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
-  channel = () => undefined,
+  channel = () => undefined, fileUrl = () => undefined,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -219,7 +362,12 @@ export function render(src, {
       ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
       : `${before}<span class="mention">${at}</span>`;
   };
-  const html = cards(micromark(repair(String(src || '').replaceAll(BREAK, '')), OPTIONS)
+  // The files listed at the end: images as images (one paragraph each, so two or more are a
+  // gallery), the others as cards, without the "Attachments:" line.
+  const files = splitAttachments(String(src || '').replaceAll(BREAK, ''));
+  const body = files ? [files.text.trimEnd(), ...files.images].join('\n\n')
+    : String(src || '').replaceAll(BREAK, '');
+  const html = cards(micromark(repair(body), OPTIONS)
     .replace(BLOCK_END, '$1\n')
     .replaceAll(BREAK, '<br />\n'));
   const channelLink = (m, before, token) => {
@@ -263,5 +411,5 @@ export function render(src, {
     return text
       .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
-  }).join('')).trim();
+  }).join('')).trim() + (files ? fileCards(files, fileUrl) : '');
 }

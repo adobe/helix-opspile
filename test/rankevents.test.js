@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { d1 } from './d1.js';
 import {
-  cleanPick, rankEvents, recordPick,
+  cleanPick, pruneRankEvents, rankEvents, recordPick,
 } from '../src/rankevents.js';
 
 const PEOPLE = [{
@@ -47,14 +47,24 @@ describe('picks in the thread list (src/rankevents.js)', () => {
     bad({ view: 'helix', clicked: 't1', shown: Array.from({ length: 61 }, (_, i) => ({ ...shown[0], thread: `t${i}` })) });
   });
 
-  it('records picks and gives them back page by page', async () => {
+  const setup = () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }], people: PEOPLE });
-    const env = { DB };
+    for (const t of ['t1', 't2']) {
+      DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, updated_at) VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix', ?, '2026-01-01')`)
+        .run(t, t, `p/${t}/`);
+    }
+    return { DB };
+  };
+  const me = { id: 1, teams: [{ slug: 'helix' }] };
+
+  it('records picks and gives them back page by page', async () => {
+    const env = setup();
     for (const clicked of ['t1', 't2', 't1']) {
       // eslint-disable-next-line no-await-in-loop
-      assert.deepEqual(await recordPick(env, { id: 1 }, { view: 'helix', clicked, shown }), { ok: true });
+      assert.deepEqual(await recordPick(env, me, { view: 'helix', clicked, shown }), { ok: true });
     }
-    assert.ok((await recordPick(env, { id: 1 }, { view: 'helix', clicked: 'x', shown })).error);
+    assert.ok((await recordPick(env, me, { view: 'helix', clicked: 'x', shown })).error);
     const first = await rankEvents(env, 0, 2);
     assert.equal(first.events.length, 2);
     assert.equal(first.events[1].clicked, 't2');
@@ -62,5 +72,27 @@ describe('picks in the thread list (src/rankevents.js)', () => {
     const rest = await rankEvents(env, first.next, 2);
     assert.equal(rest.events.length, 1);
     assert.equal(rest.next, null);
+  });
+
+  it('takes picks only in your views, of threads that exist', async () => {
+    const env = setup();
+    assert.deepEqual(await recordPick(env, me, { view: 'personal', clicked: 't1', shown }), { ok: true });
+    assert.match((await recordPick(env, me, { view: 'other', clicked: 't1', shown })).error, /view/);
+    const ghost = [shown[0], { ...shown[1], thread: 'nope' }];
+    assert.match((await recordPick(env, me, { view: 'helix', clicked: 'nope', shown: ghost })).error, /thread/);
+    assert.equal((await rankEvents(env)).events.length, 1);
+  });
+
+  it('deletes picks older than the window, a batch at a time', async () => {
+    const env = setup();
+    const now = new Date('2026-06-01T00:00:00Z');
+    for (const days of [200, 120, 91, 89, 1]) {
+      // eslint-disable-next-line no-await-in-loop
+      await recordPick(env, me, { view: 'helix', clicked: 't1', shown }, new Date(now - days * 86400000));
+    }
+    assert.equal((await pruneRankEvents(env, now, { limit: 2 })).deleted, 2);
+    assert.equal((await pruneRankEvents(env, now)).deleted, 1);
+    assert.equal((await pruneRankEvents(env, now)).deleted, 0);
+    assert.equal((await rankEvents(env)).events.length, 2);
   });
 });

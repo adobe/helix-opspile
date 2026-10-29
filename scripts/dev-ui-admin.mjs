@@ -401,7 +401,7 @@ function seedAdminChannels(DB) {
   });
 }
 
-export function createAdmin(store, { manager = false, bases = [] } = {}) {
+export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
   const DB = d1({
     teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
     people: [...store.people.values()].map((p) => ({
@@ -539,15 +539,23 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
   // Edge ops has thread agents by default: its channels nobody switched have them.
   DB.sqlite.exec(`INSERT INTO agent_teams (team, enabled, changed_by, changed_at)
     VALUES ('edge', 1, 'Dana', '2026-10-25T09:00:00Z')`);
-  // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
-  if (manager) {
-    DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
+  // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops, or
+  // (`--member`) only a member of her teams.
+  if (manager || member) {
+    DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1");
   }
-  const me = manager
-    ? {
-      ...store.me, admin: false, teams: store.me.teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })), manages: ['edge'],
-    }
-    : { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
+  if (manager) {
+    DB.sqlite.exec("UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
+  }
+  let me = { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
+  if (manager || member) {
+    me = {
+      ...store.me,
+      admin: false,
+      teams: store.me.teams.map((t) => ({ ...t, role: manager && t.slug === 'edge' ? 'manager' : 'member' })),
+      manages: manager ? ['edge'] : [],
+    };
+  }
 
   const toRequest = (req, url, body) => new Request(url, {
     method: req.method,

@@ -61,6 +61,7 @@
   .menu .item[aria-checked="true"] .ck { visibility: visible; }
   .menu select { width: calc(100% - 16px); margin: 2px 8px 4px; padding: 4px 8px; }
   .menu .hint { margin: 0 8px 4px; color: var(--mute); font-size: 11.5px; }
+  .menu label.hint { display: block; margin-top: 4px; overflow-wrap: anywhere; }
   /* Bells: the views that notify you, each with the ✕ that turns it off. */
   .menu #bells .bell { display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px; }
   .menu #bells .bell svg { width: 13px; height: 13px; flex: none; color: var(--accent); }
@@ -424,6 +425,11 @@
   .msg { display: flex; gap: 10px; align-items: flex-end; margin-top: 10px; }
   .msg.cont { margin-top: 3px; }
   .msg .face { position: relative; flex: none; width: 36px; }
+  /* The thread agent's avatar and name: its team's agent settings, at the thread's channel. */
+  .msg.agent a.face, .msg.agent .who a { color: inherit; text-decoration: none; }
+  .msg.agent a.face:hover .av, .msg.agent a.face:focus-visible .av { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .msg.agent .who a:hover b, .msg.agent .who a:focus-visible b { text-decoration: underline; }
+  .msg.agent a:focus-visible { outline: none; }
   .msg .face .badge-ico { position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; border-radius: 4px;
     background: #fff; border: 2px solid var(--pane); }
   /* A run of one author's messages: the name above the first, the avatar beside the last. */
@@ -489,6 +495,110 @@
   .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4) ~ img { grid-column: span 3; aspect-ratio: 3 / 2; }
   .bubble .gallery > img.att:hover { filter: brightness(.9); }
   .bubble .gallery > img.att:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Files attached to a message (fileCard, src/ui-markdown.js): a card each, the badge in its
+     kind's colour, linked to where the file lives. A table's or a text's preview (ui/table.js)
+     opens under its card, on the page's own colours whatever the bubble's. */
+  .bubble .files { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin: 8px 0 2px; }
+  .bubble > .files:first-child { margin-top: 2px; }
+  .bubble .file { --kind: #6b7280; display: flex; align-items: center; gap: 10px; min-width: min(280px, 100%); max-width: 100%;
+    box-sizing: border-box; padding: 6px 8px 6px 6px; border-radius: 10px; line-height: 1.3;
+    background: color-mix(in srgb, currentColor 7%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 13%, transparent); }
+  .bubble .file[data-kind="table"] { --kind: #16a34a; }
+  .bubble .file[data-kind="text"] { --kind: #64748b; }
+  .bubble .file[data-kind="video"] { --kind: #9333ea; }
+  .bubble .file[data-kind="audio"] { --kind: #db2777; }
+  .bubble .file[data-kind="image"] { --kind: #0891b2; }
+  .bubble .file[data-kind="pdf"] { --kind: #dc2626; }
+  .bubble .file[data-kind="doc"] { --kind: #2563eb; }
+  .bubble .file[data-kind="sheet"] { --kind: #15803d; }
+  .bubble .file[data-kind="slides"] { --kind: #ea580c; }
+  .bubble .file[data-kind="archive"] { --kind: #a16207; }
+  /* A sheet of paper with a folded corner. */
+  .bubble .file-ico { flex: none; position: relative; width: 32px; height: 38px; border-radius: 4px; display: grid; place-items: end center;
+    padding-bottom: 6px; box-sizing: border-box; background: var(--kind); color: #fff;
+    font: 700 9px/1 system-ui, -apple-system, sans-serif; letter-spacing: .03em;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%); }
+  .bubble .file-ico::before { content: ""; position: absolute; top: 0; right: 0; width: 10px; height: 10px;
+    background: linear-gradient(225deg, transparent 50%, rgba(255,255,255,.45) 50%); border-bottom-left-radius: 2px; }
+  .bubble .file-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .bubble .file .file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bubble .file a.file-name { color: inherit; text-decoration: none; }
+  .bubble .file a.file-name:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .bubble .file-sub { font-size: 11.5px; opacity: .68; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bubble .file-act { flex: none; font-size: 12px; padding: 3px 11px; border-radius: 999px; cursor: pointer; color: inherit;
+    background: transparent; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+  .bubble .file-act:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+  .bubble .file-act[aria-expanded="true"] { background: color-mix(in srgb, currentColor 14%, transparent); }
+  .bubble .file-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* A video or audio file plays in its card, above its name; a video at most this wide, in the
+     shape of what it shows once that is known (16:9 until then). */
+  .bubble .file.has-player { flex-wrap: wrap; width: min(520px, 100%); row-gap: 8px; }
+  .bubble .file .file-player { flex: 1 0 100%; display: block; min-width: 0; }
+  .bubble .file video.file-player { width: 100%; aspect-ratio: 16 / 9; max-height: 420px; background: #000; border-radius: 7px; }
+  .bubble .file audio.file-player { height: 36px; }
+  .bubble .file.play-failed .file-player { display: none; }
+  .bubble .file a.file-go { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%;
+    color: inherit; text-decoration: none; font-size: 14px; opacity: .7; }
+  .bubble .file a.file-go:hover { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+  .file-view, .file-dialog { --zebra: color-mix(in srgb, var(--ink) 3.5%, var(--pane)); }
+  /* An open preview widens its message as far as messages go, and scrolls inside that: a wide
+     table must not push the bubble off the screen (its own width does not count, `width: 0`). */
+  .msg .col:has(.file-view) { width: 100%; }
+  .msg .col:has(.file-view) > .bubble { align-self: stretch; }
+  .bubble .file-view { margin: -2px 0 2px; background: var(--pane); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; font-size: 12.5px; line-height: 1.45; width: 0; min-width: 100%; box-sizing: border-box; }
+  .bubble .file-view.failed { padding: 8px 10px; color: var(--mute); }
+  .file-view .fv-wait { padding: 10px 12px; color: var(--mute); }
+  .file-view .fv-wait .spin { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: -1px;
+    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  :is(.file-view, .file-dialog) .fv-bar { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px;
+    border-bottom: 1px solid var(--line); background: var(--col); }
+  :is(.file-view, .file-dialog) .fv-count { flex: 1 0 auto; color: var(--mute); white-space: nowrap; }
+  :is(.file-view, .file-dialog) .fv-find { flex: 0 1 160px; width: 0; min-width: 70px; font: inherit; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  :is(.file-view, .file-dialog) .fv-expand { flex: none; padding: 1px 8px; font-size: 15px; line-height: 1.3; border-radius: 6px; cursor: pointer; }
+  :is(.file-view, .file-dialog) .fv-scroll { max-height: 340px; overflow: auto; overscroll-behavior: contain; }
+  :is(.file-view, .file-dialog) .fv-table { display: table; border-collapse: separate; border-spacing: 0; margin: 0;
+    width: max-content; min-width: 100%; font-variant-numeric: tabular-nums; }
+  :is(.file-view, .file-dialog) .fv-table :is(th, td) { border: 0; border-bottom: 1px solid var(--line); padding: 4px 10px;
+    white-space: nowrap; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; text-align: left; vertical-align: top; }
+  :is(.file-view, .file-dialog) .fv-table th { position: sticky; top: 0; z-index: 1; background: var(--col); font-weight: 600; }
+  :is(.file-view, .file-dialog) .fv-table th button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+  :is(.file-view, .file-dialog) .fv-table th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  :is(.file-view, .file-dialog) .fv-table th button::after { content: "↕"; opacity: 0; font-weight: 400; color: var(--mute); }
+  :is(.file-view, .file-dialog) .fv-table th:hover button::after { opacity: .7; }
+  :is(.file-view, .file-dialog) .fv-table th[aria-sort="ascending"] button::after { content: "↑"; opacity: 1; color: var(--accent); }
+  :is(.file-view, .file-dialog) .fv-table th[aria-sort="descending"] button::after { content: "↓"; opacity: 1; color: var(--accent); }
+  :is(.file-view, .file-dialog) .fv-table td { background: var(--pane); }
+  :is(.file-view, .file-dialog) .fv-table tbody tr:nth-child(even) td { background: var(--zebra); }
+  :is(.file-view, .file-dialog) .fv-table tbody tr:hover td { background: var(--hover); }
+  :is(.file-view, .file-dialog) .fv-table .num { text-align: right; }
+  :is(.file-view, .file-dialog) .fv-table th.num button { flex-direction: row-reverse; }
+  /* The row numbers stay at the left as the table scrolls sideways. */
+  :is(.file-view, .file-dialog) .fv-table .fv-n { position: sticky; left: 0; color: var(--faint); text-align: right;
+    padding-right: 8px; border-right: 1px solid var(--line); font-weight: 400; }
+  :is(.file-view, .file-dialog) .fv-table th.fv-n { z-index: 2; }
+  :is(.file-view, .file-dialog) .fv-table .fv-none { color: var(--mute); text-align: center; padding: 14px; }
+  :is(.file-view, .file-dialog) .fv-text { margin: 0; border: 0; border-radius: 0; max-height: 340px; overflow: auto;
+    white-space: pre; background: var(--pane); color: var(--ink); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px; }
+  :is(.file-view, .file-dialog) .fv-more { padding: 5px 10px; color: var(--mute); border-top: 1px solid var(--line); font-size: 12px; }
+  :is(.file-view, .file-dialog) :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  dialog.file-dialog { width: min(1280px, calc(100vw - 32px)); height: min(860px, calc(100dvh - 32px)); max-width: none; max-height: none;
+    padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--pane); color: var(--ink); font-size: 13px;
+    box-shadow: 0 24px 80px rgba(0,0,0,.35); overflow: hidden; }
+  dialog.file-dialog[open] { display: flex; flex-direction: column; }
+  dialog.file-dialog::backdrop { background: rgba(0,0,0,.45); }
+  .file-dialog .fv-head { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--line); }
+  .file-dialog .fv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .file-dialog .fv-link { color: var(--link); text-decoration: none; white-space: nowrap; }
+  .file-dialog .fv-link:hover { text-decoration: underline; }
+  .file-dialog .fv-close { padding: 2px 9px; border-radius: 6px; cursor: pointer; }
+  .file-dialog .fv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .file-dialog .fv-find { flex-basis: 240px; }
+  .file-dialog :is(.fv-scroll, .fv-text) { flex: 1; max-height: none; }
+  .file-dialog .fv-table :is(th, td) { max-width: 60ch; }
+  @media (prefers-reduced-motion: reduce) { .file-view .fv-wait .spin { animation: none; } }
   /* Lightbox: a message's images full screen, dismissed by a click anywhere, the close button
      or Escape; arrows, a swipe or the thumbnails page through them. In dvh: 100vh counts the
      status bar in an app installed on an iPhone. */
@@ -866,6 +976,11 @@
       <div id="bells"></div>
       <p class="hint" id="notifyHint"></p>
       <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
+    <section id="tracesBox" hidden><h4>Opspile Agent</h4>
+      <button class="item" id="tracesAll" role="switch" aria-checked="true"><span class="ck">✓</span>Show its thinking under threads</button>
+      <div id="tracesHere" hidden><label class="hint" for="tracesChannel" id="tracesChannelLabel"></label><select id="tracesChannel">
+        <option value="">As everywhere</option><option value="on">Shown</option><option value="off">Hidden</option></select></div>
+      <p class="hint" id="tracesHint"></p></section>
     <section><h4>Keyboard</h4><dl class="keys">
       <dt>Search, on every platform</dt><dd><kbd>/</kbd></dd>
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
@@ -885,6 +1000,7 @@
 </main>
 <script src="markdown.js"></script>
 <script src="rank.js"></script>
+<script src="table.js"></script>
 <script type="module" src="inbox.js"></script>
 <script src="app.js"></script>
 </body>

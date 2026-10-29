@@ -20,7 +20,7 @@ import {
 } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
-import { isAdmin, managesTeam } from './review.js';
+import { inTeam, isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
 
 /**
@@ -30,9 +30,16 @@ import { toolAdmin } from './tooladmin.js';
 const mayEdit = (me, base) => isAdmin(me) || (base.kind === 'team' && managesTeam(me, base.slug));
 
 /**
- * The knowledge-base editor's API, for the admin team and team managers (`/inbox/kb`): list
+ * May `me` look at this knowledge base, its agents and their tools? Whoever edits it, and the
+ * members of its team: read-only (their own settings aside, which are not the editor's).
+ */
+const mayRead = (me, base) => mayEdit(me, base) || (base.kind === 'team' && inTeam(me, base.slug));
+
+/**
+ * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
  * the knowledge bases, list and read their files, and change them as the signed-in person
- * (team managers: their teams' knowledge bases only). Writes go
+ * (team managers: their teams' knowledge bases only); the members of a team read its
+ * knowledge base, and see its agents, without changing them. Writes go
  * through the same path as the agents' (OKF checks, indexes and log by code, retry on a
  * concurrent push), are committed with the person as author and stamped `human:<email>`, and
  * may also change `systemprompt.md`, which agents cannot.
@@ -147,8 +154,9 @@ async function toolCounts(env) {
 }
 
 /**
- * GET /api/kb: every knowledge base, teams first, with the team's or customer's name, its
- * entries (null until counted), and how many channels with agents and tools it has.
+ * GET /api/kb: every knowledge base `me` may read, teams first, with the team's or customer's
+ * name, its entries (null until counted), how many channels with agents and tools it has, and
+ * whether `me` may change it (`may`).
  */
 async function listBases(env, me) {
   const [agents, tools, { results }] = await Promise.all([
@@ -161,7 +169,7 @@ async function listBases(env, me) {
   ]);
   return json({
     systemPrompt: SYSTEM_PROMPT,
-    bases: (results || []).filter((r) => mayEdit(me, r)).map((r) => ({
+    bases: (results || []).filter((r) => mayRead(me, r)).map((r) => ({
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
@@ -170,6 +178,7 @@ async function listBases(env, me) {
       entries: r.entries ?? null,
       agents: agents.size(`${r.kind}:${r.slug}`),
       tools: tools.size(`${r.kind}:${r.slug}`),
+      may: mayEdit(me, r),
     })),
   });
 }
@@ -361,7 +370,7 @@ async function switchAgent(env, me, body) {
   return json({ ok: true, channel, agent });
 }
 
-/** Routes `/api/kb*` for a member of the admin team. Returns null for other paths. */
+/** Routes `/api/kb*` (see `mayRead` and `mayEdit`). Returns null for other paths. */
 export async function kbAdmin(request, env, url, me) {
   if (url.pathname === '/api/kb' && request.method === 'GET') {
     return listBases(env, me);
@@ -381,7 +390,7 @@ export async function kbAdmin(request, env, url, me) {
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));
-    return base && mayEdit(me, base) ? channels(env, me, base)
+    return base && mayRead(me, base) ? channels(env, me, base)
       : json({ error: 'no such knowledge base' }, 404);
   }
   if (!url.pathname.startsWith('/api/kb/')) {
@@ -393,8 +402,11 @@ export async function kbAdmin(request, env, url, me) {
   const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
   const repo = request.method === 'GET' ? url.searchParams.get('repo') : body.repo;
   const base = await knownRepo(env, repo);
-  if (!base || !mayEdit(me, base)) {
+  if (!base || !mayRead(me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
+  }
+  if (request.method !== 'GET' && !mayEdit(me, base)) {
+    return json({ error: 'the admin team and the team\'s managers change its knowledge base' }, 403);
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {
     return files(env, repo);

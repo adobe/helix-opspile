@@ -226,8 +226,10 @@
   }
   async function undo() {
     if (busy) return;
+    busy = true;
     let r;
     try { r = await call('/api/undo', { method: 'POST' }); } catch (e) { failed(e, undo); return; }
+    busy = false;
     renderStats(r.stats);
     next();
   }

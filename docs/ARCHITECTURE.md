@@ -353,7 +353,10 @@ prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team, and team managers for their teams' knowledge bases,
 have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. It saves as you type: a pause of a second (or leaving the file, or ⌘S)
+and the concepts. The other members of a team see its knowledge base there read-only (its
+files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
+says per knowledge base whether they may change it, `may`); what they change is only their
+own settings, whether the agent's thinking shows in their inbox (see *In the inbox*, below). It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).
 A save names the blob it was written from, so a colleague's or an agent's newer version is
@@ -396,10 +399,10 @@ knowledge base) and one per channel the knowledge base learns from. In a team's 
 the per-channel switches fold, the channels switched on their own first and then by name, with a
 filter when there are many; in a customer's they are all there is, so they are shown unfolded.
 
-For admins and team managers, every page has the same header (`ui/header.js`,
-`ui/header.css`): a switch between **Inbox**, **Agents** (this editor: the agents' knowledge
-bases, channels, MCP servers and instructions) and **Teams**, and for the admin team **Orgs**
-and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left in that
+Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**
+and **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and
+instructions) for every member of a team, **Teams** too for team managers, and for the admin
+team **Orgs** and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left in that
 browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
 **Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
 **Agents** with its knowledge base and file, and each admin section with what was picked in it.
@@ -900,7 +903,14 @@ closing note for the team, which the prompt asks for at the end of every turn (1
 sentences: what it found and what it changed). It is outlined, not filled, since nobody posted
 it. The page asks `GET /api/agent` when the thread opens or changes, and every few seconds
 while the agent works or a new message waits for it; the turn is read from the agent's
-transcript (`src/agent/turn.js`), nothing else is stored.
+transcript (`src/agent/turn.js`), nothing else is stored. Its avatar and name open the agent
+settings of the thread's team (Agents, its thread agents, at the thread's channel).
+
+Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
+on unless they turn it off, for every channel, and `channelTraces`, by channel id, where they
+chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
+Agents does too, a select on each channel with an agent. Hidden, the page does not ask
+`GET /api/agent` at all.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the

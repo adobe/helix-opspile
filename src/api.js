@@ -34,6 +34,7 @@ import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
+import { filePoster, streamFile, threadFile } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { channelRefs, nameChannelIds } from './channelrefs.js';
@@ -987,6 +988,20 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return media(env, url.searchParams.get('u'), t);
   }
+  if (['/api/file', '/api/file/stream', '/api/file/poster'].includes(url.pathname)) {
+    // A file of a message (the inbox's CSV and text previews, its video and audio player):
+    // for those who may see its thread, and only a file a message of the thread links to
+    // (src/fileview.js).
+    const t = url.searchParams.get('t');
+    if (!t || !await canSee(env, me, t)) {
+      return json({ error: 'not found' }, 404);
+    }
+    const u = url.searchParams.get('u');
+    if (url.pathname === '/api/file/stream') {
+      return streamFile(env, t, u, request);
+    }
+    return url.pathname === '/api/file/poster' ? filePoster(env, t, u) : threadFile(env, t, u);
+  }
   // The admin pages and the editor: the admin team, and team managers for their teams (the
   // routes check which).
   if (url.pathname.startsWith('/api/admin/')) {
@@ -996,8 +1011,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
-    if (!isManager(me)) {
-      return json({ error: 'the knowledge-base editor is for the admin team and team managers' }, 403);
+    // The members of a team look at its knowledge base and agents; changing them is for the
+    // admin team and team managers (and src/kbadmin.js checks whose).
+    if (request.method !== 'GET' && !isManager(me)) {
+      return json({ error: 'changing the agents is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }

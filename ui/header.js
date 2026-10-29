@@ -14,8 +14,9 @@
  * The header of every page (ui/header.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
- * The switch between the pages: Inbox, Agents and Teams for team managers, and Orgs and
- * Requests too for the admin team (with the number of open requests on Requests). Each page
+ * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
+ * Teams too for team managers, and Orgs and Requests too for the admin team (with the number
+ * of open requests on Requests). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
  * as", the editor with its knowledge base and file, and each admin section with what was
@@ -25,8 +26,8 @@
  */
 window.Header = (() => {
   const PAGES = [
-    { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors' },
-    { id: 'agents', label: 'Agents', href: '/inbox/kb', title: 'Thread agents: their knowledge bases, channels, MCP servers and instructions' },
+    { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true },
+    { id: 'agents', label: 'Agents', href: '/inbox/kb', title: 'Thread agents: their knowledge bases, channels, MCP servers and instructions', member: true },
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
     { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
@@ -102,7 +103,10 @@ window.Header = (() => {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
-    const shown = me.admin ? PAGES : me.manages?.length ? PAGES.filter((p) => !p.admin) : [];
+    let shown = [];
+    if (me.admin) shown = PAGES;
+    else if (me.manages?.length) shown = PAGES.filter((p) => !p.admin);
+    else if (me.teams?.length) shown = PAGES.filter((p) => p.member);
     const nav = $('pages');
     const item = (p) => `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`;
     nav.innerHTML = shown.map(item).join('');

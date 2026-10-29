@@ -388,8 +388,10 @@ function md(src, thread = '') {
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
+    // A message's video and audio files play in the page, through the Worker (src/fileview.js).
+    const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf,
+      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -1048,9 +1050,12 @@ function openHit(key) {
 // it, 👀 by a colleague lowers it. Without a model, classicScore: recency always counts; a
 // thread that waits on us counts more the longer it waits, the more urgent and unresolved it
 // is, and the closer to me; resolved weighs on all of it.
+// Neighbouring piles are at least 0.5 apart (× 100: 50), and baseScore stays within ±24, so a
+// thread never leaves its pile: keep both so when a pile is added or moved.
 const STATUS_WEIGHT = {
   critical: 6, hot: 5, you: 4, waiting: 3, silent: 2, team: 1.5, quiet: 1,
 };
+const PILE_CLAMP = 24;
 function smartScore(t) {
   return STATUS_WEIGHT[statusOf(t)] * 100 + baseScore(t);
 }
@@ -1071,7 +1076,7 @@ function closeness(t) {
 function baseScore(t) {
   const team = Rank.model ? Rank.score(t) : null;
   if (team === null) return classicScore(t);
-  return Math.max(-45, Math.min(45, team + Math.log(closeness(t))));
+  return Math.max(-PILE_CLAMP, Math.min(PILE_CLAMP, team + Math.log(closeness(t))));
 }
 function classicScore(t) {
   const now = Date.now();
@@ -1506,22 +1511,51 @@ function message(m, prev, fresh, followed = false) {
 
 // ---------------------------------------------------------------- the thread agent
 // Its latest turn, under the last message (GET /api/agent): what it is doing while it works,
-// its note for the team once done. Asked when a thread opens or changes, and every few
-// seconds while it works, or while a new message waits for it to start.
+// its note for the team once done: its thinking. Asked when a thread opens or changes, and
+// every few seconds while it works, or while a new message waits for it to start. Not where
+// you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
+// avatar and name open the agent settings of the thread's team, at the thread's channel.
 const AGENT_NAME = 'Opspile Agent';
 const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
 
+/** The open thread's row (its channel, its team), from the thread as it was fetched. */
+const threadRow = (key) => state.cache.get(key)?.data?.thread || null;
+
+/** Whether you see the agent's thinking in a channel: its own setting, else yours everywhere. */
+function tracesShown(channel) {
+  const own = state.settings?.channelTraces?.[channel];
+  return typeof own === 'boolean' ? own : state.settings?.traces !== false;
+}
+
+/** The agent settings of the thread's team, at its channel (ui/kb.js). */
+function agentHref(key) {
+  const t = threadRow(key);
+  const team = t?.team || (!personal() && state.team) || null;
+  if (!team) return null;
+  const q = new URLSearchParams({ team, view: 'agents' });
+  if (t?.channel_id) q.set('channel', t.channel_id);
+  return `/inbox/kb?${q}`;
+}
+
 function agentItem(key) {
   const { turn, latest } = state.agents.get(key) || {};
   if (!turn) return '';
+  if (!tracesShown(threadRow(key)?.channel_id)) return '';
   // A note is about the thread as it was: someone posted since (or is sending), it is gone.
   if (turn.state !== 'working' && latest && latest > (turn.endedAt || turn.startedAt)) return '';
   const body = turn.state === 'working' ? `<span class="spin" aria-hidden="true"></span>${esc(turn.text)}…` : md(turn.text);
   const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
+  const href = agentHref(key);
+  const team = threadRow(key)?.team;
+  const teamName = state.teams?.find((t) => t.slug === team)?.name || team;
+  const tip = `${AGENT_NAME}'s settings${teamName ? ` in ${teamName}` : ''}`;
+  const face = href ? `<a class="face" href="${esc(href)}" title="${esc(tip)}" aria-label="${esc(tip)}">${avatar(AGENT_NAME, '/icon-192.png')}</a>`
+    : `<span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>`;
+  const name = href ? `<a href="${esc(href)}" title="${esc(tip)}" tabindex="-1"><b>${AGENT_NAME}</b></a>` : `<b>${AGENT_NAME}</b>`;
   return `<div class="msg adobe agent ${turn.state === 'done' ? '' : turn.state}" aria-label="${label}"${turn.state === 'working' ? ' aria-live="polite"' : ''}>
-    <span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
-    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble">${body}</div></div></div>`;
+    ${face}
+    <div class="col"><div class="who">${name}</div><div class="bubble">${body}</div></div></div>`;
 }
 
 /** Puts the agent's turn into the open feed (or takes it out), without rebuilding the rest. */
@@ -1544,6 +1578,12 @@ function placeAgent(key) {
 async function loadAgent(key, { latest = null } = {}) {
   const known = state.agents.get(key);
   clearTimeout(known?.timer);
+  // Hidden here: not asked (shown again, renderTraces asks).
+  if (!tracesShown(threadRow(key)?.channel_id)) {
+    if (known) known.timer = null;
+    placeAgent(key);
+    return;
+  }
   let res;
   try {
     res = await get(`/api/agent?thread=${encodeURIComponent(key)}`);
@@ -1753,7 +1793,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const shown = [...messages.map(withEdit), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
   for (const p of sending) p.shown = true;
   // Who they are: the server's answer for the names the messages mention, then what the
-  // thread's authors, the inbox's people and the picked mentions say.
+  // thread's authors, the inbox's people, the picked mentions and the replies being sent say.
   const kinds = new Map(Object.entries(data.mentioned || {}));
   const known = (name, kind) => { if (name && kind && !kinds.has(name)) kinds.set(name, kind); };
   for (const m of shown) {
@@ -1762,7 +1802,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     known(a.name, state.profiles.get(m.authorKey)?.relation || (a.kind === 'bot' ? 'bot' : (a.staff ? 'adobe' : 'customer')));
   }
   for (const p of Object.values(state.data?.people || {})) known(p.name, p.relation || (p.staff ? 'adobe' : null));
-  for (const p of mention.picked.get(key)?.values() || []) known(p.name, p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
+  for (const p of mention.picked.get(key)?.values() || []) known(p.name, pickedKind(p));
+  for (const p of sending) for (const [name, kind] of Object.entries(p.kinds || {})) known(name, kind);
   setChannelRefs(data.channels);
   setMentionNames([
     ...shown.map((m) => m.author?.name),
@@ -1812,6 +1853,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
+  restorePreviews(pane);
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
@@ -2388,6 +2430,10 @@ async function send(key, thread, draft = null) {
   if (!body && !attached.length) return false;
   closeMentions();
   const mentions = draft ? (draft.mentions || []) : mentionsIn(key, body);
+  // Who they are, while the picks are still here: the bubble keeps it until the reply arrives
+  // (the thread's `mentioned` only knows the names its messages had when it was fetched).
+  const picked = mention.picked.get(key);
+  const kinds = Object.fromEntries(mentions.map((m) => [m.name, (picked?.has(m.name) && pickedKind(picked.get(m.name))) || mentionKindOf(m.name)]).filter(([, k]) => k));
   // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
   const c = state.composers.get(key);
   const base = draft ? draft.updated_at : c?.base;
@@ -2407,7 +2453,7 @@ async function send(key, thread, draft = null) {
   }
   sendSeq += 1;
   const p = {
-    thread: key, body, mentions, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
+    thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
   };
   state.sending.push(p);
   showSending(key);
@@ -2669,9 +2715,9 @@ function renderTray(key) {
 
 /** The files of a reply being sent, as the message will show them once it arrives. */
 function pendingFiles(files) {
-  const images = files.filter((f) => f.url).map((f) => `<img class="att" src="${esc(f.url)}" alt="${esc(f.name)}">`).join('');
-  const others = files.filter((f) => !f.url).map((f) => `<li>${esc(f.name)}</li>`).join('');
-  return `<p>Attachments:</p>${images ? `<p>${images}</p>` : ''}${others ? `<ul>${others}</ul>` : ''}`;
+  const images = files.filter((f) => f.url).map((f) => `<img class="att" src="${esc(f.url)}" alt="${esc(f.name)}">`);
+  const others = files.filter((f) => !f.url).map((f) => Markdown.fileCard({ name: esc(f.name), note: 'Sending…', preview: false }));
+  return `${images.length > 1 ? `<div class="gallery">${images.join('')}</div>` : images.join('')}${others.length ? `<div class="files">${others.join('')}</div>` : ''}`;
 }
 
 /**
@@ -2965,6 +3011,9 @@ function pickMention(key, i) {
   box.style.height = 'auto';
   box.style.height = `${Math.min(box.classList.contains('editbox') ? 320 : 180, box.scrollHeight)}px`;
 }
+
+/** Who a picked account is, for its mention's class: a bot, or Adobe (the picker knows staff). */
+const pickedKind = (p) => (p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
 
 /** Accounts picked for this reply whose @Name is still in the text. */
 function mentionsIn(key, body) {
@@ -3395,17 +3444,82 @@ function bellHref(b) {
   return `/inbox?${q}`;
 }
 
-/** Changes settings at once here, then on the server; back as they were if that fails. */
+/**
+ * Changes settings at once here, then on the server; back as they were if that fails. As
+ * src/settings.js: `channelTraces` changes the channels it names (null: as everywhere again).
+ */
 async function saveSettings(patch) {
   const before = state.settings;
-  state.settings = { ...before, ...patch };
-  renderNotify(); renderThreads(); syncSockets();
+  const next = { ...before, ...patch };
+  if (patch.channelTraces) {
+    next.channelTraces = { ...before.channelTraces };
+    for (const [id, on] of Object.entries(patch.channelTraces)) {
+      if (on === null) delete next.channelTraces[id]; else next.channelTraces[id] = on;
+    }
+  }
+  state.settings = next;
+  const shown = () => { renderNotify(); renderTraces(); renderThreads(); };
+  shown(); syncSockets(); tracesChanged(before);
   const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
-  if (res.ok) { state.settings = res.data; renderNotify(); renderThreads(); return true; }
+  if (res.ok) { state.settings = res.data; shown(); return true; }
+  const tried = state.settings;
   state.settings = before;
-  renderNotify(); renderThreads(); syncSockets();
-  toast(`Could not save the notification settings: ${res.data.error || res.status}`);
+  shown(); syncSockets(); tracesChanged(tried);
+  toast(`Could not save your settings: ${res.data.error || res.status}`);
   return false;
+}
+
+// ---------------------------------------------------------------- the agent's thinking
+// Whether the thread agent's thinking shows under the threads (agentItem), in the user menu:
+// everywhere, and in the open thread's channel, which wins. The Agents page has them too, by
+// channel. Not while viewing as someone else.
+
+/** The open thread's channel, as the menu names it. */
+function channelLabel(t) {
+  const name = t.channel_name || t.channel_id;
+  return t.source === 'teams' ? name : `#${name}`;
+}
+
+function renderTraces() {
+  const box = $('tracesBox');
+  box.hidden = Boolean(state.as) || !state.settings;
+  if (box.hidden) return;
+  const all = state.settings.traces !== false;
+  $('tracesAll').setAttribute('aria-checked', String(all));
+  const t = state.open && threadRow(state.open);
+  $('tracesHere').hidden = !t?.channel_id;
+  if (t?.channel_id) {
+    const own = state.settings.channelTraces?.[t.channel_id];
+    $('tracesChannelLabel').textContent = `In ${channelLabel(t)}, the open thread's channel`;
+    $('tracesChannel').options[0].textContent = `As everywhere (${all ? 'shown' : 'hidden'})`;
+    $('tracesChannel').value = typeof own === 'boolean' ? (own ? 'on' : 'off') : '';
+  }
+  const set = Object.keys(state.settings.channelTraces || {}).length;
+  $('tracesHint').textContent = `What it is doing while it works, and its note once done; only for you.${set
+    ? ` Set in ${set} channel${set === 1 ? '' : 's'} on ${set === 1 ? 'its' : 'their'} own, which win${set === 1 ? 's' : ''}: Agents lists them.` : ''}`;
+}
+
+/** The open thread's agent, after the settings changed from `before`: shown (asked again) or gone. */
+function tracesChanged(before) {
+  const key = state.open;
+  const channel = key && threadRow(key)?.channel_id;
+  if (!channel) return;
+  const was = typeof before?.channelTraces?.[channel] === 'boolean' ? before.channelTraces[channel] : before?.traces !== false;
+  if (was === tracesShown(channel)) return;
+  if (tracesShown(channel)) loadAgent(key); else placeAgent(key);
+}
+
+function wireTraces() {
+  $('tracesAll').onclick = () => saveSettings({ traces: state.settings.traces === false });
+  $('tracesChannel').onchange = () => {
+    const channel = state.open && threadRow(state.open)?.channel_id;
+    if (!channel) return;
+    const v = $('tracesChannel').value;
+    saveSettings({ channelTraces: { [channel]: v === '' ? null : v === 'on' } });
+  };
+  // The open thread's channel, as the menu opens.
+  $('menu').addEventListener('beforetoggle', (e) => { if (e.newState === 'open') renderTraces(); });
+  renderTraces();
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
@@ -3851,7 +3965,9 @@ async function start() {
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   state.rooms = roomsOf(state.me);
-  state.settings = state.me.settings || { mentions: true, bells: [] };
+  state.settings = state.me.settings || {
+    mentions: true, bells: [], traces: true, channelTraces: {},
+  };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
     : `Connected your ${accountOf(q.get('connected'))} account. Replies are sent as you.`);
@@ -3976,6 +4092,7 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
+  wireFiles();
   wireDrop();
   window.addEventListener('popstate', async (e) => {
     // Safari's edge swipe has already slid the list or the thread into view: no second slide.
@@ -3994,7 +4111,8 @@ async function start() {
     main.getBoundingClientRect();
     main.classList.remove('instant');
   });
-  // The pages (ui/header.js): the editor and the admin pages for the admin team and team
+  // The pages (ui/header.js): the editor for every member of a team (read-only, but for their
+  // own settings, unless they manage it), the admin pages for the admin team and team
   // managers. What is on screen picks what they open on: Agents and Orgs the customer on
   // screen, Teams the team picked (one you may manage); with nothing on screen they open as
   // they were left, and Agents, not opened yet in this tab, on the team. The open requests are
@@ -4044,6 +4162,7 @@ async function start() {
     showReview(state.review);
   }
   wireNotify();
+  wireTraces();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
@@ -4719,6 +4838,117 @@ function openLightbox(img) {
   dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out', pseudoElement: '::backdrop' });
   for (const el of chrome()) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 140, easing: 'ease-out', fill: 'backwards' });
 }
+// ---------------------------------------------------------------- file previews
+// A CSV, TSV or text file's fileEl (fileCard, src/ui-markdown.js) has a Preview button: the file
+// (GET /api/file, with the app's credentials) under the fileEl, as a table or as text
+// (ui/table.js), and full screen from there. Each file is fetched once per page; a preview
+// left open stays open when its message is drawn again (a reaction, an edit).
+const fileTexts = new Map(); // `${thread}\u0000${link}` -> Promise<string>
+const openPreviews = new Set(); // `${message data-id}\u0000${link}`
+function fileText(thread, link) {
+  const k = `${thread}\u0000${link}`;
+  if (!fileTexts.has(k)) {
+    const p = (async () => {
+      const res = await fetch(`/api/file?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(link)}`, {
+        credentials: 'same-origin', headers: state.as ? { 'x-opspile-as': String(state.as) } : {},
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `could not load it (${res.status})`);
+      return res.text();
+    })();
+    fileTexts.set(k, p);
+    p.catch(() => fileTexts.delete(k));
+  }
+  return fileTexts.get(k);
+}
+/** The file a fileEl is of, and the message it is in. */
+function cardFile(fileEl) {
+  const a = fileEl.querySelector('a.file-name');
+  const id = fileEl.closest('.msg[data-id]')?.dataset.id || '';
+  return {
+    id, thread: id.slice(0, id.lastIndexOf('|')), link: a?.getAttribute('href') || '', href: a?.href || '',
+    name: a?.textContent || '', home: fileEl.dataset.home || '', kind: fileEl.querySelector('[data-preview]')?.dataset.preview,
+  };
+}
+function setPreviewButton(btn, open) {
+  btn.setAttribute('aria-expanded', String(open));
+  btn.textContent = open ? 'Hide' : 'Preview';
+}
+async function openPreview(fileEl) {
+  const btn = fileEl.querySelector('[data-preview]');
+  const f = cardFile(fileEl);
+  if (!btn || !f.thread || !f.link) return;
+  openPreviews.add(`${f.id}\u0000${f.link}`);
+  const box = document.createElement('div');
+  box.className = 'file-view';
+  box.dataset.kind = f.kind;
+  box.innerHTML = '<div class="fv-wait"><span class="spin" aria-hidden="true"></span>Loading the file…</div>';
+  fileEl.after(box);
+  setPreviewButton(btn, true);
+  try {
+    const text = await fileText(f.thread, f.link);
+    if (!box.isConnected) return;
+    Table.mount(box, {
+      text, kind: f.kind, name: f.name, onExpand: (shown) => Table.open({ ...f, text, start: shown }),
+    });
+  } catch (e) {
+    if (!box.isConnected) return;
+    box.classList.add('failed');
+    box.textContent = `Cannot show ${f.name}: ${e.message}`;
+  }
+  const scroller = box.closest('.scroller');
+  if (scroller) {
+    // As much of it in view as fits, without moving the fileEl out of it.
+    const r = box.getBoundingClientRect();
+    const s = scroller.getBoundingClientRect();
+    if (r.bottom > s.bottom) scroller.scrollBy({ top: Math.min(r.bottom - s.bottom + 12, fileEl.getBoundingClientRect().top - s.top - 12), behavior: REDUCED_MOTION.matches ? 'auto' : 'smooth' });
+  }
+}
+function closePreview(fileEl, view) {
+  const f = cardFile(fileEl);
+  openPreviews.delete(`${f.id}\u0000${f.link}`);
+  view.remove();
+  setPreviewButton(fileEl.querySelector('[data-preview]'), false);
+}
+/** The previews that were open in messages drawn again. */
+function restorePreviews(pane) {
+  if (!openPreviews.size) return;
+  for (const fileEl of pane.querySelectorAll('.file:has([data-preview="table"], [data-preview="text"])')) {
+    const f = cardFile(fileEl);
+    if (openPreviews.has(`${f.id}\u0000${f.link}`) && !fileEl.nextElementSibling?.classList.contains('file-view')) {
+      openPreviews.delete(`${f.id}\u0000${f.link}`);
+      openPreview(fileEl);
+    }
+  }
+}
+function wireFiles() {
+  // Players (fileCard): a video takes the shape of what it shows once that is known; one plays
+  // at a time; one the browser cannot play (or opspile cannot load) says so, and links to it.
+  document.addEventListener('loadedmetadata', (e) => {
+    const v = e.target;
+    if (v.matches?.('video.file-player') && v.videoWidth && v.videoHeight) v.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+  }, true);
+  document.addEventListener('play', (e) => {
+    if (!e.target.matches?.('.file-player')) return;
+    for (const m of document.querySelectorAll('.file-player')) if (m !== e.target && !m.paused) m.pause();
+  }, true);
+  document.addEventListener('error', (e) => {
+    const m = e.target;
+    if (!m.matches?.('.file-player') || !m.error) return;
+    const fileEl = m.closest('.file');
+    const sub = fileEl?.querySelector('.file-sub');
+    fileEl?.classList.add('play-failed');
+    if (sub) sub.textContent = `Cannot play it here${fileEl.dataset.home ? `: open it in ${fileEl.dataset.home}` : ''}`;
+  }, true);
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('.file [data-preview]');
+    if (!btn) return;
+    e.preventDefault();
+    const fileEl = btn.closest('.file');
+    const view = fileEl.nextElementSibling?.classList.contains('file-view') ? fileEl.nextElementSibling : null;
+    if (view) closePreview(fileEl, view); else openPreview(fileEl);
+  });
+}
+
 function wireLightbox() {
   const target = (e) => {
     const img = e.target.closest?.('img.att');

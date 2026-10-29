@@ -24,7 +24,7 @@ import { existsSync } from 'node:fs';
 import { loadClassic, loadRank } from './rank-lib.mjs';
 
 const H = 3600000;
-const ALARM = /\b(urgent|asap|down|outage|broken|blocked|blocker|critical|escalat\w*|not working|fails?|failing|error|5\d\d)\b/i;
+const ALARM = /\b(urgent|asap|down|outage|broken|blocked|blocker|critical|escalat\w*|not working|fails?|failing|error|5\d\d(?= ?(?:errors?|status|response|from|on|when)\b)|5xx|http 5\d\d)\b/i;
 const THANKS = /\b(thanks|thank you|thx|ty|cheers|merci|danke|appreciate)\b/i;
 
 /** 1 answered within a day, 0 not, null when a day has not gone by yet. */

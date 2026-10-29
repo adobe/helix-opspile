@@ -166,6 +166,14 @@
   .ch.global .per.flat .find { margin-left: 0; width: 100%; }
   /* A team's thread agents by default, above its channels. */
   .ch.default { background: var(--col); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin: 8px 0 4px; }
+  /* Your own: whether your inbox shows the agent's thinking, everywhere and in each channel. */
+  .ch.mine { border-style: dashed; }
+  .ch .sub.mine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+  .ch .sub.mine select { font-size: 12px; padding: 1px 6px; }
+  /* Opened from a thread's agent in the inbox: its channel, for a moment. */
+  .ch { transition: background .6s; }
+  .ch.found { background: var(--sel); }
+  .empty.ro { color: var(--faint); font-size: 12px; }
   .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px;
     margin-top: 4px; }
   .ch.global .setup input { width: 200px; }

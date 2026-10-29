@@ -19,6 +19,7 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
+ *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: Agents read-only
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
@@ -47,9 +48,11 @@
  * fresh fake data, and the page reloads once it is back.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { watch } from 'node:fs';
+import { mkdtempSync, readFileSync, watch } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,6 +86,8 @@ const SIMULATE = !process.argv.includes('--no-sim');
 const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
+// Dana is a member of her teams, managing none: Agents read-only, but for her own settings.
+const MEMBER = process.argv.includes('--member');
 // Dana on no team, signed in from one of SIGNIN_DOMAINS (no-team mode): the personal view only,
 // of every team's channels she posted or was mentioned in.
 const NO_TEAM = process.argv.includes('--no-team');
@@ -107,7 +112,7 @@ if (NO_TEAM) {
   store.me = { ...store.me, teams: [] };
 }
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store, { manager: MANAGER, bases: kb.list() });
+const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 // Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
@@ -558,9 +563,11 @@ function thread(key) {
     }],
     messages,
     profiles: profiles(messages.map((m) => m.authorKey)),
-    // As src/profiles.js's mentionKinds: who the people the messages mention are.
+    // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
+    // the platform's accounts (a channel member who never posted) alike.
     mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
-      .map((name) => [name, [...store.people.values()].find((p) => p.name === name)])
+      .map((name) => [name, [...store.people.values(), ...store.members]
+        .find((p) => p.name === name)])
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
@@ -630,8 +637,13 @@ async function proxyApi(req, res, url, b) {
 
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
-  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js.
-  const allowed = (repo) => !MANAGER || repo === 'kb-team-edge';
+  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js, and a member
+  // reads their teams'.
+  const mine = new Set(store.me.teams.map((t) => `kb-team-${t.slug}`));
+  const allowed = (repo) => (MEMBER ? mine.has(repo) : !MANAGER || repo === 'kb-team-edge');
+  if (MEMBER && req.method !== 'GET') {
+    return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
+  }
   const body = req.method === 'GET' ? {} : await readJson(req);
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools: src/kbadmin.js itself.
@@ -701,6 +713,26 @@ const teamsOf = (id) => store.teams.filter((t) => t.members.includes(id))
   .map(({ slug, name }) => ({ slug, name }));
 
 /**
+ * The preview's video: eight seconds of ffmpeg's moving test pattern, and its first
+ * frame as a JPEG, made once; null without ffmpeg.
+ */
+let demo;
+function demoClip() {
+  if (demo !== undefined) {
+    return demo;
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'opspile-ui-'));
+  const video = join(dir, 'clip.mp4');
+  const poster = join(dir, 'poster.jpg');
+  const made = spawnSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=8',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-b:v', '600k', video], { stdio: 'ignore' });
+  const still = made.status === 0 && spawnSync('ffmpeg', ['-loglevel', 'error', '-i', video, '-frames:v', '1', '-q:v', '4', poster], { stdio: 'ignore' });
+  demo = still && still.status === 0
+    ? { video: readFileSync(video), poster: readFileSync(poster) } : null;
+  return demo;
+}
+
+/**
  * With `--admin`, whom an admin looks at the inbox as (`x-opspile-as`, or `as=`), as in
  * src/api.js; null for Dana herself.
  */
@@ -752,13 +784,14 @@ async function api(req, res, url) {
     } = store.me;
     // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
     // be tried.
-    const admin = !MANAGER && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
+    const admin = !MANAGER && !MEMBER
+      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
-      teams: MANAGER ? teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })) : teams,
+      teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
       // The person's teams and the teams of the personal view's channels (src/shares.js).
@@ -846,6 +879,45 @@ async function api(req, res, url) {
     }
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
     return res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#e8eef7"/><rect x="40" y="40" width="1200" height="60" rx="8" fill="#c9d6ea"/><rect x="40" y="130" width="760" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="170" width="980" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="210" width="640" height="24" rx="6" fill="#b4c4de"/><text x="640" y="470" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#5b6b85">${decodeURIComponent(u.split('/').pop()).replace(/[<>&]/g, '')}</text></svg>`);
+  }
+  if (url.pathname === '/api/file/stream' || url.pathname === '/api/file/poster') {
+    // The fixtures' video (src/fileview.js streams the real ones): made with ffmpeg when it is
+    // installed, in parts as the player asks for them; its first frame is the poster.
+    const clip = demoClip();
+    if (!clip || !thread(url.searchParams.get('t')) || !/\.slack\.com\/files\//.test(url.searchParams.get('u') || '')) {
+      return json(res, { error: clip ? 'not a file of this thread' : 'no ffmpeg, no video in the preview' }, 404);
+    }
+    if (url.pathname === '/api/file/poster') {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(clip.poster);
+    }
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    const size = clip.video.length;
+    if (!range) {
+      res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': size });
+      return res.end(clip.video);
+    }
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+    res.writeHead(206, {
+      'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1,
+    });
+    return res.end(clip.video.subarray(start, end + 1));
+  }
+  if (url.pathname === '/api/file') {
+    // A text file of a message (src/fileview.js): the fixtures' uploads, as text.
+    const id = (/^\/__dev\/files\/([\w-]+)\//.exec(url.searchParams.get('u') || '') || [])[1];
+    const f = id && store.uploads.get(id);
+    if (!f || !thread(url.searchParams.get('t'))) {
+      return json(res, { error: 'not a file of this thread' }, 404);
+    }
+    if (!/^text\/|json/.test(f.type)) {
+      return json(res, { error: `cannot preview this kind of file (${f.type})` }, 415);
+    }
+    res.writeHead(200, {
+      'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'x-file-name': encodeURIComponent(f.name), 'x-file-type': f.type,
+    });
+    return res.end(Buffer.from(f.bytes));
   }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
     // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
