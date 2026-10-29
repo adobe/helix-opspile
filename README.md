@@ -467,7 +467,8 @@ is live.
 To deploy by hand instead: deploys go through the new Cloudflare CLI,
 [`cf`](https://developers.cloudflare.com/cf/), which reads `cloudflare.config.ts` (`--mode
 prod` or `--mode stage` selects the Worker). `cf deploy` and `cf dev` also build the inbox's
-markdown bundle (`src/ui-markdown.bundle.js`, not committed; `npm run build` by hand).
+markdown bundle and the knowledge-base editor's (`src/ui-markdown.bundle.js` and
+`src/ui-editor.bundle.js`, not committed; `npm run build` by hand).
 
 ```sh
 npm install

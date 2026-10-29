@@ -28,7 +28,14 @@ const SEED = {
     kind: 'team',
     files: {
       [SYSTEM_PROMPT]: '---\ntype: System Prompt\ntitle: Agent instructions for Platform ops\n---\n\nSign drafts with the team name, never a person\'s.\n',
-      'playbooks/cdn-purge.md': '---\ntype: Playbook\ntitle: CDN purge takes long\ndescription: What to check when a purge seems slow.\n---\n\n1. Check the cache TTL.\n2. Check for a second CDN in front.\n',
+      // Frontmatter, folded when it opens, and Markdown, both highlighted (src/ui-editor.js).
+      'playbooks/cdn-purge.md': [
+        '---', 'type: Playbook', 'title: CDN purge takes long',
+        'description: "What to check when a purge seems slow."', 'tags: [cdn, cache]', 'reviewed: 2026-03-02',
+        '---', '', '# CDN purge takes long', '', 'A purge is **usually** done in a few seconds; *slow* ones have a cause.',
+        '', '## Check', '', '1. The cache TTL: `curl -sI https://www.example.com/ | grep -i age`.',
+        '2. A second CDN in front, see [the site](../sites/www.md).', '', '> Ask the customer before purging everything.', '',
+      ].join('\n'),
     },
   },
   'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },

@@ -159,3 +159,4 @@ vite.config.ts.timestamp-*
 
 # Built by scripts/ui-markdown.mjs (npm run build; cf deploy and cf dev build it too)
 src/ui-markdown.bundle.js
+src/ui-editor.bundle.js
