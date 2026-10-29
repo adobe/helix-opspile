@@ -479,6 +479,44 @@ export function slackText(body, mentions = []) {
   return markdownToMrkdwn(marked).replace(/\uE003(\d+)\uE003/g, (_, i) => `<@${ids[Number(i)]}>`);
 }
 
+/** `body` with each `@Name` of a mentioned account as `mark(account)` writes it. */
+const markMentions = (body, mentions, mark) => splitMentions(body, mentions)
+  .map((p) => (typeof p === 'string' ? p : mark(p))).join('');
+
+/**
+ * The Markdown of a Slack `markdown` block (posts as the opspile app): mentions as `<@U…>`,
+ * which the block keeps as mentions.
+ */
+export const slackMarkdown = (body, mentions = []) => markMentions(body, mentions, (p) => `<@${p.id}>`);
+
+/**
+ * A Discord message's `content` and `allowed_mentions` (the opspile bot's posts): mentions as
+ * `<@id>`, and the mentioned people are the only ones it pings (not `@everyone`, nor a role).
+ */
+export function discordMessage(body, mentions = []) {
+  const users = new Set();
+  const content = markMentions(body, mentions.filter((m) => m.kind !== 'bot'), (p) => {
+    users.add(p.id);
+    return `<@${p.id}>`;
+  });
+  return { content, allowed_mentions: { parse: [], ...(users.size ? { users: [...users] } : {}) } };
+}
+
+/**
+ * The opspile Teams bot's message `text` (Markdown) and `entities`: each mention an
+ * `<at>Name</at>` with its `mention` entity, by the person's Entra object id, which the Bot
+ * Framework takes. A bot stays its `@Name`: Teams gives no bot what another bot writes.
+ */
+export function teamsBotMessage(body, mentions = []) {
+  const entities = new Map();
+  const text = markMentions(body, mentions.filter((m) => m.kind !== 'bot'), (p) => {
+    const at = `<at>${p.name}</at>`;
+    entities.set(p.id, { type: 'mention', text: at, mentioned: { id: p.id, name: p.name } });
+    return at;
+  });
+  return { text, ...(entities.size ? { entities: [...entities.values()] } : {}) };
+}
+
 /**
  * Teams message `body` and `mentions`: each mention an `<at id>` with its entry, a person
  * as `user`, a bot as `application` (which the bot receives like a mention typed in Teams).

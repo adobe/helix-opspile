@@ -170,7 +170,7 @@ export async function edit(env, me, request, inTeam) {
     // The app speaks in a channel only where it may post, also to correct itself.
     const check = await appPostCheck(env, t.thread);
     done = check.problem ? { error: check.problem, status: check.status }
-      : await editAsApp(env, t, msg, body);
+      : await editAsApp(env, t, msg, body, await mentionsFor(env, t, msg.id, ids));
     if (done.error && !done.status) {
       done.status = /^too long/.test(done.error) ? 400 : 502;
     }

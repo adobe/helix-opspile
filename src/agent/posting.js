@@ -12,7 +12,9 @@
 
 import { botImages, discordForm, slackUpload } from '../attach.js';
 import { discordApi, discordEnabled } from '../discord.js';
-import { slackText, target as replyTarget } from '../post.js';
+import {
+  discordMessage, slackMarkdown, slackText, target as replyTarget, teamsBotMessage,
+} from '../post.js';
 import { editInTeams, postToTeams } from '../teamsbot.js';
 
 /**
@@ -23,12 +25,16 @@ import { editInTeams, postToTeams } from '../teamsbot.js';
  * - Slack: `chat.postMessage` with the bot token (bot scope `chat:write`), in the thread, the
  *   Markdown in a `markdown` block.
  * - Discord: the bot (Send Messages, Send Messages in Threads), in the Discord thread when the
- *   conversation is one, else as an inline reply to its first message. No pings.
+ *   conversation is one, else as an inline reply to its first message. No pings but the
+ *   people a person posting as the app mentions.
  * - Teams: the opspile bot (src/teamsbot.js), a Bot Framework bot, in the channel thread;
  *   Microsoft Graph lets no app post to a channel.
  *
  * A person posting as the app (src/postapp.js) can attach files: Slack `files:write` uploads
- * with the bot token, Discord multipart, and on Teams inline images (src/attach.js).
+ * with the bot token, Discord multipart, and on Teams inline images (src/attach.js). The
+ * people they picked (`mentions`, src/post.js `knownMentions`) are mentioned as each platform
+ * has it: `<@U…>` on Slack, `<@id>` on Discord (who alone are pinged there), and `<at>` with a
+ * mention entity on Teams.
  *
  * The reply then arrives like any other message, through the platform's events.
  */
@@ -37,10 +43,12 @@ export const MAX_POST = { slack: 8000, discord: 2000, teams: 8000 };
 
 /**
  * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`.
- * `options.files` (src/attach.js, checked against `appRule` already) go in the same message.
+ * `options.files` (src/attach.js, checked against `appRule` already) go in the same message;
+ * `options.mentions` are the accounts each `@Name` of which is a mention (src/post.js
+ * `knownMentions`).
  */
 export async function postAsApp(env, key, text, options = {}) {
-  const { files = [], ...rest } = options;
+  const { files = [], mentions = [], ...rest } = options;
   const body = String(text || '').trim();
   const t = key && await replyTarget(env, key);
   if (!t) {
@@ -59,7 +67,7 @@ export async function postAsApp(env, key, text, options = {}) {
     if (files.length) {
       // The text as the files' message, in mrkdwn: files.completeUploadExternal takes no blocks.
       const up = await slackUpload(env.SLACK_BOT_TOKEN, {
-        channel: t.channel_id, threadTs: t.root_id, comment: body && slackText(body),
+        channel: t.channel_id, threadTs: t.root_id, comment: body && slackText(body, mentions),
       }, files);
       if (up.error) {
         return {
@@ -81,8 +89,8 @@ export async function postAsApp(env, key, text, options = {}) {
       body: JSON.stringify({
         channel: t.channel_id,
         thread_ts: t.root_id,
-        text: slackText(body),
-        blocks: [{ type: 'markdown', text: body }],
+        text: slackText(body, mentions),
+        blocks: [{ type: 'markdown', text: slackMarkdown(body, mentions) }],
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -95,7 +103,11 @@ export async function postAsApp(env, key, text, options = {}) {
     if (!discordEnabled(env)) {
       return { error: 'the opspile Discord bot is not set up here' };
     }
-    const message = { content: body, allowed_mentions: { parse: [] } };
+    // No pings but the people mentioned.
+    const message = discordMessage(body, mentions);
+    if (message.content.length > MAX_POST.discord) {
+      return { error: `too long: discord takes up to ${MAX_POST.discord} characters` };
+    }
     // With files, the message goes as multipart: `payload_json` and `files[n]`.
     const request = (m) => (files.length ? { form: discordForm(m, files) } : { body: m });
     try {
@@ -119,7 +131,8 @@ export async function postAsApp(env, key, text, options = {}) {
     }
   }
   if (t.source === 'teams') {
-    return postToTeams(env, t, body, { ...rest, attachments: botImages(files) });
+    const { text: marked, entities } = teamsBotMessage(body, mentions);
+    return postToTeams(env, t, marked, { ...rest, attachments: botImages(files), entities });
   }
   return { error: `opspile cannot post to ${t.source}` };
 }
@@ -133,10 +146,10 @@ const discordChannelOf = (permalink) => {
 /**
  * Replaces the text of a message the opspile app posted, as the app: `{ ok, platform, id }`, or
  * `{ error }`. `t` is the message's platform thread row (with its Teams team's `group_id`),
- * `message` its `{ id, permalink }`. The edit then arrives like any other, through the
- * platform's events.
+ * `message` its `{ id, permalink }`, `mentions` the accounts it mentions, as for `postAsApp`.
+ * The edit then arrives like any other, through the platform's events.
  */
-export async function editAsApp(env, t, message, text) {
+export async function editAsApp(env, t, message, text, mentions = []) {
   const body = String(text || '').trim();
   const { id } = message;
   if (!body) {
@@ -159,8 +172,8 @@ export async function editAsApp(env, t, message, text) {
       body: JSON.stringify({
         channel: t.channel_id,
         ts: id,
-        text: slackText(body),
-        blocks: [{ type: 'markdown', text: body }],
+        text: slackText(body, mentions),
+        blocks: [{ type: 'markdown', text: slackMarkdown(body, mentions) }],
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -173,7 +186,10 @@ export async function editAsApp(env, t, message, text) {
     if (!discordEnabled(env)) {
       return { error: 'the opspile Discord bot is not set up here' };
     }
-    const patch = { content: body, allowed_mentions: { parse: [] } };
+    const patch = discordMessage(body, mentions);
+    if (patch.content.length > MAX_POST.discord) {
+      return { error: `too long: discord takes up to ${MAX_POST.discord} characters` };
+    }
     // In the Discord thread of the conversation, or (an inline reply, the first message) in
     // the channel; the message's link says which.
     const channels = [...new Set([discordChannelOf(message.permalink),
@@ -194,7 +210,8 @@ export async function editAsApp(env, t, message, text) {
     }
   }
   if (t.source === 'teams') {
-    return editInTeams(env, t, id, body);
+    const { text: marked, entities } = teamsBotMessage(body, mentions);
+    return editInTeams(env, t, id, marked, entities);
   }
   return { error: `opspile cannot edit on ${t.source}` };
 }

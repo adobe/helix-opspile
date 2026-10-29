@@ -2045,7 +2045,7 @@ async function sendDraft(key, asApp) {
   if (!d) return;
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (asApp) {
-    const error = await sendAsApp(key, d.body, d.updated_at);
+    const error = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [] });
     toast(error ? `Nothing was sent: ${error}.` : 'Sent as the opspile app.');
   } else {
     await send(key, data.thread, d);
@@ -2356,11 +2356,14 @@ window.addEventListener('beforeunload', (e) => {
 
 /**
  * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
- * the app post; `base` is the version of the shared draft it sends, which it uses up. Resolves
- * to null, or the error.
+ * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
+ * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
+ * mentions, as when you send it. Resolves to null, or the error.
  */
-async function sendAsApp(key, text, base, files = []) {
-  const res = await postWith('/api/post/app', { thread: key, text, ...(base ? { draft: base } : {}) }, files);
+async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [] } = {}) {
+  const res = await postWith('/api/post/app', {
+    thread: key, text, ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
+  }, files);
   if (!res.ok) return res.data.error || `could not send (${res.status})`;
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -4322,7 +4325,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'post_as_bot',
-    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Only in channels where the team lets the app post ("Post messages" in the knowledge-base editor). No mentions; Discord takes up to 2000 characters. Pass `draft` (the shared draft\'s `saved`) when it sends that draft, so it is used up.',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Only in channels where the team lets the app post ("Post messages" in the knowledge-base editor). An @Name is a real mention where the user picked that person in the reply box, or the shared draft it sends mentions them; Discord takes up to 2000 characters. Pass `draft` (the shared draft\'s `saved`) when it sends that draft, so it is used up.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4348,7 +4351,11 @@ const WEBMCP_TOOLS = [
       const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
       if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent.');
       if (!yes) return fail('The user declined to send, so nothing was sent.');
-      const error = await sendAsApp(key, body, draft);
+      // The people the shared draft it sends mentions, and those picked in the reply box.
+      const d = draft && data.draft?.updated_at === draft ? data.draft : null;
+      const mentions = [...new Map([...(d?.mentions || []), ...mentionsIn(key, body)]
+        .map((m) => [m.id, m])).values()];
+      const error = await sendAsApp(key, body, draft, { mentions });
       return error ? fail(`Nothing was sent: ${error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
     },
   },

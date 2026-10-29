@@ -497,11 +497,15 @@ async function postAsBot(env, me, args, ctx) {
   if (check.problem) {
     return { error: `Cannot post as the opspile app: ${check.problem}. Use post_draft or post_as_user instead.` };
   }
+  const m = await mentionsOf(env, me, w.key, w.text, args.mention);
+  if (m.error) {
+    return m;
+  }
   const asked = await confirmPost(env, me, 'post_as_bot', args, ctx, `Post this reply in ${whereOf(w.t)} as the opspile app?`);
   if (asked) {
     return asked;
   }
-  const request = { thread: w.key, text: w.text };
+  const request = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
   if (res.error) {
     return res;
@@ -767,12 +771,13 @@ export const TOOLS = [
   {
     name: 'post_as_bot',
     title: 'Reply as the opspile app',
-    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). No mentions. Slack and Teams take up to 8000 characters, Discord 2000. The user is asked to confirm first when the client supports elicitation.',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). Slack and Teams take up to 8000 characters, Discord 2000. The user is asked to confirm first when the client supports elicitation.',
     inputSchema: {
       type: 'object',
       properties: {
         thread: THREAD_ARG,
         text: { type: 'string', description: 'The reply, in Markdown' },
+        mention: MENTION_ARG,
         draft: DRAFT_ARG,
       },
       required: ['thread', 'text'],
