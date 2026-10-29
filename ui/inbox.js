@@ -1050,9 +1050,12 @@ function openHit(key) {
 // it, 👀 by a colleague lowers it. Without a model, classicScore: recency always counts; a
 // thread that waits on us counts more the longer it waits, the more urgent and unresolved it
 // is, and the closer to me; resolved weighs on all of it.
+// Neighbouring piles are at least 0.5 apart (× 100: 50), and baseScore stays within ±24, so a
+// thread never leaves its pile: keep both so when a pile is added or moved.
 const STATUS_WEIGHT = {
   critical: 6, hot: 5, you: 4, waiting: 3, silent: 2, team: 1.5, quiet: 1,
 };
+const PILE_CLAMP = 24;
 function smartScore(t) {
   return STATUS_WEIGHT[statusOf(t)] * 100 + baseScore(t);
 }
@@ -1073,7 +1076,7 @@ function closeness(t) {
 function baseScore(t) {
   const team = Rank.model ? Rank.score(t) : null;
   if (team === null) return classicScore(t);
-  return Math.max(-45, Math.min(45, team + Math.log(closeness(t))));
+  return Math.max(-PILE_CLAMP, Math.min(PILE_CLAMP, team + Math.log(closeness(t))));
 }
 function classicScore(t) {
   const now = Date.now();

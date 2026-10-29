@@ -20,7 +20,7 @@ import { agreementWithYou } from '../scripts/rank-judge.mjs';
 import { parseAnswer } from '../scripts/rank-llm.mjs';
 import { auc, customerTurns, logistic } from '../scripts/rank-behavior.mjs';
 import {
-  asOf, decide, replyGames, shareOut,
+  asOf, decide, foldOf, inFold, replyGames, rows, shareOut,
 } from '../scripts/rank-combo.mjs';
 import { boost, forest, treeScore } from '../scripts/rank-trees.mjs';
 import { SCRIPTS } from './ui.js';
@@ -55,6 +55,20 @@ describe('the team order model (ui/rank.js)', () => {
     for (const n of used) {
       assert.ok(Rank.names.includes(n), n);
     }
+  });
+
+  it('cannot push a thread out of its pile in the inbox', () => {
+    // The inbox clamps a score to ±PILE_CLAMP (half the closest piles' gap); the trees' widest
+    // reach, plus the most closeness can add (log 6), should stay inside it unclamped.
+    const reach = (n, pick) => (Array.isArray(n) ? pick(reach(n[2], pick), reach(n[3], pick)) : n);
+    const hi = Rank.model.trees.reduce((acc, t) => acc + reach(t, Math.max), 0);
+    const lo = Rank.model.trees.reduce((acc, t) => acc + reach(t, Math.min), 0);
+    const clamp = Number(/const PILE_CLAMP = (\d+);/.exec(SCRIPTS['inbox.js'])[1]);
+    const weights = /const STATUS_WEIGHT = \{([^}]*)\}/.exec(SCRIPTS['inbox.js'])[1]
+      .split(',').map((x) => Number(x.split(':')[1])).filter(Number.isFinite).sort((a, b) => a - b);
+    const gap = Math.min(...weights.slice(1).map((w, i) => w - weights[i])) * 100;
+    assert.ok(2 * clamp < gap, `clamp ${clamp}, closest piles ${gap} apart`);
+    assert.ok(hi + Math.log(6) < clamp && lo > -clamp, `trees reach ${lo}..${hi}`);
   });
 
   it('keeps the policy: resolved only lowers a thread, waiting on us only raises it', () => {
@@ -334,6 +348,55 @@ describe('the combo model\'s games (scripts/rank-combo.mjs)', () => {
     assert.equal(then.messages, 1);
     assert.equal(then.staffPosted, false);
     assert.equal(then.label.resolved_p, 0.3);
+  });
+
+  it('holds threads out of training in every source, both ends of a game', () => {
+    const Rank = loadRank();
+    const key = (i) => `t${i}`;
+    const at = (h) => new Date(NOW - h * 3600000).toISOString();
+    const person = (name, staff) => ({ kind: 'person', name, staff });
+    // Forty threads: each answered by Ada the same day, so replies pair them up too.
+    const threads = Array.from({ length: 40 }, (_, i) => ({
+      key: key(i),
+      entry: {
+        thread: key(i), source: 'slack', kind: 'channel', last_at: at(i + 1), label: { urgency: 1 },
+      },
+      messages: [
+        { at: at(30 + i / 10), author: person(`C${i}`, false), body: 'help?' },
+        { at: at(29.9 - i / 100), author: person('Ada', true), body: 'answer' },
+      ],
+    }));
+    // Judged pairs (a, c) and (b, c), Clef's and yours, and picks that share their threads.
+    const games = [];
+    for (let i = 0; i < 39; i += 1) {
+      games.push({ a: key(i), b: key(39), p: 0.7 }, { a: key(i), b: key(i + 1), p: 0.6 });
+    }
+    const human = games.slice(0, 10).map((g) => ({ ...g, pick: 'left', p: 1 }));
+    const events = [1, 2, 3].map((id) => ({
+      id,
+      clicked: key(id),
+      shown: [id, id + 5, 39].map((i, pos) => ({
+        thread: key(i), pos, features: Rank.features(threads[i].entry, NOW),
+      })),
+    }));
+    const list = rows({
+      Rank,
+      samples: [{
+        data: { pulledAt: NOW, threads }, games, human, llm: [],
+      }],
+      events,
+    });
+    assert.deepEqual([...new Set(list.map((r) => r.source))].sort(), ['clef', 'click', 'human', 'reply']);
+    for (let f = 0; f < 5; f += 1) {
+      const out = new Set(threads.map((t) => t.key).filter((k) => foldOf(k) === f));
+      const trained = list.filter((r) => !inFold(f)(r));
+      const test = list.filter(inFold(f));
+      assert.ok(test.length && trained.length, `fold ${f}`);
+      for (const r of trained) {
+        assert.ok(r.keys.every((k) => !out.has(k)), `fold ${f}: ${r.source} ${r.keys}`);
+      }
+      assert.ok(test.every((r) => r.keys.some((k) => out.has(k))));
+    }
   });
 
   it('gives each source its share of the training, whatever its number of games', () => {

@@ -50,6 +50,7 @@ import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
 import { sweepPreviews } from './previews.js';
+import { pruneRankEvents } from './rankevents.js';
 
 const SCRIPTS = {
   'inbox.js': inboxJs,
@@ -209,7 +210,8 @@ export default {
  * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
- * behind, and fill in the latest message's text of threads indexed before it was kept.
+ * behind, fill in the latest message's text of threads indexed before it was kept, and delete
+ * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js).
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -255,6 +257,9 @@ export default {
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
+    ctx.waitUntil(pruneRankEvents(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
   },
 };
 
