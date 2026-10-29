@@ -70,6 +70,8 @@ export default [
         Header: 'readonly',
         // The team order's model, ui/rank.js (the inbox).
         Rank: 'readonly',
+        // The preview of attached files, ui/table.js (the inbox).
+        Table: 'readonly',
       },
     },
     rules: {

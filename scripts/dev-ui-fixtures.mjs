@@ -172,6 +172,22 @@ const CHANNELS = {
 /**
  * A made-up screenshot: a chart with a title, as an SVG, for the messages with attachments.
  */
+/**
+ * A made-up CSV of publish requests (paths, statuses, timings), long enough that its preview
+ * scrolls, with a quoted field holding a comma and one holding a quote.
+ */
+function publishCsv() {
+  const paths = ['/content/acme/en/home', '/content/acme/en/products', '/content/acme/de/start', '/content/dam/acme/hero.png', '/content/acme/en/support/contact'];
+  const statuses = [200, 200, 200, 202, 503, 200, 404];
+  const rows = ['path,status,requests,p95 ms,last seen,note'];
+  for (let i = 0; i < 240; i += 1) {
+    const note = { 3: '"queued, then retried"', 7: '"agent said ""busy"""' }[i] || '';
+    rows.push([`${paths[i % paths.length]}${i >= paths.length ? `/page-${i}` : ''}`, statuses[(i * 3) % statuses.length],
+      ((i * 7919) % 4000) + 12, ((i * 104729) % 900) + 40, `2026-10-21T${String(9 + (i % 3)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00Z`, note].join(','));
+  }
+  return `${rows.join('\n')}\n`;
+}
+
 function screenshot(title, color, bars, w = 640, h = 360) {
   const bar = (v, i) => `<rect x="${60 + i * 52}" y="${h - 60 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
   return new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
@@ -739,6 +755,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [
       ['sam', 140, `The publish queue looks stuck, see the dashboard.\n\nAttachments:\n![dashboard.png](${upload('dashboard.png', 'image/svg+xml', screenshot('Publish queue', '#ef4444', [20, 35, 60, 95, 120, 130, 135]))} "640x360")`],
       ['dana', 128, `It drained after the restart. Before and after, and the worker log:\n\nAttachments:\n![after-restart.png](${upload('after-restart.png', 'image/svg+xml', screenshot('Publish queue after the restart', '#10b981', [130, 90, 50, 20, 8, 4, 2]))} "640x360")\n\n- [publish-worker.log](${upload('publish-worker.log', 'text/plain', new TextEncoder().encode('12:00:01 restart\n12:00:04 queue draining\n'))})`],
+      // Files that are not images: cards, a table and a text to preview, a video to open.
+      ['dana', 126, `The publish requests of the last hour, and the replication agent's config:\n\nAttachments:\n- [publish-requests (2).csv](${upload('publish-requests (2).csv', 'text/csv', new TextEncoder().encode(publishCsv()))})\n- [replication-agent.json](${upload('replication-agent.json', 'application/json', new TextEncoder().encode('{"agent":"publish","retries":3,"queue":{"max":500,"paused":false},"targets":["/content/acme","/content/dam/acme"]}'))})\n- [Screen Recording 2026-10-21 at 10.12.03.mov](https://example.slack.com/files/U00000000/F00000001/screen_recording_2026-10-21_at_10.12.03.mov)`],
+      ['sam', 122, 'Here is our side of it.\n\nAttachments:\n- CSV file (shared from another workspace; opspile cannot see it)'],
       ['sam', 120, 'Confirmed, publishing works again. Thanks!'],
       // Images one after the other, as Teams attaches them: a gallery (and a lightbox that
       // pages through them).

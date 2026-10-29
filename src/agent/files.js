@@ -110,7 +110,7 @@ async function keptCopy(env, f, name) {
 }
 
 /** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
-async function download(env, f) {
+export async function download(env, f) {
   let { url } = f;
   let name = f.name || url.split('/').pop().split('?')[0];
   if (f.source === 'teams') {
@@ -135,6 +135,10 @@ async function download(env, f) {
       return { error: `too large (${Math.round(file.size / 1024 / 1024)} MB; up to 10 MB)` };
     }
     url = file.url_private_download || file.url_private;
+    // The bot token goes to Slack's own file host only: a remote file's URL can be anywhere.
+    if (new URL(url).hostname !== 'files.slack.com') {
+      return { error: 'the file is not stored in Slack' };
+    }
     name = file.name || name;
     type = file.mimetype || '';
     headers.authorization = `Bearer ${env.SLACK_BOT_TOKEN}`;

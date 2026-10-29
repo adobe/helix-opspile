@@ -47,9 +47,11 @@
  * fresh fake data, and the page reloads once it is back.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { watch } from 'node:fs';
+import { mkdtempSync, readFileSync, watch } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -701,6 +703,26 @@ const teamsOf = (id) => store.teams.filter((t) => t.members.includes(id))
   .map(({ slug, name }) => ({ slug, name }));
 
 /**
+ * The preview's video: eight seconds of ffmpeg's moving test pattern, and its first
+ * frame as a JPEG, made once; null without ffmpeg.
+ */
+let demo;
+function demoClip() {
+  if (demo !== undefined) {
+    return demo;
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'opspile-ui-'));
+  const video = join(dir, 'clip.mp4');
+  const poster = join(dir, 'poster.jpg');
+  const made = spawnSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=8',
+    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-b:v', '600k', video], { stdio: 'ignore' });
+  const still = made.status === 0 && spawnSync('ffmpeg', ['-loglevel', 'error', '-i', video, '-frames:v', '1', '-q:v', '4', poster], { stdio: 'ignore' });
+  demo = still && still.status === 0
+    ? { video: readFileSync(video), poster: readFileSync(poster) } : null;
+  return demo;
+}
+
+/**
  * With `--admin`, whom an admin looks at the inbox as (`x-opspile-as`, or `as=`), as in
  * src/api.js; null for Dana herself.
  */
@@ -846,6 +868,45 @@ async function api(req, res, url) {
     }
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
     return res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#e8eef7"/><rect x="40" y="40" width="1200" height="60" rx="8" fill="#c9d6ea"/><rect x="40" y="130" width="760" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="170" width="980" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="210" width="640" height="24" rx="6" fill="#b4c4de"/><text x="640" y="470" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#5b6b85">${decodeURIComponent(u.split('/').pop()).replace(/[<>&]/g, '')}</text></svg>`);
+  }
+  if (url.pathname === '/api/file/stream' || url.pathname === '/api/file/poster') {
+    // The fixtures' video (src/fileview.js streams the real ones): made with ffmpeg when it is
+    // installed, in parts as the player asks for them; its first frame is the poster.
+    const clip = demoClip();
+    if (!clip || !thread(url.searchParams.get('t')) || !/\.slack\.com\/files\//.test(url.searchParams.get('u') || '')) {
+      return json(res, { error: clip ? 'not a file of this thread' : 'no ffmpeg, no video in the preview' }, 404);
+    }
+    if (url.pathname === '/api/file/poster') {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(clip.poster);
+    }
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    const size = clip.video.length;
+    if (!range) {
+      res.writeHead(200, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': size });
+      return res.end(clip.video);
+    }
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+    res.writeHead(206, {
+      'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1,
+    });
+    return res.end(clip.video.subarray(start, end + 1));
+  }
+  if (url.pathname === '/api/file') {
+    // A text file of a message (src/fileview.js): the fixtures' uploads, as text.
+    const id = (/^\/__dev\/files\/([\w-]+)\//.exec(url.searchParams.get('u') || '') || [])[1];
+    const f = id && store.uploads.get(id);
+    if (!f || !thread(url.searchParams.get('t'))) {
+      return json(res, { error: 'not a file of this thread' }, 404);
+    }
+    if (!/^text\/|json/.test(f.type)) {
+      return json(res, { error: `cannot preview this kind of file (${f.type})` }, 415);
+    }
+    res.writeHead(200, {
+      'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'x-file-name': encodeURIComponent(f.name), 'x-file-type': f.type,
+    });
+    return res.end(Buffer.from(f.bytes));
   }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
     // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works

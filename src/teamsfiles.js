@@ -263,10 +263,10 @@ export async function withTeamsFiles(env, key, payload, { graph } = {}) {
  * The kept copy of the file at `url` in Teams thread `thread`: an R2 object with `body`, or
  * null.
  */
-export async function keptTeamsFile(env, thread, url) {
+export async function keptTeamsFile(env, thread, url, options = {}) {
   const where = threadChannel(thread);
   if (!where || !env.RAW || !isTeamsFileUrl(url)) {
     return null;
   }
-  return env.RAW.get(await teamsFileKey(where, url));
+  return env.RAW.get(await teamsFileKey(where, url), options);
 }

@@ -388,8 +388,10 @@ function md(src, thread = '') {
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
+    // A message's video and audio files play in the page, through the Worker (src/fileview.js).
+    const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf,
+      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -1812,6 +1814,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
+  restorePreviews(pane);
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
@@ -2669,9 +2672,9 @@ function renderTray(key) {
 
 /** The files of a reply being sent, as the message will show them once it arrives. */
 function pendingFiles(files) {
-  const images = files.filter((f) => f.url).map((f) => `<img class="att" src="${esc(f.url)}" alt="${esc(f.name)}">`).join('');
-  const others = files.filter((f) => !f.url).map((f) => `<li>${esc(f.name)}</li>`).join('');
-  return `<p>Attachments:</p>${images ? `<p>${images}</p>` : ''}${others ? `<ul>${others}</ul>` : ''}`;
+  const images = files.filter((f) => f.url).map((f) => `<img class="att" src="${esc(f.url)}" alt="${esc(f.name)}">`);
+  const others = files.filter((f) => !f.url).map((f) => Markdown.fileCard({ name: esc(f.name), note: 'Sending…', preview: false }));
+  return `${images.length > 1 ? `<div class="gallery">${images.join('')}</div>` : images.join('')}${others.length ? `<div class="files">${others.join('')}</div>` : ''}`;
 }
 
 /**
@@ -3976,6 +3979,7 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
+  wireFiles();
   wireDrop();
   window.addEventListener('popstate', async (e) => {
     // Safari's edge swipe has already slid the list or the thread into view: no second slide.
@@ -4719,6 +4723,117 @@ function openLightbox(img) {
   dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out', pseudoElement: '::backdrop' });
   for (const el of chrome()) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 140, easing: 'ease-out', fill: 'backwards' });
 }
+// ---------------------------------------------------------------- file previews
+// A CSV, TSV or text file's fileEl (fileCard, src/ui-markdown.js) has a Preview button: the file
+// (GET /api/file, with the app's credentials) under the fileEl, as a table or as text
+// (ui/table.js), and full screen from there. Each file is fetched once per page; a preview
+// left open stays open when its message is drawn again (a reaction, an edit).
+const fileTexts = new Map(); // `${thread}\u0000${link}` -> Promise<string>
+const openPreviews = new Set(); // `${message data-id}\u0000${link}`
+function fileText(thread, link) {
+  const k = `${thread}\u0000${link}`;
+  if (!fileTexts.has(k)) {
+    const p = (async () => {
+      const res = await fetch(`/api/file?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(link)}`, {
+        credentials: 'same-origin', headers: state.as ? { 'x-opspile-as': String(state.as) } : {},
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `could not load it (${res.status})`);
+      return res.text();
+    })();
+    fileTexts.set(k, p);
+    p.catch(() => fileTexts.delete(k));
+  }
+  return fileTexts.get(k);
+}
+/** The file a fileEl is of, and the message it is in. */
+function cardFile(fileEl) {
+  const a = fileEl.querySelector('a.file-name');
+  const id = fileEl.closest('.msg[data-id]')?.dataset.id || '';
+  return {
+    id, thread: id.slice(0, id.lastIndexOf('|')), link: a?.getAttribute('href') || '', href: a?.href || '',
+    name: a?.textContent || '', home: fileEl.dataset.home || '', kind: fileEl.querySelector('[data-preview]')?.dataset.preview,
+  };
+}
+function setPreviewButton(btn, open) {
+  btn.setAttribute('aria-expanded', String(open));
+  btn.textContent = open ? 'Hide' : 'Preview';
+}
+async function openPreview(fileEl) {
+  const btn = fileEl.querySelector('[data-preview]');
+  const f = cardFile(fileEl);
+  if (!btn || !f.thread || !f.link) return;
+  openPreviews.add(`${f.id}\u0000${f.link}`);
+  const box = document.createElement('div');
+  box.className = 'file-view';
+  box.dataset.kind = f.kind;
+  box.innerHTML = '<div class="fv-wait"><span class="spin" aria-hidden="true"></span>Loading the file…</div>';
+  fileEl.after(box);
+  setPreviewButton(btn, true);
+  try {
+    const text = await fileText(f.thread, f.link);
+    if (!box.isConnected) return;
+    Table.mount(box, {
+      text, kind: f.kind, name: f.name, onExpand: (shown) => Table.open({ ...f, text, start: shown }),
+    });
+  } catch (e) {
+    if (!box.isConnected) return;
+    box.classList.add('failed');
+    box.textContent = `Cannot show ${f.name}: ${e.message}`;
+  }
+  const scroller = box.closest('.scroller');
+  if (scroller) {
+    // As much of it in view as fits, without moving the fileEl out of it.
+    const r = box.getBoundingClientRect();
+    const s = scroller.getBoundingClientRect();
+    if (r.bottom > s.bottom) scroller.scrollBy({ top: Math.min(r.bottom - s.bottom + 12, fileEl.getBoundingClientRect().top - s.top - 12), behavior: REDUCED_MOTION.matches ? 'auto' : 'smooth' });
+  }
+}
+function closePreview(fileEl, view) {
+  const f = cardFile(fileEl);
+  openPreviews.delete(`${f.id}\u0000${f.link}`);
+  view.remove();
+  setPreviewButton(fileEl.querySelector('[data-preview]'), false);
+}
+/** The previews that were open in messages drawn again. */
+function restorePreviews(pane) {
+  if (!openPreviews.size) return;
+  for (const fileEl of pane.querySelectorAll('.file:has([data-preview="table"], [data-preview="text"])')) {
+    const f = cardFile(fileEl);
+    if (openPreviews.has(`${f.id}\u0000${f.link}`) && !fileEl.nextElementSibling?.classList.contains('file-view')) {
+      openPreviews.delete(`${f.id}\u0000${f.link}`);
+      openPreview(fileEl);
+    }
+  }
+}
+function wireFiles() {
+  // Players (fileCard): a video takes the shape of what it shows once that is known; one plays
+  // at a time; one the browser cannot play (or opspile cannot load) says so, and links to it.
+  document.addEventListener('loadedmetadata', (e) => {
+    const v = e.target;
+    if (v.matches?.('video.file-player') && v.videoWidth && v.videoHeight) v.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+  }, true);
+  document.addEventListener('play', (e) => {
+    if (!e.target.matches?.('.file-player')) return;
+    for (const m of document.querySelectorAll('.file-player')) if (m !== e.target && !m.paused) m.pause();
+  }, true);
+  document.addEventListener('error', (e) => {
+    const m = e.target;
+    if (!m.matches?.('.file-player') || !m.error) return;
+    const fileEl = m.closest('.file');
+    const sub = fileEl?.querySelector('.file-sub');
+    fileEl?.classList.add('play-failed');
+    if (sub) sub.textContent = `Cannot play it here${fileEl.dataset.home ? `: open it in ${fileEl.dataset.home}` : ''}`;
+  }, true);
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('.file [data-preview]');
+    if (!btn) return;
+    e.preventDefault();
+    const fileEl = btn.closest('.file');
+    const view = fileEl.nextElementSibling?.classList.contains('file-view') ? fileEl.nextElementSibling : null;
+    if (view) closePreview(fileEl, view); else openPreview(fileEl);
+  });
+}
+
 function wireLightbox() {
   const target = (e) => {
     const img = e.target.closest?.('img.att');

@@ -17,7 +17,9 @@ import { bundle } from '../scripts/ui-markdown.mjs';
 import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
 import { quoteMarkdown } from '../src/markdown.js';
-import { mentionPattern, render } from '../src/ui-markdown.js';
+import {
+  fileKind, mentionPattern, render, splitAttachments,
+} from '../src/ui-markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
 // Made-up names and addresses only.
@@ -30,10 +32,68 @@ const opts = {
 const md = (src) => render(src, opts).replace(/\n/g, '');
 
 describe('ui markdown', () => {
-  it('renders attachment lists the same from Slack and Teams', () => {
-    const list = '<p>Attachments:</p><ul><li><a target="_blank" rel="noopener" href="https://files.example/a%20b.pdf">a b.pdf</a></li></ul>';
-    assert.equal(md('Attachments:\n- [a b.pdf](https://files.example/a%20b.pdf)'), list);
-    assert.equal(md('Attachments:\n\n- [a b.pdf](https://files.example/a%20b.pdf)'), list);
+  it('renders attachment lists the same from Slack and Teams, as file cards', () => {
+    const card = '<div class="files"><div class="file" data-kind="pdf"><span class="file-ico" aria-hidden="true">PDF</span>'
+      + '<span class="file-nm"><a class="file-name" href="https://files.example/a%20b.pdf" target="_blank" rel="noopener" title="Open: a b.pdf">a b.pdf</a>'
+      + '<span class="file-sub">PDF</span></span><a class="file-go" href="https://files.example/a%20b.pdf" target="_blank" rel="noopener" title="Open: a b.pdf" tabindex="-1" aria-hidden="true">↗</a></div></div>';
+    assert.equal(md('Attachments:\n- [a b.pdf](https://files.example/a%20b.pdf)'), card);
+    assert.equal(md('Attachments:\n\n- [a b.pdf](https://files.example/a%20b.pdf)'), card);
+  });
+
+  it('shows a message\'s files as cards: where they live, and a preview of tables and text', () => {
+    const html = render('See these.\n\nAttachments:\n- [table (3).csv](https://acme.slack.com/files/U1/F1/table__3_.csv)\n'
+      + '- [Quiz \\[v2\\].mov](https://acme.slack.com/files/U1/F2/quiz.mov)\n- [a.log](https://cdn.discordapp.com/attachments/1/2/a.log)');
+    assert.match(html, /^<p>See these\.<\/p><div class="files">/);
+    assert.doesNotMatch(html, /Attachments:/);
+    assert.match(html, /data-kind="table" data-home="Slack"><span class="file-ico" aria-hidden="true">CSV<\/span>/);
+    assert.match(html, /title="Open in Slack: table \(3\)\.csv">table \(3\)\.csv<\/a><span class="file-sub">Table · Slack<\/span>/);
+    assert.match(html, /<button type="button" class="file-act" data-preview="table" aria-expanded="false"/);
+    assert.match(html, />Quiz \[v2\]\.mov<\/a><span class="file-sub">Video · Slack<\/span><\/span><a class="file-go"/);
+    assert.match(html, /data-kind="text" data-home="Discord">.*data-preview="text"/);
+    // A file of another workspace: a card without a link.
+    const unseen = render('Attachments:\n- CSV file (shared from another workspace; opspile cannot see it)');
+    assert.match(unseen, /<span class="file-name">CSV file<\/span><span class="file-sub">Shared from another workspace; opspile cannot see it<\/span>/);
+    assert.match(unseen, />CSV<\/span>/);
+    assert.doesNotMatch(unseen, /data-preview|file-go/);
+  });
+
+  it('plays video and audio files in their cards, with Slack\'s still as the poster', () => {
+    const fileUrl = (u, what) => `/api/file/${what}?u=${encodeURIComponent(u)}`;
+    const html = render('Attachments:\n- [rec.mov](https://acme.slack.com/files/U1/F1/rec.mov)\n- [a.mp3](https://cdn.discordapp.com/attachments/1/2/a.mp3)\n- [b.mp4](https://cdn.discordapp.com/attachments/1/2/b.mp4)', { fileUrl });
+    assert.match(html, /<div class="file has-player" data-kind="video" data-home="Slack"><video class="file-player" controls playsinline preload="none" src="\/api\/file\/stream\?u=https%3A%2F%2Facme\.slack\.com%2Ffiles%2FU1%2FF1%2Frec\.mov" poster="\/api\/file\/poster\?u=[^"]+" aria-label="Play: rec\.mov"><\/video>/);
+    assert.match(html, /<audio class="file-player" controls preload="none" src="\/api\/file\/stream\?u=[^"]+a\.mp3"/);
+    // Only Slack makes stills.
+    assert.match(html, /<video [^>]*b\.mp4" aria-label/);
+    // Without a place to load them from, they are cards as any other file.
+    assert.doesNotMatch(render('Attachments:\n- [rec.mov](https://acme.slack.com/files/U1/F1/rec.mov)'), /<video|has-player/);
+  });
+
+  it('keeps the links of file cards as safe as other links', () => {
+    const html = render('Attachments:\n- [x.csv](javascript:alert(1))\n- [<b>y</b>.txt](https://files.example/y.txt)');
+    assert.doesNotMatch(html, /javascript:/);
+    assert.doesNotMatch(html, /<b>/);
+  });
+
+  it('shows Slack\'s attached images without the "Attachments:" line, two or more as a gallery', () => {
+    const html = render('Look\n\nAttachments:\n![a.png](https://files.slack.com/a.png "800x600")\n![b.png](https://files.slack.com/b.png "800x600")\n\n- [c.txt](https://files.example/c.txt)');
+    assert.match(html, /^<p>Look<\/p>\n+<div class="gallery">(<img class="att sized"[^>]*>){2}<\/div>\s*<div class="files">/);
+    assert.doesNotMatch(html, /Attachments:/);
+  });
+
+  it('leaves text of the person\'s own that starts with "Attachments:" as it is', () => {
+    assert.equal(md('Attachments:\nThe logs are in the ticket.'), '<p>Attachments:<br />The logs are in the ticket.</p>');
+    // Only the last list is the files; one earlier is text.
+    assert.match(render('Attachments:\nsee below\n\nAttachments:\n- [a.csv](https://files.example/a.csv)'), /^<p>Attachments:<br \/>\nsee below<\/p><div class="files">/);
+  });
+
+  it('names a file\'s kind by its extension', () => {
+    assert.deepEqual(fileKind('Report.XLSX'), { kind: 'sheet', label: 'Spreadsheet', ext: 'xlsx' });
+    assert.deepEqual(fileKind('trace.har'), { kind: 'text', label: 'Text', ext: 'har' });
+    assert.deepEqual(fileKind('README'), { kind: 'file', label: 'File', ext: '' });
+    assert.equal(splitAttachments('no files'), null);
+    assert.deepEqual(splitAttachments('Hi\n\nAttachments:\n- [a.csv](https://x.example/a.csv)'), {
+      text: 'Hi\n\n', images: [], links: ['- [a.csv](https://x.example/a.csv)'], unseen: [],
+    });
   });
 
   it('shows the label of Slack link markup inside code, not the markup', () => {
