@@ -302,7 +302,7 @@ export class ThreadAgent extends Agent {
       return { result: 'skip', reason: problem };
     }
     const t = await this.target();
-    if (!t.key || t.kind !== 'channel' || !await agentEnabled(this.env, t.channelId)) {
+    if (!t.key || t.kind !== 'channel' || !await agentEnabled(this.env, t.channelId, t.team)) {
       return { result: 'skip', reason: 'no agent for this thread' };
     }
     const entry = await entryMessages(this.env, t.key);
@@ -353,7 +353,7 @@ export class ThreadAgent extends Agent {
     }
     // Turned off since: no wrap-up either.
     const t = await this.target();
-    if (!t.key || !await agentEnabled(this.env, t.channelId)) {
+    if (!t.key || !await agentEnabled(this.env, t.channelId, t.team)) {
       return;
     }
     await this.ctx.storage.delete('idle');

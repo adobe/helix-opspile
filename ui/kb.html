@@ -69,6 +69,13 @@
   .row.dir:hover { background: none; }
   .row .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); }
   .row .tag.missing { border-style: dashed; }
+  .row .n { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* Customers and vendors: by activity or by name. */
+  h2.sorted { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
+  .seg button { border: 0; border-radius: 0; padding: 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0;
+    text-transform: none; color: var(--mute); background: none; }
+  .seg button[aria-pressed="true"] { background: var(--sel); color: var(--ink); }
   .tools { display: flex; gap: 6px; margin: 10px 4px 0; flex-wrap: wrap; }
   .empty { color: var(--mute); padding: 24px; }
   .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -150,6 +157,15 @@
   .ch.global .per .row2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ch.global .per select { font-size: 12px; }
   .ch.global .per .na { color: var(--faint); font-style: normal; font-size: 12px; }
+  .ch.global .per .row2[hidden], .ch.global .per .none[hidden] { display: none; }
+  .ch.global .per .find { display: block; width: calc(100% - 14px); max-width: 320px; margin: 6px 0 2px 14px; font-size: 12px; }
+  .ch.global .per .none { color: var(--faint); font-size: 12px; padding: 4px 0 4px 14px; }
+  /* A customer's: the per-channel switches are all it has, so they are shown, not folded. */
+  .ch.global .per.flat { margin-top: 4px; }
+  .ch.global .per.flat .row2, .ch.global .per.flat .none { padding-left: 0; }
+  .ch.global .per.flat .find { margin-left: 0; width: 100%; }
+  /* A team's thread agents by default, above its channels. */
+  .ch.default { background: var(--col); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin: 8px 0 4px; }
   .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px;
     margin-top: 4px; }
   .ch.global .setup input { width: 200px; }

@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
-  channels: null, configured: true, mcp: null, globals: null, tools: null,
+  channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {},
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -114,17 +114,37 @@ function toUrl(mode = 'push') {
 
 // ---- knowledge bases --------------------------------------------------------------------
 
+/**
+ * How customers and vendors are listed: by activity (the default: most entries in their
+ * knowledge base first, then most tools turned on) or by name. Kept in this browser.
+ */
+const SORTS = { activity: 'Activity', name: 'A–Z' };
+const keptSort = () => { try { return localStorage.getItem('opspile.kb.sort'); } catch { return null; } };
+state.sort = keptSort() === 'name' ? 'name' : 'activity';
+
+const byName = (x, y) => x.name.localeCompare(y.name) || x.repo.localeCompare(y.repo);
+const byActivity = (x, y) => (y.entries || 0) - (x.entries || 0) || (y.tools || 0) - (x.tools || 0) || byName(x, y);
+
+/** "12 entries · 2 tools" for a row's title and its count. */
+function activity(b) {
+  const parts = [b.entries === null || b.entries === undefined ? 'entries not counted yet' : `${b.entries} entr${b.entries === 1 ? 'y' : 'ies'}`];
+  if (b.tools) parts.push(`${b.tools} tool${b.tools === 1 ? '' : 's'} on`);
+  return parts.join(' · ');
+}
+
 function renderBases() {
   const f = state.filter.toLowerCase();
   const shown = state.bases.filter((b) => !f || `${b.name} ${b.slug} ${b.repo}`.toLowerCase().includes(f));
-  const group = (kind, title) => {
-    const list = shown.filter((b) => b.kind === kind);
-    if (!list.length) return '';
-    return `<h2>${title}</h2>${list.map((b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}">
-      <span>${esc(b.name)}</span>${b.agents ? `<span class="tag agent" title="Thread agents are on in ${b.agents} channel${b.agents === 1 ? '' : 's'}">agent${b.agents > 1 ? ` · ${b.agents}` : ''}</span>` : ''}<span class="sub">${esc(b.repo)}</span></div>`).join('')}`;
-  };
+  const row = (b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}" title="${esc(activity(b))}">
+      <span>${esc(b.name)}</span>${b.agents ? `<span class="tag agent" title="Thread agents are on in ${b.agents} channel${b.agents === 1 ? '' : 's'}">agent${b.agents > 1 ? ` · ${b.agents}` : ''}</span>` : ''}<span class="sub">${esc(b.repo)}</span>${b.entries ? `<span class="n">${b.entries}</span>` : ''}</div>`;
+  const teams = shown.filter((b) => b.kind === 'team');
+  const orgs = shown.filter((b) => b.kind === 'org').sort(state.sort === 'name' ? byName : byActivity);
+  const sorts = Object.entries(SORTS).map(([k, label]) => `<button data-sort="${k}" aria-pressed="${state.sort === k}"
+    title="${k === 'name' ? 'Alphabetically' : 'Most entries in the knowledge base first, then most tools turned on'}">${label}</button>`).join('');
   $('bases').innerHTML = `<input id="filter" placeholder="Filter" value="${esc(state.filter)}" aria-label="Filter knowledge bases">${
-    group('team', 'Ops teams') + group('org', 'Customers and vendors') || '<div class="empty">No knowledge bases.</div>'}`;
+    (teams.length ? `<h2>Ops teams</h2>${teams.map(row).join('')}` : '')
+    + (orgs.length ? `<h2 class="sorted"><span>Customers and vendors</span><span class="seg" role="group" aria-label="Sort customers and vendors">${sorts}</span></h2>${orgs.map(row).join('')}` : '')
+    || '<div class="empty">No knowledge bases.</div>'}`;
   $('filter').oninput = (e) => {
     state.filter = e.target.value;
     const at = e.target.selectionStart;
@@ -134,6 +154,14 @@ function renderBases() {
   };
   for (const el of $('bases').querySelectorAll('[data-repo]')) {
     el.onclick = () => openRepo(el.dataset.repo);
+  }
+  for (const el of $('bases').querySelectorAll('[data-sort]')) {
+    el.onclick = () => {
+      state.sort = el.dataset.sort;
+      try { localStorage.setItem('opspile.kb.sort', state.sort); } catch { /* private mode */ }
+      renderBases();
+      $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
+    };
   }
 }
 
@@ -221,6 +249,21 @@ async function loadChannels(repo) {
   if (state.repo !== repo) return;
   state.channels = ok ? body.channels : null;
   state.configured = ok ? body.configured : true;
+  state.teamDefault = ok ? body.teamDefault || null : null;
+}
+
+/**
+ * The counts of the list of knowledge bases (agents, tools, entries), again: switches and
+ * saves here change them, in this knowledge base and in those of its channels' team or customer.
+ */
+async function refreshBases() {
+  const r = await call('/api/kb');
+  if (!r.ok) return;
+  for (const x of r.body.bases) {
+    const mine = state.bases.find((y) => y.repo === x.repo);
+    if (mine) Object.assign(mine, { agents: x.agents, tools: x.tools, entries: x.entries });
+  }
+  renderBases();
 }
 
 const agentCount = () => (state.channels || []).filter((c) => c.agent.enabled).length;
@@ -257,6 +300,25 @@ async function showAgents({ force = false, nav = 'push' } = {}) {
   return true;
 }
 
+/** For a team's knowledge base: the switch that gives its channels agents unless switched off. */
+function teamDefaultRow() {
+  const b = base();
+  const d = state.teamDefault;
+  if (b.kind !== 'team' || !d) return '';
+  const by = d.by ? `Turned ${d.enabled ? 'on' : 'off'} by ${esc(d.by)}, ${esc(ago(d.at))}` : '';
+  return `<div class="ch default">
+      <div class="who">
+        <div class="nm">On by default</div>
+        <div class="sub">${d.enabled ? `Every channel of ${esc(b.name)} has a thread agent, new ones too, unless it is switched off below.`
+    : `Off: only the channels switched on below have thread agents. On, every channel of ${esc(b.name)} nobody switched gets one, new ones too.`}</div>
+        ${by ? `<div class="sub by">${by}</div>` : ''}
+      </div>
+      <span class="state${d.enabled ? ' on' : ''}">${d.enabled ? 'On' : 'Off'}</span>
+      <button class="switch" role="switch" aria-checked="${d.enabled}" aria-label="Thread agents by default in ${esc(b.name)}"
+        title="${d.may ? `Turn agents by default ${d.enabled ? 'off' : 'on'}` : `Only the admin team and the managers of ${esc(b.name)} change it.`}" id="teamDefault"${d.may ? '' : ' disabled'}></button>
+    </div>`;
+}
+
 function renderAgents(note) {
   const b = base();
   const list = state.channels;
@@ -267,8 +329,10 @@ function renderAgents(note) {
   const rows = (list || []).map((c) => {
     const a = c.agent;
     const alert = c.kind !== 'channel';
-    const by = a.set && a.by ? `Turned ${a.enabled ? 'on' : 'off'} by ${esc(a.by)}, ${esc(ago(a.at))}`
-      : a.enabled ? 'On by default (AGENT_CHANNELS)' : '';
+    let by = '';
+    if (a.set && a.by) by = `Turned ${a.enabled ? 'on' : 'off'} by ${esc(a.by)}, ${esc(ago(a.at))}`;
+    else if (a.via === 'team') by = `On by default for ${esc(c.teamName)}`;
+    else if (a.enabled) by = 'On by default (AGENT_CHANNELS)';
     const why = alert ? 'Alert channels have no thread agents.'
       : c.may ? `Turn the agent ${a.enabled ? 'off' : 'on'}` : `Only the admin team and the managers of ${c.teamName} turn it on or off.`;
     return `<div class="ch">
@@ -285,23 +349,19 @@ function renderAgents(note) {
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Thread agents in ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
-    <div class="channels">${list ? rows || '<div class="empty">No channels yet.</div>' : '<div class="empty">Could not list the channels.</div>'}</div>`;
+    <div class="channels">${list ? teamDefaultRow() + (rows || '<div class="empty">No channels yet.</div>') : '<div class="empty">Could not list the channels.</div>'}</div>`;
   for (const el of $('editor').querySelectorAll('[data-channel]')) {
-    el.onclick = () => switchAgent(state.channels.find((c) => c.channelId === el.dataset.channel));
+    el.onclick = () => switchAgent(state.channels.find((c) => c.channelId === el.dataset.channel), el);
   }
+  if ($('teamDefault')) $('teamDefault').onclick = () => switchTeamDefault($('teamDefault'));
 }
 
-async function switchAgent(c) {
+/** A channel's switch: takes effect right away, no question (it is one channel, and switches back). */
+async function switchAgent(c, el) {
   const on = !c.agent.enabled;
   const name = channelName(c);
-  const yes = await ask(
-    on ? `Turn on the thread agent in ${name}?` : `Turn off the thread agent in ${name}?`,
-    on ? 'From now on, every thread of the channel that gets a new message has an agent: it reads the whole thread, keeps a draft reply for the team (it never posts) and files what it learns in the knowledge bases.'
-      : 'Agents of its threads stop at their next message, and skip their wrap-up. Their drafts, and what they filed, stay.',
-    on ? 'Turn on' : 'Turn off',
-  );
-  if (!yes) return;
   const repo = state.repo;
+  el.disabled = true;
   const { status, ok, body } = await call('/api/kb/agent', {
     method: 'PUT',
     body: JSON.stringify({ channel: c.channelId, enabled: on }),
@@ -312,17 +372,40 @@ async function switchAgent(c) {
   const b = base();
   if (b) b.agents = agentCount();
   // The other knowledge bases of the channel (its team's, its customer's) count it too.
-  call('/api/kb').then((r) => {
-    if (!r.ok) return;
-    for (const x of r.body.bases) {
-      const mine = state.bases.find((y) => y.repo === x.repo);
-      if (mine) mine.agents = x.agents;
-    }
-    renderBases();
-  });
+  refreshBases();
   renderBases();
   renderFiles();
-  renderAgents({ kind: 'ok', text: `The thread agent in ${name} is ${on ? 'on' : 'off'}.` });
+  renderAgents({
+    kind: 'ok',
+    text: on ? `The thread agent in ${name} is on: every thread that gets a new message has one, which keeps a draft reply (it never posts) and files what it learns.`
+      : `The thread agent in ${name} is off: its threads' agents stop at their next message. Their drafts, and what they filed, stay.`,
+  });
+}
+
+/** The team's default: asks first, since it turns on (or off) the agents of many channels at once. */
+async function switchTeamDefault(el) {
+  const b = base();
+  const on = !state.teamDefault.enabled;
+  const unset = (state.channels || []).filter((c) => c.kind === 'channel' && !c.agent.set && c.agent.via !== 'deployment');
+  const n = `${unset.length} channel${unset.length === 1 ? '' : 's'}`;
+  const yes = await ask(
+    on ? `Turn on thread agents by default in ${b.name}?` : `Turn off thread agents by default in ${b.name}?`,
+    on ? `${unset.length ? `${n} nobody switched get${unset.length === 1 ? 's' : ''} an agent now` : 'No channel changes now'}, and every channel ${b.name} gets later has one too. Channels switched off stay off.`
+      : `${unset.length ? `The agents of ${n} nobody switched stop at their next message` : 'No channel changes now'}; channels switched on stay on, and new channels have no agent.`,
+    on ? 'Turn on' : 'Turn off',
+  );
+  if (!yes) return;
+  const repo = state.repo;
+  el.disabled = true;
+  const { status, ok, body } = await call('/api/kb/agent', { method: 'PUT', body: JSON.stringify({ team: b.slug, enabled: on }) });
+  if (state.repo !== repo || state.view !== 'agents') return;
+  if (!ok) { renderAgents({ kind: 'err', text: body.error || `Switching failed (${status}).` }); return; }
+  await loadChannels(repo);
+  if (state.repo !== repo || state.view !== 'agents') return;
+  b.agents = agentCount();
+  refreshBases();
+  renderFiles();
+  renderAgents({ kind: 'ok', text: on ? `Thread agents are on by default in ${b.name}.` : `Thread agents are off by default in ${b.name}.` });
 }
 
 // ---- MCP servers ------------------------------------------------------------------------
@@ -427,27 +510,59 @@ function toolsTag() {
   return on.length ? `<span class="tag agent" title="${esc(on.map((t) => t.names.join(', ')).join(', '))}">${on.length} tool${on.length === 1 ? '' : 's'}</span>` : '';
 }
 
-/** The per-channel switches of a tool; channels on a platform it does not work on are left off. */
-function toolPerChannel(t) {
+/**
+ * The per-channel switches of a tool or a global server: the channels switched on their own
+ * first, then by name, with a filter when there are many. In a customer's knowledge base they
+ * are all there is (no team switch above them), so they are shown; in a team's they fold.
+ * `kind` names the select (`tch`, `gch`), `fold` the <details> (`tper`, `per`).
+ */
+function channelSwitches({
+  kind, fold, id, title, switches, team, works = () => true, open,
+}) {
   const b = base();
   const list = (state.channels || []).filter((c) => c.kind === 'channel');
   if (!list.length) return '';
-  const set = list.filter((c) => t.channels[c.channelId]).length;
-  const team = t.team ? (t.team.enabled ? 'on' : 'off') : null;
-  const rows = list.map((c) => {
-    const works = !t.platforms || t.platforms.includes(c.source);
-    const sw = t.channels[c.channelId];
+  const set = list.filter((c) => switches[c.channelId]).length;
+  const key = `${kind}:${id}`;
+  const q = (state.perFilter[key] || '').trim().toLowerCase();
+  const label = (c) => `${channelName(c)}${b.kind === 'org' ? ` · ${c.teamName}` : ''}`;
+  const plain = (c) => channelName(c).replace(/^#/, '');
+  const sorted = [...list].sort((x, y) => Number(Boolean(switches[y.channelId])) - Number(Boolean(switches[x.channelId]))
+    || plain(x).localeCompare(plain(y)));
+  const teamState = team ? (team.enabled ? 'on' : 'off') : null;
+  const rows = sorted.map((c) => {
+    const ok = works(c);
+    const sw = switches[c.channelId];
     const value = sw ? (sw.enabled ? 'on' : 'off') : '';
-    const title = !works ? `Not on ${SOURCES[c.source] || c.source}` : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
-    return `<div class="row2"><span title="${esc(title)}">${esc(channelName(c))}${b.kind === 'org' ? ` · ${esc(c.teamName)}` : ''}${works ? '' : ` <i class="na">not on ${esc(SOURCES[c.source] || c.source)}</i>`}</span>
-      <select data-tch="${esc(t.tool)}" data-channel="${esc(c.channelId)}" aria-label="${esc(t.title)} in ${esc(channelName(c))}"${c.may && works ? '' : ' disabled'}>
-        <option value=""${value === '' ? ' selected' : ''}>As its team${team ? ` (${team})` : ''}</option>
+    const where = SOURCES[c.source] || c.source;
+    const tip = !ok ? `Not on ${where}` : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
+    const hidden = q && !label(c).toLowerCase().includes(q);
+    return `<div class="row2" data-find="${esc(label(c).toLowerCase())}"${hidden ? ' hidden' : ''}><span title="${esc(tip)}">${esc(label(c))}${ok ? '' : ` <i class="na">not on ${esc(where)}</i>`}</span>
+      <select data-${kind}="${esc(id)}" data-channel="${esc(c.channelId)}" aria-label="${esc(title)} in ${esc(channelName(c))}"${c.may && ok ? '' : ' disabled'}>
+        <option value=""${value === '' ? ' selected' : ''}>As its team${teamState ? ` (${teamState})` : ''}</option>
         <option value="on"${value === 'on' ? ' selected' : ''}>On</option>
         <option value="off"${value === 'off' ? ' selected' : ''}>Off</option>
       </select></div>`;
   }).join('');
-  return `<details class="per"${state.openTool === t.tool ? ' open' : ''} data-tper="${esc(t.tool)}"><summary>Per channel${set ? ` (${set} set)` : ''}</summary>${rows}</details>`;
+  const matches = sorted.filter((c) => !q || label(c).toLowerCase().includes(q)).length;
+  const find = list.length >= 6 ? `<input type="search" class="find" data-find-for="${esc(key)}" value="${esc(state.perFilter[key] || '')}"
+    placeholder="Filter ${list.length} channels" aria-label="Filter the channels of ${esc(title)}">` : '';
+  const none = `<div class="none"${matches ? ' hidden' : ''}>No channel matches.</div>`;
+  if (b.kind === 'org') return `<div class="per flat">${find}${rows}${none}</div>`;
+  return `<details class="per"${open ? ' open' : ''} data-${fold}="${esc(id)}"><summary>Per channel${set ? ` (${set} set)` : ''}</summary>${find}${rows}${none}</details>`;
 }
+
+/** The per-channel switches of a tool; channels on a platform it does not work on are left off. */
+const toolPerChannel = (t) => channelSwitches({
+  kind: 'tch',
+  fold: 'tper',
+  id: t.tool,
+  title: t.title,
+  switches: t.channels,
+  team: t.team,
+  works: (c) => !t.platforms || t.platforms.includes(c.source),
+  open: state.openTool === t.tool,
+});
 
 function toolRow(t) {
   const b = base();
@@ -515,6 +630,7 @@ function bindTools() {
       if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       t.team = body.switch;
       renderFiles();
+      refreshBases();
       renderMcp({ kind: 'ok', text: `${t.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
     };
   }
@@ -534,6 +650,7 @@ function bindTools() {
       else delete t.channels[c.channelId];
       state.openTool = t.tool;
       renderFiles();
+      refreshBases();
       renderMcp({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
@@ -578,25 +695,9 @@ function githubSetup(g) {
     ${rows ? `<div class="per">${rows}</div>` : ''}`;
 }
 
-function perChannel(g) {
-  const b = base();
-  const list = (state.channels || []).filter((c) => c.kind === 'channel');
-  if (!list.length) return '';
-  const set = list.filter((c) => g.channels[c.channelId]).length;
-  const team = g.team ? (g.team.enabled ? 'on' : 'off') : null;
-  const rows = list.map((c) => {
-    const sw = g.channels[c.channelId];
-    const value = sw ? (sw.enabled ? 'on' : 'off') : '';
-    const title = sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
-    return `<div class="row2"><span title="${esc(title)}">${esc(channelName(c))}${b.kind === 'org' ? ` · ${esc(c.teamName)}` : ''}</span>
-      <select data-gch="${esc(g.server)}" data-channel="${esc(c.channelId)}" aria-label="${esc(g.server)} in ${esc(channelName(c))}"${c.may ? '' : ' disabled'}>
-        <option value=""${value === '' ? ' selected' : ''}>As its team${team ? ` (${team})` : ''}</option>
-        <option value="on"${value === 'on' ? ' selected' : ''}>On</option>
-        <option value="off"${value === 'off' ? ' selected' : ''}>Off</option>
-      </select></div>`;
-  }).join('');
-  return `<details class="per"${state.openGlobal === g.server ? ' open' : ''} data-per="${esc(g.server)}"><summary>Per channel${set ? ` (${set} set)` : ''}</summary>${rows}</details>`;
-}
+const perChannel = (g) => channelSwitches({
+  kind: 'gch', fold: 'per', id: g.server, title: g.server, switches: g.channels, team: g.team, open: state.openGlobal === g.server,
+});
 
 function globalRow(g) {
   const b = base();
@@ -687,12 +788,14 @@ function renderMcp(shownNote) {
     ${list ? mcpForm(editing || {}) : ''}</div>`;
   bindTools();
   bindGlobals();
+  bindFinds();
   if (!list) return;
   const find = (id) => list.find((x) => String(x.id) === String(id));
   const put = (server) => {
     state.mcp = state.mcp.some((x) => x.id === server.id) ? state.mcp.map((x) => (x.id === server.id ? server : x))
       : [...state.mcp, server].sort((x, y) => x.name.localeCompare(y.name));
     renderFiles();
+    refreshBases();
   };
   const reached = (s) => (s.checkError ? { kind: 'warn', text: `${s.name} could not be reached: ${s.checkError}` }
     : { kind: 'ok', text: `${s.name}: ${mcpUsable(s)} tool${mcpUsable(s) === 1 ? '' : 's'} for the agents.` });
@@ -744,6 +847,7 @@ function renderMcp(shownNote) {
       state.mcp = state.mcp.filter((x) => x.id !== s.id);
       if (state.editing === s.id) state.editing = null;
       renderFiles();
+      refreshBases();
       renderMcp({ kind: 'ok', text: `Deleted ${s.name}.` });
     };
   }
@@ -813,6 +917,22 @@ function renderMcp(shownNote) {
   if ($('mClear')) $('mClear').onclick = () => save({ headers: {} });
 }
 
+/** The filters of the per-channel lists: they hide the rows that do not match, as you type. */
+function bindFinds() {
+  for (const el of $('editor').querySelectorAll('[data-find-for]')) {
+    el.oninput = () => {
+      state.perFilter[el.dataset.findFor] = el.value;
+      const q = el.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of el.parentElement.querySelectorAll('.row2[data-find]')) {
+        row.hidden = Boolean(q) && !row.dataset.find.includes(q);
+        if (!row.hidden) shown += 1;
+      }
+      el.parentElement.querySelector('.none').hidden = shown > 0;
+    };
+  }
+}
+
 /** The handlers of the global servers' switches, checks and GitHub App setup. */
 function bindGlobals() {
   const b = base();
@@ -838,6 +958,7 @@ function bindGlobals() {
       if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       g.team = body.switch;
       renderFiles();
+      refreshBases();
       renderMcp({ kind: 'ok', text: `${g.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
     };
   }
@@ -853,6 +974,7 @@ function bindGlobals() {
       else delete g.channels[c.channelId];
       state.openGlobal = g.server;
       renderFiles();
+      refreshBases();
       renderMcp({ kind: 'ok', text: enabled === null ? `${g.title} in ${channelName(c)} follows its team again.` : `${g.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
@@ -1117,6 +1239,7 @@ async function remove() {
 }
 
 async function reloadFiles() {
+  refreshBases();
   const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(state.repo)}`);
   if (ok) {
     state.files = body.files;

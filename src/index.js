@@ -33,6 +33,7 @@ import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
+import { countEntries } from './kbadmin.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth } from './oauth.js';
@@ -198,7 +199,8 @@ export default {
   },
 
   /**
- * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, keep the
+ * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
+ * entries of the knowledge bases not counted yet, keep the
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
  * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
@@ -212,6 +214,9 @@ export default {
     ctx.waitUntil(ensureTeamKnowledgeBases(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'teams', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'teams', error: e.message }))));
+    ctx.waitUntil(countEntries(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
     // The sign-in allow list follows the teams, in case a change in D1 bypassed the admin pages.
     ctx.waitUntil(syncAccessQuietly(env, 'cron'));
     ctx.waitUntil(refreshMirrors(env)

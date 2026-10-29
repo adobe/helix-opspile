@@ -383,7 +383,7 @@ export async function processKey(env, key, cache = {}) {
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
-  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId);
+  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId, cls.team);
   // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
   // poked once that is decided, so it is the group's agent, not one of the root's own.
   if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {

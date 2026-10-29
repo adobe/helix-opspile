@@ -32,7 +32,7 @@ import {
 import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
-import { setAgent } from '../src/agent/enabled.js';
+import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
   agentStatus, pokeAgent, seedAgent, tellDiscarded,
 } from '../src/agent/stub.js';
@@ -236,6 +236,15 @@ describe('thread agents', () => {
     assert.deepEqual(DB.rows('SELECT channel_id, enabled, changed_by FROM agent_channels ORDER BY channel_id'), [
       { channel_id: 'C1', enabled: 1, changed_by: 'Bo' }, { channel_id: 'C2', enabled: 1, changed_by: 'Ada' },
     ]);
+    // A team's default turns on its channels nobody switched; a channel's switch wins.
+    await setTeamDefault(e, 'helix', true, 'Ada');
+    assert.equal(await agentEnabled(e, 'C3', 'helix'), true);
+    assert.equal(await agentEnabled(e, 'C3', 'edge'), false);
+    assert.equal(await agentEnabled(e, 'C3'), false);
+    await setAgent(e, 'C3', false, 'Bo');
+    assert.equal(await agentEnabled(e, 'C3', 'helix'), false);
+    await setTeamDefault(e, 'helix', false, 'Ada');
+    assert.equal(await agentEnabled(e, 'C4', 'helix'), false);
   });
 
   it('check every message not written by staff with Clef, and withhold flagged ones', async () => {

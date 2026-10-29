@@ -447,8 +447,8 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
-    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
-      VALUES (?, ?, ?, 'dev', ?)`).run(b.repo, b.kind, b.slug, b.created_at);
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, entries)
+      VALUES (?, ?, ?, 'dev', ?, ?)`).run(b.repo, b.kind, b.slug, b.created_at, b.entries ?? null);
   }
   const queued = [];
   const env = {
@@ -482,9 +482,16 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   });
-  // The computer is on for the platform team already.
-  DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at)
-    VALUES ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
+  // The computer is on for the platform team already, and posting in one of its channels: the
+  // per-channel lists put the channels switched on their own first.
+  DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
+    ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
+    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z');
+    INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
+      VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // Edge ops has thread agents by default: its channels nobody switched have them.
+  DB.sqlite.exec(`INSERT INTO agent_teams (team, enabled, changed_by, changed_at)
+    VALUES ('edge', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
   if (manager) {
     DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
