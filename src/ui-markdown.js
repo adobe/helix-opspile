@@ -34,10 +34,10 @@ import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
-import { QUOTE_TITLE } from './markdown.js';
+import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
-export { withoutQuotes } from './markdown.js';
+export { CHANNEL_REF, withoutQuotes } from './markdown.js';
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
@@ -205,9 +205,13 @@ const cards = (html) => html.replace(QUOTE_CARD, (_, href, at, name) => '<blockq
  * @param {(url: string) => string} [options.proxy] the address to load an image from
  * @param {(name: string) => string|undefined} [options.kindOf] who a mentioned name is
  *   (`adobe`, `partner`, `customer`, `bot`): a class on the mention, and a hint
+ * @param {(token: string) => ({ name: string, href: string, title?: string,
+ *   inbox?: boolean })|undefined} [options.channel] the channel a `#name` or `#C…` names: a
+ *   link to it, as `#name` (`inbox`: the link is to the inbox, and opens in this tab)
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
+  channel = () => undefined,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -218,14 +222,28 @@ export function render(src, {
   const html = cards(micromark(repair(String(src || '').replaceAll(BREAK, '')), OPTIONS)
     .replace(BLOCK_END, '$1\n')
     .replaceAll(BREAK, '<br />\n'));
+  const channelLink = (m, before, token) => {
+    const c = channel(token);
+    if (!c || !c.href) {
+      return m;
+    }
+    const attrs = c.inbox ? ' data-inbox' : ' target="_blank" rel="noopener"';
+    const title = c.title ? ` title="${encode(c.title)}"` : '';
+    return `${before}<a class="channel" href="${encode(c.href)}"${attrs}${title}>`
+      + `#${encode(c.name || token)}</a>`;
+  };
   let code = 0;
+  let link = 0;
   return galleries(html.split(/(<[^>]*>)/).map((part, i) => {
     if (i % 2) {
       if (/^<(code|pre)[\s>]/.test(part)) {
         code += 1;
       } else if (/^<\/(code|pre)>/.test(part)) {
         code -= 1;
+      } else if (part === '</a>') {
+        link -= 1;
       } else if (part.startsWith('<a ')) {
+        link += 1;
         return part.replace('<a ', '<a target="_blank" rel="noopener" ');
       } else if (part.startsWith('<img ')) {
         return image(part, proxy);
@@ -236,6 +254,9 @@ export function render(src, {
       return part;
     }
     let text = part;
+    if (!link) {
+      text = text.replace(CHANNEL_REF, channelLink);
+    }
     if (mentions) {
       text = text.replace(mentions, mark);
     }

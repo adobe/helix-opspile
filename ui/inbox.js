@@ -80,6 +80,10 @@ const platform = (t) => PLATFORM[t.source] || 'Teams';
 // The account a person connects for a platform.
 const accountOf = (p) => (p === 'teams' ? 'Microsoft' : PLATFORM[p] || p);
 const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
+// When the list places a thread and says it was active: its last post by a person, else (only
+// bots or apps posted) its last message at all, as the inbox API orders it. Never null: a
+// thread without a time would sort above every date ("null" > "2026-…").
+const activityOf = (t) => String(lastOf(t) || t.any_at || '');
 const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
   : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`);
 // An org as the admin team set it up (/inbox/admin): its name and icon, else the slug and
@@ -329,6 +333,47 @@ function setMentionNames(names, kinds = new Map()) {
   if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
   mentionSet = mentionSets.get(source);
 }
+// Channels the open thread's messages name (`#name`, or the `#C…` id Slack sent without the
+// name; src/channelrefs.js): links to where their threads are, in the view on screen if it
+// has them, with the channel's customer picked, else to the channel on its platform.
+let channelRefs = new Map();
+let channelSet = '';
+const channelSets = new Map();
+function channelLink(c) {
+  const customer = c.org ? `&f.customer=${encodeURIComponent(c.org)}` : '';
+  const name = c.name ? `#${c.name}` : 'The channel';
+  const inPersonal = c.personal && (personal() || !c.teams.length);
+  const team = !inPersonal && (c.teams.includes(state.team) ? state.team : c.teams[0]);
+  const where = c.org ? `${customerName(c.org)} in ` : '';
+  if (inPersonal) return { name: c.name, href: `/inbox?view=personal&filters=1${customer}`, inbox: true, title: `${name}: ${where}Personal` };
+  if (team) return { name: c.name, href: `/inbox?team=${encodeURIComponent(team)}&filters=1${customer}`, inbox: true, title: `${name}: ${where}${viewName(team)}` };
+  return c.url ? { name: c.name, href: c.url, title: `${name} is not in your inbox: open it in ${platform(c)}` } : undefined;
+}
+function setChannelRefs(list) {
+  channelRefs = new Map();
+  for (const c of list || []) {
+    const link = channelLink(c);
+    if (!link) continue;
+    channelRefs.set(c.id, link);
+    if (c.name && !channelRefs.has(c.name.toLowerCase())) channelRefs.set(c.name.toLowerCase(), link);
+  }
+  const source = JSON.stringify([...channelRefs]);
+  if (!channelSets.has(source)) channelSets.set(source, String(channelSets.size));
+  channelSet = channelSets.get(source);
+}
+const channelOf = (token) => channelRefs.get(token) || channelRefs.get(token.toLowerCase());
+/** A title with the channel ids in it (`#C…`) as the channels' names. */
+const channelNames = (s) => String(s || '').replace(Markdown.CHANNEL_REF, (m, before, token) => {
+  const c = channelRefs.get(token);
+  return c && c.name ? `${before}#${c.name}` : m;
+});
+/** A channel link in a message (`a[data-inbox]`): the inbox, with its filters, in this tab. */
+function openInbox(href) {
+  // The thread closes first: loading the other view must not write it into the new address.
+  state.open = null;
+  history.pushState(null, '', href);
+  window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+}
 // Slack, Teams and Discord images come through the Worker, with the app's credentials; a Teams
 // image with its thread, so the Worker serves its copy from pile 1 (SharePoint files only so).
 const MEDIA = /^https:\/\/(files\.slack\.com\/|graph\.microsoft\.com\/|[a-z0-9-]+\.sharepoint\.com\/|(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/)/i;
@@ -339,11 +384,13 @@ const rendered = new Map();
 const RENDERED_MAX = 4000;
 // `thread`: the message's own, for its images.
 function md(src, thread = '') {
-  const k = `${mentionSet}\u0000${thread}\u0000${src}`;
+  const k = `${mentionSet}\u0000${channelSet}\u0000${thread}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
-    html = Markdown.render(src, { mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf });
+    html = Markdown.render(src, {
+      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf,
+    });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
     rendered.delete(k);
@@ -845,7 +892,7 @@ function row(t, hit = null) {
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
     <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
       ${draftMark(t)}${resolvedMark(t)}<span class="title">${titleHtml(t, hit)}</span>
-      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
+      <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
     <div class="l2">${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
@@ -1071,7 +1118,6 @@ const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]
   .sort((a, b) => a[0].localeCompare(b[0]));
 const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
   setsKey(state.sel), setsKey(state.not)]);
-const activityOf = (t) => String(lastOf(t) || t.any_at || '');
 /** A new list, when what the list is of changed. */
 function syncList() {
   if (!state.data) return;
@@ -1084,7 +1130,7 @@ function syncList() {
 const onList = (t) => (state.list.held.has(t.thread) && (!personal() || t.kind !== 'alert')) || passes(t);
 /** The view's order: latest activity first (personal), or what needs me most (a team). */
 function viewSort(ts) {
-  if (personal()) return ts.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
+  if (personal()) return ts.sort((a, b) => activityOf(b).localeCompare(activityOf(a)));
   // Scores are computed when the inbox loads, not when you read a thread.
   return ts.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
 }
@@ -1676,6 +1722,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }
   for (const p of Object.values(state.data?.people || {})) known(p.name, p.relation || (p.staff ? 'adobe' : null));
   for (const p of mention.picked.get(key)?.values() || []) known(p.name, p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
+  setChannelRefs(data.channels);
   setMentionNames([
     ...shown.map((m) => m.author?.name),
     ...Object.values(state.data?.people || {}).map((p) => p.name),
@@ -1713,7 +1760,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   }).join(' ');
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
-  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(thread.title || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
+  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(thread.title) || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
       <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
@@ -3821,6 +3868,8 @@ async function start() {
   wireRail();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
+    const inbox = e.target.closest('a[data-inbox]');
+    if (inbox && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)) { e.preventDefault(); openInbox(inbox.getAttribute('href')); return; }
     const retry = e.target.closest('[data-retry]');
     if (retry) { retrySend(retry.dataset.retry); return; }
     const unsend = e.target.closest('[data-unsend]');

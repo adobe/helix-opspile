@@ -621,6 +621,14 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
   });
 
+  // Only a bot posted, yesterday: in the personal view (Dana posted in the channel) it sorts
+  // by that post, not above everything else. Slack sent the channel it names as an id only
+  // (`<#C…>`): the thread shows the channel's name, linked to its customer in the inbox.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [['bot', 18 * 60, 'New channel created: #C0UMBRELLA, ask in #edge-questions']],
+  });
+
   // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a
   // `_toneN`): shown as emoji all the same (src/emojinames.js).
   seed({

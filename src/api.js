@@ -35,6 +35,7 @@ import {
 import { folderFiles } from './filecache.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
+import { channelRefs, nameChannelIds } from './channelrefs.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
@@ -488,7 +489,8 @@ export async function inbox(env, me, team, {
       }])),
     teams: myTeams,
     members: teamMembers,
-    threads: fold(readState(threads, marks || [], mentions || [], me.id)
+    // Channel ids Slack sent without the name, in titles and last texts, as the names.
+    threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
         const label = labelBy.get(t.thread) || null;
         return {
@@ -511,7 +513,7 @@ export async function inbox(env, me, team, {
       const sized = g && g.n > 1 ? { ...entry, occurrences: g.n, messages: g.total } : entry;
       const draft = draftSummary(draftOf(drafts, [t.thread, ...t.members.map((m) => m.thread)]));
       return { ...sized, waiting_on: waitingOn(sized), draft };
-    }),
+    })),
   };
 }
 
@@ -680,12 +682,16 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const label = effectiveLabel(model, model ? reviewed : []);
-  const [cards, mentioned] = await Promise.all([
+  const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
+  const [cards, mentioned, channels] = await Promise.all([
     profiles(env, messages.map((m) => m.authorKey)),
     // Who the people the messages mention are: Adobe, a partner or the customer.
     mentionKinds(env, {
       source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
-    }, messages.filter((m) => !m.deletedAt).map((m) => m.body)),
+    }, bodies),
+    // The channels the messages name (`#name`, `#C…`): their names, and where they are.
+    channelRefs(env, row, [...bodies, row.title, anchorLabel && anchorLabel.title,
+      label && label.title], me),
   ]);
   return {
     thread: {
@@ -706,6 +712,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     messages,
     profiles: cards,
     mentioned,
+    channels,
     watermarks: marks || [],
     label,
     model,

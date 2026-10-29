@@ -536,6 +536,9 @@
   }
   body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   .bubble .mention { font-weight: 600; }
+  /* A channel a message names (#name), as Slack shows one: bold, underlined on hover. */
+  .bubble a.channel { font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .bubble a.channel:hover { text-decoration: underline; }
   /* Mentions of Adobe people in red, so they stand out; everyone else's (customers, partners,
      bots, unknown names) stay in the bubble's own colour. On grey bubbles the red is a shade
      with 4.5:1 contrast in either theme; no red reads on your blue, so there it is a pill

@@ -57,6 +57,8 @@ import {
   appRule, checkFiles, cleanName, personRule,
 } from '../src/attach.js';
 import { parse } from '../src/channels.js';
+import { channelTokens, SLACK_CHANNEL_ID } from '../src/channelrefs.js';
+import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { rankMentions } from '../src/mention-match.js';
@@ -339,6 +341,16 @@ function myChannels() {
     .map(at));
 }
 
+/** As src/channelrefs.js's nameChannelIds: Slack channel ids (`#C…`) as the channels' names. */
+function nameIds(s) {
+  if (!s) {
+    return s;
+  }
+  const names = new Map([...store.threads.values()].map((e) => [e.ch.channelId, e.ch.name]));
+  return String(s).replace(CHANNEL_REF, (m, before, token) => (SLACK_CHANNEL_ID.test(token)
+    && names.has(token) ? `${before}#${names.get(token)}` : m));
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -397,7 +409,9 @@ function inbox(team, before = null, personal = false, only = null) {
       resolution: resolutionOf(store.threads.get(t.thread)),
       draft: draftSummary(drafts.get(t.thread)) || null,
     }))
-    .map((t) => ({ ...t, waiting_on: waitingOn(t) }));
+    .map((t) => ({
+      ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
+    }));
   return {
     team: personal ? null : team,
     personal,
@@ -486,6 +500,26 @@ function editableOf(meta, source) {
   return mine && source !== 'discord' ? 'user' : null;
 }
 
+/** As src/channelrefs.js: the channels the texts name, and where the viewer finds them. */
+function channelRefs(source, texts) {
+  const { ids, names } = channelTokens(texts);
+  const channels = new Map([...store.threads.values()].map((e) => [`${e.ch.source}:${e.ch.channelId}`, e.ch]));
+  const mine = myChannels();
+  const teams = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+  return [...channels.values()]
+    .filter((ch) => ch.source === source
+      && (ids.includes(ch.channelId) || names.includes(ch.name.toLowerCase())))
+    .map((ch) => ({
+      id: ch.channelId,
+      source,
+      name: ch.name,
+      org: ch.org,
+      teams: teams.includes(ch.team) ? [ch.team] : [],
+      personal: mine.has(`${ch.source}:${ch.channelId}`),
+      url: source === 'slack' ? `https://slack.com/archives/${ch.channelId}` : null,
+    }));
+}
+
 function thread(key) {
   const entry = store.threads.get(key);
   if (!entry || !inTeam(entry.row.team)) {
@@ -528,6 +562,7 @@ function thread(key) {
       .map((name) => [name, [...store.people.values()].find((p) => p.name === name)])
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
+    channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
