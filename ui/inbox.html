@@ -683,133 +683,34 @@
   .rv .hist { color: var(--mute); font-size: 12px; margin-top: 4px; }
 
   /*
-   * Design explorations: three ways of setting unread threads apart in the list, picked with
-   * ?design=a|b|c (see DESIGNS in inbox.js). Without one, the list stays as above. Each knows
-   * read, unread, hovered, selected (also the lifted copy in #lift), unread and selected,
-   * resolved, an unread mention of you and critical or hot, in both themes and every width.
+   * Read and unread set apart (the thread list's design A): unread rows are white (lighter in
+   * the dark theme), read rows tinted; unread titles are bold, the time blue, a resolved one's
+   * title greyed once read. The second line: the customer (unless the filters pick one),
+   * "Y replies, X mentions", then the latest reply as far as it fits before the reactions, grey
+   * in unread rows too, so the bold title leads.
    */
-  :root[data-design] .t .ok { flex: none; color: var(--green); font-weight: 700; }
-  :root[data-design] .t .at { flex: none; min-width: 18px; height: 17px; padding: 0 5px; border-radius: 9px;
-    background: var(--red); color: #fff; font: 650 11px/17px system-ui, sans-serif; text-align: center; }
-  :root[data-design] .t .urg { margin-right: 4px; font-size: 12px; }
-  :root[data-design] .t .org { display: none; }
-
-  /* A: the smallest change. Unread rows are white (lighter in the dark theme), read rows keep
-     a tint a shade deeper than now; unread titles are bold, the time blue. The second line:
-     the customer (unless the filters pick one), "Y replies, X mentions", then the latest reply
-     as far as it fits before the reactions, grey in unread rows too, so the bold title leads. */
-  :root[data-design="a"] { --row-read: #121519; --row-unread: #1f242b; }
+  .t .ok { flex: none; color: var(--green); font-weight: 700; }
+  :root { --row-read: #121519; --row-unread: #1f242b; }
   @media (prefers-color-scheme: light) {
-    :root[data-design="a"] { --row-read: #eff1f4; --row-unread: #fff; }
+    :root { --row-read: #eff1f4; --row-unread: #fff; }
   }
-  :root[data-design="a"] #threads { background: var(--row-read); }
-  :root[data-design="a"] .t { --row-bg: var(--row-read); background: var(--row-bg); }
-  :root[data-design="a"] .t.unread { --row-bg: var(--row-unread); }
-  :root[data-design="a"] .t:hover { background: color-mix(in srgb, var(--accent) 7%, var(--row-bg)); }
-  :root[data-design="a"] .t.sel, :root[data-design="a"] .t.sel:hover { --row-bg: var(--sel); background: var(--sel); }
-  :root[data-design="a"] .t .title { font-weight: 400; }
-  :root[data-design="a"] .t.unread .title { font-weight: 700; }
-  :root[data-design="a"] .t.resolved:not(.unread) .title { color: var(--mute); }
-  :root[data-design="a"] .t.unread .when { color: var(--accent); font-weight: 650; }
-  :root[data-design="a"] .t .replies { flex: none; white-space: nowrap; }
-  :root[data-design="a"] .t .replies .men { color: var(--red); font-weight: 650; }
-  :root[data-design="a"] .t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  #threads { background: var(--row-read); }
+  .t { --row-bg: var(--row-read); background: var(--row-bg); }
+  .t.unread { --row-bg: var(--row-unread); }
+  .t:hover { background: color-mix(in srgb, var(--accent) 7%, var(--row-bg)); }
+  .t.sel, .t.sel:hover { --row-bg: var(--sel); background: var(--sel); }
+  .t .title { font-weight: 400; }
+  .t.unread .title { font-weight: 700; }
+  .t.resolved:not(.unread) .title { color: var(--mute); }
+  .t.unread .when { color: var(--accent); font-weight: 650; }
+  .t .replies { flex: none; white-space: nowrap; }
+  .t .replies .men { color: var(--red); font-weight: 650; }
+  .t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; color: var(--mute); }
-  :root[data-design="a"] .t .tags { flex: none; }
-  :root[data-design="a"] .t .faces .av, :root[data-design="a"] .t .moods .em { border-color: var(--row-bg); }
-  :root[data-design="a"] .t .dot.ring { box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 3.5px var(--ring); }
+  .t .tags { flex: none; }
+  .t .faces .av, .t .moods .em { border-color: var(--row-bg); }
+  .t .dot.ring { box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 3.5px var(--ring); }
 
-  /* B: after iMessage. A white list without row borders (separators start at the text), the
-     customer's logo, the title over two lines of the latest message, the time and a chevron;
-     a blue dot at the leading edge for unread. The open thread is solid blue, as in Messages. */
-  :root[data-design="b"] { --row-h: 78px; --list-bg: var(--col); --sel-solid: #1f6feb; }
-  @media (prefers-color-scheme: light) { :root[data-design="b"] { --list-bg: #fff; } }
-  :root[data-design="b"] #threads, :root[data-design="b"] #threads .count { background: var(--list-bg); }
-  :root[data-design="b"] .t { --row-bg: var(--list-bg); position: relative; padding-top: 10px; border-bottom: 0;
-    grid-template-columns: 16px 42px minmax(0, 1fr) auto; grid-template-rows: 20px 38px; row-gap: 1px; }
-  :root[data-design="b"] .t.hit { height: 98px; grid-template-rows: 20px 38px 18px; contain-intrinsic-size: auto 98px; }
-  :root[data-design="b"] .t::after { content: ""; position: absolute; right: 0; bottom: 0; height: 1px;
-    left: calc(18px + 16px + 42px + 12px); background: var(--line); }
-  :root[data-design="b"] .t .l1, :root[data-design="b"] .t .l2 { display: contents; }
-  :root[data-design="b"] .t:hover { --row-bg: var(--hover); background: var(--hover); }
-  :root[data-design="b"] .t .ud { grid-area: 1 / 1 / 3 / 2; align-self: center; width: 10px; height: 10px;
-    margin-left: -3px; border-radius: 50%; background: var(--accent); visibility: hidden; }
-  :root[data-design="b"] .t.unread .ud { visibility: visible; }
-  :root[data-design="b"] .t .ava { grid-area: 1 / 2 / 3 / 3; align-self: center; width: 42px; height: 42px;
-    border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 600;
-    position: relative; overflow: hidden; }
-  :root[data-design="b"] .t .ava img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 10px;
-    object-fit: contain; background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); border-radius: 50%; }
-  :root[data-design="b"] .t .st { grid-area: 1 / 2 / 3 / 3; align-self: center; justify-self: end; z-index: 1;
-    width: 14px; height: 14px; margin: 26px -3px 0 0; border-radius: 50%; border: 2.5px solid var(--row-bg); }
-  :root[data-design="b"] .t .st.ring { outline: 1.5px solid var(--ring, var(--accent)); outline-offset: 0; }
-  :root[data-design="b"] .t .st.c-critical { --ring: #8e1b1b; } :root[data-design="b"] .t .st.c-hot { --ring: var(--red); }
-  :root[data-design="b"] .t .st.c-you { --ring: var(--accent); } :root[data-design="b"] .t .st.c-waiting { --ring: var(--yellow); }
-  :root[data-design="b"] .t .title { grid-area: 1 / 3; align-self: center; margin-left: 12px; font-weight: 500;
-    font-size: 14.5px; line-height: 20px; }
-  :root[data-design="b"] .t.unread .title { font-weight: 700; }
-  :root[data-design="b"] .t .side { grid-area: 1 / 4; display: flex; align-items: center; gap: 5px; margin-left: 8px;
-    color: var(--mute); font-size: 12.5px; }
-  :root[data-design="b"] .t .when { color: inherit; font-size: inherit; }
-  :root[data-design="b"] .t .chev { color: var(--faint); font-size: 19px; line-height: 1; margin-top: -2px; }
-  :root[data-design="b"] .t .pv { grid-area: 2 / 3 / 3 / 5; margin-left: 12px; font-size: 13px; line-height: 18px;
-    color: var(--mute); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
-    overflow: hidden; overflow-wrap: anywhere; }
-  :root[data-design="b"] .t.unread .pv { color: color-mix(in srgb, var(--ink) 72%, var(--mute)); }
-  :root[data-design="b"] .t .pv .org { display: inline; font-weight: 600; color: var(--ink); }
-  :root[data-design="b"] .t .pv .org::after { content: " \00b7"; font-weight: 400; color: var(--mute); }
-  :root[data-design="b"] .t .pv .drafted { margin-right: 4px; color: var(--red); font-size: inherit; }
-  :root[data-design="b"] .t .pv .drafted::after { content: ":"; }
-  :root[data-design="b"] .t .l3 { grid-area: 3 / 3 / 4 / 5; margin-left: 12px; padding-left: 0; }
-  :root[data-design="b"] .t.resolved:not(.unread) .title { color: var(--mute); }
-  :root[data-design="b"] .t.sel, :root[data-design="b"] .t.sel:hover, :root[data-design="b"] #lift .t {
-    --row-bg: var(--sel-solid); background: var(--sel-solid); color: #fff; }
-  :root[data-design="b"] .t.sel::after, :root[data-design="b"] #lift .t::after { display: none; }
-  :root[data-design="b"] .t.sel .pv, :root[data-design="b"] .t.sel .side, :root[data-design="b"] .t.sel .chev,
-  :root[data-design="b"] .t.sel .pv .org, :root[data-design="b"] .t.sel .pv .org::after,
-  :root[data-design="b"] .t.sel .ok, :root[data-design="b"] .t.sel .pv .drafted, :root[data-design="b"] .t.sel.sel .title { color: #fff; }
-  :root[data-design="b"] .t.sel .pv { color: rgba(255,255,255,.85); }
-  :root[data-design="b"] .t.sel .ud { background: #fff; }
-  :root[data-design="b"] .t.sel .at { background: #fff; color: var(--sel-solid); }
-  :root[data-design="b"] #lift .t { border-color: var(--sel-solid); padding-top: calc(10px + var(--lv) - 1px); }
-  @media (max-width: 699px) {
-    :root[data-design="b"] .t::after { left: calc(14px + 16px + 42px + 12px); }
-  }
-
-  /* C: dense, and what is read recedes. A white list without borders; a thread this page has
-     shown unread gets two lines in full ink (bold title, blue time, who wrote last); a read one
-     is one greyed line: title, customer, time. Rows keep their height once read. */
-  :root[data-design="c"] { --row-h: 60px; --row-short: 36px; --list-bg: var(--col); }
-  @media (prefers-color-scheme: light) { :root[data-design="c"] { --list-bg: #fff; } }
-  @media (pointer: coarse) { :root[data-design="c"] { --row-short: 44px; } }
-  :root[data-design="c"] #threads, :root[data-design="c"] #threads .count { background: var(--list-bg); }
-  :root[data-design="c"] .t { --row-bg: var(--list-bg); padding-top: 9px; border-bottom: 0;
-    grid-template-rows: 22px 20px; row-gap: 1px; }
-  :root[data-design="c"] .t.short { --row-h: var(--row-short); padding-top: calc((var(--row-short) - 22px) / 2);
-    grid-template-rows: 22px; }
-  :root[data-design="c"] .t.hit { height: 80px; grid-template-rows: 22px 20px 18px; contain-intrinsic-size: auto 80px; }
-  :root[data-design="c"] .t.short .l2 { display: none; }
-  :root[data-design="c"] .t:hover { --row-bg: var(--hover); background: var(--hover); }
-  :root[data-design="c"] .t.sel, :root[data-design="c"] .t.sel:hover { --row-bg: var(--sel); background: var(--sel); }
-  :root[data-design="c"] .t .title { font-weight: 400; color: var(--mute); }
-  :root[data-design="c"] .t.unread .title { font-weight: 650; color: var(--ink); }
-  :root[data-design="c"] .t.sel.sel .title { color: var(--ink); }
-  :root[data-design="c"] .t .when { color: var(--faint); }
-  :root[data-design="c"] .t.unread .when { color: var(--accent); font-weight: 650; }
-  :root[data-design="c"] .t.short .org { display: block; flex: none; max-width: 30%; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
-  :root[data-design="c"] .t:not(.unread) .dot { opacity: .5; }
-  :root[data-design="c"] .t.short .dot { width: 7px; height: 7px; margin: 0 1px; }
-  :root[data-design="c"] .t .dot.ring { box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 3.5px var(--ring); }
-  :root[data-design="c"] .t .l2 { gap: 6px; color: var(--faint); }
-  :root[data-design="c"] .t.unread .l2 { color: var(--mute); }
-  :root[data-design="c"] .t .l2 .last::before, :root[data-design="c"] .t .l2 .replies::before { content: "\00b7"; margin-right: 6px; }
-  :root[data-design="c"] .t.unread .l2 .replies { color: var(--accent); font-weight: 600; }
-  :root[data-design="c"] .t:not(.unread) .cust img { filter: grayscale(1); opacity: .6; }
-  :root[data-design="c"] .t.resolved .title { color: var(--faint); }
-  :root[data-design="c"] .t.resolved.unread .title { color: var(--ink); }
-  :root[data-design="c"] .t.short .drafted, :root[data-design="c"] .t.short .ok { font-size: 11px; }
-  :root[data-design="c"] #lift .t.short { padding-top: calc((var(--row-short) - 22px) / 2 + var(--lv) - 1px); }
 
   /*
    * Narrower screens. The thread list's heading has a Filters button there, and an open thread

@@ -800,7 +800,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     reads: { dana: 3990 },
   });
 
-  // Read and unread side by side, for the thread list's designs (?design=a|b|c): critical and
+  // Read and unread side by side, for the thread list: critical and
   // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
   seed({
     ch: CHANNELS.aemUmbrella,
