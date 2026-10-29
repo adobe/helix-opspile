@@ -239,10 +239,20 @@
   .moods .em { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
     background: var(--card); border: 2px solid var(--col); margin-left: -5px; }
   .moods .em:first-child { margin-left: 0; }
-  /* The list's heading: the search box, then the controls (or, while searching, the results' count). */
-  #threads .count { display: flex; flex-direction: column; align-items: stretch; gap: 7px; }
+  /* The list's heading: the search box, then the controls (or, while searching, the results' count).
+     A wide list puts all three in one row, the search box in the middle. */
+  #threads .count { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; container-type: inline-size; }
+  #threads .count > .find, #threads .count > .ctl { flex: 1 1 100%; }
   #threads .count .ctl { display: flex; align-items: center; min-height: 22px; }
+  #threads .count .lead { display: flex; align-items: center; min-width: 0; }
   #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  /* The two sides share what the search box leaves equally, so it stays centred. */
+  @container (min-width: 560px) {
+    #threads .count .ctl { display: contents; }
+    #threads .count .lead { order: 0; flex: 1 1 0; min-width: max-content; }
+    #threads .count > .find { order: 1; flex: 2 1 0; min-width: 240px; max-width: 440px; }
+    #threads .count .sort { order: 2; flex: 1 1 0; min-width: max-content; justify-content: flex-end; }
+  }
   .find { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 7px 0 9px; cursor: text;
     background: var(--card); border: 1px solid var(--line); border-radius: 8px; color: var(--faint); }
   .find:focus-within { border-color: var(--accent); color: var(--mute); }
