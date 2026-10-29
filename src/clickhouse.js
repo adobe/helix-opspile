@@ -14,8 +14,11 @@ import { fileRef } from './agent/files.js';
 import { threadMessages } from './label.js';
 import { withoutQuotes } from './markdown.js';
 import { relationOf } from './profiles.js';
-import { mergeFacts, resolution, resolutionFacts } from './resolve.js';
+import {
+  mergeFacts, resolution, resolutionFacts, signalFacts,
+} from './resolve.js';
 import { effectiveLabel, reviewsFor } from './review.js';
+import { waitingOn } from './threads.js';
 
 /**
  * The klickhaus export: one row per message, metadata and Clef's classification but no text,
@@ -162,17 +165,19 @@ async function threadsOf(env, keys) {
 /**
  * What the inbox shows for each group (src/api.js): the latest member's label (else the first
  * thread's), reviewed; the first thread's title; resolved by a staff ✅ on a member's root
- * (reopened by a customer), else by Clef; the facts of every member.
+ * (reopened by a customer), else by Clef; who it waits on (`waitingOn`, over the group as the
+ * inbox folds it: the latest member's last speaker, every member's 🙏); the facts of every member.
  */
 async function entries(env, groups) {
   const all = [...groups.values()].flat().map((t) => t.thread);
-  const [{ results: labels }, reviews, { results: facts }, checks] = await Promise.all([
+  const [{ results: labels }, reviews, { results: facts }, checks, signals] = await Promise.all([
     env.DB.prepare('SELECT * FROM labels WHERE thread IN (SELECT value FROM json_each(?))')
       .bind(list(all)).all(),
     reviewsFor(env.DB, all),
     env.DB.prepare(`SELECT DISTINCT thread, field, value FROM facts
       WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`).bind(list(all)).all(),
     resolutionFacts(env, all),
+    signalFacts(env, all),
   ]);
   const labelOf = new Map((labels || []).map((l) => [l.thread, l]));
   const reviewsOf = by(reviews, 'thread');
@@ -189,10 +194,20 @@ async function entries(env, groups) {
       ?.verdict;
     const known = members.flatMap((m) => factsOf.get(m.thread) || []);
     const kind = label && label.kind && label.kind !== 'other' ? label.kind : 'other';
+    const latestOf = (column) => members.map((m) => m[column]).filter(Boolean).sort().pop() || null;
+    const waiting = waitingOn({
+      kind: anchor.kind,
+      last_staff: latest.last_staff,
+      last_at: latestOf('last_at'),
+      any_at: latestOf('any_at'),
+      label,
+      signals: members.flatMap((m) => signals.get(m.thread) || []),
+    });
     out.set(g, {
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || anchor.title || '',
       resolved: verdict ? verdict === 'resolved'
         : Boolean(label && label.resolved_p != null && label.resolved_p >= 0.5),
+      waiting,
       label: {
         'label.next_actor': (label && label.next_actor) || '',
         'label.kind': anchor.kind === 'alert' ? 'alert' : kind,
@@ -295,6 +310,7 @@ async function rowsOf(env, emit, groups, version) {
       'thread.root_at': iso(t.root_at) || at,
       'thread.messages': t.messages || 0,
       'thread.resolved': entry.resolved ? 1 : 0,
+      'thread.waiting_on': entry.waiting,
       ...entry.label,
       ...entry.facts,
       url: `${origin}/inbox?view=personal&t=${encodeURIComponent(m.thread)}`,

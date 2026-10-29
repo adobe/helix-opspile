@@ -548,13 +548,16 @@ kind (channels the rules ignore never get there).
 - **No text.** A row is the message's metadata (when, which platform, channel, team and the
   teams it is shared with, org; its author's kind, relation, name, mail domain and ops teams;
   whether it was edited, its reactions, mentions and files) and its thread's classification:
-  the title, whether it is resolved, Clef's label (who acts next, kind, urgency and its level,
-  `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
+  the title, whether it is resolved, who it waits on, Clef's label (who acts next, kind,
+  urgency and its level, `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
   thread in the inbox's personal view.
 - **As the inbox shows it.** The label, title, resolution and facts are the inbox entry's: a
   re-threaded group's latest member's label (with reviews), its first thread's title, the facts
   of every member, and resolved by a staff ✅ on a member's root (until a customer writes again)
-  or else by Clef (`resolved_p` ≥ 0.5). The urgency level is the inbox's bucket (none is low).
+  or else by Clef (`resolved_p` ≥ 0.5). Who it waits on is the inbox's `waiting_on`: Clef's
+  next actor, except that a thread where Adobe posted last never waits on us, an unlabeled one
+  waits on us when the customer posted last, and a 🙏 after the last message leaves nothing
+  pending. The urgency level is the inbox's bucket (none is low).
   So exporting a thread exports its group; a group of more than 100 threads exports only the
   threads that changed and its first.
 - **One table, rows replaced.** `opspile_messages_raw` is a ReplacingMergeTree keyed by

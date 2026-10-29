@@ -38,7 +38,7 @@ const COLUMNS = [
   'channel.name', 'channel.kind', 'team', 'teams', 'org.slug', 'org.name', 'org.type',
   'author.kind', 'author.relation', 'author.name', 'author.domain', 'author.ops_teams', 'edited',
   'reactions', 'mentions', 'attachments', 'thread.title', 'thread.root_at', 'thread.messages',
-  'thread.resolved', 'label.next_actor', 'label.kind', 'label.urgency', 'label.urgency_level',
+  'thread.resolved', 'thread.waiting_on', 'label.next_actor', 'label.kind', 'label.urgency', 'label.urgency_level',
   'label.resolved_p', 'label.model', 'facts_tickets', 'facts_sites', 'facts_cves', 'facts_urls',
   'facts_problems', 'url', '_version', '_deleted',
 ];
@@ -134,7 +134,10 @@ function message(env, id, minutes, {
       attachments,
     );
   sql.prepare(`UPDATE threads SET any_at = MAX(any_at, ?2), updated_at = ?2,
-    messages = (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0) WHERE thread = ?1`)
+    messages = (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0),
+    last_at = (SELECT MAX(at) FROM messages WHERE thread = ?1 AND counted = 1 AND deleted = 0),
+    last_staff = (SELECT staff FROM messages WHERE thread = ?1 AND counted = 1 AND deleted = 0
+      ORDER BY at DESC LIMIT 1) WHERE thread = ?1`)
     .run(key, iso(minutes));
 }
 
@@ -239,6 +242,8 @@ describe('klickhaus export', () => {
       'thread.root_at': iso(0),
       'thread.messages': 4,
       'thread.resolved': 0,
+      // The partner posted last and Clef says us.
+      'thread.waiting_on': 'us',
       'label.next_actor': 'us',
       'label.kind': 'incident',
       'label.urgency': 2.4,
@@ -296,6 +301,28 @@ describe('klickhaus export', () => {
     assert.deepEqual(rowsOf(posts[2]).map((r) => r['thread.resolved']), [1, 1]);
   });
 
+  it('says who a thread waits on as the inbox does', async () => {
+    const env = setup();
+    thread(env);
+    message(env, '1.1', 0);
+    const waiting = async (n) => {
+      await exportThreads(env, KEY, { now: NOW + n });
+      return rowsOf(posts[n])[0]['thread.waiting_on'];
+    };
+    // Unlabeled, the customer posted last: us.
+    assert.equal(await waiting(0), 'us');
+    // Adobe posted last: never us, whatever Clef says.
+    message(env, '1.2', 5, { user: 'U7', person: 7, staff: 1 });
+    label(env, KEY, { nextActor: 'us' });
+    assert.equal(await waiting(1), 'nobody');
+    label(env, KEY, { nextActor: 'customer' });
+    assert.equal(await waiting(2), 'customer');
+    // 🙏 after the last message: nothing is pending.
+    env.DB.sqlite.prepare(`INSERT INTO reactions (message, thread, emoji, user_key, at)
+      VALUES ('slack:E1:C1:1.2', ?, 'pray', 'slack:E1:U8', ?)`).run(KEY, iso(6));
+    assert.equal(await waiting(3), 'nobody');
+  });
+
   it('exports a re-threaded group as the inbox shows it', async () => {
     const env = setup();
     const LATER = 'slack:E1:C1:2.1';
@@ -321,6 +348,7 @@ describe('klickhaus export', () => {
       assert.deepEqual(row.facts_tickets, ['OPS-1', 'OPS-2']);
       assert.equal(row.is_root, 1);
       assert.equal(row['thread.messages'], 1);
+      assert.equal(row['thread.waiting_on'], 'us');
     }
     assert.equal(rows[1].url, `https://opspile.example/inbox?view=personal&t=${encodeURIComponent(LATER)}`);
     assert.equal(env.DB.rows('SELECT COUNT(*) AS n FROM threads WHERE exported_at IS NOT NULL')[0].n, 2);
@@ -348,6 +376,7 @@ describe('klickhaus export', () => {
     assert.equal(byThread[ALERT]['channel.kind'], 'alert');
     assert.equal(byThread[ALERT]['label.next_actor'], '');
     assert.equal(byThread[ALERT]['label.urgency_level'], 'low');
+    assert.equal(byThread[ALERT]['thread.waiting_on'], 'nobody');
   });
 
   it('exports a thread re-filed as ignore as tombstones', async () => {
