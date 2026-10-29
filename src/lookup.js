@@ -71,33 +71,48 @@ async function graphJson(env, path) {
   return res.json();
 }
 
-/** Slack workspace domains by team id (team.info), per isolate; '' when the lookup failed. */
+/**
+ * Slack workspace domains by team id (team.info), per isolate, for as long as a channel row
+ * stays fresh. A failed lookup is not kept: the channel row records '' and asks again once it
+ * is looked up again (MAX_AGE_MS later), when the API may answer.
+ */
 const slackDomains = new Map();
 
-async function slackDomain(env, team) {
-  if (!slackDomains.has(team)) {
-    try {
-      const { team: t } = await slackApi(env, 'team.info', { team });
-      slackDomains.set(team, (t && t.domain) || '');
-    } catch (e) {
-      console.warn(JSON.stringify({ route: 'normalize', lookup: 'team', error: e.message }));
-      slackDomains.set(team, '');
-    }
+async function slackDomain(env, team, now) {
+  const hit = slackDomains.get(team);
+  if (hit && hit.at > now - MAX_AGE_MS) {
+    return hit.domain;
   }
-  return slackDomains.get(team);
+  try {
+    const { team: t } = await slackApi(env, 'team.info', { team });
+    const domain = (t && t.domain) || '';
+    if (domain) {
+      slackDomains.set(team, { domain, at: now });
+    }
+    return domain;
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'normalize', lookup: 'team', error: e.message }));
+    slackDomains.delete(team);
+    return '';
+  }
 }
 
-/** The workspace most of a tenant's Slack channels live in, per isolate. */
+/** The workspace most of a tenant's Slack channels live in, per isolate, kept like a domain. */
 const homeTeams = new Map();
 
-async function homeTeam(env, tenant) {
-  if (!homeTeams.has(tenant)) {
-    const row = await env.DB.prepare(`SELECT group_id FROM channels
-      WHERE source = 'slack' AND tenant = ? AND group_id LIKE 'T%'
-      GROUP BY group_id ORDER BY count(*) DESC, group_id LIMIT 1`).bind(tenant).first();
-    homeTeams.set(tenant, row ? row.group_id : null);
+async function homeTeam(env, tenant, now) {
+  const hit = homeTeams.get(tenant);
+  if (hit && hit.at > now - MAX_AGE_MS) {
+    return hit.team;
   }
-  return homeTeams.get(tenant);
+  const row = await env.DB.prepare(`SELECT group_id FROM channels
+    WHERE source = 'slack' AND tenant = ? AND group_id LIKE 'T%'
+    GROUP BY group_id ORDER BY count(*) DESC, group_id LIMIT 1`).bind(tenant).first();
+  const team = row ? row.group_id : null;
+  if (team) {
+    homeTeams.set(tenant, { team, at: now });
+  }
+  return team;
 }
 
 /**
@@ -105,13 +120,13 @@ async function homeTeam(env, tenant) {
  * `context_team_id` is the org's) or one shared between its workspaces is in several; of
  * those, the one most channels live in, where the people reading the inbox are.
  */
-async function linkTeam(env, tenant, c) {
+async function linkTeam(env, tenant, c, now) {
   const teams = [...new Set([c.context_team_id, ...(c.shared_team_ids || [])])]
     .filter((t) => /^T/.test(t || ''));
   if (teams.length < 2) {
     return teams[0] || null;
   }
-  const home = await homeTeam(env, tenant);
+  const home = await homeTeam(env, tenant, now);
   return teams.includes(home) ? home : teams[0];
 }
 
@@ -120,10 +135,10 @@ export function resetSlackDomains() {
   homeTeams.clear();
 }
 
-async function fetchSlackChannel(env, tenant, channelId) {
+async function fetchSlackChannel(env, tenant, channelId, now) {
   const { channel: c } = await slackApi(env, 'conversations.info', { channel: channelId });
   const connected = connectedTeams(c);
-  const team = await linkTeam(env, tenant, c);
+  const team = await linkTeam(env, tenant, c, now);
   return {
     name: c.name,
     group_id: c.context_team_id || null,
@@ -131,7 +146,7 @@ async function fetchSlackChannel(env, tenant, channelId) {
     shared: c.is_ext_shared || c.is_shared ? 1 : 0,
     connected: JSON.stringify(connected),
     topic: (c.purpose && c.purpose.value) || (c.topic && c.topic.value) || null,
-    domain: team ? await slackDomain(env, team) : '',
+    domain: team ? await slackDomain(env, team, now) : '',
   };
 }
 
@@ -214,7 +229,7 @@ export async function getChannel(env, {
   try {
     let f;
     if (source === 'slack') {
-      f = await fetchSlackChannel(env, tenant, channelId);
+      f = await fetchSlackChannel(env, tenant, channelId, now);
     } else if (source === 'discord') {
       f = await fetchDiscordChannel(env, tenant, channelId);
     } else {
