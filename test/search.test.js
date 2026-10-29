@@ -274,6 +274,49 @@ describe('search: the inbox', () => {
 });
 
 describe('search: re-filed channels', () => {
+  it('tells the rooms of the old and the new team about the threads it moved', async () => {
+    const DB = d1({
+      rules: [{
+        id: 1, target: 'team', priority: 100, source: null, field: 'name', pattern: '^aem-', value: 'helix',
+      }, {
+        id: 2, target: 'org', priority: 100, source: null, field: 'name', pattern: '^aem-(.+)$', value: '$1',
+      }],
+    });
+    DB.sqlite.exec(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('slack', 'E1', 'C1', 'aem-acme', '${AT}')`);
+    DB.sqlite.exec(`INSERT OR IGNORE INTO teams (slug, name) VALUES ('edge', 'Edge');
+      INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('slack', 'C1', 'edge', '${AT}')`);
+    const path = 'channels/_unassigned/_unassigned/slack-C1/1.1/';
+    DB.sqlite.exec(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('slack:E1:C1:1.1', 'slack', 'E1', 'C1', '1.1', '_unassigned', '_unassigned',
+        'channel', '${path}', '${AT}', '${AT}', '${AT}', 1, '${AT}')`);
+    const CHANNELS = fakeBucket({ [`${path}1.1.md`]: '---\nid: "1.1"\n---\nhello' });
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          notified.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const job = {
+      source: 'slack', tenant: 'E1', channelId: 'C1', threads: [['slack:E1:C1:1.1', path]],
+    };
+    await refile({ DB, CHANNELS, ROOMS }, job);
+    assert.deepEqual(DB.rows('SELECT org, team FROM threads'), [{ org: 'acme', team: 'helix' }]);
+    assert.deepEqual(notified.map((n) => n.team).sort(), ['_unassigned', 'edge', 'helix']);
+    assert.deepEqual(notified[0], {
+      team: notified[0].team, type: 'thread', thread: 'slack:E1:C1:1.1', moved: ['slack:E1:C1:1.1'],
+    });
+    // Filed where it already is: nobody is told.
+    notified.length = 0;
+    await refile({ DB, CHANNELS, ROOMS }, job);
+    assert.deepEqual(notified, []);
+  });
   it('makes the vectors of re-filed threads again, under their new team', async () => {
     const DB = d1({
       rules: [{

@@ -3150,7 +3150,10 @@ function listen(team, live) {
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {
       if (ev.folded) for (const k of [ev.thread, ...ev.folded]) if (k !== state.open) state.cache.delete(k);
-      reloadSoon(ev.folded?.includes(state.open) ? state.open : ev.thread);
+      // Re-filed under another org or team (a rule change): cached copies say where they were.
+      if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
+      const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
+      reloadSoon(open ? state.open : ev.thread);
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
