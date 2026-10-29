@@ -18,7 +18,7 @@ import { parse } from '../src/channels.js';
 import { runBackfill, slackBackfillKey } from '../src/backfill.js';
 import { ruleFacts } from '../src/facts.js';
 import { labelThread, QUESTIONS } from '../src/label.js';
-import { resetSlackDomains } from '../src/lookup.js';
+import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
@@ -73,8 +73,10 @@ describe('processKey', () => {
   const realFetch = globalThis.fetch;
   let calls;
   let channelInfo;
+  let teamDown;
   beforeEach(() => {
     calls = [];
+    teamDown = false;
     channelInfo = { id: 'C1', name: 'aem-acme', context_team_id: 'T1' };
     resetSlackDomains();
     globalThis.fetch = async (url) => {
@@ -84,6 +86,9 @@ describe('processKey', () => {
         return Response.json({ ok: true, channel: channelInfo });
       }
       if (u.pathname === '/api/team.info') {
+        if (teamDown) {
+          return Response.json({ ok: false, error: 'internal_error' });
+        }
         const domains = { T1: 'acme-support', T2: 'acme-internal' };
         const domain = domains[u.searchParams.get('team')];
         return Response.json(domain ? { ok: true, team: { id: u.searchParams.get('team'), domain } }
@@ -308,6 +313,22 @@ describe('processKey', () => {
     channelInfo = { ...channelInfo, context_team_id: 'T1' };
     await processKey(e, k2);
     assert.equal(link(), 'https://acme-support.slack.com/archives/C1/p11');
+  });
+
+  it('asks for a workspace again a day after its lookup failed, and keeps one that answered', async () => {
+    const e = env({});
+    const t0 = Date.parse(NOW_ISO);
+    const hours = (h) => t0 + h * 60 * 60 * 1000;
+    const ch = (channelId, now) => getChannel(e, { source: 'slack', tenant: 'E1', channelId }, now);
+    teamDown = true;
+    assert.equal((await quiet(() => ch('C1', t0))).domain, null);
+    teamDown = false;
+    // Within the day the row is fresh; after it, the lookup is made again and now answers.
+    assert.equal((await ch('C1', hours(1))).domain, null);
+    assert.equal((await ch('C1', hours(25))).domain, 'acme-support');
+    // Another channel of the same workspace, the same day: no second team.info.
+    assert.equal((await ch('C2', hours(26))).domain, 'acme-support');
+    assert.equal(calls.filter((c) => c === '/api/team.info').length, 2);
   });
 
   it('caches channels and people in D1', async () => {
