@@ -1753,7 +1753,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const shown = [...messages.map(withEdit), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
   for (const p of sending) p.shown = true;
   // Who they are: the server's answer for the names the messages mention, then what the
-  // thread's authors, the inbox's people and the picked mentions say.
+  // thread's authors, the inbox's people, the picked mentions and the replies being sent say.
   const kinds = new Map(Object.entries(data.mentioned || {}));
   const known = (name, kind) => { if (name && kind && !kinds.has(name)) kinds.set(name, kind); };
   for (const m of shown) {
@@ -1762,7 +1762,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     known(a.name, state.profiles.get(m.authorKey)?.relation || (a.kind === 'bot' ? 'bot' : (a.staff ? 'adobe' : 'customer')));
   }
   for (const p of Object.values(state.data?.people || {})) known(p.name, p.relation || (p.staff ? 'adobe' : null));
-  for (const p of mention.picked.get(key)?.values() || []) known(p.name, p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
+  for (const p of mention.picked.get(key)?.values() || []) known(p.name, pickedKind(p));
+  for (const p of sending) for (const [name, kind] of Object.entries(p.kinds || {})) known(name, kind);
   setChannelRefs(data.channels);
   setMentionNames([
     ...shown.map((m) => m.author?.name),
@@ -2388,6 +2389,10 @@ async function send(key, thread, draft = null) {
   if (!body && !attached.length) return false;
   closeMentions();
   const mentions = draft ? (draft.mentions || []) : mentionsIn(key, body);
+  // Who they are, while the picks are still here: the bubble keeps it until the reply arrives
+  // (the thread's `mentioned` only knows the names its messages had when it was fetched).
+  const picked = mention.picked.get(key);
+  const kinds = Object.fromEntries(mentions.map((m) => [m.name, (picked?.has(m.name) && pickedKind(picked.get(m.name))) || mentionKindOf(m.name)]).filter(([, k]) => k));
   // Sent from the thread's draft: that uses it up (unless a colleague changed it since).
   const c = state.composers.get(key);
   const base = draft ? draft.updated_at : c?.base;
@@ -2407,7 +2412,7 @@ async function send(key, thread, draft = null) {
   }
   sendSeq += 1;
   const p = {
-    thread: key, body, mentions, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
+    thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
   };
   state.sending.push(p);
   showSending(key);
@@ -2965,6 +2970,9 @@ function pickMention(key, i) {
   box.style.height = 'auto';
   box.style.height = `${Math.min(box.classList.contains('editbox') ? 320 : 180, box.scrollHeight)}px`;
 }
+
+/** Who a picked account is, for its mention's class: a bot, or Adobe (the picker knows staff). */
+const pickedKind = (p) => (p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
 
 /** Accounts picked for this reply whose @Name is still in the text. */
 function mentionsIn(key, body) {
