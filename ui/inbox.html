@@ -507,18 +507,65 @@
   /* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */
   .bubble img.att.sized { height: auto; max-height: none; background: color-mix(in srgb, currentColor 8%, transparent); }
   .bubble img.att:not(.sized) { min-width: 120px; min-height: 90px; }
-  /* Lightbox: an image full screen, dismissed by a click anywhere, the close button or Escape.
-     In dvh: 100vh counts the status bar in an app installed on an iPhone. */
+  /* A gallery: two or more images in a row, as a grid of thumbnails (cropped; the lightbox
+     shows them whole). Three to a row, and a last row of two where one or two are left over,
+     so no row has a gap. */
+  .bubble .gallery { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; width: min(100%, 480px);
+    margin: 6px 0; border-radius: 10px; overflow: hidden; }
+  .bubble .gallery > img.att { grid-column: span 2; width: 100%; height: auto; aspect-ratio: 4 / 3; max-height: none;
+    min-width: 0; min-height: 0; margin: 0; border-radius: 2px; object-fit: cover;
+    background: color-mix(in srgb, currentColor 8%, transparent); transition: filter .15s; }
+  .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2),
+  .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2) + img,
+  .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4),
+  .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4) ~ img { grid-column: span 3; aspect-ratio: 3 / 2; }
+  .bubble .gallery > img.att:hover { filter: brightness(.9); }
+  .bubble .gallery > img.att:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Lightbox: a message's images full screen, dismissed by a click anywhere, the close button
+     or Escape; arrows, a swipe or the thumbnails page through them. In dvh: 100vh counts the
+     status bar in an app installed on an iPhone. */
   dialog.lightbox { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
-    background: transparent; color: #fff; place-items: center; cursor: zoom-out; overflow: hidden; outline: none; }
+    background: transparent; color: #fff; cursor: zoom-out; overflow: hidden; outline: none; }
   dialog.lightbox[open] { display: grid; }
   dialog.lightbox::backdrop { background: rgba(0,0,0,.88); }
-  dialog.lightbox > img { max-width: calc(100vw - 32px); max-height: calc(100dvh - 80px); object-fit: contain;
-    border-radius: 6px; box-shadow: 0 12px 48px rgba(0,0,0,.5); background: #fff; }
+  dialog.lightbox .stage { grid-area: 1 / 1; display: grid; place-items: center; min-width: 0; min-height: 0;
+    touch-action: pan-y pinch-zoom; }
+  dialog.lightbox .stage > img { grid-area: 1 / 1; width: auto; height: auto; max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 80px); object-fit: contain; border-radius: 6px; box-shadow: 0 12px 48px rgba(0,0,0,.5);
+    background: #fff; will-change: transform, opacity; }
+  dialog.lightbox.many .stage > img { max-width: calc(100vw - 128px); max-height: calc(100dvh - 170px); margin-bottom: 50px; }
+  dialog.lightbox .stage > img.out { pointer-events: none; }
   dialog.lightbox .bar { position: fixed; top: 12px; right: 12px; display: flex; gap: 8px; align-items: center; }
   dialog.lightbox .bar a, dialog.lightbox .bar button { color: #fff; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.25);
     border-radius: 8px; padding: 4px 10px; font-size: 13px; text-decoration: none; cursor: pointer; }
   dialog.lightbox .bar a:hover, dialog.lightbox .bar button:hover { background: rgba(255,255,255,.15); }
+  dialog.lightbox .count { position: fixed; top: 12px; left: 12px; padding: 4px 10px; font-size: 13px;
+    font-variant-numeric: tabular-nums; background: rgba(0,0,0,.5); border-radius: 8px; cursor: default; }
+  dialog.lightbox .nav { position: fixed; top: 50%; translate: 0 -50%; width: 44px; height: 64px; display: grid;
+    place-items: center; color: #fff; background: rgba(0,0,0,.4); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 10px; font-size: 30px; line-height: 1; cursor: pointer; transition: background .15s; }
+  dialog.lightbox .nav:hover { background: rgba(255,255,255,.18); }
+  dialog.lightbox .nav.prev { left: 12px; }
+  dialog.lightbox .nav.next { right: 12px; }
+  dialog.lightbox .strip { position: fixed; left: 50%; bottom: 12px; translate: -50% 0; max-width: calc(100vw - 24px);
+    display: flex; gap: 6px; padding: 6px; overflow-x: auto; scrollbar-width: none; background: rgba(0,0,0,.45);
+    border-radius: 12px; cursor: default; }
+  dialog.lightbox .strip button { flex: none; width: 64px; height: 44px; padding: 0; border: 2px solid transparent;
+    border-radius: 7px; overflow: hidden; background: #222; cursor: pointer; opacity: .5;
+    transition: opacity .2s, border-color .2s, transform .2s; }
+  dialog.lightbox .strip button:hover { opacity: .85; }
+  dialog.lightbox .strip button[aria-current="true"] { opacity: 1; border-color: #fff; transform: translateY(-2px); }
+  dialog.lightbox .strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  dialog.lightbox :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 600px) {
+    dialog.lightbox.many .stage > img { max-width: calc(100vw - 16px); }
+    dialog.lightbox .nav { width: 36px; height: 52px; font-size: 26px; }
+    dialog.lightbox .nav.prev { left: 4px; }
+    dialog.lightbox .nav.next { right: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    dialog.lightbox .strip button, dialog.lightbox .nav, .bubble .gallery > img.att { transition: none; }
+  }
   body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   .bubble .mention { font-weight: 600; }
   /* Mentions of Adobe people in red, so they stand out; everyone else's (customers, partners,

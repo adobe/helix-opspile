@@ -4359,27 +4359,196 @@ function confirmInPage(question, body, signal, yesLabel = 'Post as me') {
 
 /**
  * Images in messages open full screen in a modal dialog: a click anywhere (but the link to
- * the original), the close button or Escape dismisses it, and focus goes back to the image.
+ * the original and the controls), the close button or Escape dismisses it, and focus goes back
+ * to the image last shown. A message's images are one set: the arrow keys, Home and End, the
+ * buttons at the sides, a swipe or the thumbnails below page through them. The image grows out
+ * of its thumbnail (cropped as the thumbnail is) and shrinks back into it.
  */
+const EASE = 'cubic-bezier(.2, .8, .2, 1)';
+// An image that failed to load has nothing to show.
+const failed = (i) => i.complete && !i.naturalWidth;
+const imageSrc = (i) => i.currentSrc || i.src;
+// Runs `fn` once `anim` is over, or a little after it should be: a page in the background
+// draws no frames, and its animations do not finish.
+const settled = (anim, fn) => {
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.finished.then(once, once);
+  setTimeout(once, anim.effect.getComputedTiming().endTime + 100);
+};
+const onScreen = (r) => r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+/**
+ * The keyframes that turn `el` (laid out where it ends) into the thumbnail at `from`, cropped
+ * as the thumbnail crops it (`object-fit: cover`).
+ */
+function morph(el, from) {
+  const to = el.getBoundingClientRect();
+  if (!to.width || !to.height || !onScreen(from)) return null;
+  const scale = Math.max(from.width / to.width, from.height / to.height);
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+  const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+  const x = Math.max(0, (to.width - from.width / scale) / 2);
+  const y = Math.max(0, (to.height - from.height / scale) / 2);
+  return [
+    { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, clipPath: `inset(${y}px ${x}px round ${10 / scale}px)` },
+    { transform: 'none', clipPath: 'inset(0 round 6px)' },
+  ];
+}
 function openLightbox(img) {
-  const src = img.currentSrc || img.src;
-  const dlg = toNode(`<dialog class="lightbox" aria-label="${esc(img.alt || 'Image')}">
-    <img src="${esc(src)}" alt="${esc(img.alt)}">
-    <div class="bar"><a href="${esc(src)}" target="_blank" rel="noopener">Open original ↗</a>
-    <button type="button" aria-label="Close">✕</button></div></dialog>`);
-  const dismiss = () => {
-    if (!dlg.isConnected) return;
-    if (dlg.open) dlg.close();
-    dlg.remove();
-    img.focus({ preventScroll: true });
+  const scope = img.closest('.bubble') || img.parentElement;
+  const set = [...scope.querySelectorAll('img.att')].filter((i) => i === img || !failed(i));
+  const many = set.length > 1;
+  let at = -1;
+  let shown = null;
+  let closing = false;
+  const dlg = toNode(`<dialog class="lightbox${many ? ' many' : ''}">
+    <div class="stage"></div>
+    ${many ? `<span class="count" aria-live="polite"></span>
+    <button type="button" class="nav prev" aria-label="Previous image" title="Previous (←)">‹</button>
+    <button type="button" class="nav next" aria-label="Next image" title="Next (→)">›</button>
+    <div class="strip">${set.map((i, n) => `<button type="button" data-n="${n}" aria-label="Image ${n + 1}"><img src="${esc(imageSrc(i))}" alt=""></button>`).join('')}</div>` : ''}
+    <div class="bar"><a target="_blank" rel="noopener">Open original ↗</a>
+    <button type="button" class="close" aria-label="Close">✕</button></div></dialog>`);
+  const stage = dlg.querySelector('.stage');
+  const chrome = () => [...dlg.querySelectorAll('.bar, .count, .nav, .strip')];
+  const motion = () => !REDUCED_MOTION.matches;
+
+  const show = (n, dir = 0) => {
+    const next = (n + set.length) % set.length;
+    if (next === at) return;
+    at = next;
+    const from = set[at];
+    const el = document.createElement('img');
+    el.src = imageSrc(from);
+    el.alt = from.alt;
+    const old = shown;
+    shown = el;
+    stage.append(el);
+    if (old) {
+      old.classList.add('out');
+      if (motion() && dir) {
+        const leave = old.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-dir * 12}%) scale(.94)` }], { duration: 240, easing: EASE, fill: 'forwards' });
+        settled(leave, () => old.remove());
+        el.animate([{ opacity: 0, transform: `translateX(${dir * 12}%) scale(.94)` }, { opacity: 1, transform: 'none' }], { duration: 300, easing: EASE });
+      } else if (motion()) {
+        settled(old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }), () => old.remove());
+        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+      } else {
+        old.remove();
+      }
+    }
+    dlg.querySelector('.bar a').href = el.src;
+    dlg.setAttribute('aria-label', many ? `Image ${at + 1} of ${set.length}${from.alt ? `: ${from.alt}` : ''}` : from.alt || 'Image');
+    if (!many) return;
+    dlg.querySelector('.count').textContent = `${at + 1} / ${set.length}`;
+    for (const b of dlg.querySelectorAll('.strip button')) b.setAttribute('aria-current', String(Number(b.dataset.n) === at));
+    const strip = dlg.querySelector('.strip');
+    const thumb = strip.querySelector(`[data-n="${at}"]`);
+    strip.scrollTo({ left: thumb.offsetLeft - (strip.clientWidth - thumb.offsetWidth) / 2, behavior: motion() ? 'smooth' : 'auto' });
+    // The neighbours load while this one is looked at.
+    for (const d of [-1, 1]) new Image().src = imageSrc(set[(at + d + set.length) % set.length]);
   };
-  dlg.addEventListener('click', (e) => { if (!e.target.closest('a')) dismiss(); });
+
+  const dismiss = () => {
+    if (closing || !dlg.isConnected) return;
+    closing = true;
+    const back = set[at];
+    const done = () => {
+      if (!dlg.isConnected) return;
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      back.focus({ preventScroll: true });
+    };
+    if (!motion() || !dlg.open) { done(); return; }
+    // From where it is now, not from where a running animation has it.
+    for (const a of shown.getAnimations()) a.finish();
+    shown.style.translate = '';
+    const frames = morph(shown, back.getBoundingClientRect());
+    const fade = { duration: 220, easing: 'ease-in', fill: 'forwards' };
+    for (const el of chrome()) el.animate([{ opacity: 1 }, { opacity: 0 }], { ...fade, duration: 150 });
+    dlg.animate([{ opacity: 1 }, { opacity: 0 }], { ...fade, pseudoElement: '::backdrop' });
+    const run = frames
+      ? shown.animate([...frames].reverse(), { duration: 260, easing: EASE, fill: 'forwards' })
+      : shown.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }], fade);
+    settled(run, done);
+  };
+
+  // Swipes: the image follows the finger, and goes on to the next one past a threshold.
+  let swipe = null;
+  let swiped = false;
+  stage.addEventListener('pointerdown', (e) => {
+    if (!many || e.button !== 0 || closing) return;
+    swipe = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0 };
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    swipe.dx = e.clientX - swipe.x;
+    if (Math.abs(swipe.dx) > 8 && Math.abs(swipe.dx) > Math.abs(e.clientY - swipe.y)) {
+      if (!stage.hasPointerCapture(e.pointerId)) stage.setPointerCapture(e.pointerId);
+      shown.style.translate = `${swipe.dx}px 0`;
+    }
+  });
+  const endSwipe = (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const { dx } = swipe;
+    swipe = null;
+    if (Math.abs(dx) <= 8) return;
+    // The click that ends a swipe with a mouse does not dismiss (a finger's does not click).
+    swiped = true;
+    setTimeout(() => { swiped = false; });
+    const el = shown;
+    if (Math.abs(dx) > 60 && e.type === 'pointerup') {
+      show(at + (dx < 0 ? 1 : -1), dx < 0 ? 1 : -1);
+    } else {
+      el.animate([{ translate: `${dx}px 0` }, { translate: '0 0' }], { duration: 200, easing: EASE });
+      el.style.translate = '';
+    }
+  };
+  stage.addEventListener('pointerup', endSwipe);
+  stage.addEventListener('pointercancel', endSwipe);
+
+  dlg.addEventListener('click', (e) => {
+    if (swiped) { swiped = false; return; }
+    if (e.target.closest('a, .count')) return;
+    const nav = e.target.closest('.nav, .strip [data-n]');
+    if (nav) {
+      const n = nav.dataset.n == null ? at + (nav.classList.contains('next') ? 1 : -1) : Number(nav.dataset.n);
+      show(n, Math.sign(n - at));
+      return;
+    }
+    if (!e.target.closest('.strip')) dismiss();
+  });
+  dlg.addEventListener('keydown', (e) => {
+    if (!many || closing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const to = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: set.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    show(to, Math.sign(to - at));
+  });
   // Escape: tidy up right away instead of waiting for the close event.
   dlg.addEventListener('cancel', (e) => { e.preventDefault(); dismiss(); });
-  dlg.addEventListener('close', dismiss);
+  dlg.addEventListener('close', () => { if (!closing) { closing = true; dlg.remove(); set[at].focus({ preventScroll: true }); } });
+
   document.body.append(dlg);
   dlg.showModal();
-  dlg.querySelector('button').focus();
+  show(set.indexOf(img));
+  dlg.querySelector('.close').focus();
+  if (!motion()) return;
+  const first = shown;
+  const grow = () => {
+    const frames = morph(first, img.getBoundingClientRect());
+    if (frames) first.animate(frames, { duration: 340, easing: EASE });
+    else first.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE });
+  };
+  // Its size is known once it decodes (at once, mostly: the thumbnail loaded it).
+  if (first.complete && first.naturalWidth) {
+    grow();
+  } else {
+    first.style.opacity = '0';
+    first.decode().catch(() => {}).finally(() => { first.style.opacity = ''; if (!closing && first === shown) grow(); });
+  }
+  dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out', pseudoElement: '::backdrop' });
+  for (const el of chrome()) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 140, easing: 'ease-out', fill: 'backwards' });
 }
 function wireLightbox() {
   const target = (e) => {
@@ -4394,6 +4563,13 @@ function wireLightbox() {
     openLightbox(img);
   });
   document.addEventListener('keydown', (e) => {
+    // The arrow keys move between a gallery's thumbnails.
+    const thumb = e.target.closest?.('.gallery > img.att');
+    if (thumb && /^Arrow(Left|Right)$/.test(e.key)) {
+      const next = e.key === 'ArrowRight' ? thumb.nextElementSibling : thumb.previousElementSibling;
+      if (next) { e.preventDefault(); next.focus(); }
+      return;
+    }
     const img = target(e);
     if (!img || (e.key !== 'Enter' && e.key !== ' ')) return;
     e.preventDefault();
