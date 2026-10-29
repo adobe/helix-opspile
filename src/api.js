@@ -873,7 +873,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t), {
-      waitUntil,
+      waitUntil, me,
     });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {

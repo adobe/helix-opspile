@@ -632,9 +632,18 @@ which is what Teams writes when someone mentions it.
 
 What follows the `@` matches, in any case and without accents, the start of any word of a
 person's name, of their other names (`identities.aliases`: the Slack login and display name,
-the Discord username) or of their mail address before the @ (`src/mention-match.js`). People who
-posted in the thread come first, then the members of its channel, then everyone else; among
-those, a match at the start of the name before one further in, then staff, then by name. The
+the Discord username) or of their mail address before the @ (`src/mention-match.js`). People
+outside Adobe who posted in the thread come first. Then come the Adobe people who know what the
+thread is about (`src/expertise.js`): the thread's `CONTENT` vector (a re-threaded group's
+mean; its title embedded while it has none yet) is matched against the staff messages of every
+channel, the 50 closest that are no less than 0.65 similar and within 0.15 of the closest, and
+each author gets what their five closest have over the weakest that counts (their messages on
+every platform together, when D1 knows them as one person). The viewer's own messages do not
+count. The affinities are kept for ten minutes per version of the thread's vectors, as every
+typed letter asks again. Then anyone else who posted in the thread, the members of its channel,
+and everyone else; among those, the higher affinity first, then a match at the start of the
+name before one further in, then staff, then by name. The suggestion says "Adobe · related" for
+such an expert. The
 members are `channel_members`: Slack's `conversations.members` (on Teams, the team's members
 from Graph, where the app may list them) and whoever posted in the channel (on Teams, in any
 channel of the team). Opening the suggestions lists a channel's members when that is a week

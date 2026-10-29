@@ -818,6 +818,20 @@ async function api(req, res, url) {
       .filter((t) => t.ch.channelId === entry.ch.channelId)
       .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
     const listed = new Set(entry.ch.members || []);
+    // A stand-in for the vectors (src/expertise.js): an Adobe person's affinity is how many of
+    // this thread's longer words their messages anywhere have, the viewer's own aside.
+    const wordsOf = (s) => new Set(String(s || '').toLowerCase().match(/[a-z]{5,}/g) || []);
+    const about = wordsOf([entry.row.title, ...entry.messages.map((m) => m.body)].join(' '));
+    const affinity = new Map();
+    for (const t of store.threads.values()) {
+      for (const m of t.messages) {
+        const who = m.author && m.author.staff && m.author.name;
+        if (who && who !== store.people.get(ME).name) {
+          const shared = [...wordsOf(m.body)].filter((w) => about.has(w)).length;
+          affinity.set(who, (affinity.get(who) || 0) + (shared >= 2 ? shared : 0));
+        }
+      }
+    }
     const found = rankMentions([...store.people.values(), ...store.members].map((p) => ({
       id: `${entry.row.source}-${p.key}`,
       name: p.name,
@@ -826,8 +840,11 @@ async function api(req, res, url) {
       here: here.has(p.name),
       member: listed.has(p.key) || posted.has(p.name),
       staff: p.staff,
+      affinity: p.staff ? affinity.get(p.name) || 0 : 0,
       kind: 'person',
-    })), url.searchParams.get('q'), 8).map((p) => ({ ...p, aliases: undefined }));
+    })), url.searchParams.get('q'), 8).map((p) => ({
+      ...p, aliases: undefined, affinity: undefined, ...(p.affinity > 0 ? { expert: true } : {}),
+    }));
     return json(res, { platform: entry.row.source, people: found });
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {

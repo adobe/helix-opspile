@@ -69,4 +69,25 @@ describe('mention matching', () => {
     assert.deepEqual(names('kse'), ['Kira Selby']);
     assert.deepEqual(names('', 3), ['Lu Kent', 'Bo Kim', 'Anna Klein']);
   });
+
+  it('puts the Adobe people who know the topic after the customers in the thread', () => {
+    const people = [
+      { name: 'Ann Cust', here: true },
+      { name: 'Bea Here', staff: true, here: true },
+      { name: 'Cy Member', member: true },
+      { name: 'Di Expert', staff: true, affinity: 0.1 },
+      {
+        name: 'Ed Expert', staff: true, affinity: 0.3, member: true,
+      },
+      { name: 'Flo Staff', staff: true },
+      // An affinity only counts for staff.
+      { name: 'Gus Cust', affinity: 0.9 },
+    ];
+    const names = (q) => rankMentions(people, q).map((p) => p.name);
+    assert.deepEqual(names(''), [
+      'Ann Cust', 'Ed Expert', 'Di Expert', 'Bea Here', 'Cy Member', 'Flo Staff', 'Gus Cust',
+    ]);
+    // What is typed still has to match.
+    assert.deepEqual(names('e'), ['Ed Expert', 'Di Expert']);
+  });
 });

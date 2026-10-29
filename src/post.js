@@ -15,6 +15,7 @@ import {
 } from './attach.js';
 import { json } from './http.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
+import { threadExperts } from './expertise.js';
 import { rankMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
 import { teamsOf } from './shares.js';
@@ -643,16 +644,20 @@ export async function mentionsByName(env, t, names) {
 
 /**
  * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1
- * for the thread's platform and workspace. Whoever posted in the thread comes first, then
- * the members of its channel (on Teams: of its team, or who posted there), then everyone
- * else; among them by how well `q` matches (src/mention-match.js: the start of any word of
- * the name, the Slack login or display name, or the mail address, in any case), staff first,
- * by name. On Teams, the bots seen in the thread's Teams team are offered as well.
+ * for the thread's platform and workspace. People outside Adobe who posted in the thread come
+ * first, then, with `me` given, the Adobe people who know what the thread is about (`expert`:
+ * their messages anywhere are close to it, src/expertise.js), then anyone else who posted in
+ * it, the members of its channel (on Teams: of its team, or who posted there), and everyone
+ * else; among them by that affinity, then by how well `q` matches (src/mention-match.js: the
+ * start of any word of the name, the Slack login or display name, or the mail address, in any
+ * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
+ * as well.
  *
  * `waitUntil`, where given, lists the channel's members in the background (`learnMembers`)
  * when the suggestions open (an empty `q`: the @ was just typed), so they show up from then on.
+ * `me`, the viewer, is never anyone's expert: their own messages do not count.
  */
-export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
+export async function mentionable(env, key, q, inTeam, { waitUntil, me } = {}) {
   const t = key && await target(env, key);
   if (!t || !inTeam(await teamsOf(env, t))) {
     return json({ error: 'not found' }, 404);
@@ -672,8 +677,10 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
       id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
     }));
   const channels = JSON.stringify(await channelsOf(env, t));
-  const [{ results: accounts }, { results: posters }, { results: members }] = await Promise.all([
-    env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name, i.name AS account_name, i.aliases,
+  const [
+    { results: accounts }, { results: posters }, { results: members }, experts,
+  ] = await Promise.all([
+    env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name, i.aliases,
         COALESCE(i.email, p.email) AS email, i.avatar,
         MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
       ${ACCOUNTS} LIMIT ${MAX_ACCOUNTS}`).bind(t.source, t.tenant).all(),
@@ -686,8 +693,13 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
         WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))
           AND author_key IS NOT NULL`)
       .bind(t.source, t.tenant, channels, t.source, t.tenant, channels).all(),
+    me ? threadExperts(env, key, { me: me.id }) : null,
   ]);
   const prefix = `${t.source}:${t.tenant}:`;
+  const affinity = (r) => (!experts || !r.staff || (me && r.person === me.id) ? 0 : Math.max(
+    experts.authors.get(`${prefix}${r.id}`) || 0,
+    (r.person !== null && experts.people.get(r.person)) || 0,
+  ));
   const here = new Set((posters || []).map((r) => String(r.author_key || ''))
     .filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)));
   const inChannel = new Set((members || []).map((r) => r.user_id));
@@ -696,6 +708,7 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
     aliases: [r.account_name, ...parseAliases(r.aliases), r.email],
     here: here.has(r.id),
     member: inChannel.has(r.id),
+    affinity: affinity(r),
   })), typed, MAX_SUGGESTIONS - bots.length).map((r) => ({
     id: r.id,
     name: r.name,
@@ -703,6 +716,7 @@ export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
     here: r.here,
     member: r.member,
     staff: Boolean(r.staff),
+    ...(r.affinity > 0 ? { expert: true } : {}),
     kind: 'person',
   }));
   return json({ platform: t.source, people: [...people, ...bots] });
