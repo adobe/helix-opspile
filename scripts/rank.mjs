@@ -15,37 +15,45 @@
  * Learns the team order from Clef. Three steps, each reading what the one before wrote in
  * `.rank/` (not committed: it holds production threads, read-only):
  *
- *   npm run rank -- pull  [--n 200] [--alerts 0.1] [--team <slug>]… [--seed 1]
- *     A random sample of the threads in your teams' inboxes, as the inbox gets them
- *     (GET /api/inbox, the features), with their messages (GET /api/thread, the content).
- *     Uses the session of `npm run ui:session -- <inbox origin>`.
+ *   npm run rank -- pull  [--n all] [--alerts 0.1] [--team <slug>]… [--own-teams] [--no-personal]
+ *     The threads in your teams' inboxes and your personal view, and for the admin team every
+ *     team's (read as one of its members, read-only), all of them or a random sample, as
+ *     the inbox gets them (GET /api/inbox, the features), with their messages (GET /api/thread,
+ *     the content). Uses the session of `npm run ui:session -- <inbox origin>`. The sample
+ *     before, and what was judged on it, moves to `.rank/<when it was pulled>/`.
  *   npm run rank -- duel  [--rounds 12] [--concurrency 8]
  *     An Elo tournament, Swiss pairings: Clef reads two threads (content and what the inbox
  *     shows of them) and says which the team should turn to first, asked both ways round.
  *     More rounds add to the games already played. Needs CLOUDFLARE_ACCOUNT_ID (the Worker's
  *     account) and CLOUDFLARE_API_TOKEN, or a `wrangler login` with Workers AI.
- *   npm run rank -- train [--l2 3] [--dry-run]
+ *   npm run rank -- train [--l2 3] [--human 0] [--without <feature>,…] [--dry-run]
  *     Fits the linear model of ui/rank.js to the games, reports how often it, the old score and
- *     recency alone agree with Clef (5-fold cross-validation), and writes it into ui/rank.js.
+ *     recency alone agree with Clef (5-fold cross-validation) and with you, and writes it into
+ *     ui/rank.js. `--human <weight>` trains on your answers too, each worth that many of Clef's.
+ *   npm run rank -- judge [--port 8796]
+ *     Two threads of Clef's games side by side in the browser: you pick, then see what Clef, the
+ *     model and the old score said, and how often each agrees with you (scripts/rank-judge.mjs).
  */
 
 import { execFileSync } from 'node:child_process';
 import {
-  appendFile, chmod, mkdir, readFile, writeFile,
+  appendFile, chmod, mkdir, readFile, rename, writeFile,
 } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PROMPT_VERSION, QUESTION, agreement, bradleyTerry, elo, firstP, fit, loadClassic, loadRank,
   pairKey, pairState, random, shuffle, spearman, swiss, withModel,
 } from './rank-lib.mjs';
+import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, '.rank');
 const THREADS = join(DIR, 'threads.json');
 const GAMES = join(DIR, 'games.jsonl');
 const RATINGS = join(DIR, 'ratings.json');
+const HUMAN = join(DIR, 'human.jsonl');
 const RANK_JS = join(ROOT, 'ui', 'rank.js');
 const CLEF = '@cf/cloudflare/clef';
 
@@ -80,8 +88,10 @@ async function session() {
     throw new Error('no session: run `npm run ui:session -- <inbox origin>` first');
   }
   const s = JSON.parse(await readFile(file, 'utf8'));
-  return async (path) => {
-    const r = await fetch(`${s.origin}${path}`, { headers: { cookie: s.cookie }, redirect: 'manual' });
+  // `as`: a person the admin team reads the inbox as (x-opspile-as, read-only).
+  return async (path, as = null) => {
+    const headers = { cookie: s.cookie, ...(as ? { 'x-opspile-as': String(as) } : {}) };
+    const r = await fetch(`${s.origin}${path}`, { headers, redirect: 'manual' });
     if (r.status !== 200) {
       throw new Error(`${path.split('?')[0]}: ${r.status}${r.status === 302 ? ' (sign in again, then ui:session)' : ''}`);
     }
@@ -101,6 +111,26 @@ const slim = (m) => ({
   reactions: (m.reactions || []).map((r) => ({ emoji: r.emoji, names: r.names || [] })),
 });
 
+/**
+ * Moves the last sample and everything judged on it into `.rank/<when it was pulled>/`: the
+ * games, Clef's and yours, are of that sample as it was then.
+ */
+async function archive() {
+  if (!existsSync(THREADS)) {
+    return;
+  }
+  const { pulledAt } = JSON.parse(await readFile(THREADS, 'utf8'));
+  const to = join(DIR, new Date(pulledAt).toISOString().replace(/[:.]/g, '-'));
+  await mkdir(to, { recursive: true, mode: 0o700 });
+  for (const f of [THREADS, GAMES, RATINGS, HUMAN]) {
+    if (existsSync(f)) {
+      // eslint-disable-next-line no-await-in-loop
+      await rename(f, join(to, basename(f)));
+    }
+  }
+  console.log(`the last sample and its games → ${to}`);
+}
+
 async function pull(opts) {
   const get = await session();
   const me = await get('/api/me');
@@ -108,33 +138,54 @@ async function pull(opts) {
   const rnd = random(num(opts.seed, 1));
   const entries = new Map();
   const people = {};
-  for (const team of teams) {
+  // Every team's inbox, and the personal view (the channels of other teams you are in).
+  const views = teams.map((team) => ({ q: `team=${encodeURIComponent(team)}` }));
+  if (!opts['no-personal']) {
+    views.push({ q: 'view=personal' });
+  }
+  // The admin team sees the other teams' inboxes too, as one of their members (read-only).
+  if (me.admin && !opts.team && !opts['own-teams']) {
+    const { teams: all = [] } = await get('/api/admin/teams');
+    for (const t of all.filter((x) => !teams.includes(x.slug))) {
+      // eslint-disable-next-line no-await-in-loop
+      const { members = [] } = await get(`/api/admin/team?slug=${encodeURIComponent(t.slug)}`);
+      if (members.length) {
+        views.push({ q: `team=${encodeURIComponent(t.slug)}`, as: members[0].id });
+      }
+    }
+  }
+  for (const view of views) {
     let before = null;
     do {
       // eslint-disable-next-line no-await-in-loop
-      const page = await get(`/api/inbox?team=${encodeURIComponent(team)}&limit=200`
-        + `${before ? `&before=${encodeURIComponent(before)}` : ''}`);
+      const page = await get(`/api/inbox?${view.q}&limit=200`
+        + `${before ? `&before=${encodeURIComponent(before)}` : ''}`, view.as);
       for (const t of page.threads) {
         if (!entries.has(t.thread)) {
-          entries.set(t.thread, { team, entry: t });
+          entries.set(t.thread, { team: t.team, entry: t, as: view.as });
         }
       }
       Object.assign(people, page.people || {});
       before = page.page?.next;
     } while (before);
   }
-  const n = num(opts.n, 200);
   const all = [...entries.values()];
   const alerts = shuffle(all.filter((x) => x.entry.kind === 'alert'), rnd);
   const talks = shuffle(all.filter((x) => x.entry.kind !== 'alert'), rnd);
-  const nAlerts = Math.min(alerts.length, Math.round(n * num(opts.alerts, 0.1)));
+  // All of them, by default; alerts are a tenth of the sample.
+  const share = num(opts.alerts, 0.1);
+  const n = opts.n === undefined || opts.n === 'all'
+    ? Math.round(talks.length / (1 - share)) : num(opts.n, 200);
+  const nAlerts = Math.min(alerts.length, Math.round(n * share));
   const picked = [...talks.slice(0, n - nAlerts), ...alerts.slice(0, nAlerts)];
+  await archive();
   const pulledAt = Date.now();
   const threads = [];
   for (let i = 0; i < picked.length; i += 8) {
     // eslint-disable-next-line no-await-in-loop
-    threads.push(...await Promise.all(picked.slice(i, i + 8).map(async ({ team, entry }) => {
-      const r = await get(`/api/thread?thread=${encodeURIComponent(entry.thread)}&team=${encodeURIComponent(team)}`);
+    threads.push(...await Promise.all(picked.slice(i, i + 8).map(async ({ team, entry, as }) => {
+      const r = await get(`/api/thread?thread=${encodeURIComponent(entry.thread)}`
+        + `${team ? `&team=${encodeURIComponent(team)}` : ''}`, as);
       return {
         key: entry.thread, team, entry, messages: (r.messages || []).map(slim),
       };
@@ -147,7 +198,7 @@ async function pull(opts) {
   await secretFile(THREADS, JSON.stringify({
     pulledAt, teams, staff, threads,
   }));
-  console.log(`${threads.length} threads (${nAlerts} alerts) of ${all.length} in ${teams.length} inboxes`
+  console.log(`${threads.length} threads (${nAlerts} alerts) of ${all.length} in ${views.length} views`
     + ` → ${THREADS}`);
 }
 
@@ -273,7 +324,9 @@ async function train(opts) {
   }
   const source = await readFile(RANK_JS, 'utf8');
   const Rank = loadRank(source);
-  const { names } = Rank;
+  // `--without a,b`: leave features out, to see what they are worth.
+  const without = new Set(String(opts.without || '').split(',').filter(Boolean));
+  const names = Rank.names.filter((n) => !without.has(n));
   const vectors = new Map([...byKey].map(([k, t]) => {
     const f = Rank.features(t.entry, data.pulledAt);
     return [k, names.map((n) => f[n])];
@@ -287,15 +340,30 @@ async function train(opts) {
   };
   // Cross-validation by threads: trained on the games among four fifths of them, tested on
   // every game of the other fifth, so the scores are for threads the model has not seen.
+  // Your answers: what you decided, and ties as even; trained on with `--human <weight>`.
+  const human = (await readHuman(HUMAN, data.pulledAt))
+    .filter((h) => h.pick !== 'skip' && byKey.has(h.a) && byKey.has(h.b));
+  const humanWeight = num(opts.human, 0);
+  const yours = human.map((h) => ({
+    a: h.a, b: h.b, p: h.p, weight: humanWeight,
+  }));
   const rnd = random(7);
   const fold = new Map(shuffle([...byKey.keys()], rnd).map((k, i) => [k, i % 5]));
+  const inFold = (f) => (g) => fold.get(g.a) === f || fold.get(g.b) === f;
   const scores = { model: [], classic: [], recency: [] };
+  const heldOut = new Map();
   for (let f = 0; f < 5; f += 1) {
-    const trainSet = games.filter((g) => fold.get(g.a) !== f && fold.get(g.b) !== f);
-    const test = games.filter((g) => fold.get(g.a) === f || fold.get(g.b) === f);
+    const trainSet = games.filter((g) => !inFold(f)(g))
+      .concat(humanWeight ? yours.filter((g) => !inFold(f)(g)) : []);
+    const test = games.filter(inFold(f));
     const w = fit(names, vec, trainSet, { l2 });
     const s = (k) => vec(k).reduce((acc, x, i) => acc + x * w[names[i]], 0);
     scores.model.push(agreement(s, test));
+    for (const h of yours.filter(inFold(f))) {
+      if (!heldOut.has(h)) {
+        heldOut.set(h, s(h.a) - s(h.b));
+      }
+    }
     // The baselines have no scale of their own: fitted on the train folds, a weight each.
     for (const b of ['classic', 'recency']) {
       const wb = fit(['x'], (k) => [baseline[b](k)], trainSet, { l2: 0.01 });
@@ -303,7 +371,7 @@ async function train(opts) {
     }
   }
   const mean = (list, k) => list.reduce((s, x) => s + x[k], 0) / list.length;
-  const weights = fit(names, vec, games, { l2 });
+  const weights = fit(names, vec, humanWeight ? games.concat(yours) : games, { l2 });
   const ids = [...byKey.keys()];
   const bt = bradleyTerry(ids, games);
   const modelScore = (k) => vec(k).reduce((acc, x, i) => acc + x * weights[names[i]], 0);
@@ -314,6 +382,18 @@ async function train(opts) {
   }]));
   console.table(report);
   console.log(`Spearman vs Clef's ratings: model ${rho(modelScore).toFixed(3)}, classic ${rho(baseline.classic).toFixed(3)}, recency ${rho(baseline.recency).toFixed(3)}`);
+  if (human.length) {
+    const you = agreementWithYou(human, games, {
+      model: () => 0, classic: baseline.classic,
+    });
+    const decided = yours.filter((h) => h.p !== 0.5);
+    const held = decided.filter((h) => heldOut.get(h)).length
+      ? decided.filter((h) => (heldOut.get(h) > 0) === (h.p > 0.5)).length / decided.length : 0;
+    const share = (b) => (b.n ? `${Math.round((100 * b.agree) / b.n)}%` : '–');
+    console.log(`You (${you.decided} decided, ${you.ties} same): Clef agrees ${share(you.clef)},`
+      + ` the model on threads it was not trained on ${Math.round(held * 100)}%,`
+      + ` the old score ${share(you.classic)}`);
+  }
   console.log('weights (log-odds per unit):');
   for (const [k, w] of Object.entries(weights).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
     console.log(`  ${k.padEnd(16)} ${w >= 0 ? ' ' : ''}${w.toFixed(3)}`);
@@ -324,6 +404,7 @@ async function train(opts) {
     games: games.length,
     accuracy: report.model.accuracy,
     classicAccuracy: report.classic.accuracy,
+    ...(humanWeight ? { human: yours.length, humanWeight } : {}),
     weights: Object.fromEntries(Object.entries(weights).map(([k, w]) => [k, Number(w.toFixed(4))])),
   };
   if (opts['dry-run']) {
@@ -334,9 +415,17 @@ async function train(opts) {
 }
 
 const opts = options(process.argv.slice(2));
-const step = { pull, duel, train }[opts._[0]];
+async function judgeStep(o) {
+  await judge({
+    port: num(o.port, 8796), threadsFile: THREADS, humanFile: HUMAN, readGames,
+  });
+}
+
+const step = {
+  pull, duel, train, judge: judgeStep,
+}[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|duel|train [options] (see scripts/rank.mjs)');
+  console.error('usage: npm run rank -- pull|duel|train|judge [options] (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {
   step(opts).catch((e) => {

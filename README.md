@@ -429,26 +429,37 @@ file, or run `npm run ui:session -- --clear`, to go back to fake data.
 ### Train the team order
 
 Within a status, a team's inbox is ordered by the model in `ui/rank.js`: a weighted sum of some
-thirty features of a thread, computed in the browser from the inbox entry (how long since the
+forty features of a thread, computed in the browser from the inbox entry (how long since the
 last message, whether it waits on us, Clef's urgency and resolved, a staff ✅, the kind, unseen
-by Adobe, a draft, …), in log-odds of "the team should turn to this one first". Its weights are
-learned from Clef, in three steps, each reading what the step before wrote into `.rank/`
-(gitignored; it holds production threads, so it stays on your machine):
+by Adobe, a draft, what the last message asks, …), in log-odds of "the team should turn to this
+one first". Its weights are learned from Clef, step by step, each reading what the step before
+wrote into `.rank/` (gitignored; it holds production threads, so it stays on your machine):
 
-1. `npm run rank -- pull [--n 200] [--alerts 0.1]` takes a random sample of the threads in your
-   teams' inboxes, with their messages, from the production API, read-only, with the session
-   `npm run ui:session` copied.
+1. `npm run rank -- pull [--n all] [--alerts 0.1]` takes the threads of your teams' inboxes and
+   your personal view (for the admin team, every team's, read as one of its members), with their
+   messages, from the production API, read-only, with the session `npm run ui:session` copied.
+   Alerts are a tenth of the sample. The sample before, and what was judged on it, moves to
+   `.rank/<when it was pulled>/`.
 2. `npm run rank -- duel [--rounds 12]` plays an Elo tournament with Swiss pairings: Clef reads
    two threads (their messages and what the inbox shows of them) and the team's policy
    (`POLICY` in `scripts/rank-lib.mjs`), and says which comes first, asked both ways round. More
    rounds add to the games played; changing what Clef is shown (`PROMPT_VERSION`) asks again.
    It calls Workers AI with `CLOUDFLARE_ACCOUNT_ID` (the Worker's account) and
    `CLOUDFLARE_API_TOKEN`, or the token of `wrangler login`.
-3. `npm run rank -- train [--l2 3] [--dry-run]` fits the weights (pairwise logistic regression),
-   prints how often the model, the hand-made score it replaces (`classicScore` in
-   `ui/inbox.js`) and recency alone agree with Clef on threads held out (five folds), and
-   writes the weights into `ui/rank.js` (between `// MODEL:` and `// END MODEL`). Only feature
-   names and numbers are committed.
+3. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
+   browser, and you pick the one the team should turn to first (← →, ↓ for "same", `s` to skip,
+   `u` to undo). Then it shows what Clef, the model and the old score said, and how often each
+   agrees with you so far (Clef's also by how sure it was, and where asking it the other way
+   round changed its mind). It can show any pair, the ones Clef was unsure of, or where the model
+   and Clef, or the model and the old score, disagree; "Blind" hides the answers. Your answers go
+   to `.rank/human.jsonl`.
+4. `npm run rank -- train [--l2 3] [--human 0] [--without a,b] [--dry-run]` fits the weights
+   (pairwise logistic regression), prints how often the model, the hand-made score it replaces
+   (`classicScore` in `ui/inbox.js`) and recency alone agree with Clef, and with you, on threads
+   held out (five folds), and writes the weights into `ui/rank.js` (between `// MODEL:` and
+   `// END MODEL`). `--human 3` trains on your answers too, each worth three of Clef's;
+   `--without` leaves features out, to see what they are worth. Only feature names and numbers
+   are committed.
 
 A feature is added in `features()` of `ui/rank.js`, which the browser and the training both
 run; train again after changing one. `Rank.explain(entry)` in the console lists what makes up a

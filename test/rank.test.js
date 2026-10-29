@@ -16,6 +16,7 @@ import {
   agreement, bradleyTerry, elo, firstP, fit, loadClassic, loadRank, pairKey, pairState, random,
   spearman, swiss, withModel,
 } from '../scripts/rank-lib.mjs';
+import { agreementWithYou } from '../scripts/rank-judge.mjs';
 import { SCRIPTS } from './ui.js';
 
 const NOW = Date.parse('2026-03-02T12:00:00Z');
@@ -70,10 +71,10 @@ describe('the team order model (ui/rank.js)', () => {
       last_staff: 1,
       waiting_on: 'customer',
       messages: 3,
-      label: { urgency: 0.5, resolved_p: 0.2, label_kind: 'request' },
+      label: { urgency: 1, resolved_p: 0.2, label_kind: 'request' },
     };
     assert.ok(Rank.score(done, NOW) < Rank.score(open, NOW), 'resolving lowers it');
-    assert.ok(Rank.score(done, NOW) < Rank.score(week, NOW), 'below an open thread a week old');
+    assert.ok(Rank.score(done, NOW) < Rank.score(week, NOW), 'below an open thread a week old, as urgent');
     // What makes up a score, largest first.
     const parts = Rank.explain(done, NOW);
     assert.ok(parts.some(([k]) => k === 'resolved'));
@@ -169,5 +170,41 @@ describe('learning the order from Clef (scripts/rank-lib.mjs)', () => {
     const classic = loadClassic(NOW);
     const open = { last_at: ago(1), waiting_on: 'us', label: { urgency: 2 } };
     assert.ok(classic(open) > classic({ ...open, resolution: { verdict: 'resolved' } }));
+  });
+
+  it('counts how often Clef, the model and the old score pick what you picked', () => {
+    const games = [
+      {
+        a: 'x', b: 'y', p: 0.95, ab: 0.97, ba: 0.07,
+      },
+      {
+        a: 'y', b: 'z', p: 0.6, ab: 0.8, ba: 0.6,
+      },
+      {
+        a: 'x', b: 'z', p: 0.3, ab: 0.3, ba: 0.7,
+      },
+    ];
+    const human = [
+      {
+        a: 'x', b: 'y', pick: 'left', p: 1,
+      },
+      {
+        a: 'y', b: 'z', pick: 'right', p: 0,
+      },
+      {
+        a: 'x', b: 'z', pick: 'tie', p: 0.5,
+      },
+    ];
+    const order = { x: 3, y: 2, z: 1 };
+    const s = agreementWithYou(human, games, { model: (k) => order[k], classic: (k) => -order[k] });
+    assert.equal(s.decided, 2);
+    assert.equal(s.ties, 1);
+    assert.deepEqual(s.clef, { n: 2, agree: 1 });
+    assert.deepEqual(s.byConfidence['90%+'], { n: 1, agree: 1 });
+    // Asked the other way round, Clef changed its mind on y and z (0.8, then 0.6 for z).
+    assert.deepEqual(s.clefFlipped, { n: 1, agree: 0 });
+    assert.deepEqual(s.model, { n: 2, agree: 1 });
+    assert.deepEqual(s.classic, { n: 2, agree: 1 });
+    assert.equal(s.tieClefConfidence, 0.7);
   });
 });

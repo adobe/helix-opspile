@@ -23,6 +23,8 @@
 globalThis.Rank = (() => {
   const H = 3600000;
   const KINDS = ['incident', 'security', 'question', 'request', 'access'];
+  const THANKS = /\b(thanks|thank you|thx|ty|cheers|merci|danke|gracias|appreciate)\b/i;
+  const ALARM = /\b(urgent|asap|down|outage|broken|blocked|blocker|critical|escalat\w*|not working|fails?|failing|error|5\d\d|prod(uction)? (issue|is))\b/i;
 
   /** Staff 👀 since the customer last wrote, staff 🛟 at all: someone is on it, someone asks for eyes. */
   function steering(t) {
@@ -79,6 +81,15 @@ globalThis.Rank = (() => {
       vendor: t.org_type === 'vendor' ? 1 : 0,
     };
     for (const k of KINDS) f[`kind_${k}`] = !alert && kind === k ? 1 : 0;
+    // What the last message says, in words that matter for who moves next.
+    const text = String(t.last_text || '');
+    f.lastAsks = /\?\s*$|\?\s|\b(can you|could you|please|any update|how do|is there)\b/i.test(text) ? 1 : 0;
+    f.lastThanks = THANKS.test(text) ? 1 : 0;
+    f.lastAlarm = ALARM.test(text) ? 1 : 0;
+    f.lastLength = Math.log1p(text.length) / 6;
+    // How sure Clef was of who moves next and of the kind.
+    f.nextActorP = lab.next_actor_p ?? 0;
+    f.kindP = lab.kind_p ?? 0;
     return f;
   }
   const NAMES = Object.keys(features({}, 0));
@@ -86,41 +97,47 @@ globalThis.Rank = (() => {
   // MODEL: written by `npm run rank -- train`, do not edit by hand.
   const MODEL = {
     trained: '2026-10-29',
-    threads: 200,
-    games: 1597,
-    accuracy: 0.847,
-    classicAccuracy: 0.694,
+    threads: 410,
+    games: 4915,
+    accuracy: 0.797,
+    classicAccuracy: 0.675,
     weights: {
-      recent6h: 0.3235,
-      recent2d: 1.1111,
-      recent2w: -0.2024,
-      threadAge: 0.0606,
-      lastStaff: 0.1344,
-      unseenByAdobe: 0.7497,
-      waitsOnUs: 1.8836,
-      waitsOnThem: -0.3224,
-      waitsOnUsLong: -0.2318,
-      urgency: 3.3287,
-      unlabeled: -0.2868,
-      resolved: -1.2063,
-      checked: -0.8742,
-      resolvedRecent: -0.6301,
-      openUrgency: 0.846,
-      unseenUrgency: -2.172,
-      alert: 0.6096,
-      seenByStaff: 0.6091,
+      recent6h: 0.638,
+      recent2d: 0.2758,
+      recent2w: 0.9447,
+      threadAge: 0.0576,
+      lastStaff: 0.1404,
+      unseenByAdobe: 0.4848,
+      waitsOnUs: 0.9659,
+      waitsOnThem: -0.3723,
+      waitsOnUsLong: 0.4048,
+      urgency: 2.4323,
+      unlabeled: 0.3033,
+      resolved: -1.141,
+      checked: -0.5987,
+      resolvedRecent: -0.0989,
+      openUrgency: 1.7151,
+      unseenUrgency: -1.4732,
+      alert: 1.0214,
+      seenByStaff: 0.3122,
       help: 0,
-      draft: -0.6798,
-      messages: 1.3033,
-      customers: -0.2644,
-      staff: -0.0703,
-      partner: -0.3421,
-      vendor: -0.4846,
-      kind_incident: 0.4375,
-      kind_security: 1.0074,
-      kind_question: 0.2354,
-      kind_request: 0.2574,
-      kind_access: 0.3193,
+      draft: 0.288,
+      messages: 0.7796,
+      customers: -0.1247,
+      staff: 0.001,
+      partner: -0.2185,
+      vendor: -0.4466,
+      kind_incident: 0.3397,
+      kind_security: 0.6684,
+      kind_question: 0.229,
+      kind_request: 0.2971,
+      kind_access: 0.2655,
+      lastAsks: 0.1285,
+      lastThanks: -0.0267,
+      lastAlarm: -0.0897,
+      lastLength: 0.4215,
+      nextActorP: 0.1072,
+      kindP: 0.384,
     },
   };
   // END MODEL
