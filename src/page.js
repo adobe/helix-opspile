@@ -11,6 +11,7 @@
  */
 
 import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from './emoji.js';
+import EDITOR from './ui-editor.bundle.js';
 import MARKDOWN from './ui-markdown.bundle.js';
 
 const PLACEHOLDER = '/* SLACK_EMOJI */ { names: {}, skin: [] }';
@@ -22,8 +23,9 @@ const SCRIPT = /<script( type="module")? src="([a-z-]+\.js)"><\/script>/g;
 const STYLE = /<link rel="stylesheet" href="([a-z-]+\.css)">/g;
 
 /**
- * A page of ui/ as served: its scripts, ui/*.js and `markdown.js` (the markdown renderer,
- * src/ui-markdown.js, as the global `Markdown`), and its shared stylesheets, ui/*.css,
+ * A page of ui/ as served: its scripts, ui/*.js, `markdown.js` (the markdown renderer,
+ * src/ui-markdown.js, as the global `Markdown`) and `editor.js` (the knowledge-base editor's
+ * text field, src/ui-editor.js, as the global `Editor`), and its shared stylesheets, ui/*.css,
  * inlined where the page names them. The scripts live in their own files, which lint checks,
  * and what every page shares (the header, ui/header.*) is written once, but the page stays
  * one request.
@@ -32,7 +34,7 @@ const STYLE = /<link rel="stylesheet" href="([a-z-]+\.css)">/g;
  * @param {Record<string, string>} scripts ui/*.js and ui/*.css by file name
  */
 export function page(html, scripts) {
-  const files = { ...scripts, 'markdown.js': MARKDOWN };
+  const files = { ...scripts, 'markdown.js': MARKDOWN, 'editor.js': EDITOR };
   const styled = html.replace(STYLE, (tag, name) => {
     if (typeof files[name] !== 'string') {
       throw new Error(`no stylesheet ${name} for the page`);

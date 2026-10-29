@@ -28,7 +28,7 @@ describe('page scripts', () => {
       for (const [tag] of html.matchAll(TAGS)) {
         const named = NAMED.exec(tag);
         assert.ok(named, `${name}: ${tag.slice(0, 60)} is not <script src="name.js"></script>`);
-        assert.ok(named[2] === 'markdown.js' || SCRIPTS[named[2]], `${name}: no ui/${named[2]}`);
+        assert.ok(['markdown.js', 'editor.js'].includes(named[2]) || SCRIPTS[named[2]], `${name}: no ui/${named[2]}`);
         used.add(named[2]);
       }
     }

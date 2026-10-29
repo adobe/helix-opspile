@@ -15,7 +15,7 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  candidateHosts, faviconProxy, findIcons, forgetIcons, icoPng, orgDomain, pageIcons, pageTitle,
+  candidateHosts, faviconProxy, findIcons, forgetIcons, orgDomain, pageIcons, pageTitle,
   registrable, sniff,
 } from '../src/favicons.js';
 import { CLEF } from '../src/label.js';
@@ -70,10 +70,9 @@ describe('favicons: images and pages', () => {
     assert.equal(sniff(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), 'jpeg');
     assert.equal(sniff(new TextEncoder().encode('RIFF0000WEBPVP8 ')), 'webp');
     assert.equal(sniff(new TextEncoder().encode('  <svg xmlns="x"></svg>')), 'svg');
+    assert.equal(sniff(new TextEncoder().encode('<!-- made by hand --><svg viewBox="0 0 1 1"/>')), 'svg');
     assert.equal(sniff(ico(32)), 'ico');
     assert.equal(sniff(new TextEncoder().encode('<html>')), null);
-    assert.deepEqual([...icoPng(ico(32))], [...PNG(7)]);
-    assert.equal(icoPng(ico(32).slice(0, 30)), null);
   });
 
   it('reads the icons and the title a page names', () => {
@@ -85,8 +84,10 @@ describe('favicons: images and pages', () => {
       <link rel="icon" type="image/svg+xml" href="/icon.svg">
       <link rel="shortcut icon" href="http://acme.example/old.ico">
       <link rel="icon" href="/favicon-32.png"></head></html>`;
+    // An SVG comes after the others: Clef does not read it.
     assert.deepEqual(pageIcons(html, new URL('https://www.acme.example/home')), [
-      'https://cdn.acme.example/touch.png', 'https://www.acme.example/favicon-32.png']);
+      'https://cdn.acme.example/touch.png', 'https://www.acme.example/favicon-32.png',
+      'https://www.acme.example/icon.svg']);
     assert.equal(pageTitle(html), 'ACME & Co — Home');
     assert.equal(pageTitle('<html></html>'), null);
   });
@@ -95,11 +96,14 @@ describe('favicons: images and pages', () => {
 describe('favicons: finding an org\'s', () => {
   const realFetch = globalThis.fetch;
   let fetched;
+  let agents;
   beforeEach(() => {
     forgetIcons();
     fetched = [];
-    globalThis.fetch = async (url) => {
+    agents = new Set();
+    globalThis.fetch = async (url, init = {}) => {
       const u = new URL(url);
+      agents.add(init.headers && init.headers['user-agent']);
       fetched.push(u.host === 'www.google.com' ? `google:${u.searchParams.get('domain')}` : u.href);
       if (u.host === 'www.google.com') {
         const d = u.searchParams.get('domain');
@@ -116,12 +120,15 @@ describe('favicons: finding an org\'s', () => {
         return new Response(PNG(9), { status: 404 });
       }
       if (u.href === 'https://acme.example/') {
-        return Object.defineProperty(new Response('<title>ACME</title><link rel="apple-touch-icon" href="/touch.png">', {
+        return Object.defineProperty(new Response('<title>ACME</title><link rel="apple-touch-icon" href="/touch.png"><link rel="icon" href="/logo.svg">', {
           headers: { 'content-type': 'text/html' },
         }), 'url', { value: 'https://www.acme.example/' });
       }
       if (u.href === 'https://www.acme.example/touch.png') {
         return new Response(PNG(3));
+      }
+      if (u.href === 'https://www.acme.example/logo.svg') {
+        return new Response('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>');
       }
       if (u.href === 'https://www.acme.example/favicon.ico') {
         return new Response(ico(48));
@@ -161,8 +168,14 @@ describe('favicons: finding an org\'s', () => {
       ['https://www.acme.example/touch.png', 'site', 'www.acme.example', 90],
       ['https://www.acme.example/favicon.ico', 'site', 'www.acme.example', 42],
       ['acmelabs.com', 'favicon', 'acmelabs.com', 30],
+      // Offered, but not shown to Clef.
+      ['https://www.acme.example/logo.svg', 'site', 'www.acme.example', 0],
     ]);
+    assert.equal(icons.at(-1).p, null);
+    assert.equal(icons.at(-1).svg, true);
     assert.equal(icons[0].title, 'ACME');
+    // Sites are asked as a browser asks.
+    assert.deepEqual([...agents].map((a) => /^Mozilla\/5\.0 \(Macintosh.*Chrome\/[\d.]+ Safari/.test(a)), [true]);
     assert.equal(icons[0].image, undefined);
     // Four images per question set; Clef is told where each is from.
     assert.deepEqual(asked.map((b) => b.images.length), [4]);

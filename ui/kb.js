@@ -52,10 +52,15 @@ function conceptTemplate(path) {
   return `---\ntype: Reference\ntitle: ${title}\ndescription: One sentence that says what this is.\ntags: []\n---\n\n`;
 }
 
+/** The editor's text, or null when it shows something else. */
+function editorText() {
+  return $('text') && state.editor ? state.editor.value : null;
+}
+
 /** Whether the editor holds text that is not saved: edited since it was opened or saved. */
 function edited() {
   const f = state.file;
-  return Boolean(f && !f.readonly && $('text') && $('text').value !== f.baseline);
+  return Boolean(f && !f.readonly && editorText() !== null && editorText() !== f.baseline);
 }
 
 /**
@@ -1083,7 +1088,7 @@ function renderEditor(note) {
     ? 'Written by code from the concepts; changes to the concepts update it.'
     : isPrompt
       ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it. Saved as you type.${f.isNew ? ' It does not exist yet: start typing to create it.' : ''}`
-      : `An OKF concept: YAML frontmatter with a <code>type</code>, then Markdown. Saved as you type; index.md and log.md follow.${f.choosePath ? ' Give it a path first.' : ''}`;
+      : f.choosePath ? 'Give it a path first.' : '';
   $('editor').innerHTML = `
     <div class="bar">${up('files', 'Files')}
       ${f.choosePath
@@ -1092,13 +1097,17 @@ function renderEditor(note) {
       <span class="hash" id="hash"></span>
     </div>
     <div class="note${note ? ` ${note.kind}` : ''}" id="note">${note ? esc(note.text) : explain}</div>
-    <textarea id="text" spellcheck="false"${f.readonly ? ' readonly' : ''} aria-label="File contents"></textarea>
+    <div class="text" id="text"></div>
     ${f.readonly || f.isNew ? '' : '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>'}`;
-  $('text').value = f.baseline;
+  state.editor = Editor.create($('text'), {
+    text: f.baseline,
+    readonly: f.readonly,
+    label: 'File contents',
+    onInput: f.readonly ? undefined : schedule,
+    onBlur: f.readonly ? undefined : () => { flush(); },
+  });
   showHash();
   if (f.readonly) return;
-  $('text').addEventListener('input', schedule);
-  $('text').addEventListener('blur', () => { flush(); });
   if ($('path')) $('path').addEventListener('input', schedule);
   if ($('delete')) $('delete').onclick = remove;
 }
@@ -1146,7 +1155,7 @@ async function flush() {
 }
 
 async function commit(f) {
-  const text = $('text').value;
+  const content = editorText();
   const path = f.choosePath ? $('path').value.trim().replace(/^\/+/, '') : f.path;
   if (!PATH.test(path)) {
     f.problem = 'Give the file a lowercase path that ends in .md, like issues/cdn-purge-delay.md.';
@@ -1156,7 +1165,7 @@ async function commit(f) {
   setNote('', 'Saving…');
   const { status, ok, body } = await call('/api/kb/file', {
     method: 'PUT',
-    body: JSON.stringify({ repo: state.repo, path, content: text, base: f.hash }),
+    body: JSON.stringify({ repo: state.repo, path, content, base: f.hash }),
   });
   if (state.file !== f) return;
   if (status === 409) {
@@ -1174,7 +1183,7 @@ async function commit(f) {
     return;
   }
   f.problem = null;
-  f.baseline = text;
+  f.baseline = content;
   if (body.hash) f.hash = body.hash;
   const created = f.isNew;
   f.isNew = false;
@@ -1214,7 +1223,7 @@ function resolveConflict(f, keep) {
   if (theirs && !state.files.some((x) => x.path === f.path)) reloadFiles();
   if (keep === 'theirs') {
     f.baseline = theirs ? theirs.text : '';
-    $('text').value = f.baseline;
+    state.editor.value = f.baseline;
     showHash();
     setNote('', 'Loaded their version.');
     return;
@@ -1282,7 +1291,7 @@ window.addEventListener('pagehide', () => {
     credentials: 'same-origin',
     keepalive: true,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ repo: state.repo, path: f.path, content: $('text').value, base: f.hash }),
+    body: JSON.stringify({ repo: state.repo, path: f.path, content: editorText(), base: f.hash }),
   });
 });
 // The one native question: leaving the page (the browser's Back, a reload, closing the tab)

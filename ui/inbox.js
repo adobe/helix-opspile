@@ -17,7 +17,9 @@ const state = {
   sel: { type: new Set(['conversation']) },
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
-  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, keep: new Set(), scores: new Map(),
+  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
+  // The thread list on screen, while it stays the same list (see syncList).
+  list: newList(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
@@ -81,7 +83,7 @@ const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
 // When the list places a thread and says it was active: its last post by a person, else (only
 // bots or apps posted) its last message at all, as the inbox API orders it. Never null: a
 // thread without a time would sort above every date ("null" > "2026-…").
-const activityOf = (t) => lastOf(t) || t.any_at || '';
+const activityOf = (t) => String(lastOf(t) || t.any_at || '');
 const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
   : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`);
 // An org as the admin team set it up (/inbox/admin): its name and icon, else the slug and
@@ -681,9 +683,9 @@ function valuesOf(f, t) {
   if (!byThread.has(t)) byThread.set(t, facetValues(f, t));
   return byThread.get(t);
 }
-// Unread only keeps the threads read since it was turned on, so a row does not vanish
-// when you open it.
-const passes = (t, except) => (!state.unread || t.unread || state.keep.has(t.thread))
+// Unread only keeps every thread the list has shown since it was opened (see syncList), so a
+// row does not vanish when you, or you elsewhere, read it.
+const passes = (t, except) => (!state.unread || keptUnread(t))
   && (!personal() || t.kind !== 'alert')
   && viewFacets().every((f) => f.id === except || facetPasses(f, t));
 /**
@@ -796,6 +798,7 @@ const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === 
 
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
+  syncList();
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
@@ -1085,6 +1088,92 @@ const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
 
 function renderThreads() { inPass(threadRows); }
+
+/*
+ * The thread list stays put while it is the same list: the same view, filters and unread only
+ * (`listKey`). Reading a thread changes its score, its status and whether it is unread; none of
+ * that moves or hides a row you have seen, and new threads do not push the rows you look at
+ * away. While the list lasts:
+ * - every thread it has shown stays in it (`held`), read or not, whatever its filters say now:
+ *   unread only is "unread when the list was opened", and what came in since;
+ * - the rows you have seen (in view, or scrolled past: `seen`) keep their order; the rows below
+ *   them are sorted as the view sorts, as older pages come in behind them;
+ * - threads that come in (`arrived`: activity since the list was opened, and not in it yet) are
+ *   added at the end of a team's list, its queue, and at the top of the personal view, latest
+ *   activity first. There, a thread further down that you have not seen comes up to the top
+ *   too when it has activity. In a team's list, a critical or hot one (nobody at Adobe has
+ *   seen it) comes in right below the rows you have seen instead, not at the end.
+ * A new list (another view or filter, unread only on or off, or a click on the view already
+ * shown) is sorted afresh. The thread open then (`open`) stays in it when read, if it passes
+ * the new filters.
+ */
+function newList(key = null, open = null) {
+  return {
+    key, open, fresh: true, order: [], held: new Set(), seen: new Set(), arrived: new Set(), since: '',
+  };
+}
+/** Whether unread only keeps `t`: unread, shown by the list already, or open when the list was opened. */
+const keptUnread = (t) => t.unread || state.list.held.has(t.thread) || t.thread === state.list.open;
+const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]) => [id, [...s].sort()])
+  .sort((a, b) => a[0].localeCompare(b[0]));
+const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
+  setsKey(state.sel), setsKey(state.not)]);
+/** A new list, when what the list is of changed. */
+function syncList() {
+  if (!state.data) return;
+  const key = listKey();
+  if (state.list.key === key) return;
+  state.list = newList(key, state.open);
+  state.list.since = state.data.threads.reduce((m, t) => (activityOf(t) > m ? activityOf(t) : m), '');
+}
+/** A thread the list shows: one it has shown already (not an alert in the personal view), or one that passes. */
+const onList = (t) => (state.list.held.has(t.thread) && (!personal() || t.kind !== 'alert')) || passes(t);
+/** The view's order: latest activity first (personal), or what needs me most (a team). */
+function viewSort(ts) {
+  if (personal()) return ts.sort((a, b) => activityOf(b).localeCompare(activityOf(a)));
+  // Scores are computed when the inbox loads, not when you read a thread.
+  return ts.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+}
+/** The threads of the list (`sorted`, in the view's order), in the order the list shows them. */
+function placeRows(sorted) {
+  const L = state.list;
+  let out = sorted;
+  if (!L.fresh) {
+    const placed = new Set(L.order);
+    const unseen = sorted.filter((t) => !L.seen.has(t.thread));
+    for (const t of unseen) {
+      if ((personal() || !placed.has(t.thread)) && activityOf(t) > L.since) L.arrived.add(t.thread);
+    }
+    const by = new Map(sorted.map((t) => [t.thread, t]));
+    const pinned = L.order.filter((k) => L.seen.has(k) && by.has(k)).map((k) => by.get(k));
+    const come = unseen.filter((t) => L.arrived.has(t.thread));
+    const rest = unseen.filter((t) => !L.arrived.has(t.thread));
+    const urgent = (t) => ['critical', 'hot'].includes(statusOf(t));
+    out = personal() ? [...come, ...pinned, ...rest]
+      : [...pinned, ...come.filter(urgent), ...rest, ...come.filter((t) => !urgent(t))];
+  }
+  L.fresh = false;
+  L.order = out.map((t) => t.thread);
+  for (const k of L.order) L.held.add(k);
+  return out;
+}
+/** The rows in view, and the ones above them, are seen: they keep their order from now on. */
+function noteSeen() {
+  const box = $('threads');
+  const rows = box.querySelector('.rows')?.children;
+  if (!rows?.length || searching() || !box.clientHeight) return;
+  const bottom = Math.min(box.getBoundingClientRect().bottom, window.innerHeight);
+  let lo = 0;
+  let hi = rows.length - 1;
+  let last = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].getBoundingClientRect().top < bottom) { last = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  for (let i = 0; i <= last; i += 1) if (rows[i].dataset.thread) state.list.seen.add(rows[i].dataset.thread);
+}
+let seenFrame = 0;
+const seenSoon = () => { if (!seenFrame) seenFrame = requestAnimationFrame(() => { seenFrame = 0; noteSeen(); }); };
 /** The personal view (the default), then each of the viewer's teams: one switch, the active one highlighted. */
 function viewSwitch() {
   const mine = personal();
@@ -1113,12 +1202,9 @@ function threadRows() {
   const box = $('threads');
   if (!state.data) return;
   listHead(box);
+  syncList();
   if (searching()) { searchRows(box); return; }
-  const shown = state.data.threads.filter((t) => passes(t));
-  if (personal()) shown.sort((a, b) => activityOf(b).localeCompare(activityOf(a)));
-  // Team order is computed when the inbox loads, not when you read a thread, so a click
-  // never moves the row you clicked.
-  else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+  const shown = placeRows(viewSort(state.data.threads.filter(onList)));
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
@@ -1195,6 +1281,7 @@ function threadRows() {
   cardGone();
   state.order = shown.map((t) => t.thread);
   state.prevKeys = known;
+  noteSeen();
 }
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
 
@@ -2941,7 +3028,6 @@ function markRead(t) {
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
   }
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
-  if (state.unread && t.unread) state.keep.add(t.thread);
   Object.assign(t, {
     unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
   });
@@ -3202,7 +3288,10 @@ function listen(team, live) {
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {
       if (ev.folded) for (const k of [ev.thread, ...ev.folded]) if (k !== state.open) state.cache.delete(k);
-      reloadSoon(ev.folded?.includes(state.open) ? state.open : ev.thread);
+      // Re-filed under another org or team (a rule change): cached copies say where they were.
+      if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
+      const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
+      reloadSoon(open ? state.open : ev.thread);
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
@@ -3421,7 +3510,7 @@ async function noteMention(ev, team) {
  * synchronous, so nothing on screen sees it.
  */
 function inBell(b, data, t) {
-  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'keep', 'coPeople'];
+  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'list', 'coPeople'];
   const saved = Object.fromEntries(keys.map((k) => [k, state[k]]));
   const savedPass = pass;
   const sets = (o) => Object.fromEntries(Object.entries(o).map(([id, vs]) => [id, new Set(vs)]));
@@ -3434,7 +3523,7 @@ function inBell(b, data, t) {
       sel: sets(b.sel),
       not: sets(b.not),
       unread: false,
-      keep: new Set(),
+      list: newList(),
     });
     state.coPeople = coParticipants();
     return inPass(() => passes(t));
@@ -3492,8 +3581,8 @@ function noteEvent(ev, team) {
   bellsSoon(team);
 }
 
-function setUnread(on, open = state.open) {
-  if (on !== state.unread) state.keep = new Set(on && open ? [open] : []);
+/** Unread only, on or off: a new list (see syncList), which keeps the open thread. */
+function setUnread(on) {
   state.unread = on;
 }
 
@@ -3555,7 +3644,7 @@ function fromUrl() {
   }
   state.sort = personalAsked(q) ? 'personal' : 'team';
   onePick();
-  setUnread(q.get('unread') === '1', q.get('t'));
+  setUnread(q.get('unread') === '1');
   state.as = Number(q.get('as')) || null;
   return { open: q.get('t'), review: q.get('review') === '1', q: q.get('q') || '' };
 }
@@ -3752,10 +3841,13 @@ async function start() {
     if (t) prefetch(t.dataset.thread, { urgent: true });
   });
   $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
+  $('threads').addEventListener('scroll', seenSoon, { passive: true });
+  window.addEventListener('resize', seenSoon, { passive: true });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
     const view = e.target.closest('[data-view]');
-    if (view) { switchView(view.dataset.view || null); return; }
+    // A click on the view already shown sorts it afresh, without the threads unread only kept.
+    if (view) { if (view.getAttribute('aria-checked') === 'true') state.list.key = null; switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
@@ -4066,7 +4158,7 @@ const WEBMCP_TOOLS = [
         },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
         sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, whichever team they belong to, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
-        unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
+        unread_only: { type: 'boolean', description: 'Only threads the viewer has not read (a thread read while the list is shown stays in it)' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
     },

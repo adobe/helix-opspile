@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { createHash } from 'node:crypto';
+
 /** In-memory stand-ins for the RAW bucket and the NORMALIZE queue. */
 export function fakeEnv(vars = {}, { failPut = false } = {}) {
   const objects = new Map();
@@ -148,5 +150,56 @@ export function fakeArtifacts({ existing = [], fail = false } = {}) {
         [Symbol.dispose]() {},
       };
     },
+  };
+}
+
+const sha = (s) => createHash('sha1').update(s).digest('hex');
+
+/** An Artifacts repo in memory, from `{ path: content }`, readable like the binding. */
+export function fakeRepo(files) {
+  const blobs = new Map();
+  const trees = new Map();
+  function tree(prefix) {
+    const names = new Map();
+    for (const path of Object.keys(files)) {
+      if (path.startsWith(prefix)) {
+        const [first, ...rest] = path.slice(prefix.length).split('/');
+        names.set(first, rest.length ? 'tree' : 'blob');
+      }
+    }
+    const entries = [...names].map(([name, type]) => {
+      if (type === 'blob') {
+        const content = files[`${prefix}${name}`];
+        const hash = sha(`blob ${content}`);
+        blobs.set(hash, content);
+        return {
+          name, type, hash, mode: '100644',
+        };
+      }
+      return {
+        name, type, hash: tree(`${prefix}${name}/`), mode: '40000',
+      };
+    });
+    const hash = sha(`tree ${prefix} ${JSON.stringify(entries)}`);
+    trees.set(hash, entries);
+    return hash;
+  }
+  const root = Object.keys(files).length ? tree('') : null;
+  return {
+    async log() {
+      return root ? [{
+        hash: sha(`commit ${root}`), treeHash: root, message: 'seed', author: { name: 'x' }, committedAt: 1792584000,
+      }] : [];
+    },
+    async readTree(hash) {
+      return trees.get(hash) || null;
+    },
+    async readBlob(hash) {
+      return blobs.has(hash) ? new Blob([blobs.get(hash)]) : null;
+    },
+    async info() {
+      return { remote: 'https://made-up.example/git/ns/x.git' };
+    },
+    [Symbol.dispose]() {},
   };
 }
