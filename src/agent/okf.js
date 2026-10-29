@@ -37,6 +37,12 @@ export function splitFrontmatter(text) {
 export const SYSTEM_PROMPT = 'systemprompt.md';
 export const SYSTEM_PROMPT_TYPE = 'System Prompt';
 
+/**
+ * Whether a file of a knowledge base is one of its entries: what the agents and people filed,
+ * not the index, the log or the system prompt. The editor ranks knowledge bases by them.
+ */
+export const isEntry = (path) => path !== SYSTEM_PROMPT && !RESERVED.has(String(path).split('/').pop());
+
 /** A system prompt with frontmatter, as a concept; text without frontmatter gets some. */
 export function asSystemPrompt(content, title = 'Agent instructions') {
   const text = String(content || '');

@@ -14,7 +14,7 @@ import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
 import {
-  addLogEntry, asSystemPrompt, checkConcept, renderIndex, RESERVED, splitFrontmatter,
+  addLogEntry, asSystemPrompt, checkConcept, isEntry, renderIndex, RESERVED, splitFrontmatter,
   stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 
@@ -244,6 +244,21 @@ async function cloneOrInit(url, headers, empty) {
   return fs;
 }
 
+/**
+ * Records how many entries the knowledge base has now (`knowledge_bases.entries`), from the
+ * work tree that was pushed. The editor's list ranks by it; a failure leaves the last count.
+ */
+async function countEntries(env, artifact, fs) {
+  if (!env.DB) {
+    return;
+  }
+  const n = fs.files(DIR).filter((f) => !f.startsWith('.git/') && isEntry(f)).length;
+  await env.DB.prepare('UPDATE knowledge_bases SET entries = ? WHERE repo = ?').bind(n, artifact).run()
+    .catch((e) => console.error(JSON.stringify({
+      route: 'kb', action: 'count', artifact, error: e.message,
+    })));
+}
+
 const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward|fetch first|failed to update ref/i
   .test(`${e && e.code} ${e && e.message}`);
 
@@ -287,6 +302,8 @@ export async function writeKnowledge(env, artifact, changes, {
         if (pushed && pushed.ok === false) {
           throw new Error(`push failed: ${pushed.error || 'rejected'}`);
         }
+        // eslint-disable-next-line no-await-in-loop
+        await countEntries(env, artifact, fs);
         return { commit: result.commit, files: changes.map((c) => c.path) };
       } catch (e) {
         if (!rejected(e) || attempt >= ATTEMPTS) {
