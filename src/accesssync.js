@@ -10,13 +10,17 @@
  * governing permissions and limitations under the License.
  */
 
-import { isStaffDomain } from './lookup.js';
+import { domainList, isStaffDomain } from './lookup.js';
 
 /**
  * Keeps the Cloudflare Access policy of the inbox in step with the ops teams: whoever is a
  * member of a team (and staff, with a staff mail domain) may sign in, with any of the login
  * methods; nobody else. The policy's email includes are the list; other includes (groups,
  * domains) are left alone.
+ *
+ * No-team mode: with SIGNIN_DOMAINS, anyone with an email at one of those domains may sign in
+ * too, so the policy also gets an email-domain include for each of them (added when missing,
+ * never taken off: unsetting SIGNIN_DOMAINS leaves them for an admin to remove in Access).
  *
  * Runs after every membership change in the admin pages and on the cron. Needs the secret
  * ACCESS_API_TOKEN (Access: Apps and Policies Write) and the vars ACCESS_ACCOUNT_ID,
@@ -37,24 +41,30 @@ export async function memberEmails(env) {
 }
 
 /**
- * The policy with its email includes replaced by `emails`, and what changed. Includes that
- * are not single emails stay as they are.
+ * The policy with its email includes replaced by `emails`, and an email-domain include for
+ * each of `domains` it lacks, and what changed. Other includes stay as they are.
  */
-export function withEmails(policy, emails) {
+export function withEmails(policy, emails, domains = []) {
   const include = policy.include || [];
   const before = new Set(include.filter((i) => i.email)
     .map((i) => String(i.email.email).toLowerCase()));
   const after = new Set(emails);
   const added = [...after].filter((e) => !before.has(e));
   const removed = [...before].filter((e) => !after.has(e));
+  const had = new Set(include.filter((i) => i.email_domain)
+    .map((i) => String(i.email_domain.domain).toLowerCase()));
+  const domainsAdded = [...new Set(domains)].filter((d) => !had.has(d));
   return {
     added,
     removed,
+    domainsAdded,
     body: {
       name: policy.name,
       decision: policy.decision,
       include: [
-        ...include.filter((i) => !i.email), ...[...after].map((email) => ({ email: { email } })),
+        ...include.filter((i) => !i.email),
+        ...domainsAdded.map((domain) => ({ email_domain: { domain } })),
+        ...[...after].map((email) => ({ email: { email } })),
       ],
       exclude: policy.exclude || [],
       require: policy.require || [],
@@ -73,8 +83,9 @@ export async function syncAccess(env, { fetchImpl = fetch } = {}) {
     return { skipped: 'not configured' };
   }
   const emails = await memberEmails(env);
+  const domains = domainList(env.SIGNIN_DOMAINS);
   // An empty list would lock everyone out: rather keep the policy as it is.
-  if (!emails.length) {
+  if (!emails.length && !domains.length) {
     return { skipped: 'no members' };
   }
   const url = `${API}/accounts/${env.ACCESS_ACCOUNT_ID}/access/apps/${env.ACCESS_APP_ID}`
@@ -84,15 +95,22 @@ export async function syncAccess(env, { fetchImpl = fetch } = {}) {
   if (!got.success) {
     throw new Error(`access policy: ${JSON.stringify(got.errors || []).slice(0, 200)}`);
   }
-  const { added, removed, body } = withEmails(got.result, emails);
-  if (!added.length && !removed.length) {
-    return { added: 0, removed: 0 };
+  const {
+    added, removed, domainsAdded, body,
+  } = withEmails(got.result, emails, domains);
+  const counts = {
+    added: added.length,
+    removed: removed.length,
+    ...(domains.length ? { domainsAdded: domainsAdded.length } : {}),
+  };
+  if (!added.length && !removed.length && !domainsAdded.length) {
+    return counts;
   }
   const put = await (await fetchImpl(url, { method: 'PUT', headers, body: JSON.stringify(body) })).json();
   if (!put.success) {
     throw new Error(`access policy: ${JSON.stringify(put.errors || []).slice(0, 200)}`);
   }
-  return { added: added.length, removed: removed.length };
+  return counts;
 }
 
 /** syncAccess for request handlers: never throws, logs counts only. */

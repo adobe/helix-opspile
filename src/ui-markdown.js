@@ -164,6 +164,16 @@ function image(tag, proxy) {
 }
 
 /**
+ * Paragraphs of nothing but images, one after the other (Teams and Slack attach images so):
+ * two or more images in such a run are a gallery, a grid the page shows them in.
+ */
+const IMAGE_RUN = /(?:<p>(?:\s*(?:<img class="att[^>]*>|<br \/>))+\s*<\/p>\s*)+/g;
+const galleries = (html) => html.replace(IMAGE_RUN, (run) => {
+  const images = run.match(/<img [^>]*>/g);
+  return images.length < 2 ? run : `<div class="gallery">${images.join('')}</div>\n`;
+});
+
+/**
  * Markdown to HTML, safe to put in the page.
  *
  * @param {string} src
@@ -187,7 +197,7 @@ export function render(src, {
     .replace(BLOCK_END, '$1\n')
     .replaceAll(BREAK, '<br />\n');
   let code = 0;
-  return html.split(/(<[^>]*>)/).map((part, i) => {
+  return galleries(html.split(/(<[^>]*>)/).map((part, i) => {
     if (i % 2) {
       if (/^<(code|pre)[\s>]/.test(part)) {
         code += 1;
@@ -210,5 +220,5 @@ export function render(src, {
     return text
       .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
-  }).join('').trim();
+  }).join('')).trim();
 }

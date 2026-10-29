@@ -46,6 +46,9 @@ export async function entryOf(env, key) {
   return {
     key: k,
     team: row.team,
+    // The channel, for who may work it (src/shares.js, `mayWork`).
+    source: row.source,
+    channel_id: row.channel_id,
     teams: await teamsOf(env, row),
     keys: [...new Set([k, row.thread, ...(results || []).map((r) => r.thread)])],
   };
@@ -119,7 +122,7 @@ function nextVersion(previous) {
  */
 export async function getDraft(env, key, canSee) {
   const e = await entryOf(env, key);
-  if (!e || !canSee(e.teams)) {
+  if (!e || !await canSee(e.teams, e)) {
     return json({ error: 'not found' }, 404);
   }
   return json({ draft: draftOf(await draftsFor(env, e.keys), e.keys) });
@@ -140,7 +143,7 @@ export async function saveDraft(env, me, request, inTeam) {
     return json({ error: 'write something to save (up to 8000 characters)' }, 400);
   }
   const e = await entryOf(env, key);
-  if (!e || !inTeam(e.teams)) {
+  if (!e || !await inTeam(e.teams, e)) {
     return json({ error: 'not found' }, 404);
   }
   const current = draftOf(await draftsFor(env, e.keys), e.keys);
@@ -184,7 +187,7 @@ export async function saveDraft(env, me, request, inTeam) {
 export async function discardDraft(env, me, request, inTeam) {
   const { thread: key, base = null } = request || {};
   const e = await entryOf(env, key);
-  if (!e || !inTeam(e.teams)) {
+  if (!e || !await inTeam(e.teams, e)) {
     return json({ error: 'not found' }, 404);
   }
   const current = draftOf(await draftsFor(env, e.keys), e.keys);

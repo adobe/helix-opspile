@@ -77,7 +77,7 @@ export async function seedAgent(env, me, body, inTeam) {
   let name;
   if (body.thread) {
     const t = await threadTarget(env, body.thread);
-    if (!t || !inTeam(t.entry.teams)) {
+    if (!t || !await inTeam(t.entry.teams, t.entry)) {
       return json({ error: 'not found' }, 404);
     }
     if (!t.enabled) {
@@ -87,7 +87,7 @@ export async function seedAgent(env, me, body, inTeam) {
   } else {
     const team = String(body.team || '');
     const org = String(body.org || '');
-    if (!repoName('team', team) || !repoName('org', org) || !inTeam(team)) {
+    if (!repoName('team', team) || !repoName('org', org) || !await inTeam(team)) {
       return json({ error: 'give a thread, or one of your teams and a customer slug' }, 400);
     }
     name = `kb:${team}:${org}`;
@@ -129,7 +129,7 @@ export async function tellDiscarded(env, me, key, result) {
 /** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */
 export async function agentStatus(env, key, canSee) {
   const t = await threadTarget(env, key);
-  if (!t || !canSee(t.entry.teams)) {
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled || !env.AGENTS) {

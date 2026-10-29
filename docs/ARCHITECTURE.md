@@ -428,11 +428,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   through, and a plain click stops excluding it.
 - The thread list has the personal view and a view per team the viewer is in, switched above
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
-  (`view=personal`, and the default: any address without `team=`) has the conversations of all your teams in the channels you posted or
-  were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
+  (`view=personal`, and the default: any address without `team=`) has the conversations in the channels you posted or
+  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts), puts the
   latest activity first and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Its live updates come from the rooms of all your teams. A **team's** view
+  views. Its live updates come from the rooms of your teams and of the teams those channels are
+  filed under; in the rooms of other teams, only about those channels (scoped sockets,
+  `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
+  A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's

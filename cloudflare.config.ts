@@ -53,6 +53,9 @@ const VARS = [
 // The sign-in allow list (Cloudflare Access policy of the inbox) follows the ops teams when
 // these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write).
 const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_ID'] as const;
+// No-team mode, optional: SIGNIN_DOMAINS, comma-separated mail domains whose people may sign in
+// without being on an ops team (their personal view only); the allow list gets them as domains.
+const SIGNIN_VARS = ['SIGNIN_DOMAINS'] as const;
 
 // RETIRED_ORIGINS: comma-separated origins the Worker answered on before PUBLIC_ORIGIN; pages
 // opened there are redirected, and Graph subscriptions still pointing there are removed.
@@ -147,7 +150,8 @@ function vars(deployed: boolean) {
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(
-    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...MOVE_VARS, ...SLACK_VARS, ...DISCORD_VARS]
+    [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
+      ...DISCORD_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
