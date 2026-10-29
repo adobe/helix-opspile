@@ -83,8 +83,8 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
     (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title,
-     permalink, author_key, preview)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     permalink, author_key, preview, author_kind, edited, attachments)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
@@ -92,7 +92,10 @@ export async function indexMessage(db, m, now = new Date()) {
       title = COALESCE(excluded.title, messages.title),
       permalink = COALESCE(excluded.permalink, messages.permalink),
       author_key = COALESCE(excluded.author_key, messages.author_key),
-      preview = COALESCE(excluded.preview, messages.preview)`)
+      preview = COALESCE(excluded.preview, messages.preview),
+      author_kind = COALESCE(excluded.author_kind, messages.author_kind),
+      edited = COALESCE(excluded.edited, messages.edited),
+      attachments = COALESCE(excluded.attachments, messages.attachments)`)
     .bind(
       m.source,
       m.tenant,
@@ -109,6 +112,9 @@ export async function indexMessage(db, m, now = new Date()) {
       m.permalink || null,
       m.authorKey || null,
       m.preview ?? null,
+      m.authorKind || null,
+      m.edited == null ? null : Number(Boolean(m.edited)),
+      m.attachments ?? null,
     )
     .run();
 

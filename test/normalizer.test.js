@@ -633,6 +633,49 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(e2.DB.rows('SELECT via FROM watermarks'), [{ via: 'post' }]);
   });
 
+  it('keeps what the klickhaus export needs in D1, and queues the export', async () => {
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const edit = 'slack/E1/C1/2026/10/21/1.5-b.json';
+    const file = {
+      id: 'F3',
+      name: 'a.png',
+      mimetype: 'image/png',
+      url_private: 'https://files.slack.com/files-pri/T1-F3/a.png',
+      permalink: 'https://acme-support.slack.com/files/U2/F3/a.png',
+    };
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'see this', files: [file],
+      }),
+      [edit]: event({
+        type: 'message',
+        subtype: 'message_changed',
+        channel: 'C1',
+        event_ts: '1.5',
+        message: {
+          user: 'U2', ts: '1.1', text: 'see this, please', edited: { ts: '1.5' }, files: [file],
+        },
+      }),
+    }, {
+      CLICKHOUSE_URL: 'https://clickhouse.example',
+      CLICKHOUSE_DATABASE: 'logs',
+      CLICKHOUSE_USER: 'writer',
+      CLICKHOUSE_PASSWORD: 'made-up',
+    });
+    await processKey(e, root);
+    assert.deepEqual(e.DB.rows('SELECT author_kind, edited, attachments FROM messages'), [
+      { author_kind: 'person', edited: 0, attachments: 1 },
+    ]);
+    await processKey(e, edit);
+    assert.deepEqual(e.DB.rows('SELECT author_kind, edited, attachments FROM messages'), [
+      { author_kind: 'person', edited: 1, attachments: 1 },
+    ]);
+    const jobs = e.queued.filter((q) => q.body.export);
+    assert.equal(jobs.length, 2);
+    assert.equal(jobs[0].body.export, 'slack:E1:C1:1.1');
+    assert.deepEqual(jobs[0].options, { delaySeconds: 180 });
+  });
+
   it('vectorizes a thread a person posted in, through the queue', async () => {
     const stored = new Map();
     const AI = { run: async (model, { text }) => ({ data: text.map((t) => [t.length, 1]) }) };

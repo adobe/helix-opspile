@@ -73,6 +73,11 @@ const DISCORD_VARS = [
   'DISCORD_CLIENT_ID',
 ] as const;
 
+// The klickhaus export, optional: rows of every message in ClickHouse (src/clickhouse.js). It is
+// off unless CLICKHOUSE_URL (the HTTP interface's https origin), CLICKHOUSE_DATABASE,
+// CLICKHOUSE_USER and the secret CLICKHOUSE_PASSWORD are set.
+const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_USER'] as const;
+
 // TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
 // (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
 // Connector to post through, default the public cloud's.
@@ -97,6 +102,8 @@ const SECRETS = [
   // Discord: the bot's token where the poller is on, the app's secret where people connect.
   ...(process.env.DISCORD_GUILDS ? ['DISCORD_BOT_TOKEN'] : []),
   ...(process.env.DISCORD_CLIENT_ID ? ['DISCORD_CLIENT_SECRET'] : []),
+  // The klickhaus export's ClickHouse password, where it is on.
+  ...(process.env.CLICKHOUSE_URL ? ['CLICKHOUSE_PASSWORD'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -151,7 +158,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );

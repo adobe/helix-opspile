@@ -115,6 +115,10 @@ Nothing below is committed; set it on the Worker.
 | `DISCORD_POLL_SECONDS` | var | Optional: how often the poller asks Discord for new messages, default 60 (at least 15) |
 | `DISCORD_CLIENT_ID` | var | Optional: the Discord app's client id, so people can connect their Discord account (scope `identify`) and their posts and reactions there count as theirs |
 | `DISCORD_CLIENT_SECRET` | secret | The Discord app's client secret. Required when `DISCORD_CLIENT_ID` is set |
+| `CLICKHOUSE_URL` | var | Optional: the `https://` origin of the ClickHouse HTTP interface the klickhaus export writes to (`src/clickhouse.js`, "5. Stats (klickhaus)" in docs/ARCHITECTURE.md). The export is off unless all four `CLICKHOUSE_*` are set |
+| `CLICKHOUSE_DATABASE` | var | The database of `opspile_messages_raw` |
+| `CLICKHOUSE_USER` | var | The ClickHouse user the export writes as, which may only `INSERT` into `opspile_messages_raw` |
+| `CLICKHOUSE_PASSWORD` | secret | That user's password, sent in `X-ClickHouse-Key`. Required when `CLICKHOUSE_URL` is set |
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool, Cloudflare Computer's just-bash) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
