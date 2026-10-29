@@ -443,7 +443,9 @@ Bradley–Terry model whose strength is that score, learned from games of three 
   Haiku, then Clef.
 - **Picks.** When someone opens a thread by clicking it in the list, the inbox sends the threads
   on screen then, their places and their features to `POST /api/rank/pick` (table
-  `rank_events`; not while viewing as someone else or searching). The clicked thread wins over
+  `rank_events`; not while viewing as someone else or searching; only in your own views, of a
+  thread that exists). The cron deletes picks older than 90 days (`RANK_EVENTS_DAYS` in
+  `src/rankevents.js`): by then the weekly training has fetched them into `.rank/events.jsonl`. The clicked thread wins over
   each of them: fully over those above it, less over those below it, which may not have been
   looked at.
 - **Replies.** When the same person answers several customers on the same day, the customer
@@ -484,8 +486,8 @@ it stays on your machine):
    (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
 6. `npm run rank -- train [--model boost|linear] [--trees 150] [--depth 3] [--shares click=0.3,…|counts]
    [--weights …] [--without a,b] [--dry-run]` fits the model on all samples, picks and replies, prints how often the model
-   picks the winner of each source's games about threads it was not trained on (five folds, by
-   thread), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
+   picks the winner of each source's games about a thread it was not trained on (five folds by
+   thread: no game with a held-out thread is trained on, whatever its source), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
    often each judge agrees with you, and writes the model into `ui/rank.js` (between
    `// MODEL:` and `// END MODEL`). A feature seen in fewer than `--min-support` threads is not
    learned, and the policy's signs (`SIGNS` in `scripts/rank-combo.mjs`: resolved lowers a

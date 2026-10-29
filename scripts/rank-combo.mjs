@@ -130,6 +130,18 @@ export function decide(games, human, llm) {
   return [...by.values()];
 }
 
+const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000003, 7);
+
+/** The fold a thread is held out in: by its key, the same in every source and sample. */
+export const foldOf = (key, folds = 5) => hash(key) % folds;
+
+/**
+ * Whether a game is held out in fold `f`: it is about a thread of that fold. Trained on are the
+ * games about none of them, so no held-out thread is in a game the model learned from, whether
+ * a judge's, a pick's or a reply's; a held-out game's other thread may have been.
+ */
+export const inFold = (f, folds = 5) => (r) => r.keys.some((k) => foldOf(k, folds) === f);
+
 /** A thread as it was when a customer wrote in it: what the messages say, then. */
 export function asOf(entry, messages, turn) {
   const before = messages.filter((m) => !m.deletedAt && Date.parse(m.at) <= turn.at);

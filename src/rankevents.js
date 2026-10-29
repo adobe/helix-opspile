@@ -14,13 +14,17 @@
  * What people pick in the thread list (`rank_events`, migration 0040), for the team order to
  * learn from: `POST /api/rank/pick` when someone opens a thread by clicking it in the list,
  * with the threads on screen then and their features; `GET /api/rank/events` gives them to
- * the admin team's training (scripts/rank.mjs), page by page.
+ * the admin team's training (scripts/rank.mjs), page by page. The cron deletes picks older than
+ * RANK_EVENTS_DAYS: the weekly training has long since fetched them into its own `.rank/`.
  */
 
 export const MAX_SHOWN = 60;
 const MAX_FEATURES = 80;
 const MAX_KEY = 300;
 export const EVENTS_PAGE = 500;
+/** How long picks are kept in D1, and how many the cron deletes in a run at most. */
+export const RANK_EVENTS_DAYS = 90;
+const PRUNE_LIMIT = 5000;
 
 const key = (s) => typeof s === 'string' && s.length > 0 && s.length <= MAX_KEY;
 
@@ -77,10 +81,22 @@ export function cleanPick(body) {
   };
 }
 
+/**
+ * Records a pick of `me`'s: in the personal view or a view of one of their teams, of a thread
+ * that exists, so a stray client cannot feed the training with made-up views or threads.
+ */
 export async function recordPick(env, me, body, now = new Date()) {
   const pick = cleanPick(body);
   if (pick.error) {
     return pick;
+  }
+  if (pick.view !== 'personal' && !(me.teams || []).some((t) => t.slug === pick.view)) {
+    return { error: 'not a view of yours' };
+  }
+  const known = await env.DB.prepare('SELECT 1 FROM threads WHERE thread = ?')
+    .bind(pick.clicked).first();
+  if (!known) {
+    return { error: 'no such thread' };
   }
   await env.DB.prepare(`INSERT INTO rank_events (person, at, view, clicked, shown, model)
     VALUES (?, ?, ?, ?, ?, ?)`)
@@ -98,4 +114,14 @@ export async function rankEvents(env, since = 0, limit = EVENTS_PAGE) {
   const more = rows.length > size;
   const page = rows.slice(0, size).map((r) => ({ ...r, shown: JSON.parse(r.shown) }));
   return { events: page, next: more ? page[page.length - 1].id : null };
+}
+
+/** Deletes picks older than `days`, oldest first, at most `limit` a run. */
+export async function pruneRankEvents(env, now = new Date(), {
+  days = RANK_EVENTS_DAYS, limit = PRUNE_LIMIT,
+} = {}) {
+  const before = new Date(now.getTime() - days * 86400000).toISOString();
+  const res = await env.DB.prepare(`DELETE FROM rank_events WHERE id IN (
+      SELECT id FROM rank_events WHERE at < ? ORDER BY id LIMIT ?)`).bind(before, limit).run();
+  return { deleted: res.meta?.changes ?? 0, before };
 }

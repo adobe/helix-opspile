@@ -64,7 +64,7 @@ import {
   boost, forest, predict, treeScore,
 } from './rank-trees.mjs';
 import {
-  DEFAULT_SHARES, DEFAULT_WEIGHTS, SIGNS, rows, samples, shareOut,
+  DEFAULT_SHARES, DEFAULT_WEIGHTS, SIGNS, inFold, rows, samples, shareOut,
 } from './rank-combo.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -375,9 +375,6 @@ function fitRows(names, list, l2, held = new Set()) {
 }
 
 const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
-const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000003, 7);
-/** Held out in fold f: a game about any thread of that fold; trained on: the others. */
-const inFold = (f) => (r) => r.keys.some((k) => hash(k) % 5 === f);
 
 /** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
 async function events() {
@@ -534,7 +531,8 @@ async function train(opts) {
     model: Number(mean(held[k].model, 'accuracy').toFixed(3)),
     'old score': held[k].classic.length ? Number(mean(held[k].classic, 'accuracy').toFixed(3)) : null,
   }]));
-  console.log('How often each picks the winner, on threads (or picks) it was not trained on:');
+  console.log('How often each picks the winner of games about a thread it was not trained on'
+    + ' (no game with that thread was trained on, whatever its source):');
   console.table(report);
   // The judges against you, sample by sample.
   for (const smp of all.filter((x) => x.human.length)) {
@@ -684,7 +682,8 @@ async function compare(opts) {
     };
     process.stdout.write(`${name} done\n`);
   }
-  console.log('How often each picks the winner of each source\'s games, held out (5 folds):');
+  console.log('How often each picks the winner of each source\'s games about a thread it was not'
+    + ' trained on (5 folds by thread):');
   console.table(results);
   return results;
 }
