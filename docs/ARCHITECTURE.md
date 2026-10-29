@@ -146,7 +146,7 @@ page has the same channel search the admin team adds channels with (every channe
 Teams team, customer or id), and picking one sends a request, "add this channel to this team",
 with an optional note (`channel_requests`, migration 0028; one open request per channel and
 team). The admin team sees the open ones under **Requests** in the admin pages, their number on
-that tab and on the inbox's Admin switch. Opening one runs the manual assignment as a dry run
+Requests in every page's header. Opening one runs the manual assignment as a dry run
 and says what confirming would do: re-file the channel under the team (and which threads move),
 or share it with the team when another team holds it. **Confirm** then makes that assignment,
 exactly as adding the channel on the team's page does, and records who confirmed it and what it
@@ -351,17 +351,24 @@ only tools agents may call. Adding or changing one connects to it and lists its 
 them are the [global servers](#global-mcp-servers), with a switch for the team (in a team's
 knowledge base) and one per channel the knowledge base learns from.
 
-For admins and team managers, the pages' headers have the same switch between **Inbox**,
-**Agents** (this editor: the agents' knowledge bases, channels, MCP servers and instructions)
-and **Admin**, and context goes along between the inbox and the editor. From the inbox, the editor opens the knowledge base
-of the open thread's customer (or of the one customer filtered on) if it has one, else the
-team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
-origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
-thread and "view as". Opened directly, **Inbox** goes to the inbox of the team whose knowledge
-base is open. The editor's URL names the knowledge base and the file (or the history), and
-each one opened is a history entry, so the browser's Back and Forward step through them and
-back to the inbox. The editor itself is always the admin's own, also when they came from a
-"view as" inbox.
+For admins and team managers, every page has the same header (`ui/header.js`,
+`ui/header.css`): a switch between **Inbox**, **Agents** (this editor: the agents' knowledge
+bases, channels, MCP servers and instructions) and **Teams**, and for the admin team **Orgs**
+and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left in that
+browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
+**Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
+**Agents** with its knowledge base and file, and each admin section with what was picked in it.
+From the inbox, what is on screen picks what the others open on: Agents and Orgs the customer
+on screen (the open thread's, or the one customer filtered on; Agents its knowledge base if it
+has one, else the team's), Teams the team picked (in the team views, for whoever may manage it).
+With nothing on screen for them, they open as they were left, and Agents, not opened yet in the
+tab, on the team's. The inbox, not
+opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
+address on links made before, is still taken.) The editor's URL names the knowledge base and
+the file (or the history), and each one opened is a history entry, so the browser's Back and
+Forward step through them; going between the admin sections is one too. The editor itself is
+always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
+the page you are on, with a menu of the others.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
@@ -376,6 +383,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   classification), people and their platform identities, ops teams, and read watermarks. It
   answers the inbox queries, for example "everything waiting on us for my team" or
   "everything from this customer in the last 7 days".
+  It keeps one piece of text: each message's first 200 characters as one line of plain text
+  (`messages.preview`, written by the normalizer), and the latest one of every thread
+  (`threads.last_text`, derived with the other `last_*` columns), so the inbox's rows show
+  the latest reply without reading the thread. Threads indexed before it was kept (migration
+  0035) get it from the cron, a few hundred per run, the most recent first
+  (`src/previews.js`, from the latest message's file in pile 2).
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
   them back to D1 in batches.
@@ -422,11 +435,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   through, and a plain click stops excluding it.
 - The thread list has the personal view and a view per team the viewer is in, switched above
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
-  (`view=personal`, and the default: any address without `team=`) has the conversations of all your teams in the channels you posted or
-  were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
+  (`view=personal`, and the default: any address without `team=`) has the conversations in the channels you posted or
+  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts), puts the
   latest activity first and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Its live updates come from the rooms of all your teams. A **team's** view
+  views. Its live updates come from the rooms of your teams and of the teams those channels are
+  filed under; in the rooms of other teams, only about those channels (scoped sockets,
+  `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
+  A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
@@ -568,6 +584,15 @@ closest emoji from at most 16 candidates (the most alike by name and CLDR keywor
 ones), at most three names per reply, within 2.5 seconds; it needs a probability of 0.5, else
 the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
 way. The inbox shows every platform's names as emoji the same way.
+
+**Emoji suggestions.** Typing `:` and two more characters of a name in the reply box (or in a
+message being edited) suggests up to eight emoji, as typing `@` suggests people. First, at
+once, those whose Slack name, or another platform's name for them, has what was typed: the
+whole name, then names it starts, then names with a part it starts, then any, one name per
+emoji (`matchEmoji`, `src/emojinames.js`). When that leaves room, Clef fills the list
+(`GET /api/emoji`): it ranks the candidates above by how likely each is what is being
+typed, with no threshold, and the list takes them in that order, skipping the emoji it
+already has, until it is full. Picking one writes `:name: `.
 
 **Files.** A reply can carry files (`src/attach.js`): the 📎 button beside the reply box,
 files dropped anywhere on the open thread (which shows where they go, or why they cannot), or

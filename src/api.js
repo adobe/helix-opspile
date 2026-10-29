@@ -25,7 +25,8 @@ import {
   startAuth,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
-import { isStaffDomain } from './lookup.js';
+import { rankEmoji } from './shortcodes.js';
+import { isSignInDomain, isStaffDomain } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { react, resolve } from './react.js';
 import {
@@ -39,7 +40,7 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  memberOf, sharedWith, teamsOf, viewTeam,
+  inPersonalView, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
@@ -124,12 +125,15 @@ async function personWhere(env, column, value) {
 }
 
 /**
- * The signed-in person, from the verified Access email. An admin may look at the inbox as
- * someone else (`x-opspile-as: <person id>`): reads only, never their read state or a reply.
+ * Whether a person may use the inbox: a member of an ops team, or (no-team mode) someone
+ * whose email is in one of SIGNIN_DOMAINS.
  */
-/** A person by id, with their teams (an MCP client's token names the person). */
+const admitted = (env, p) => Boolean(p) && (p.teams.length > 0 || isSignInDomain(env, p.email));
+
+/** A person by id, with their teams (an MCP client's token names the person), or null. */
 export async function personById(env, id) {
-  return personWhere(env, 'id', id);
+  const p = await personWhere(env, 'id', id);
+  return admitted(env, p) ? p : null;
 }
 
 /**
@@ -150,17 +154,35 @@ const orgFields = (orgs, slug) => {
   return { org_name: (o && o.name) || null, org_icon: (o && o.icon) || null, org_type: (o && o.type) || 'customer' };
 };
 
-/** A person by email, with their teams, or null. */
+/**
+ * The person signed in with `email`, with their teams, or null. Without a team, only from one
+ * of SIGNIN_DOMAINS (no-team mode); someone from there signing in for the first time, who never
+ * posted in a channel opspile follows, becomes a person in D1 now (staff if the domain is one of
+ * STAFF_DOMAINS), named as their platform accounts are.
+ */
 export async function personByEmail(env, email) {
+  const found = await personWhere(env, 'email', email);
+  if (found || !isSignInDomain(env, email)) {
+    return admitted(env, found) ? found : null;
+  }
+  const known = await env.DB.prepare(`SELECT name FROM identities
+    WHERE email = ? AND kind = 'person' AND name IS NOT NULL LIMIT 1`).bind(email).first();
+  await env.DB.prepare(`INSERT INTO people (email, name, staff) VALUES (?, ?, ?)
+    ON CONFLICT (email) DO NOTHING`)
+    .bind(email, (known && known.name) || null, isStaffDomain(env, email) ? 1 : 0).run();
   return personWhere(env, 'email', email);
 }
 
+/**
+ * The signed-in person, from the verified Access email. An admin may look at the inbox as
+ * someone else (`x-opspile-as: <person id>`): reads only, never their read state or a reply.
+ */
 export async function viewer(request, env, options) {
   const email = await accessEmail(request, env, options);
   if (!email) {
     return null;
   }
-  const me = await personWhere(env, 'email', email);
+  const me = await personByEmail(env, email);
   if (!me) {
     return null;
   }
@@ -177,11 +199,14 @@ export async function viewer(request, env, options) {
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
 
-/** Whether the viewer may see thread `key`, as `/api/thread` decides: a team whose inbox has it. */
+/**
+ * Whether the viewer may see thread `key`, as `/api/thread` decides: a team whose inbox has it,
+ * or for someone on no team a channel of their personal view.
+ */
 async function canSee(env, me, key) {
   const row = await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
     .bind(key).first();
-  return Boolean(row) && (inTeam(me, await teamsOf(env, row)) || isAdmin(me));
+  return Boolean(row) && (isAdmin(me) || mayWork(env, me)(await teamsOf(env, row), row));
 }
 
 /**
@@ -208,21 +233,17 @@ async function members(env, teams) {
 /**
  * SQL: the thread row `alias` is in the inbox, with `?1` bound to `inboxTeams(…).value`. A
  * team's inbox has its own channels and the channels shared with it. The personal view has
- * the conversations of all the viewer's teams in the channels they posted or were mentioned
- * in (`me`: the parameter bound to their id); alerts are not in it.
+ * the conversations in the channels the viewer posted or was mentioned in (`me`: the parameter
+ * bound to their id), whichever team they are filed under, on a team or not; alerts are not
+ * in it.
  */
 function inInbox(alias, personal, me) {
   if (!personal) {
     return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')})`;
   }
-  const teams = '(SELECT value FROM json_each(?1))';
-  return `(${alias}.team IN ${teams} OR (${alias}.source, ${alias}.channel_id) IN (
-      SELECT source, channel_id FROM channel_teams WHERE team IN ${teams}))
-    AND ${alias}.kind != 'alert'
-    AND (${alias}.source, ${alias}.channel_id) IN (
-      SELECT source, channel_id FROM messages WHERE person = ${me}
-      UNION SELECT c.source, c.channel_id FROM mentions n JOIN threads c ON c.thread = n.thread
-        WHERE n.person = ${me})`;
+  // ?1 (the viewer's teams) is not needed here, but is bound: say so, so it stays numbered.
+  return `?1 IS NOT NULL AND ${alias}.kind != 'alert'
+    AND ${inPersonalView(alias, me)}`;
 }
 
 const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
@@ -264,6 +285,7 @@ export function fold(threads) {
       any_at: max(ms.map((m) => m.any_at)),
       last_author: latest.last_author,
       last_staff: latest.last_staff,
+      last_text: latest.last_text,
       messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
       participants: people,
       label: latest.label || anchor.label || null,
@@ -310,9 +332,13 @@ export async function inbox(env, me, team, {
     JOIN teams t ON t.slug = m.team
     WHERE m.team IN (SELECT team FROM team_members WHERE person = ?)`).bind(me.id).all();
   const membersP = members(env, scope);
+  // The personal view's rooms (as /api/me's): they grow when the viewer is first in a channel
+  // of another team, and the inbox listens there from then on.
+  const roomsP = personal ? roomsOf(env, me) : Promise.resolve(null);
   // Settled either way, so a failure elsewhere does not leave these rejections unhandled.
   teamRowsP.catch(() => {});
   membersP.catch(() => {});
+  roomsP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
   const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
@@ -339,7 +365,8 @@ export async function inbox(env, me, team, {
   const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
   const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
-      channel_name, title, root_at, last_at, last_author, last_staff, any_at, messages,
+      channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
+      messages,
       root_at IS NOT NULL AS root_known, logical_thread,
       (SELECT m.permalink FROM messages m WHERE m.thread = r.thread AND m.deleted = 0
         AND m.permalink IS NOT NULL ORDER BY (m.id = r.root_id) DESC, m.at LIMIT 1)
@@ -354,7 +381,12 @@ export async function inbox(env, me, team, {
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
     return {
-      team: personal ? null : team, personal, members: await membersP, threads: [], page,
+      team: personal ? null : team,
+      personal,
+      members: await membersP,
+      threads: [],
+      page,
+      ...(personal ? { rooms: await roomsP } : {}),
     };
   }
   const threadKeys = threads.map((t) => t.thread);
@@ -365,22 +397,26 @@ export async function inbox(env, me, team, {
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
-    // (the personal view: of the viewer's teams).
-    env.DB.prepare(`SELECT w.person, w.thread, w.read_at, p.staff, EXISTS (
-          SELECT 1 FROM team_members m WHERE m.person = w.person AND ${scope.in('m.team')})
+    // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
+    // is on none of them).
+    env.DB.prepare(`SELECT w.person, w.thread, w.read_at, p.staff, (w.person = ? OR EXISTS (
+          SELECT 1 FROM team_members m WHERE m.person = w.person AND ${scope.in('m.team')}))
           AS in_team
       FROM watermarks w JOIN people p ON p.id = w.person
       WHERE w.thread IN (SELECT value FROM json_each(?))
-        AND (p.staff = 1 OR EXISTS (
+        AND (p.staff = 1 OR w.person = ? OR EXISTS (
           SELECT 1 FROM team_members m WHERE m.person = w.person AND ${scope.in('m.team')}))`)
-      .bind(scope.value, keys, scope.value).all(),
+      .bind(me.id, scope.value, keys, me.id, scope.value).all(),
+    // Mentions of the team (the personal view: of the viewer's teams) and of the viewer.
     env.DB.prepare(`SELECT DISTINCT n.thread, n.message, n.person, n.at
-      FROM mentions n JOIN team_members m ON m.person = n.person AND ${scope.in('m.team')}
+      FROM mentions n
       -- A mention's message is in the mention's thread: the thread narrows the search.
       JOIN messages x ON x.thread = n.thread
         AND x.source || ':' || x.tenant || ':' || x.channel_id || ':' || x.id = +n.message
-      WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0`)
-      .bind(scope.value, keys).all(),
+      WHERE n.thread IN (SELECT value FROM json_each(?)) AND x.deleted = 0
+        AND (n.person = ? OR n.person IN (
+          SELECT m.person FROM team_members m WHERE ${scope.in('m.team')}))`)
+      .bind(keys, me.id, scope.value).all(),
     env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
         kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
@@ -443,6 +479,7 @@ export async function inbox(env, me, team, {
     team: personal ? null : team,
     personal,
     page,
+    ...(personal ? { rooms: await roomsP } : {}),
     me: { id: me.id, name: me.name, readonly: Boolean(me.readonly) },
     profiles: cards,
     people: Object.fromEntries((names || [])
@@ -485,8 +522,10 @@ export async function inbox(env, me, team, {
  */
 export async function searchInbox(env, me, team, q, { limit, personal = false } = {}) {
   const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || 30));
-  const teams = personal ? (me.teams || []).map((t) => t.slug) : [team];
-  const found = await find(env, teams, q, { limit: n });
+  // The personal view's channels are filed under the teams of its rooms.
+  const teams = personal ? await roomsOf(env, me) : [team];
+  const found = teams.length ? await find(env, teams, q, { limit: n })
+    : { q: String(q || '').trim(), words: [], hits: [] };
   if (!found.hits.length) {
     return {
       team: personal ? null : team,
@@ -549,7 +588,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Every team whose inbox has it: the one it is filed under, and those its channel is shared
   // with. Read state is the team's the viewer looks at it from (`wanted`, if it is one).
   const teams = row ? await teamsOf(env, row) : [];
-  if (!row || !(inTeam(me, teams) || isAdmin(me))) {
+  if (!row || !(isAdmin(me) || await mayWork(env, me)(teams, row))) {
     return null;
   }
   const readers = viewTeam(me, teams, wanted);
@@ -751,6 +790,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return json({ error: 'not signed in, or not a member of any team' }, 403);
   }
   const team = url.searchParams.get('team');
+  // Who may work a thread (src/shares.js): reply, react, resolve, draft; and who may see it,
+  // admins too.
+  const working = mayWork(env, me);
+  const seeing = async (teams, place) => isAdmin(me) || working(teams, place);
 
   if (url.pathname === '/api/me') {
     return json({
@@ -769,6 +812,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
       settings: me.readonly ? DEFAULTS : await readSettings(env, me),
+      // The rooms the inbox listens to (GET /api/live): the person's teams, and the teams of
+      // the channels in their personal view.
+      rooms: await roomsOf(env, me),
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
@@ -814,7 +860,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: read.error }, read.status);
     }
     const { body, files } = read;
-    const inMine = (t) => inTeam(me, t);
+    const inMine = mayWork(env, me);
     // As the person, or as the opspile app (where it may post in the channel).
     const res = url.pathname === '/api/post'
       ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
@@ -831,14 +877,14 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/draft') {
     if (request.method === 'GET') {
-      return getDraft(env, url.searchParams.get('thread'), (t) => inTeam(me, t) || isAdmin(me));
+      return getDraft(env, url.searchParams.get('thread'), seeing);
     }
     const body = await request.json().catch(() => ({}));
     if (request.method === 'PUT') {
-      return saveDraft(env, me, body, (t) => inTeam(me, t));
+      return saveDraft(env, me, body, working);
     }
     if (request.method === 'DELETE') {
-      const res = await discardDraft(env, me, body, (t) => inTeam(me, t));
+      const res = await discardDraft(env, me, body, working);
       if (res.ok) {
         // The agent hears who threw its draft away; the discard never fails because of it.
         const told = res.clone().json().then((r) => tellDiscarded(env, me, body.thread, r))
@@ -853,28 +899,31 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
   }
   if (url.pathname === '/api/agent' && request.method === 'GET') {
-    return agentStatus(env, url.searchParams.get('thread'), (t) => inTeam(me, t) || isAdmin(me));
+    return agentStatus(env, url.searchParams.get('thread'), seeing);
   }
   if (url.pathname === '/api/agent/seed' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return seedAgent(env, me, body, (t) => inTeam(me, t));
+    return seedAgent(env, me, body, working);
   }
   if (url.pathname === '/api/edit' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return edit(env, me, body, (t) => inTeam(me, t));
+    return edit(env, me, body, working);
   }
   if (url.pathname === '/api/react' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return react(env, me, body, (t) => inTeam(me, t));
+    return react(env, me, body, working);
   }
   if (url.pathname === '/api/resolve' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return resolve(env, me, body, (t) => inTeam(me, t));
+    return resolve(env, me, body, working);
   }
   if (url.pathname === '/api/mentionable') {
-    return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t), {
+    return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), working, {
       waitUntil, me,
     });
+  }
+  if (url.pathname === '/api/emoji') {
+    return json({ emoji: await rankEmoji(env, url.searchParams.get('q')) });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
     return json(await inbox(env, me, null, {
@@ -913,7 +962,8 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     if (!result) {
       return json({ error: 'not found' }, 404);
     }
-    result.can_post_as_bot = Boolean(app && !app.problem && inTeam(me, result.thread.teams));
+    result.can_post_as_bot = Boolean(app && !app.problem
+      && await working(result.thread.teams, result.thread));
     return json(result);
   }
   if (url.pathname === '/api/media') {
@@ -959,7 +1009,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     const row = key && await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
       .bind(key).first();
     const teams = await teamsOf(env, row);
-    if (!row || !inTeam(me, teams) || typeof at !== 'string') {
+    if (!row || typeof at !== 'string' || !await working(teams, row)) {
       return json({ error: 'not found' }, 404);
     }
     // The room of the inbox it was read in, which fans it out there.
@@ -970,12 +1020,17 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return new Response(null, { status: 204 });
   }
   if (url.pathname === '/api/live') {
-    if (!inTeam(me, team) || request.headers.get('upgrade') !== 'websocket') {
+    // A team's room, or the room of a team whose channels are in the personal view, which
+    // tells only about those (`scoped`, src/room.js).
+    const member = inTeam(me, team);
+    const scoped = !member && Boolean(team) && (await roomsOf(env, me)).includes(team);
+    if (!(member || scoped) || request.headers.get('upgrade') !== 'websocket') {
       return text('expected a websocket for one of your teams\n', 400);
     }
     const headers = new Headers(request.headers);
     headers.set('x-opspile-person', String(me.id));
     headers.set('x-opspile-readonly', me.readonly ? '1' : '0');
+    headers.set('x-opspile-scoped', scoped ? '1' : '0');
     return room(env, team).fetch(new Request('https://room/connect', { headers }));
   }
   return json({ error: 'not found' }, 404);

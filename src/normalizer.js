@@ -33,7 +33,7 @@ import { teamsOf } from './shares.js';
 import { classify } from './rules.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
-  replaceReactions, titleOf,
+  previewOf, replaceReactions, titleOf,
 } from './threads.js';
 
 export { notifyRoom };
@@ -336,6 +336,7 @@ export async function processKey(env, key, cache = {}) {
     counted: author.kind === 'person',
     deleted,
     title: deleted ? null : titleOf(message.subject, body),
+    preview: deleted ? null : previewOf(body),
     org: cls.org,
     team: cls.team,
     kind: cls.kind,

@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, mentionedByName, readState, titleOf, waitingOn,
+  advanceWatermark, indexMessage, mentionedByName, PREVIEW_MAX, previewOf, readState, titleOf,
+  waitingOn,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -55,8 +56,10 @@ describe('indexMessage', () => {
   it('derives the same thread row in any order', async () => {
     const msgs = [
       msg('1.1', '2026-10-21T10:00:00Z'),
-      msg('1.2', '2026-10-21T10:05:00Z', { author: 'A', person: 1, staff: true }),
-      msg('1.3', '2026-10-21T10:09:00Z', { author: 'bot', counted: false }),
+      msg('1.2', '2026-10-21T10:05:00Z', {
+        author: 'A', person: 1, staff: true, preview: 'on it',
+      }),
+      msg('1.3', '2026-10-21T10:09:00Z', { author: 'bot', counted: false, preview: 'beep' }),
     ];
     const forward = db();
     for (const m of msgs) {
@@ -75,6 +78,7 @@ describe('indexMessage', () => {
       assert.equal(t.last_at, '2026-10-21T10:05:00Z'); // the bot does not count
       assert.equal(t.last_author, 'A');
       assert.equal(t.last_staff, 1);
+      assert.equal(t.last_text, 'on it');
       assert.equal(t.any_at, '2026-10-21T10:09:00Z');
       assert.equal(t.messages, 3);
     }
@@ -94,6 +98,17 @@ describe('indexMessage', () => {
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z', { org: 'adobe', path: 'channels/adobe/helix/slack-C1/1.1/' }));
     assert.deepEqual([thread(D).org, thread(D).path], ['adobe', 'channels/adobe/helix/slack-C1/1.1/']);
+  });
+
+  it('keeps the latest message\'s text: an edit changes it, a deletion falls back', async () => {
+    const D = db();
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z', { preview: 'help' }));
+    await indexMessage(D, msg('1.2', '2026-10-21T10:05:00Z', { preview: 'on it' }));
+    assert.equal(thread(D).last_text, 'on it');
+    await indexMessage(D, msg('1.2', '2026-10-21T10:05:00Z', { preview: 'on it, fixed' }));
+    assert.equal(thread(D).last_text, 'on it, fixed');
+    await indexMessage(D, msg('1.2', '2026-10-21T10:05:00Z', { deleted: true, preview: null }));
+    assert.equal(thread(D).last_text, 'help');
   });
 
   it('drops a deleted message from the thread, and the deletion is final', async () => {
@@ -232,5 +247,19 @@ describe('titleOf', () => {
     assert.equal(titleOf('Outage', 'body'), 'Outage');
     assert.equal(titleOf(undefined, '\n> **Site down** since 9\nmore'), 'Site down since 9');
     assert.equal(titleOf(undefined, 'x'.repeat(200)).length, 140);
+  });
+});
+
+describe('previewOf', () => {
+  it('is one line of plain text, cut off at PREVIEW_MAX', () => {
+    const quoted = previewOf('> **Site down** since 9\n- see [the log](https://x.example/l)');
+    assert.equal(quoted, 'Site down since 9 see the log');
+    const shown = previewOf('look:\n```\nerror\n```\n![shot](https://x.example/a.png)');
+    assert.equal(shown, 'look: [code] [image]');
+    assert.equal(previewOf(':rotating_light: _now_ `prod`'), ':rotating_light: now prod');
+    assert.equal(previewOf(''), '');
+    const long = previewOf('word '.repeat(100));
+    assert.equal(long.length, PREVIEW_MAX);
+    assert.ok(long.endsWith('…'));
   });
 });

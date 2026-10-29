@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="opspile">
+<link rel="stylesheet" href="header.css">
 <style>
   :root {
     --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
@@ -49,46 +50,7 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--red); }
   a { color: var(--link); }
-  /* The toolbar, as in the inbox: you on the right, with a menu to log out. */
-  header { display: flex; gap: 10px; align-items: center; height: 50px; padding: 0 12px 0 14px; flex: none;
-    background: var(--col); border-bottom: 1px solid var(--line); }
-  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
-    letter-spacing: .01em; }
-  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
-  header .spacer { flex: 1; }
-  .av { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; color: #fff;
-    font-size: 11px; font-weight: 600; }
-  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
-    background: none; border-radius: 10px; text-align: left; }
-  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
-  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
-  #user svg { width: 12px; height: 12px; color: var(--mute); }
-  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
-  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
-  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
-  .menu .id .nm { font-weight: 650; font-size: 14px; }
-  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
-  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
-  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--faint); }
-  .menu .item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: inherit;
-    text-decoration: none; }
-  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
-  .menu .item svg { width: 14px; height: 14px; flex: none; }
-  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
-  .menu .keys dd { margin: 0; text-align: right; }
-  /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
-  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
-    overflow: hidden; }
-  nav.pages[hidden] { display: none; }
-  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
-  nav.pages a + a { border-left: 1px solid var(--line); }
-  nav.pages a:hover { color: var(--ink); background: var(--hover); }
-  nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
-    box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
-  nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* The header is every page's (ui/header.css). */
   main { flex: 1; display: grid; grid-template-columns: 260px 320px 1fr; min-height: 0; }
   main > section { overflow: auto; min-height: 0; border-right: 1px solid var(--line); }
   #bases { padding: 12px; background: var(--bg); }
@@ -195,7 +157,6 @@
     color: inherit; text-decoration: none; white-space: nowrap; }
   .ch.global .setup a.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--mute); }
-  .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - 58px); overflow-y: auto; }
 
   /*
    * Narrower screens. Under 1100px the two lists get narrower. Under 700px (phones, a folded
@@ -213,13 +174,6 @@
     main { grid-template-columns: minmax(170px, 22%) minmax(200px, 27%) minmax(0, 1fr); }
   }
   @media (max-width: 699px) {
-    header { gap: 8px; padding: 0 8px 0 12px; }
-    header h1 { font-size: 0; gap: 0; margin: 0; }
-    nav.pages { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-    nav.pages a { padding: 0 8px; white-space: nowrap; }
-    #user { padding: 0 4px; gap: 6px; }
-    #user .nm { display: none; }
-    .menu { right: 8px; }
     main { grid-template-columns: 100%; }
     main > section { border-right: 0; }
     main:not([data-pane="bases"]) #bases, main:not([data-pane="files"]) #files,
@@ -234,11 +188,12 @@
 </head>
 <body>
 <header>
-  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
-  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" title="Back to the inbox as you left it">Inbox</a><a id="kbs" href="/inbox/kb" aria-current="page">Agents</a><a href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors">Admin</a></nav>
+  <h1><a data-page="inbox" href="/inbox"><img src="/apple-touch-icon.png" alt="">opspile</a></h1>
+  <nav class="pages" id="pages" hidden aria-label="Pages"></nav>
   <span class="spacer"></span>
   <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
-    <span class="av" id="userAv"></span><span class="nm" id="me"></span>
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="userSub"></span></span>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <div id="menu" class="menu" popover>
@@ -247,6 +202,7 @@
     <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
   </div>
 </header>
+<script src="header.js"></script>
 <main data-pane="bases">
   <section id="bases"><div class="empty">Loading…</div></section>
   <section id="files"></section>

@@ -21,5 +21,8 @@ const files = readdirSync(dir);
 /** ui/<name>.html by file name. */
 export const PAGES = Object.fromEntries(files.filter((f) => f.endsWith('.html')).map((f) => [f, read(f)]));
 
-/** ui/<name>.js by file name, as src/page.js takes them. */
-export const SCRIPTS = Object.fromEntries(files.filter((f) => f.endsWith('.js')).map((f) => [f, read(f)]));
+/**
+ * ui/<name>.js and ui/<name>.css (the stylesheets the pages share) by file name, as
+ * src/page.js takes them.
+ */
+export const SCRIPTS = Object.fromEntries(files.filter((f) => /\.(js|css)$/.test(f)).map((f) => [f, read(f)]));

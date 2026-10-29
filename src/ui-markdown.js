@@ -19,7 +19,8 @@
  * - no raw HTML (shown as text), no indented code (chat indents prose), no footnotes
  * - links open in a new tab; Slack and Teams images go through the inbox's media proxy
  * - `@Full Name` mentions and `:emoji:` codes, outside code; `emojiLookup`
- *   (src/emojinames.js) finds an emoji by any platform's name for it
+ *   (src/emojinames.js) finds an emoji by any platform's name for it, `matchEmoji` those
+ *   whose name has what was typed (the composer's `:` suggestions)
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`.
@@ -33,7 +34,7 @@ import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
-export { emojiLookup } from './emojinames.js';
+export { emojiLookup, matchEmoji } from './emojinames.js';
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
@@ -163,6 +164,16 @@ function image(tag, proxy) {
 }
 
 /**
+ * Paragraphs of nothing but images, one after the other (Teams and Slack attach images so):
+ * two or more images in such a run are a gallery, a grid the page shows them in.
+ */
+const IMAGE_RUN = /(?:<p>(?:\s*(?:<img class="att[^>]*>|<br \/>))+\s*<\/p>\s*)+/g;
+const galleries = (html) => html.replace(IMAGE_RUN, (run) => {
+  const images = run.match(/<img [^>]*>/g);
+  return images.length < 2 ? run : `<div class="gallery">${images.join('')}</div>\n`;
+});
+
+/**
  * Markdown to HTML, safe to put in the page.
  *
  * @param {string} src
@@ -186,7 +197,7 @@ export function render(src, {
     .replace(BLOCK_END, '$1\n')
     .replaceAll(BREAK, '<br />\n');
   let code = 0;
-  return html.split(/(<[^>]*>)/).map((part, i) => {
+  return galleries(html.split(/(<[^>]*>)/).map((part, i) => {
     if (i % 2) {
       if (/^<(code|pre)[\s>]/.test(part)) {
         code += 1;
@@ -209,5 +220,5 @@ export function render(src, {
     return text
       .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
-  }).join('').trim();
+  }).join('')).trim();
 }

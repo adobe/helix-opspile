@@ -105,7 +105,7 @@ describe('viewer and inbox', () => {
       ...base, rootId: '2', id: '2', thread: 't2', at: '2026-10-21T11:00:00Z', title: 'two', path: 'p2/',
     });
     await indexMessage(DB, {
-      ...base, rootId: '2', id: '3', thread: 't2', at: '2026-10-21T11:05:00Z', person: 2, staff: true, path: 'p2/',
+      ...base, rootId: '2', id: '3', thread: 't2', at: '2026-10-21T11:05:00Z', person: 2, staff: true, path: 'p2/', preview: 'on it',
     });
     DB.sqlite.prepare(`INSERT INTO labels (thread, next_actor, labeled_through, model, labeled_at)
       VALUES (?, 'us', '', 'm', '')`).run('t2');
@@ -113,12 +113,12 @@ describe('viewer and inbox', () => {
     assert.deepEqual(members.map((m) => m.name), ['A', 'B']);
     assert.deepEqual(threads.map((t) => t.permalink), [null, 'https://chat.example/1']);
     const view = threads.map((t) => [
-      t.thread, t.unread, t.seenByOthers, t.unseen, t.last_staff, t.waiting_on,
+      t.thread, t.unread, t.seenByOthers, t.unseen, t.last_staff, t.waiting_on, t.last_text,
     ]);
     // t2 is labeled "us", but Adobe posted last: it does not wait on us.
     assert.deepEqual(view, [
-      ['t2', true, true, false, 1, 'nobody'],
-      ['t1', true, false, true, 0, 'us'],
+      ['t2', true, true, false, 1, 'nobody', 'on it'],
+      ['t1', true, false, true, 0, 'us', null],
     ]);
   });
 });
@@ -164,7 +164,7 @@ describe('personal view', () => {
     }).then(() => `slack:E1:${channelId}:${thread}.${n}`);
   };
 
-  it('has the threads of my teams\' channels that I posted or was mentioned in', async () => {
+  it('has the threads of the channels I posted or was mentioned in, whichever team has them', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
     await say(DB, {
@@ -187,14 +187,19 @@ describe('personal view', () => {
     await say(DB, {
       thread: 'admin', channelId: 'C4', team: 'admin', person: 1, at: at(6),
     });
-    // Not one of my teams' channels: not mine to see, though I posted there.
+    // Not one of my teams' channels, but I posted there: in Personal too.
     await say(DB, {
       thread: 'elsewhere', channelId: 'C5', team: 'other', person: 1, at: at(7),
+    });
+    await say(DB, {
+      thread: 'not-mine', channelId: 'C6', team: 'other', person: 2, at: at(8),
     });
     const res = await inbox({ DB }, me, null, { personal: true });
     assert.equal(res.personal, true);
     assert.equal(res.team, null);
-    assert.deepEqual(res.threads.map((t) => t.thread).sort(), ['admin', 'mentioned', 'posted', 'same-channel']);
+    assert.deepEqual(res.threads.map((t) => t.thread).sort(), ['admin', 'elsewhere', 'mentioned', 'posted', 'same-channel']);
+    // And it listens to the other team's room, for that channel.
+    assert.deepEqual(res.rooms, ['admin', 'helix', 'other']);
     assert.deepEqual(res.members.map((x) => x.name), ['A', 'B']);
     // The team inbox is as it was.
     const team = await inbox({ DB }, me, 'helix');

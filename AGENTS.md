@@ -29,6 +29,10 @@ code and docs, is the decision model that labels threads and channels.
   fetches `/api/*` without following redirects: a redirect is Cloudflare Access's sign-in, so
   the page shows "Sign in again" instead of "Failed to fetch" (`POST /__dev/signout` in
   `npm run ui:dev` shows it).
+- The header is every page's too: `ui/header.css` (`<link rel="stylesheet" href="header.css">`,
+  inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
+  which keeps where each page was left in the browser tab, and you with your menu. Change it
+  there, not in a page.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand) and
   `src/ui-markdown.bundle.js` (from `scripts/ui-markdown.mjs`, not committed). `npm run build`
   builds the bundle, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and

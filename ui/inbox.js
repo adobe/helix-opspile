@@ -619,8 +619,8 @@ const FACETS = [
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
 ];
 // The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
-// (`state.sort` is 'personal'), the threads of all their teams in the channels they posted or
-// were mentioned in. The personal view (latest activity first) keeps the customer and platform
+// (`state.sort` is 'personal'), the threads of the channels they posted or were mentioned in,
+// whichever team they are filed under. The personal view (latest activity first) keeps the customer and platform
 // cards only, and picks one customer at a time; it shows conversations, not alerts. A team's
 // view has every card. Filters on the cards a view does not show do not apply in it, and are
 // kept for the other.
@@ -885,7 +885,7 @@ function rowA(t, hit) {
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
   const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
-  // The latest reply, once the thread is in the cache (rows in view are fetched ahead).
+  // The latest reply: the inbox sends it (see `preview`).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
@@ -911,11 +911,12 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
   .replace(/\s+/g, ' ')
   .trim();
 /**
- * Design B's preview: the thread's latest message, once the thread is in the cache (rows in view
- * are fetched ahead, see `preload`), else who wrote last. A preview the list can always show
- * would need the inbox to send the latest message's text (a column of `threads`).
+ * The preview of designs A and B: the thread's latest message as the inbox sends it
+ * (`last_text`, from `threads`), else from the thread cache (a thread the cron has not filled in
+ * yet, see src/previews.js), else who wrote last.
  */
 function preview(t) {
+  if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
   const ms = (state.cache.get(t.thread)?.data?.messages || [])
     .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
   const m = ms[ms.length - 1];
@@ -1053,7 +1054,7 @@ function searchRows(box) {
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
   // The view switch stays: a search is of the view on screen, a team's or the personal one.
-  const ctl = `${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button><span class="sort">${viewSwitch()}</span>`;
+  const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== ctl) { head.innerHTML = ctl; head.__html = ctl; }
   const list = box.querySelector('.rows');
@@ -1137,7 +1138,7 @@ function renderThreads() { inPass(threadRows); }
 function viewSwitch() {
   const mine = personal();
   const views = [{
-    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, in all your teams, latest activity first',
+    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, latest activity first',
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
   }))];
@@ -1176,7 +1177,7 @@ function threadRows() {
   // The bell: notifications for this view, with its filters (not while viewing as someone).
   const rung = bellOn();
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
-  const count = `${filt}${unread}${bell}<span class="sort">${sorter}</span>`;
+  const count = `<span class="lead">${filt}${unread}${bell}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -2721,7 +2722,7 @@ async function postWith(path, payload, files = []) {
 // (src/mention-match.js).
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
-const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
+const mention = { kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
 // The box suggestions are for: the reply box, or the message being edited, whichever has the
 // focus; the list of suggestions next to it.
 const mentionBox = () => (document.activeElement?.classList?.contains('editbox') ? document.activeElement : $('reply'));
@@ -2739,8 +2740,10 @@ function mentionQuery(box, key) {
 
 function suggest(key) {
   const box = mentionBox();
-  const hit = box && mentionQuery(box, key);
   clearTimeout(mention.timer);
+  const em = box && emojiQuery(box);
+  if (em) { suggestEmoji(key, em); return; }
+  const hit = box && mentionQuery(box, key);
   if (!hit) { closeMentions(); return; }
   const seq = ++mention.seq;
   mention.timer = setTimeout(async () => {
@@ -2751,9 +2754,62 @@ function suggest(key) {
     if (seq !== mention.seq || state.open !== key) return;
     // A space after a name that matches nobody ends the mention.
     if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
-    Object.assign(mention, { list: people, i: 0, from: hit.from });
+    Object.assign(mention, { kind: 'person', list: people, i: 0, from: hit.from });
     renderMentions(key);
   }, hit.q ? 120 : 0);
+}
+
+// Typing : and two more characters of a name suggests emoji, by Slack's names (which replies
+// to every platform take, src/shortcodes.js): first those whose name (or another platform's
+// name for them) has what was typed (src/emojinames.js `matchEmoji`), at once; then, until
+// the list is full, those Clef thinks were meant (GET /api/emoji: its candidates by Clef's
+// probability, no threshold), so `:celebr` finds 🥳 too. Picking one writes `:name: `; the
+// reply goes out as the platform knows it.
+const EMOJI_AT = /(?:^|[\s(]):([a-z0-9_+-]{2,40})$/i;
+const EMOJI_MAX = 8;
+// Clef's rankings by what was typed, as promises, so typing back and forth asks once.
+const clefEmoji = new Map();
+
+function emojiQuery(box) {
+  if (box.selectionStart !== box.selectionEnd) return null;
+  const m = EMOJI_AT.exec(box.value.slice(0, box.selectionStart));
+  return m ? { q: m[1].toLowerCase(), from: box.selectionStart - m[1].length - 1 } : null;
+}
+
+function clefRanking(q) {
+  if (!clefEmoji.has(q)) {
+    if (clefEmoji.size >= 200) clefEmoji.delete(clefEmoji.keys().next().value);
+    clefEmoji.set(q, get(`/api/emoji?q=${encodeURIComponent(q)}`).then((d) => d.emoji || [], () => {
+      clefEmoji.delete(q);
+      return [];
+    }));
+  }
+  return clefEmoji.get(q);
+}
+
+function suggestEmoji(key, hit) {
+  const found = Markdown.matchEmoji(SLACK_EMOJI.names, SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
+    .map((name) => ({ emoji: name }));
+  if (!found.length) closeMentions();
+  const seq = ++mention.seq;
+  Object.assign(mention, { kind: 'emoji', list: found, i: 0, from: hit.from });
+  if (found.length) renderMentions(key);
+  if (found.length >= EMOJI_MAX || !/[a-z]/.test(hit.q)) return;
+  mention.timer = setTimeout(async () => {
+    const ranked = await clefRanking(hit.q);
+    if (seq !== mention.seq || state.open !== key) return;
+    // One line per emoji: Clef's that are not in the list yet, until it is full.
+    const have = new Set(mention.list.map((e) => emojiByName(e.emoji)));
+    const more = [];
+    for (const name of ranked) {
+      const c = emojiByName(name);
+      if (more.length >= EMOJI_MAX - mention.list.length) break;
+      if (c && !have.has(c)) { have.add(c); more.push({ emoji: name, clef: true }); }
+    }
+    if (!more.length) return;
+    mention.list = [...mention.list, ...more];
+    renderMentions(key);
+  }, clefEmoji.has(hit.q) ? 0 : 200);
 }
 
 function renderMentions(key) {
@@ -2761,14 +2817,18 @@ function renderMentions(key) {
   const box = mentionBox();
   if (!ul || !box) return;
   if (!mention.list.length) { closeMentions(); return; }
+  ul.setAttribute('aria-label', mention.kind === 'emoji' ? 'Emoji' : 'People to mention');
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
+    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
   ul.onmousedown = (e) => e.preventDefault();
   ul.onclick = (e) => { const li = e.target.closest('li'); if (li) pickMention(key, Number(li.dataset.i)); };
 }
+
+/** An emoji suggestion: the emoji, its name, and whether Clef suggested it. */
+const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${esc(emoji(p.emoji))}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint" title="Suggested by Clef">Clef</span>' : ''}`;
 
 function closeMentions() {
   mention.list = [];
@@ -2803,14 +2863,16 @@ function pickMention(key, i) {
   const box = mentionBox();
   const p = mention.list[i];
   if (!box || !p) return;
-  const insert = `@${p.name} `;
+  const insert = p.emoji ? `:${p.emoji}: ` : `@${p.name} `;
   box.value = box.value.slice(0, mention.from) + insert + box.value.slice(box.selectionStart);
   const at = mention.from + insert.length;
   box.focus();
   box.setSelectionRange(at, at);
-  if (!mention.picked.has(key)) mention.picked.set(key, new Map());
-  mention.picked.get(key).set(p.name, p);
-  mention.names.add(p.name);
+  if (!p.emoji) {
+    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+    mention.picked.get(key).set(p.name, p);
+    mention.names.add(p.name);
+  }
   closeMentions();
   if (box.classList.contains('editbox') && state.editing) {
     Object.assign(state.editing, { text: box.value, caret: at });
@@ -2976,6 +3038,7 @@ document.addEventListener('visibilitychange', () => {
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
   state.teams = who.teams;
+  state.rooms = roomsOf(who);
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
   renderUser();
 }
@@ -2985,18 +3048,22 @@ async function loadWho() {
  * above the thread list.
  */
 function renderUser() {
-  const name = state.me.name || state.me.email;
-  $('me').textContent = name;
-  $('teamName').textContent = personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '';
-  for (const id of ['userAv', 'menuAv']) {
-    $(id).textContent = initials(name);
-    $(id).style.background = hue(name);
-  }
-  $('menuName').textContent = name;
-  $('menuEmail').textContent = state.me.email || '';
+  Header.user(state.me, personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '');
   const as = state.data?.me?.readonly ? state.data.me.name : null;
   $('viewing').hidden = !as;
   $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
+}
+
+/**
+ * Label review (admin team): a tool beside the pages while it is off, a mode on the right
+ * ("Reviewing labels ✕") while it is on, as "View as" is.
+ */
+function showReview(on) {
+  state.review = on;
+  const can = Boolean(state.me?.admin);
+  $('review').hidden = !can || on;
+  $('toolsep').hidden = !can || on || $('pages').hidden;
+  $('reviewing').hidden = !can || !on;
 }
 
 // The inbox comes in pages, newest activity first: the first page shows at once, older ones
@@ -3019,13 +3086,17 @@ async function loadInbox(early = null) {
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
   }
   state.data = first;
+  // Personal's rooms grow once you are in a channel of another team: listen there too.
+  if (first.rooms && !first.rooms.every((r) => state.rooms?.includes(r))) {
+    state.rooms = first.rooms;
+    syncSockets();
+  }
   if (!state.as) checkBells(scopeKey(), first);
   mergeProfiles(state.data.profiles);
   renderUser();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
-  syncPages();
   backfill();
 }
 
@@ -3120,8 +3191,13 @@ function prefetchAround(key) {
   if (i < 0) return;
   for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
-/** The rooms of the inbox on screen: its team's, or for Personal those of all the viewer's teams. */
-const screenTeams = () => (personal() ? (state.teams || []).map((t) => t.slug) : [state.team]).filter(Boolean);
+/**
+ * The rooms someone's Personal listens to (GET /api/me's `rooms`): their teams', and those of
+ * the teams the channels they posted or were mentioned in are filed under.
+ */
+const roomsOf = (who) => who.rooms || (who.teams || []).map((t) => t.slug);
+/** The rooms of the inbox on screen: its team's, or for Personal its rooms. */
+const screenTeams = () => (personal() ? state.rooms || [] : [state.team]).filter(Boolean);
 /** One socket per team: the ones on screen, and the ones the notifications need (notifyTeams). */
 const wantedTeams = () => [...new Set([...screenTeams(), ...notifyTeams()])];
 /**
@@ -3319,7 +3395,7 @@ function wireNotify() {
 /** The teams whose rooms the notifications need: all of yours for mentions and Personal. */
 function notifyTeams() {
   if (state.as || !state.settings) return [];
-  const all = (state.teams || []).map((t) => t.slug);
+  const all = state.rooms || [];
   const bells = state.settings.bells || [];
   if (state.settings.mentions || bells.some((b) => b.view === PERSONAL_VIEW)) return all;
   return all.filter((slug) => bells.some((b) => b.view === slug));
@@ -3379,7 +3455,8 @@ async function noteMention(ev, team) {
     at: ev.at,
     title: `${ev.author || 'Someone'} mentioned you`,
     body: `${clipNote(title, 80)}${msg?.body ? `\n${clipNote(msg.body)}` : ''}`,
-    url: noteUrl(team, known?.thread || ev.thread),
+    // A room that is not one of your teams' (you are on none): the thread is in Personal.
+    url: noteUrl((state.teams || []).some((t) => t.slug === team) ? team : PERSONAL_VIEW, known?.thread || ev.thread),
   });
 }
 
@@ -3440,7 +3517,7 @@ function checkBells(scope, data) {
 function bellsSoon(team) {
   if (state.as) return;
   const scopes = new Set((state.settings?.bells || []).map((b) => b.view)
-    .filter((v) => v === team || (v === PERSONAL_VIEW && (state.teams || []).some((t) => t.slug === team))));
+    .filter((v) => v === team || (v === PERSONAL_VIEW && (state.rooms || []).includes(team))));
   for (const scope of scopes) {
     // The inbox on screen reloads on its own (reloadSoon), and is checked then.
     if (scope === scopeKey()) continue;
@@ -3480,28 +3557,24 @@ function toUrl(push = true, entry = null) {
   if (design) q.set('design', design);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
-  syncPages();
 }
-/**
- * The switch to the knowledge-base editor (admin team) opens the knowledge base that fits what
- * is on screen: the open thread's customer's (or the one customer filtered on), else the team's;
- * the editor picks whichever of them exists. `back` is this inbox as it is now, so the editor's
- * "Inbox" returns to it: team, filters, sort, unread, the open thread and "view as".
- */
-function kbHref() {
-  const q = new URLSearchParams();
+/** The customer on screen: the open thread's, else the one filtered on. */
+function customerOnScreen() {
   const open = state.open && (state.data?.threads.find((t) => t.thread === state.open)
     || state.cache.get(state.open)?.data?.thread);
   const customers = state.sel.customer;
-  const org = open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
+  return open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
+}
+/**
+ * The knowledge-base editor for what is on screen: the customer's knowledge base (see
+ * customerOnScreen), else the team's; the editor picks whichever of them exists.
+ */
+function kbHref() {
+  const q = new URLSearchParams();
+  const org = customerOnScreen();
   if (org) q.set('org', org);
   if (state.team && !personal()) q.set('team', state.team);
-  q.set('back', `${location.pathname}${location.search}`);
-  return `/inbox/kb?${q}`;
-}
-function syncPages() {
-  $('inbox').href = `${location.pathname}${location.search}`;
-  $('kb').href = kbHref();
+  return `/inbox/kb${q.size ? `?${q}` : ''}`;
 }
 /**
  * Whether an address asks for the personal view: it is the default, so any address without a
@@ -3690,6 +3763,7 @@ async function start() {
     : get(personalAsked(asked) ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null);
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
+  state.rooms = roomsOf(state.me);
   state.settings = state.me.settings || { mentions: true, bells: [] };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
@@ -3703,7 +3777,6 @@ async function start() {
   syncReading();
   await loadWho();
   toUrl(false);
-  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
     const el = e.target.closest('.card');
     if (!el) return;
@@ -3821,15 +3894,29 @@ async function start() {
     renderUser();
     if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
     if (query !== state.search.q || !state.search.data) runSearch(query);
-    state.review = review;
-    $('review').setAttribute('aria-pressed', String(review));
+    showReview(review);
     render();
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
-    syncPages();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
     main.classList.remove('instant');
+  });
+  // The pages (ui/header.js): the editor and the admin pages for the admin team and team
+  // managers. What is on screen picks what they open on: Agents and Orgs the customer on
+  // screen, Teams the team picked (one you may manage); with nothing on screen they open as
+  // they were left, and Agents, not opened yet in this tab, on the team. The open requests are
+  // the admin team's own, not shown while viewing as someone.
+  const teamOnScreen = () => (!personal() && state.team
+    && (state.me.admin || state.me.manages?.includes(state.team)) ? state.team : null);
+  Header.init(state.me, {
+    prefer: {
+      agents: () => (customerOnScreen() ? kbHref() : null),
+      teams: () => (teamOnScreen() ? `/inbox/admin?tab=teams&team=${encodeURIComponent(teamOnScreen())}` : null),
+      orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
+    },
+    fallback: { agents: kbHref },
+    count: !state.as,
   });
   if (state.me.admin) {
     const sel = $('as');
@@ -3854,37 +3941,21 @@ async function start() {
     };
     sel.onchange = () => { $('menu').hidePopover(); viewAs(Number(sel.value) || null); };
     $('viewing').onclick = () => viewAs(null);
-    $('review').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
-    $('review').onclick = () => {
-      state.review = !state.review;
-      $('review').setAttribute('aria-pressed', String(state.review));
+    const toggle = () => {
+      showReview(!state.review);
       toUrl();
       if (state.open) openThread(state.open, { live: true });
     };
-  }
-  // The switch to the editor and the admin pages: the admin team, and team managers (who see
-  // their teams' members and knowledge bases there).
-  if (state.me.admin || state.me.manages?.length) {
-    $('pages').hidden = false;
-    $('inbox').onclick = (e) => e.preventDefault();
-    // Channels team managers asked for, waiting for the admin team: their number on Admin.
-    if (state.me.admin && !state.as) {
-      get('/api/admin/requests?count=1').then(({ open }) => {
-        if (!open) return;
-        $('adminPage').insertAdjacentHTML('beforeend', `<span class="count">${Number(open)}</span>`);
-        $('adminPage').title = `${open} channel request${open === 1 ? '' : 's'} from team managers to confirm or decline`;
-        $('adminPage').href = '/inbox/admin?tab=requests';
-      }).catch(() => {});
-    }
-    // Fresh at the moment it is used (the open thread's customer may have loaded since).
-    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
+    $('review').onclick = toggle;
+    $('reviewing').onclick = toggle;
+    showReview(state.review);
   }
   wireNotify();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
-  if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
+  if (initial.review && state.me.admin) showReview(true);
   if (initial.open) openThread(initial.open);
   connect();
   registerTools();
@@ -4038,7 +4109,7 @@ const WEBMCP_TOOLS = [
           description: 'Values to leave out, by the same filters: e.g. { "platform": ["discord"] } hides Discord threads. Each one given replaces what that filter excludes; an empty list stops excluding. A value excluded is no longer picked.',
         },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
-        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, in all their teams, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
+        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, whichever team they belong to, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
@@ -4359,27 +4430,198 @@ function confirmInPage(question, body, signal, yesLabel = 'Post as me') {
 
 /**
  * Images in messages open full screen in a modal dialog: a click anywhere (but the link to
- * the original), the close button or Escape dismisses it, and focus goes back to the image.
+ * the original and the controls), the close button or Escape dismisses it, and focus goes back
+ * to the image last shown. A message's images are one set: the arrow keys, Home and End, the
+ * buttons at the sides, a swipe or the thumbnails below page through them. The image grows out
+ * of its thumbnail (cropped as the thumbnail is) and shrinks back into it.
  */
+const EASE = 'cubic-bezier(.2, .8, .2, 1)';
+// An image that failed to load has nothing to show.
+const failed = (i) => i.complete && !i.naturalWidth;
+const imageSrc = (i) => i.currentSrc || i.src;
+// Runs `fn` once `anim` is over, or a little after it should be: a page in the background
+// draws no frames, and its animations do not finish.
+const settled = (anim, fn) => {
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.finished.then(once, once);
+  setTimeout(once, anim.effect.getComputedTiming().endTime + 100);
+};
+const onScreen = (r) => r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+/**
+ * The keyframes that turn `el` (laid out where it ends) into the thumbnail at `from`, cropped
+ * as the thumbnail crops it (`object-fit: cover`, from the top left).
+ */
+function morph(el, from) {
+  const to = el.getBoundingClientRect();
+  if (!to.width || !to.height || !onScreen(from)) return null;
+  const scale = Math.max(from.width / to.width, from.height / to.height);
+  // Thumbnails are cropped from the top left (`object-position: left top`): what is cut off is
+  // to the right and below.
+  const x = Math.max(0, to.width - from.width / scale);
+  const y = Math.max(0, to.height - from.height / scale);
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2) + (scale * x) / 2;
+  const dy = from.top + from.height / 2 - (to.top + to.height / 2) + (scale * y) / 2;
+  return [
+    { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, clipPath: `inset(0 ${x}px ${y}px 0 round ${8 / scale}px)` },
+    { transform: 'none', clipPath: 'inset(0 round 6px)' },
+  ];
+}
 function openLightbox(img) {
-  const src = img.currentSrc || img.src;
-  const dlg = toNode(`<dialog class="lightbox" aria-label="${esc(img.alt || 'Image')}">
-    <img src="${esc(src)}" alt="${esc(img.alt)}">
-    <div class="bar"><a href="${esc(src)}" target="_blank" rel="noopener">Open original ↗</a>
-    <button type="button" aria-label="Close">✕</button></div></dialog>`);
-  const dismiss = () => {
-    if (!dlg.isConnected) return;
-    if (dlg.open) dlg.close();
-    dlg.remove();
-    img.focus({ preventScroll: true });
+  const scope = img.closest('.bubble') || img.parentElement;
+  const set = [...scope.querySelectorAll('img.att')].filter((i) => i === img || !failed(i));
+  const many = set.length > 1;
+  let at = -1;
+  let shown = null;
+  let closing = false;
+  const dlg = toNode(`<dialog class="lightbox${many ? ' many' : ''}">
+    <div class="stage"></div>
+    ${many ? `<span class="count" aria-live="polite"></span>
+    <button type="button" class="nav prev" aria-label="Previous image" title="Previous (←)">‹</button>
+    <button type="button" class="nav next" aria-label="Next image" title="Next (→)">›</button>
+    <div class="strip">${set.map((i, n) => `<button type="button" data-n="${n}" aria-label="Image ${n + 1}"><img src="${esc(imageSrc(i))}" alt=""></button>`).join('')}</div>` : ''}
+    <div class="bar"><a target="_blank" rel="noopener">Open original ↗</a>
+    <button type="button" class="close" aria-label="Close">✕</button></div></dialog>`);
+  const stage = dlg.querySelector('.stage');
+  const chrome = () => [...dlg.querySelectorAll('.bar, .count, .nav, .strip')];
+  const motion = () => !REDUCED_MOTION.matches;
+
+  const show = (n, dir = 0) => {
+    const next = (n + set.length) % set.length;
+    if (next === at) return;
+    at = next;
+    const from = set[at];
+    const el = document.createElement('img');
+    el.src = imageSrc(from);
+    el.alt = from.alt;
+    const old = shown;
+    shown = el;
+    stage.append(el);
+    if (old) {
+      old.classList.add('out');
+      if (motion() && dir) {
+        const leave = old.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translateX(${-dir * 12}%) scale(.94)` }], { duration: 240, easing: EASE, fill: 'forwards' });
+        settled(leave, () => old.remove());
+        el.animate([{ opacity: 0, transform: `translateX(${dir * 12}%) scale(.94)` }, { opacity: 1, transform: 'none' }], { duration: 300, easing: EASE });
+      } else if (motion()) {
+        settled(old.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }), () => old.remove());
+        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+      } else {
+        old.remove();
+      }
+    }
+    dlg.querySelector('.bar a').href = el.src;
+    dlg.setAttribute('aria-label', many ? `Image ${at + 1} of ${set.length}${from.alt ? `: ${from.alt}` : ''}` : from.alt || 'Image');
+    if (!many) return;
+    dlg.querySelector('.count').textContent = `${at + 1} / ${set.length}`;
+    for (const b of dlg.querySelectorAll('.strip button')) b.setAttribute('aria-current', String(Number(b.dataset.n) === at));
+    const strip = dlg.querySelector('.strip');
+    const thumb = strip.querySelector(`[data-n="${at}"]`);
+    strip.scrollTo({ left: thumb.offsetLeft - (strip.clientWidth - thumb.offsetWidth) / 2, behavior: motion() ? 'smooth' : 'auto' });
+    // The neighbours load while this one is looked at.
+    for (const d of [-1, 1]) new Image().src = imageSrc(set[(at + d + set.length) % set.length]);
   };
-  dlg.addEventListener('click', (e) => { if (!e.target.closest('a')) dismiss(); });
+
+  const dismiss = () => {
+    if (closing || !dlg.isConnected) return;
+    closing = true;
+    const back = set[at];
+    const done = () => {
+      if (!dlg.isConnected) return;
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      back.focus({ preventScroll: true });
+    };
+    if (!motion() || !dlg.open) { done(); return; }
+    // From where it is now, not from where a running animation has it.
+    for (const a of shown.getAnimations()) a.finish();
+    shown.style.translate = '';
+    const frames = morph(shown, back.getBoundingClientRect());
+    const fade = { duration: 220, easing: 'ease-in', fill: 'forwards' };
+    for (const el of chrome()) el.animate([{ opacity: 1 }, { opacity: 0 }], { ...fade, duration: 150 });
+    dlg.animate([{ opacity: 1 }, { opacity: 0 }], { ...fade, pseudoElement: '::backdrop' });
+    const run = frames
+      ? shown.animate([...frames].reverse(), { duration: 260, easing: EASE, fill: 'forwards' })
+      : shown.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }], fade);
+    settled(run, done);
+  };
+
+  // Swipes: the image follows the finger, and goes on to the next one past a threshold.
+  let swipe = null;
+  let swiped = false;
+  stage.addEventListener('pointerdown', (e) => {
+    if (!many || e.button !== 0 || closing) return;
+    swipe = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0 };
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    swipe.dx = e.clientX - swipe.x;
+    if (Math.abs(swipe.dx) > 8 && Math.abs(swipe.dx) > Math.abs(e.clientY - swipe.y)) {
+      if (!stage.hasPointerCapture(e.pointerId)) stage.setPointerCapture(e.pointerId);
+      shown.style.translate = `${swipe.dx}px 0`;
+    }
+  });
+  const endSwipe = (e) => {
+    if (!swipe || e.pointerId !== swipe.id) return;
+    const { dx } = swipe;
+    swipe = null;
+    if (Math.abs(dx) <= 8) return;
+    // The click that ends a swipe with a mouse does not dismiss (a finger's does not click).
+    swiped = true;
+    setTimeout(() => { swiped = false; });
+    const el = shown;
+    if (Math.abs(dx) > 60 && e.type === 'pointerup') {
+      show(at + (dx < 0 ? 1 : -1), dx < 0 ? 1 : -1);
+    } else {
+      el.animate([{ translate: `${dx}px 0` }, { translate: '0 0' }], { duration: 200, easing: EASE });
+      el.style.translate = '';
+    }
+  };
+  stage.addEventListener('pointerup', endSwipe);
+  stage.addEventListener('pointercancel', endSwipe);
+
+  dlg.addEventListener('click', (e) => {
+    if (swiped) { swiped = false; return; }
+    if (e.target.closest('a, .count')) return;
+    const nav = e.target.closest('.nav, .strip [data-n]');
+    if (nav) {
+      const n = nav.dataset.n == null ? at + (nav.classList.contains('next') ? 1 : -1) : Number(nav.dataset.n);
+      show(n, Math.sign(n - at));
+      return;
+    }
+    if (!e.target.closest('.strip')) dismiss();
+  });
+  dlg.addEventListener('keydown', (e) => {
+    if (!many || closing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const to = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: set.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    show(to, Math.sign(to - at));
+  });
   // Escape: tidy up right away instead of waiting for the close event.
   dlg.addEventListener('cancel', (e) => { e.preventDefault(); dismiss(); });
-  dlg.addEventListener('close', dismiss);
+  dlg.addEventListener('close', () => { if (!closing) { closing = true; dlg.remove(); set[at].focus({ preventScroll: true }); } });
+
   document.body.append(dlg);
   dlg.showModal();
-  dlg.querySelector('button').focus();
+  show(set.indexOf(img));
+  dlg.querySelector('.close').focus();
+  if (!motion()) return;
+  const first = shown;
+  const grow = () => {
+    const frames = morph(first, img.getBoundingClientRect());
+    if (frames) first.animate(frames, { duration: 340, easing: EASE });
+    else first.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: EASE });
+  };
+  // Its size is known once it decodes (at once, mostly: the thumbnail loaded it).
+  if (first.complete && first.naturalWidth) {
+    grow();
+  } else {
+    first.style.opacity = '0';
+    first.decode().catch(() => {}).finally(() => { first.style.opacity = ''; if (!closing && first === shown) grow(); });
+  }
+  dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out', pseudoElement: '::backdrop' });
+  for (const el of chrome()) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 140, easing: 'ease-out', fill: 'backwards' });
 }
 function wireLightbox() {
   const target = (e) => {
@@ -4394,6 +4636,13 @@ function wireLightbox() {
     openLightbox(img);
   });
   document.addEventListener('keydown', (e) => {
+    // The arrow keys move between a gallery's thumbnails.
+    const thumb = e.target.closest?.('.gallery > img.att');
+    if (thumb && /^Arrow(Left|Right)$/.test(e.key)) {
+      const next = e.key === 'ArrowRight' ? thumb.nextElementSibling : thumb.previousElementSibling;
+      if (next) { e.preventDefault(); next.focus(); }
+      return;
+    }
     const img = target(e);
     if (!img || (e.key !== 'Enter' && e.key !== ' ')) return;
     e.preventDefault();

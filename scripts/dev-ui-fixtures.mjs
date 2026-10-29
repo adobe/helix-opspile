@@ -20,7 +20,7 @@
  */
 
 import { channelPath, render } from '../src/channels.js';
-import { titleOf } from '../src/threads.js';
+import { previewOf, titleOf } from '../src/threads.js';
 
 const MIN = 60 * 1000;
 const TENANT = 'T-FAKE';
@@ -171,15 +171,13 @@ const CHANNELS = {
 /**
  * A made-up screenshot: a chart with a title, as an SVG, for the messages with attachments.
  */
-function screenshot(title, color, bars) {
-  const w = 640;
-  const h = 360;
-  const bar = (v, i) => `<rect x="${60 + i * 52}" y="${300 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
+function screenshot(title, color, bars, w = 640, h = 360) {
+  const bar = (v, i) => `<rect x="${60 + i * 52}" y="${h - 60 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
   return new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   <rect width="${w}" height="${h}" fill="#f6f7f9"/><rect width="${w}" height="44" fill="#1f2937"/>
   <circle cx="22" cy="22" r="6" fill="#ef4444"/><circle cx="42" cy="22" r="6" fill="#f59e0b"/><circle cx="62" cy="22" r="6" fill="#10b981"/>
   <text x="90" y="28" font-family="sans-serif" font-size="15" fill="#e5e7eb">${title}</text>
-  <line x1="50" y1="300" x2="610" y2="300" stroke="#9ca3af"/>${bars.map(bar).join('')}
+  <line x1="50" y1="${h - 60}" x2="${w - 30}" y2="${h - 60}" stroke="#9ca3af"/>${bars.map(bar).join('')}
 </svg>`);
 }
 
@@ -426,6 +424,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       last_id: last ? last.id : null,
       last_author: last ? last.author.name : null,
       last_staff: last ? Number(last.author.staff) : null,
+      last_text: last ? previewOf(last.body) : null,
       any_at: ats.length ? ats[ats.length - 1] : null,
       messages: live.length,
       updated_at: new Date(now).toISOString(),
@@ -732,6 +731,14 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['sam', 140, `The publish queue looks stuck, see the dashboard.\n\nAttachments:\n![dashboard.png](${upload('dashboard.png', 'image/svg+xml', screenshot('Publish queue', '#ef4444', [20, 35, 60, 95, 120, 130, 135]))} "640x360")`],
       ['dana', 128, `It drained after the restart. Before and after, and the worker log:\n\nAttachments:\n![after-restart.png](${upload('after-restart.png', 'image/svg+xml', screenshot('Publish queue after the restart', '#10b981', [130, 90, 50, 20, 8, 4, 2]))} "640x360")\n\n- [publish-worker.log](${upload('publish-worker.log', 'text/plain', new TextEncoder().encode('12:00:01 restart\n12:00:04 queue draining\n'))})`],
       ['sam', 120, 'Confirmed, publishing works again. Thanks!'],
+      // Images one after the other, as Teams attaches them: a gallery (and a lightbox that
+      // pages through them).
+      ['sam', 110, `One more thing, the author console shows these after every publish:\n\n${[
+        ['console-1.png', 'Author console, errors', '#f59e0b', [60, 80, 40, 100], 640, 360],
+        ['console-2.png', 'Network tab, failed requests', '#6366f1', [30, 90, 120, 70, 50, 20, 10, 90, 40], 1280, 500],
+        ['console-3.png', 'Queue', '#ef4444', [90, 60, 30], 360, 640],
+        ['console-4.png', 'Replication agent', '#10b981', [20, 40, 60, 80, 100], 800, 600],
+      ].map(([name, title, color, bars, w, h]) => `![${name}](${upload(name, 'image/svg+xml', screenshot(title, color, bars, w, h))} "${w}x${h}")`).join('\n\n')}`],
     ],
     reads: { dana: 'latest' },
     label: {

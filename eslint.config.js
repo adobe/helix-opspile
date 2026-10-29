@@ -53,7 +53,7 @@ export default [
   },
   {
     // The pages' scripts (src/page.js inlines them into ui/*.html): browser code. The pages'
-    // own are module scripts; app.js, which every page runs, is a classic one.
+    // own are module scripts; app.js and header.js, which every page runs, are classic ones.
     ...recommended,
     files: ['ui/**/*.js'],
     languageOptions: {
@@ -64,6 +64,8 @@ export default [
         ...globals.browser,
         // The markdown renderer, src/ui-markdown.js, bundled (`markdown.js` in the page).
         Markdown: 'readonly',
+        // Every page's header, ui/header.js.
+        Header: 'readonly',
       },
     },
     rules: {
@@ -87,7 +89,7 @@ export default [
     },
   },
   {
-    files: ['ui/app.js'],
+    files: ['ui/app.js', 'ui/header.js'],
     languageOptions: { sourceType: 'script' },
   },
 ];

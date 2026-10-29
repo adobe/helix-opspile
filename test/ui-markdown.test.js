@@ -52,6 +52,18 @@ describe('ui markdown', () => {
     assert.doesNotMatch(html, /title="\d+x\d+"/);
   });
 
+  it('shows images one after the other as a gallery, and no other images', () => {
+    const img = (n) => `![${n}](https://files.example/${n}.png "800x600")`;
+    const run = render(`Text.\n\n${img('a')}\n\n${img('b')}\n\n${img('c')} ${img('d')}\n\nMore text.`);
+    assert.match(run, /^<p>Text\.<\/p>\n+<div class="gallery">(<img class="att sized"[^>]*>){4}<\/div>\n<p>More text\.<\/p>$/);
+    // One image alone, or images with text between them, stay as they are.
+    assert.doesNotMatch(render(img('a')), /gallery/);
+    assert.doesNotMatch(render(`${img('a')}\n\nsee\n\n${img('b')}`), /gallery/);
+    assert.doesNotMatch(render(`see ${img('a')} and ${img('b')}`), /gallery/);
+    // Not in code.
+    assert.doesNotMatch(render(`\`\`\`\n${img('a')}\n\n${img('b')}\n\`\`\``), /gallery/);
+  });
+
   it('repairs links stored with spaces in their address', () => {
     assert.equal(
       md('- [a b.pdf](https://files.example/Shared Documents/a b.pdf)'),

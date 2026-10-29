@@ -13,10 +13,10 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from '../src/emoji.js';
-import { emojiLookup, squash } from '../src/emojinames.js';
+import { emojiLookup, matchEmoji, squash } from '../src/emojinames.js';
 import { CLEF } from '../src/label.js';
 import {
-  candidates, COMMON, emojiChar, forget, MAX_ASK, resolveShortcodes,
+  candidates, COMMON, emojiChar, forget, MAX_ASK, rankEmoji, resolveShortcodes,
 } from '../src/shortcodes.js';
 import { d1 } from './d1.js';
 
@@ -172,5 +172,71 @@ describe('shortcodes in a reply', () => {
     // Another workspace's emoji are not this one's.
     const other = await resolveShortcodes(env, ':party-blob:', { source: 'slack', tenant: 'E2' });
     assert.equal(other.text, ':tada:');
+  });
+});
+
+describe('emoji suggestions in the composer', () => {
+  beforeEach(() => forget());
+  const match = (q, limit) => matchEmoji(SLACK_EMOJI, EMOJI_ALIASES, q, limit);
+
+  it('finds the names that have what was typed: whole, start, part, anywhere', () => {
+    assert.deepEqual(match('check'), [
+      'checkered_flag', 'heavy_check_mark', 'white_check_mark', 'ballot_box_with_check',
+    ]);
+    assert.deepEqual(match('fire', 3), ['fire', 'fireworks', 'fire_engine']);
+    assert.deepEqual(match('+1'), ['+1']);
+    // Separators may be left out, from the start of a part only.
+    assert.deepEqual(match('checkm'), ['heavy_check_mark', 'white_check_mark']);
+    assert.deepEqual(match('tad'), ['tada', 'stadium']);
+    assert.deepEqual(match('SMI', 2), ['smile', 'smirk']);
+    assert.deepEqual(match(''), []);
+  });
+
+  it('finds other platforms\' names, one name per emoji, Slack\'s first', () => {
+    assert.equal(match('facepalm')[0], 'face_palm');
+    assert.equal(match('facep')[0], 'face_palm');
+    assert.deepEqual(match('thu', 2), ['thumbsup', 'thumbsdown']);
+    const chars = match('smile', 20).map((n) => SLACK_EMOJI[n]);
+    assert.equal(new Set(chars).size, chars.length);
+  });
+
+  it('ranks all of the candidates by Clef, without a threshold', async () => {
+    const list = candidates('celebr');
+    assert.ok(list.includes('partying_face') && list.includes('tada'));
+    const calls = [];
+    const AI = {
+      async run(model, input) {
+        calls.push(input);
+        const { criteria } = input.questions.emoji;
+        assert.equal(criteria.none, undefined);
+        const k = Object.keys(criteria).find((c) => criteria[c].includes(':tada:'));
+        return { answers: { emoji: { choice: k, probabilities: { [k]: 0.2, e0: 0.1 } } } };
+      },
+    };
+    const ranked = await rankEmoji({ AI }, 'Celebr');
+    assert.match(calls[0].state, /has typed :celebr so far/);
+    assert.equal(ranked[0], 'tada');
+    assert.equal(ranked[1], list[0]);
+    assert.deepEqual([...ranked].sort(), [...list].sort());
+    // Remembered.
+    assert.deepEqual(await rankEmoji({ AI }, 'celebr'), ranked);
+    assert.equal(calls.length, 1);
+  });
+
+  it('suggests nothing without Clef, for too little, or when Clef fails or is slow', async () => {
+    assert.deepEqual(await rankEmoji({}, 'party'), []);
+    const AI = { run: () => assert.fail('not asked') };
+    assert.deepEqual(await rankEmoji({ AI }, 'p'), []);
+    assert.deepEqual(await rankEmoji({ AI }, '+1'), []);
+    const failing = {
+      AI: {
+        run: async () => {
+          throw new Error('overloaded');
+        },
+      },
+    };
+    assert.deepEqual(await rankEmoji(failing, 'party'), []);
+    const slow = { AI: { run: () => new Promise(() => {}) } };
+    assert.deepEqual(await rankEmoji(slow, 'party', 10), []);
   });
 });
