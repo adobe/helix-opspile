@@ -1091,7 +1091,9 @@ function openHit(key) {
 
 // Team order: what needs me most, first. Recency always counts; a thread that waits on
 // us counts more the longer it waits, the more urgent and unresolved it is, and the closer
-// it is to me (mentioned me > I posted > mentioned the team > the team posted).
+// it is to me (mentioned me > I posted > mentioned the team > the team posted). Resolved
+// weighs on all of it, recency too: closing a thread with a last word must not lift it
+// above the open ones in its pile.
 const STATUS_WEIGHT = {
   critical: 6, hot: 5, you: 4, waiting: 3, silent: 2, team: 1.5, quiet: 1,
 };
@@ -1104,7 +1106,7 @@ function baseScore(t) {
   const ageH = Math.max(0, (now - last) / 3600000);
   const recency = Math.exp(-ageH / 48);
   const urgency = 1 + (t.label?.urgency ?? 0.5);
-  const open = 1 - 0.8 * resolvedP(t);
+  const open = 1 - 0.9 * resolvedP(t);
   const me = viewerId();
   const team = teamIds();
   let near = 1;
@@ -1119,7 +1121,7 @@ function baseScore(t) {
   const sig = signals(t);
   // 👀 by a colleague lowers it for you; 🛟 by a colleague raises it.
   const steer = (sig.others && !sig.mine ? 0.5 : 1) * (sig.help ? 2 : 1);
-  return alert * (2 * recency + urgency * open * waiting * near * unseen * steer);
+  return alert * open * (2 * recency + urgency * waiting * near * unseen * steer);
 }
 
 const tpl = document.createElement('template');
