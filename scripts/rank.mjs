@@ -26,7 +26,8 @@
  *     shows of them) and says which the team should turn to first, asked both ways round.
  *     More rounds add to the games already played. Needs CLOUDFLARE_ACCOUNT_ID (the Worker's
  *     account) and CLOUDFLARE_API_TOKEN, or a `wrangler login` with Workers AI.
- *   npm run rank -- train [--l2 30] [--shares …|counts] [--min-support 20] [--without …]
+ *   npm run rank -- train [--model boost|linear] [--trees 150] [--depth 3] [--l2 30]
+ *     [--shares …|counts] [--min-support 20] [--without …]
  *     Fits the linear model of ui/rank.js to the games, reports how often it, the old score and
  *     recency alone agree with Clef (5-fold cross-validation) and with you, and writes it into
  *     ui/rank.js. `--human <weight>` trains on your answers too, each worth that many of Clef's.
@@ -59,7 +60,9 @@ import {
 import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
 import { llm } from './rank-llm.mjs';
 import { behavior } from './rank-behavior.mjs';
-import { boost, forest, treeScore } from './rank-trees.mjs';
+import {
+  boost, forest, predict, treeScore,
+} from './rank-trees.mjs';
 import {
   DEFAULT_SHARES, DEFAULT_WEIGHTS, SIGNS, rows, samples, shareOut,
 } from './rank-combo.mjs';
@@ -475,9 +478,23 @@ async function train(opts) {
     .map((k) => [k, list.filter((r) => r.source === k).length]));
   const counts = Object.entries(count).map(([k, n]) => `${k} ${n}`).join(', ');
   console.log(`${list.length} games from ${all.length} samples: ${counts}`);
+  // Boosted trees (the inbox's), or `--model linear`.
+  const kind = opts.model === 'linear' ? 'linear' : 'boost';
+  const treeOpts = {
+    trees: num(opts.trees, 150), depth: num(opts.depth, 3), signs: SIGNS,
+  };
+  const fitKind = (games, pinned) => {
+    if (kind === 'linear') {
+      const lw = fitRows(names, games, l2, pinned);
+      return { json: lw, value: (x) => dot(lw, names, x) };
+    }
+    const m = boost(names, games, treeOpts);
+    return { json: m, value: (x) => m.trees.reduce((acc, t) => acc + predict(t, x), 0) };
+  };
+  console.log(`model: ${kind === 'linear' ? 'linear' : `boosted trees (${treeOpts.trees} × depth ${treeOpts.depth})`}`);
   const held = Object.fromEntries(sources.map((k) => [k, { model: [], classic: [] }]));
   for (let f = 0; f < 5; f += 1) {
-    const w = fitRows(names, list.filter((r) => !inFold(f)(r)), l2);
+    const fitted = fitKind(list.filter((r) => !inFold(f)(r)));
     for (const k of sources) {
       const test = list.filter((r) => inFold(f)(r) && r.source === k);
       if (test.length) {
@@ -485,7 +502,7 @@ async function train(opts) {
         const s = (key) => {
           const [i, side] = [key.slice(0, -1), key.slice(-1)];
           const r = ids.get(i);
-          return dot(w, names, side === 'a' ? r.xa : r.xb);
+          return fitted.value(side === 'a' ? r.xa : r.xb);
         };
         held[k].model.push({
           ...agreement(s, test.map((r, i) => ({ a: `${i}a`, b: `${i}b`, p: r.p }))),
@@ -528,20 +545,44 @@ async function train(opts) {
       + `${Object.entries(you.judges).map(([k, b]) => `${k} ${share(b)}`).join(', ')}`);
   }
   const pinned = new Set();
-  const w = fitRows(names, list, l2, pinned);
+  const final = fitKind(list, pinned);
   if (pinned.size) {
     console.log(`held at 0, as the games would turn them against the policy (SIGNS): ${[...pinned].join(', ')}`);
   }
-  console.log('weights (log-odds per unit):');
-  for (const [k, v] of Object.entries(w).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
-    console.log(`  ${k.padEnd(18)} ${v >= 0 ? ' ' : ''}${v.toFixed(3)}`);
-  }
-  const model = {
+  const base = {
     trained: new Date().toISOString().slice(0, 10),
     games: Object.fromEntries(Object.entries(count)),
     accuracy: Object.fromEntries(Object.entries(report).map(([k, r]) => [k, r.model])),
-    weights: Object.fromEntries(Rank.names.map((k) => [k, Number((w[k] || 0).toFixed(4))])),
   };
+  let model;
+  if (kind === 'linear') {
+    const w = final.json;
+    console.log('weights (log-odds per unit):');
+    for (const [k, v] of Object.entries(w).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
+      console.log(`  ${k.padEnd(18)} ${v >= 0 ? ' ' : ''}${v.toFixed(3)}`);
+    }
+    model = {
+      ...base,
+      weights: Object.fromEntries(Rank.names.map((k) => [k, Number((w[k] || 0).toFixed(4))])),
+    };
+  } else {
+    // How much each feature moves the scores of the games' threads (mean |score − score at 0|).
+    const m = final.json;
+    const xs = [...new Set(list.flatMap((r) => [r.xa, r.xb]))].slice(0, 2000);
+    const val = (x) => m.trees.reduce((acc, t) => acc + predict(t, x), 0);
+    const moves = names.map((n, i) => [n, xs.reduce((acc, x) => {
+      const z = [...x];
+      z[i] = 0;
+      return acc + Math.abs(val(x) - val(z));
+    }, 0) / xs.length]).filter(([, v]) => v > 1e-4).sort((a, b) => b[1] - a[1]);
+    console.log('what each feature moves a score by, on average (log-odds):');
+    for (const [k, v] of moves) {
+      console.log(`  ${k.padEnd(18)} ${v.toFixed(3)}`);
+    }
+    model = {
+      ...base, kind: 'boost', names: m.names, trees: m.trees,
+    };
+  }
   if (opts['dry-run']) {
     return model;
   }
@@ -598,7 +639,7 @@ async function compare(opts) {
       return { score: (r, side) => dot(w, names, side === 'a' ? r.xa : r.xb), json: w };
     },
     'boosted trees': (games) => {
-      const m = boost(names, games, { trees, depth: num(opts.depth, 3) });
+      const m = boost(names, games, { trees, depth: num(opts.depth, 3), signs: SIGNS });
       return { score: (r, side) => treeScore(m, side === 'a' ? r.a : r.b), json: m };
     },
     'random forest': (games) => {

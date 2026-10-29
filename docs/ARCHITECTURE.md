@@ -490,7 +490,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. First comes the
   status (unseen and critical, unseen and hot, you, waiting too long, customer silent, team on it,
-  the rest); within a status, the score of `ui/rank.js`, a linear model over what the inbox knows
+  the rest); within a status, the score of `ui/rank.js`, boosted trees over what the inbox knows
   of a thread (how long ago, who is waited on, urgency, resolved, kind, …) learned from Clef's
   pairwise judgements of production threads, from what people open in the list and from which
   customers get answered first (`npm run rank`, see the README), plus how close the thread is to

@@ -20,8 +20,10 @@
  * - forest: a random forest of such steps from zero, each on a bootstrap of the games and a
  *   random part of the features, averaged; then scaled to log-odds.
  *
- * A tree is `{ f, t, l, r }` (feature index, threshold: x[f] <= t goes left) or `{ v }`, so a
- * model is plain JSON the browser can walk, or D1 can as nested CASE expressions.
+ * A tree is `[f, t, l, r]` (feature index into the model's `names`, threshold: x[f] <= t goes
+ * left) or a number (a leaf), so a model is plain JSON the browser (ui/rank.js) can walk, or D1
+ * as nested CASE expressions. `monotone` (feature → 1 or −1) keeps a feature's effect one way,
+ * as XGBoost does: a split on it must order its leaves so, and bounds what grows below.
  */
 
 import { random } from './rank-lib.mjs';
@@ -69,12 +71,13 @@ function presort(X, d) {
 }
 
 /**
- * A regression tree on (g, h): each leaf the Newton step −G / (H + λ), splits where they
- * lower the loss most (XGBoost's gain), down to `depth`, with at least `minH` hessian a side.
+ * A regression tree on (g, h): each leaf the Newton step −G / (H + λ), within [lo, hi], splits
+ * where they lower the loss most, down to `depth`, with at least `minH` hessian a side.
  */
-function grow(X, g, h, sorted, members, {
-  depth, lambda, minH, features,
-}) {
+function grow(X, g, h, sorted, members, opts, lo = -Infinity, hi = Infinity) {
+  const {
+    depth, lambda, minH, features, mono,
+  } = opts;
   let G = 0;
   let Hs = 0;
   for (let i = 0; i < members.length; i += 1) {
@@ -83,13 +86,16 @@ function grow(X, g, h, sorted, members, {
       Hs += h[i];
     }
   }
-  const leaf = { v: -G / (Hs + lambda) };
+  const clip = (w) => Math.min(hi, Math.max(lo, w));
+  const loss = (gs, hs, w) => gs * w + 0.5 * (hs + lambda) * w * w;
+  const here = clip(-G / (Hs + lambda));
   if (depth === 0 || Hs < 2 * minH) {
-    return leaf;
+    return here;
   }
-  const parent = (G * G) / (Hs + lambda);
+  const parent = loss(G, Hs, here);
   let best = null;
   for (const f of features) {
+    const sign = mono[f] || 0;
     let gl = 0;
     let hl = 0;
     let prev = null;
@@ -97,9 +103,15 @@ function grow(X, g, h, sorted, members, {
       if (members[i]) {
         const x = X[i][f];
         if (prev !== null && x > prev && hl >= minH && Hs - hl >= minH) {
-          const gain = (gl * gl) / (hl + lambda) + ((G - gl) ** 2) / (Hs - hl + lambda) - parent;
-          if (!best || gain > best.gain) {
-            best = { gain, f, t: (prev + x) / 2 };
+          const wl = clip(-gl / (hl + lambda));
+          const wr = clip(-(G - gl) / (Hs - hl + lambda));
+          if (!sign || sign * (wr - wl) >= 0) {
+            const gain = parent - loss(gl, hl, wl) - loss(G - gl, Hs - hl, wr);
+            if (!best || gain > best.gain) {
+              best = {
+                gain, f, t: (prev + x) / 2, wl, wr,
+              };
+            }
           }
         }
         gl += g[i];
@@ -109,7 +121,7 @@ function grow(X, g, h, sorted, members, {
     }
   }
   if (!best || best.gain <= 1e-9) {
-    return leaf;
+    return here;
   }
   const left = new Uint8Array(members.length);
   const right = new Uint8Array(members.length);
@@ -118,37 +130,46 @@ function grow(X, g, h, sorted, members, {
       (X[i][best.f] <= best.t ? left : right)[i] = 1;
     }
   }
-  const opts = {
-    depth: depth - 1, lambda, minH, features,
-  };
-  return {
-    f: best.f,
-    t: best.t,
-    l: grow(X, g, h, sorted, left, opts),
-    r: grow(X, g, h, sorted, right, opts),
-  };
+  const below = { ...opts, depth: depth - 1 };
+  let [ll, lh, rl, rh] = [lo, hi, lo, hi];
+  const sign = mono[best.f] || 0;
+  if (sign) {
+    const mid = (best.wl + best.wr) / 2;
+    if (sign > 0) {
+      lh = mid;
+      rl = mid;
+    } else {
+      ll = mid;
+      rh = mid;
+    }
+  }
+  return [best.f, best.t, grow(X, g, h, sorted, left, below, ll, lh),
+    grow(X, g, h, sorted, right, below, rl, rh)];
 }
 
 export function predict(node, x) {
   let n = node;
-  while (n.f !== undefined) {
-    n = x[n.f] <= n.t ? n.l : n.r;
+  while (Array.isArray(n)) {
+    n = x[n[0]] <= n[1] ? n[2] : n[3];
   }
-  return n.v;
+  return n;
 }
 
-const scale = (node, k) => (node.f === undefined ? { v: node.v * k }
-  : { ...node, l: scale(node.l, k), r: scale(node.r, k) });
+const scale = (node, k) => (Array.isArray(node)
+  ? [node[0], node[1], scale(node[2], k), scale(node[3], k)] : node * k);
 
-const round = (node) => (node.f === undefined ? { v: Number(node.v.toFixed(4)) }
-  : {
-    f: node.f, t: Number(node.t.toFixed(4)), l: round(node.l), r: round(node.r),
-  });
+const round = (node) => (Array.isArray(node)
+  ? [node[0], Number(node[1].toFixed(4)), round(node[2]), round(node[3])]
+  : Number(node.toFixed(4)));
+
+const monotone = (names, signs = {}) => Object.fromEntries(names
+  .map((n, f) => [f, signs[n] || 0]).filter(([, v]) => v));
 
 /** Boosted trees: `trees` Newton steps of `rate`, each on all games. */
 export function boost(names, list, {
-  trees = 150, depth = 3, rate = 0.1, lambda = 5, minH = 2, colsample = 1, seed = 3,
+  trees = 150, depth = 3, rate = 0.1, lambda = 5, minH = 2, colsample = 1, seed = 3, signs = {},
 } = {}) {
+  const mono = monotone(names, signs);
   const { X, pairs } = itemize(names, list);
   const sorted = presort(X, names.length);
   const rnd = random(seed);
@@ -159,7 +180,7 @@ export function boost(names, list, {
     const { g, h } = gradients(F, pairs, X.length);
     const features = names.map((_, f) => f).filter(() => rnd() < colsample);
     const tree = scale(grow(X, g, h, sorted, all, {
-      depth, lambda, minH, features: features.length ? features : [0],
+      depth, lambda, minH, mono, features: features.length ? features : [0],
     }), rate);
     for (let i = 0; i < X.length; i += 1) {
       F[i] += predict(tree, X[i]);
@@ -171,8 +192,9 @@ export function boost(names, list, {
 
 /** A random forest: one Newton step from zero per tree, on a bootstrap and part of the features. */
 export function forest(names, list, {
-  trees = 150, depth = 5, lambda = 5, minH = 2, colsample = 0.5, seed = 3,
+  trees = 150, depth = 5, lambda = 5, minH = 2, colsample = 0.5, seed = 3, signs = {},
 } = {}) {
+  const mono = monotone(names, signs);
   const { X, pairs } = itemize(names, list);
   const sorted = presort(X, names.length);
   const rnd = random(seed);
@@ -184,7 +206,7 @@ export function forest(names, list, {
     const members = Uint8Array.from(h, (x) => (x > 0 ? 1 : 0));
     const features = names.map((_, f) => f).filter(() => rnd() < colsample);
     out.push(grow(X, g, h, sorted, members, {
-      depth, lambda, minH, features: features.length ? features : [0],
+      depth, lambda, minH, mono, features: features.length ? features : [0],
     }));
   }
   // The mean of the steps, scaled to log-odds by one weight fitted on the games (Newton).
@@ -204,7 +226,9 @@ export function forest(names, list, {
     }
     k -= gk / (hk + 1e-9);
   }
-  return { kind: 'forest', names, trees: out.map((tr) => round(scale(tr, k / out.length))) };
+  // A negative scale would turn every monotone feature around: kept at 0 or above.
+  const kk = Math.max(0, k);
+  return { kind: 'forest', names, trees: out.map((tr) => round(scale(tr, kk / out.length))) };
 }
 
 /** A tree model's score of a thread's features (an object by name). */

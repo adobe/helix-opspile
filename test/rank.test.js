@@ -48,9 +48,34 @@ describe('the team order model (ui/rank.js)', () => {
     }
   });
 
-  it('is trained on every feature it computes, and nothing else', () => {
+  it('is trained on features it computes, and nothing else', () => {
     assert.ok(Rank.model, 'ui/rank.js has a model');
-    assert.deepEqual(Object.keys(Rank.model.weights).sort(), [...Rank.names].sort());
+    const used = Rank.model.trees ? Rank.model.names : Object.keys(Rank.model.weights);
+    assert.ok(used.length > 10);
+    for (const n of used) {
+      assert.ok(Rank.names.includes(n), n);
+    }
+  });
+
+  it('keeps the policy: resolved only lowers a thread, waiting on us only raises it', () => {
+    const base = {
+      last_at: ago(3),
+      root_at: ago(30),
+      last_staff: 0,
+      messages: 6,
+      waiting_on: 'customer',
+      label: { urgency: 1, resolved_p: 0.2, label_kind: 'question' },
+      participants: [{ staff: true }],
+    };
+    for (const h of [0.5, 5, 50, 500]) {
+      for (const urgency of [0, 1, 2, 3]) {
+        const t = { ...base, last_at: ago(h), label: { ...base.label, urgency } };
+        const at = (p) => Rank.score({ ...t, label: { ...t.label, resolved_p: p } }, NOW);
+        assert.ok(at(0.9) <= at(0.5) && at(0.5) <= at(0.1), `resolved, ${h} h, urgency ${urgency}`);
+        assert.ok(Rank.score({ ...t, resolution: { verdict: 'resolved' } }, NOW) <= at(1) + 1e-9);
+        assert.ok(Rank.score({ ...t, waiting_on: 'us' }, NOW) >= Rank.score(t, NOW) - 1e-9, `us, ${h} h`);
+      }
+    }
   });
 
   it('puts a thread you just answered and resolved below the open ones', () => {
@@ -345,9 +370,19 @@ describe('tree models of the order (scripts/rank-trees.mjs)', () => {
   it('boosted trees learn an interaction', () => {
     const m = boost(['x', 'y', 'z'], games, { trees: 40, depth: 2, rate: 0.3 });
     assert.ok(right(m) > 0.95, String(right(m)));
-    // Plain JSON: a tree is a split or a leaf.
+    // Plain JSON: a tree is a split [feature, threshold, left, right] or a leaf.
     const t = JSON.parse(JSON.stringify(m.trees[0]));
-    assert.ok(t.f !== undefined || t.v !== undefined);
+    assert.ok(Array.isArray(t) ? t.length === 4 : typeof t === 'number');
+  });
+
+  it('keeps a monotone feature one way, even against the games', () => {
+    // The games say: more x wins. Held to −1, x may only lower a score.
+    const m = boost(['x', 'y', 'z'], games, {
+      trees: 40, depth: 2, rate: 0.3, signs: { x: -1 },
+    });
+    for (const t of things) {
+      assert.ok(treeScore(m, { ...t, x: 0.9 }) <= treeScore(m, { ...t, x: 0.1 }) + 1e-9);
+    }
   });
 
   it('a random forest does too, scaled to log-odds', () => {

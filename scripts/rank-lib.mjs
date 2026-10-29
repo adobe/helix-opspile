@@ -23,7 +23,9 @@ const UI = new URL('../ui/', import.meta.url);
 
 /** ui/rank.js, run as the browser runs it: its global `Rank`. */
 export function loadRank(source = readFileSync(new URL('rank.js', UI), 'utf8')) {
-  const context = { Math, Date, Object };
+  const context = {
+    Math, Date, Object, Array, Number,
+  };
   context.globalThis = context;
   vm.runInNewContext(source, context);
   return context.Rank;
@@ -426,11 +428,23 @@ export function spearman(xs, ys) {
   return num / Math.sqrt(da * db || 1);
 }
 
+/** A tree as a one-line array literal: `[f, t, left, right]` or a leaf. */
+const treeLiteral = (n) => (Array.isArray(n)
+  ? `[${n[0]}, ${n[1]}, ${treeLiteral(n[2])}, ${treeLiteral(n[3])}]` : String(n));
+
 /** A value as the source of ui/rank.js writes it (the style the linter wants). */
-function literal(v, indent = '  ') {
+function literal(v, indent = '  ', key = null) {
+  if (key === 'trees' && Array.isArray(v)) {
+    const inner = `${indent}  `;
+    return `[\n${v.map((t) => `${inner}${treeLiteral(t)},`).join('\n')}\n${indent}]`;
+  }
+  if (Array.isArray(v)) {
+    const inner = `${indent}  `;
+    return `[\n${v.map((x) => `${inner}${literal(x, inner)},`).join('\n')}\n${indent}]`;
+  }
   if (v && typeof v === 'object') {
     const inner = `${indent}  `;
-    const rows = Object.entries(v).map(([k, x]) => `${inner}${/^[A-Za-z_$][\w$]*$/.test(k) ? k : `'${k}'`}: ${literal(x, inner)},`);
+    const rows = Object.entries(v).map(([k, x]) => `${inner}${/^[A-Za-z_$][\w$]*$/.test(k) ? k : `'${k}'`}: ${literal(x, inner, k)},`);
     return `{\n${rows.join('\n')}\n${indent}}`;
   }
   return typeof v === 'string' ? `'${v.replace(/[\\']/g, '\\$&')}'` : String(v);
