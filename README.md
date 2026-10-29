@@ -75,7 +75,7 @@ Nothing below is committed; set it on the Worker.
 
 | Name | Kind | What |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write` |
+| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies read the workspace's custom emoji with it (bot scope `emoji:read`) |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
@@ -353,7 +353,9 @@ asked for only when someone first attaches a file to a reply) and the redirect U
 `<origin>/api/auth/slack/callback` and Access's callback (Sign in with Slack asks for
 `openid`, `email` and `profile` itself); the bot needs `team:read` for the workspace that links to
 Slack open in (`team.info`), `reactions:read` for the reaction
-events, `files:read` for images and for the files shared in Slack Connect channels (their
+events, `emoji:read` for the workspace's custom emoji (`emoji.list`, so a custom `:name:` in a
+reply stays as typed; without it Clef replaces no name on Slack that is not a standard one,
+since it may be a custom emoji), `files:read` for images and for the files shared in Slack Connect channels (their
 events carry only a stub, which opspile looks up with `files.info`), and `files:write` for files
 sent as the opspile app. Its Event Subscriptions request URL is
 `<origin>/slack/events`.

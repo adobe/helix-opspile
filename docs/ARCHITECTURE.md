@@ -627,14 +627,19 @@ with the browser's "Leave page?": the bubble lives in the page only, and the pos
 off.
 
 **Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
-Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling
-is Slack's (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`, from the GitHub and
+Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling is
+Slack's (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`, from the GitHub and
 Discord names in `src/emoji.js` and by leaving out separators, `src/emojinames.js`), and a
-workspace's own emoji (one somebody reacted with) stays. For any other name, Clef picks the
-closest emoji from at most 16 candidates (the most alike by name and CLDR keywords, then common
-ones), at most three names per reply, within 2.5 seconds; it needs a probability of 0.5, else
-the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
-way. The inbox shows every platform's names as emoji the same way.
+workspace's own emoji (one somebody reacted with, and on Slack every one of `emoji.list`, bot
+scope `emoji:read`, remembered per isolate for ten minutes) stays. For any other name, Clef
+picks the closest emoji from at most 16 candidates (the most alike by name and CLDR keywords,
+then common ones), at most three names per reply, within 2.5 seconds; it needs a probability of
+0.5, else the name stays as typed. On Slack, Clef is asked only once `emoji.list` answered:
+without it (no `emoji:read`, Slack failing; tried again after a minute) a name that is not a
+standard one may be a custom emoji and stays as typed. Answers are remembered per isolate. Code
+(fenced blocks of three or more backticks or tildes, code spans of any number of backticks) and
+addresses (bare, autolinks in `<…>`, link destinations) are left alone. Edits (`POST /api/edit`)
+go the same way. The inbox shows every platform's names as emoji the same way.
 
 **Emoji suggestions.** Typing `:` and two more characters of a name in the reply box (or in a
 message being edited) suggests up to eight emoji, as typing `@` suggests people. First, at
