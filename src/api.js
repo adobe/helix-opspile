@@ -404,7 +404,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows },
+    { results: techRows }, techVocab,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -461,6 +461,8 @@ export async function inbox(env, me, team, {
         ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
       WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
       .bind(keys, TECH_MIN).all(),
+    // The team's names for its technologies (the personal view, across teams: the admin team's).
+    vocab(env, personal ? null : team),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -507,7 +509,7 @@ export async function inbox(env, me, team, {
       }])),
     teams: myTeams,
     members: teamMembers,
-    vocab: vocab(),
+    vocab: techVocab,
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
     threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
@@ -724,7 +726,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     },
     tech: tech || [],
     topics: topicList(model && model.topics),
-    vocab: vocab(),
+    vocab: await vocab(env, row.team),
     members: group.map((m) => ({
       thread: m.thread,
       root_at: m.root_at,

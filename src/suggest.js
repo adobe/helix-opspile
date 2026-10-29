@@ -12,7 +12,7 @@
 
 import { platformName } from './platforms.js';
 import { cachedGraph } from './graph.js';
-import { CLEF, TECH } from './label.js';
+import { CLEF } from './label.js';
 import {
   getChannel, isStaffDomain, loadRules, slackApi,
 } from './lookup.js';
@@ -196,8 +196,11 @@ export async function channelFacts(env, ch, ctx = {}) {
       COALESCE(p.staff, 0) AS staff
     FROM channel_members cm LEFT JOIN people p ON p.email = cm.email
     WHERE cm.source = ? AND cm.tenant = ? AND cm.channel_id = ?`, ...k);
-  const tech = (await rows(env, `SELECT tech FROM channel_tech WHERE source = ? AND tenant = ? AND channel_id = ?
-    ORDER BY p DESC`, ...k)).map((r) => r.tech);
+  // What each technology is, as the teams describe it to Clef (src/extract.js).
+  const tech = (await rows(env, `SELECT c.tech, COALESCE((SELECT s.description FROM tech_stack s
+        WHERE s.tech = c.tech ORDER BY s.team = 'admin' DESC LIMIT 1), c.tech) AS what
+    FROM channel_tech c WHERE c.source = ? AND c.tenant = ? AND c.channel_id = ?
+    ORDER BY c.p DESC`, ...k)).map((r) => r.what);
   const staff = (p) => Boolean(p.staff) || isStaffDomain(env, p.email);
   const teamsFor = (p) => (p.email ? teamsOf.get(p.email) || [] : [])
     .filter((t) => t !== ADMIN_TEAM).map((t) => teamName.get(t) || t);
@@ -225,7 +228,7 @@ export async function channelFacts(env, ch, ctx = {}) {
       name: p.name, email: p.email, staff: staff(p), teams: teamsFor(p),
     })),
     membersListed: Boolean(ch.members_at && !ch.members_error),
-    tech: tech.map((t) => TECH[t] || t),
+    tech,
   };
 }
 

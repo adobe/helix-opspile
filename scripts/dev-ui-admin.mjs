@@ -510,9 +510,26 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
-    // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader.
+    // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader,
+    // which runs extraction scripts (src/extract.js) in this process, with network access: the
+    // preview's scripts are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
-    LOADER: {},
+    LOADER: {
+      get: (id, make) => ({
+        getEntrypoint: () => ({
+          fetch: async (url, init) => {
+            const code = make().modules['rule.js'];
+            try {
+              const mod = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+              const out = await mod.default(JSON.parse(init.body));
+              return Response.json({ results: Array.isArray(out) ? out : [] });
+            } catch (e) {
+              return Response.json({ error: String(e.message || e) });
+            }
+          },
+        }),
+      }),
+    },
     TEAMS_APP_ID: 'made-up-catalog-id',
     MS_CLIENT_ID: 'made-up-app-id',
     MS_CLIENT_SECRET: 'made-up-secret',
@@ -536,6 +553,26 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
+  // technology of its own, and one of the admin team's turned off for its channels.
+  DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,
+      position, changed_by, changed_at) VALUES
+    ('platform', 'Order ids in checkout errors', 'regex', 'fact', 'order', '\\bORD-\\d{6}\\b', '', '', 10,
+      'Dana Ops', '2026-10-26T09:00:00Z'),
+    ('platform', 'Release numbers', 'regex', 'fact', 'release', '\\bRelease (\\d+)\\b', 'i', '$1', 20,
+      'opspile-agent/dev', '2026-10-27T15:00:00Z');
+    INSERT INTO tech_stack (team, tech, name, description, enabled, changed_by, changed_at) VALUES
+      ('platform', 'sitecore', 'Sitecore', 'Sitecore as the CMS before the migration', 1, 'Dana Ops', '2026-10-26T09:00:00Z'),
+      ('platform', 'gdrive', 'Google Drive', 'Google Drive or Google Docs as the content source', 0, 'Dana Ops',
+        '2026-10-26T09:05:00Z')`);
+  DB.sqlite.prepare(`INSERT INTO extraction_rules (team, name, kind, script, position, enabled, changed_by,
+      changed_at) VALUES ('platform', 'Customers who say it is blocking', 'script', ?, 30, 0, 'Dana Ops',
+      '2026-10-27T16:00:00Z')`).run([
+    'export default (thread) => thread.messages',
+    '  .filter((m) => !m.staff && /block/i.test(m.text))',
+    "  .map((m) => ({ field: 'blocker', value: m.author }));",
+    '',
+  ].join('\n'));
   // Edge ops has thread agents by default: its channels nobody switched have them.
   DB.sqlite.exec(`INSERT INTO agent_teams (team, enabled, changed_by, changed_at)
     VALUES ('edge', 1, 'Dana', '2026-10-25T09:00:00Z')`);
@@ -599,5 +636,5 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       await consume({ messages }, env);
     }
     return res;
-  }, { kb });
+  }, { kb, env });
 }

@@ -331,6 +331,44 @@ describe('mcp tools', () => {
     assert.match(bad.body.result.content[0].text, /Invalid topic: weather/);
   });
 
+  it('lists, tests and changes a team\'s extraction rules and tech stack, for its managers', async () => {
+    const e = env();
+    const list = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
+    assert.deepEqual(list.rules, []);
+    assert.ok(list.inherited.rules.some((r) => r.field === 'site'));
+    const other = await callTool(e, 'list_extraction_rules', { team: 'edge' });
+    assert.match(other.body.result.content[0].text, /Not one of your teams: edge/);
+
+    const rule = {
+      name: 'Outage words', field: 'symptom', pattern: '\\b(down|broken)\\b', value: '$1',
+    };
+    const tested = structured(await callTool(e, 'test_extraction_rule', { rule, thread: SLACK }));
+    assert.deepEqual(tested.facts, [{ field: 'symptom', value: 'down' }]);
+    // Ada is a member of helix, not one of its managers.
+    const refused = await callTool(e, 'save_extraction_rule', { team: 'helix', ...rule });
+    assert.match(refused.body.result.content[0].text, /managers of helix/);
+    const boss = { ...ME, teams: [{ slug: 'helix', name: 'Helix', role: 'manager' }] };
+    const saved = await send(e, req('tools/call', { name: 'save_extraction_rule', arguments: { team: 'helix', ...rule } }), boss);
+    assert.equal(saved.body.result.structuredContent.rule.team, 'helix');
+    const tech = await send(e, req('tools/call', {
+      name: 'save_tech',
+      arguments: {
+        team: 'helix', tech: 'sitecore', name: 'Sitecore', description: 'Sitecore as the old CMS',
+      },
+    }), boss);
+    assert.equal(tech.body.result.structuredContent.tech.name, 'Sitecore');
+    // A member tests regex rules; a script runs code, and is tested by those who may save it.
+    const script = { name: 'Script', kind: 'script', script: 'export default () => [];' };
+    const notYours = await callTool(e, 'test_extraction_rule', { rule: script, thread: SLACK });
+    assert.match(notYours.body.result.content[0].text, /managers of helix/);
+    const noTeam = await callTool(e, 'test_extraction_rule', { rule: script, text: 'x' });
+    assert.match(noTeam.body.result.content[0].text, /Give the `team`/);
+    const ran = await send(e, req('tools/call', { name: 'test_extraction_rule', arguments: { rule: script, team: 'helix', text: 'x' } }), boss);
+    assert.match(ran.body.result.content[0].text, /LOADER/);
+    const after = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
+    assert.deepEqual([after.rules.length, after.tech.map((t) => t.tech)], [1, ['sitecore']]);
+  });
+
   it('get_thread returns messages with ids, and nothing for other teams', async () => {
     const t = structured(await callTool(env(), 'get_thread', { thread: SLACK }));
     assert.equal(t.customer, 'acme');

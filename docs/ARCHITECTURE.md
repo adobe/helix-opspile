@@ -661,7 +661,27 @@ and an unchanged thread is never labeled twice):
   caching, performance, preview and publishing, SEO, integrations). The kind says what the
   thread asks for, the topics what it is about: an incident and a question can both be about
   the CDN. A thread keeps the topics at 0.8 or above (`labels.topics`).
-- **Rules** extract CVE ids, ticket keys, Edge Delivery `org/site` pairs, GitHub repos and URLs.
+- **Extraction rules** (`src/extract.js`) find facts and detect technologies: regular
+  expressions, or scripts, which are configuration of the ops teams (`extraction_rules`), not
+  code. The admin team's apply to every channel, any other team's to the channels it owns, on
+  top. The admin team's start as migration 0043 wrote them: CVE ids, ticket keys, Edge Delivery
+  `org/site` pairs (in hostnames, including `aem.network` and `aem.reviews`, da.live paths and
+  admin API paths), the admin API operation, AEM Cloud Service `pNNN-eNNN` environments, GitHub
+  repos, aem.live documentation pages and tools, configuration files (`cdn.yaml`,
+  `redirects.xlsx`, …), HTTP status codes of failures, response headers that name a request or
+  an error, support cases, and URLs (not chat links and attachments); and detections: an Edge
+  Delivery or Document Authoring link, an AEM Cloud Service, Assets or App Builder host, an
+  Akamai error reference, a Cloudflare ray id, a Fastly or CloudFront header, another git host.
+  A rule is a pattern with a value template (`$2/$1`), a case and an `exclude` pattern, that
+  writes a fact of its `field` or detects technology `field`. A regular expression cannot be
+  stopped once it runs (and a Worker's clock stands still while it does), so a pattern that
+  repeats a group that itself repeats without bound, as `(a+)+`, is refused when it is saved
+  and when it runs: that shape backtracks without end on text that almost matches. A script is an ES module whose
+  default export gets the thread and returns `[{ field, value }, { tech }]`; it runs in a
+  Dynamic Worker of its own (`LOADER`), without network access, within two seconds. Rules are
+  edited on the Agents page (**Extraction rules** of a team's knowledge base), with the MCP
+  server's tools (`list_extraction_rules`, `save_extraction_rule`, …), and by thread agents
+  where the team turned on their `extraction_rules` tool (see "Agent tools").
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the
@@ -669,8 +689,15 @@ and an unchanged thread is never labeled twice):
   still writes is removed afterwards. When the model finds nothing to name ("None", "No title
   available"), the thread has no title, and the inbox shows its first words.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
-  Document Authoring, Universal Editor, the CDN, the content source, …). The channel keeps the
-  highest probability any thread showed, so every thread of a customer shows their stack.
+  Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
+  the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
+  customer uses <description>?". The admin team's are asked in every channel; a team's own are
+  asked in its channels too, and one with the id of an admin team's replaces it there (turned
+  off, it is not asked there). Clef gets at most 24 questions per call; the rest are asked in
+  calls of their own, at the same time. The channel keeps the highest probability any thread
+  showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
+  The inbox shows a team's own name for a technology in its inbox and threads, the admin
+  team's elsewhere.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
@@ -1067,7 +1094,7 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Two tools are off until the admin team or a team's managers turn them on, as the global MCP
+Three tools are off until the admin team or a team's managers turn them on, as the global MCP
 servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
@@ -1108,6 +1135,15 @@ customer messages; nothing stops an agent from sending what it read, so the prom
 send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
+
+**`extraction_rules`.** The agent reads, tests and changes its team's extraction rules and tech
+stack (`list_extraction_rules`, `test_extraction_rule`, `save_extraction_rule`,
+`delete_extraction_rule`, `save_tech`, `delete_tech`; see "Labels and facts"), as
+`opspile-agent/<model>`. Testing a script rule (MCP `test_extraction_rule`, the page's Test)
+runs code in a Dynamic Worker, so it is for those who may save the rule, as saving is. What it saves applies to every channel of its team from the next
+labeling of a thread; it cannot change the admin team's, which apply to every channel. Its
+section of the prompt asks it to add a rule only for what recurs and the existing rules miss,
+to test it first, and never to put a customer's name or a secret into one.
 
 ## People
 

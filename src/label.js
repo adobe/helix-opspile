@@ -12,13 +12,16 @@
 
 import { platformName } from './platforms.js';
 import { fileCache, folderFiles } from './filecache.js';
-import { ruleFacts } from './facts.js';
+import {
+  extract, rulesFor, techFor, techNames,
+} from './extract.js';
 import { isStaffDomain } from './lookup.js';
 
 /**
- * Thread labels (Clef, a decision model) and facts (rules, plus Clairic, an extraction
- * model, above a confidence threshold). A thread is labeled shortly after it changes;
- * `labeled_through` makes a relabel of an unchanged thread a no-op.
+ * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
+ * an extraction model, above a confidence threshold). A thread is labeled shortly after it
+ * changes; `labeled_through` makes a relabel of an unchanged thread a no-op. The technologies
+ * Clef asks about, and the rules, are the teams' configuration (src/extract.js).
  */
 
 export const CLEF = '@cf/cloudflare/clef';
@@ -26,50 +29,10 @@ export const CLAIRIC = '@cf/cloudflare/clairic';
 export const TITLER = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const MAX_TITLE = 90;
 
-/**
- * Technologies worth knowing at a glance for a customer. Each is one Clef yes/no
- * question; the channel keeps the highest probability any thread showed.
- */
-export const TECH = {
-  eds: 'Adobe Edge Delivery Services (aem.live, aem.page, helix, Franklin)',
-  da: 'Document Authoring (da.live)',
-  ue: 'Universal Editor',
-  sharepoint: 'SharePoint or OneDrive as the content source',
-  gdrive: 'Google Drive or Google Docs as the content source',
-  aemcs: 'AEM as a Cloud Service (author or publish tier, Cloud Manager)',
-  assets: 'AEM Assets or Dynamic Media',
-  forms: 'AEM Forms',
-  commerce: 'Adobe Commerce (Magento) or Commerce drop-ins',
-  cloudflare: 'Cloudflare as CDN',
-  akamai: 'Akamai as CDN',
-  fastly: 'Fastly as CDN',
-  cloudfront: 'Amazon CloudFront as CDN',
-  github: 'GitHub for code',
-  bitbucket: 'Bitbucket, GitLab or Cloud Manager git for code',
-  target: 'Adobe Target or personalization',
-  analytics: 'Adobe Analytics, Web SDK or Experience Platform data collection',
-};
-/** The technologies' names, as the inbox shows them (the tech facet, a thread's tech tags). */
-export const TECH_NAMES = {
-  eds: 'Edge Delivery',
-  da: 'Document Authoring',
-  ue: 'Universal Editor',
-  sharepoint: 'SharePoint',
-  gdrive: 'Google Drive',
-  aemcs: 'AEM Cloud Service',
-  assets: 'Assets',
-  forms: 'Forms',
-  commerce: 'Commerce',
-  cloudflare: 'Cloudflare',
-  akamai: 'Akamai',
-  fastly: 'Fastly',
-  cloudfront: 'CloudFront',
-  github: 'GitHub',
-  bitbucket: 'Bitbucket / Cloud Manager git',
-  target: 'Target',
-  analytics: 'Analytics',
-};
+/** At or above this, a technology is the channel's (channel_tech); a rule's detection is 1. */
 export const TECH_MIN = 0.8;
+/** Questions per Clef call: more are asked in calls of their own, at the same time. */
+export const MAX_QUESTIONS = 24;
 
 /**
  * What a thread is about, across kinds: an incident and a question can both be about the CDN.
@@ -169,10 +132,30 @@ export const QUESTIONS = {
   },
 };
 
-const TECH_QUESTIONS = Object.fromEntries(Object.entries(TECH).map(([id, what]) => [`tech.${id}`, {
+/** The Clef questions about a channel's tech stack (src/extract.js techFor). */
+const techQuestions = (tech) => Object.fromEntries(tech.map((t) => [`tech.${t.tech}`, {
   type: 'noul',
-  instructions: `Does this thread show that the customer uses ${what}?`,
+  instructions: `Does this thread show that the customer uses ${t.description}?`,
 }]));
+
+/**
+ * Clef on `state`, `questions` asked in calls of at most MAX_QUESTIONS at the same time: the
+ * answers of them all, as one answer.
+ */
+export async function askClef(env, state, questions) {
+  const entries = Object.entries(questions);
+  const calls = [];
+  for (let i = 0; i < entries.length; i += MAX_QUESTIONS) {
+    calls.push(env.AI.run(CLEF, {
+      model: 'clef', state, questions: Object.fromEntries(entries.slice(i, i + MAX_QUESTIONS)),
+    }));
+  }
+  const all = await Promise.all(calls);
+  return {
+    model: (all[0] && all[0].model) || 'clef',
+    answers: Object.assign({}, ...all.map((r) => (r && r.answers) || {})),
+  };
+}
 
 const TOPIC_QUESTIONS = Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [`topic.${id}`, {
   type: 'noul',
@@ -203,10 +186,13 @@ export function topicList(stored) {
     ? Object.entries(parsed).sort((x, y) => y[1] - x[1]).map(([id]) => id) : [];
 }
 
+/** The names the inbox shows for topic ids. */
+export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
+  .map(([id, t]) => [id, t.name]));
+
 /** The names the inbox shows for tech stack and topic ids. */
-export const vocab = () => ({
-  tech: { ...TECH_NAMES },
-  topics: Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [id, t.name])),
+export const vocab = async (env, team = null) => ({
+  tech: await techNames(env, team), topics: topicNames(),
 });
 
 export const FIELDS = {
@@ -399,9 +385,13 @@ export async function writeTitle(env, state, alert, thread) {
   return isTitle(title) ? title.slice(0, MAX_TITLE) : null;
 }
 
-async function recordTech(env, thread, answers) {
-  for (const id of Object.keys(TECH)) {
-    const p = answers[`tech.${id}`]?.noul;
+/**
+ * The channel's technologies, from Clef's answers about `tech` and what the rules `detected`
+ * (as sure as can be): each keeps the highest probability any thread showed.
+ */
+async function recordTech(env, thread, tech, answers, detected = []) {
+  for (const id of tech.map((t) => t.tech)) {
+    const p = detected.includes(id) ? 1 : answers[`tech.${id}`]?.noul;
     if (typeof p === 'number' && p >= TECH_MIN) {
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
@@ -449,7 +439,8 @@ async function labelAlert(env, thread, now) {
   if (!messages.length) {
     return { result: 'skip', reason: 'no messages' };
   }
-  await replaceFacts(env.DB, anchorKey, 'rule', ruleFacts(messages.map((m) => m.body || '')));
+  const found = await extract(env, await rulesFor(env, anchor.team), anchor, messages);
+  await replaceFacts(env.DB, anchorKey, 'rule', found.facts);
   const title = await writeTitle(env, stateOf(anchor, messages), true, anchor);
   await env.DB.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model, labeled_at, title)
     VALUES (?, 'alert', 1, ?, ?, ?, ?)
@@ -490,13 +481,13 @@ export async function labelThread(env, key, now = new Date()) {
     return { result: 'skip', reason: 'no messages' };
   }
 
-  await replaceFacts(env.DB, key, 'rule', ruleFacts(messages.map((m) => m.body || '')));
+  const [rules, tech] = await Promise.all([rulesFor(env, thread.team), techFor(env, thread.team)]);
+  const found = await extract(env, rules, thread, messages);
+  await replaceFacts(env.DB, key, 'rule', found.facts);
 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    env.AI.run(CLEF, {
-      model: 'clef', state, questions: { ...QUESTIONS, ...TECH_QUESTIONS, ...TOPIC_QUESTIONS },
-    }),
+    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS, ...techQuestions(tech) }),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -535,7 +526,7 @@ export async function labelThread(env, key, now = new Date()) {
       topics ? JSON.stringify(topics) : null,
     )
     .run();
-  await recordTech(env, thread, a);
+  await recordTech(env, thread, tech, a, found.tech);
   const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {

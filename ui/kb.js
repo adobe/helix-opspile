@@ -28,7 +28,9 @@ const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
   channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {},
+  extraction: null,
 };
+const VIEWS = ['history', 'agents', 'mcp', 'extraction'];
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const base = () => state.bases.find((b) => b.repo === state.repo);
@@ -117,7 +119,7 @@ function toUrl(mode = 'push') {
   const q = new URLSearchParams();
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
-  if (['history', 'agents', 'mcp'].includes(state.view)) q.set('view', state.view);
+  if (VIEWS.includes(state.view)) q.set('view', state.view);
   const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
     history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
@@ -195,11 +197,13 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.mcp = null;
   state.globals = null;
   state.tools = null;
+  state.extraction = null;
   const [{ ok, body }] = await Promise.all([
     call(`/api/kb/files?repo=${encodeURIComponent(repo)}`),
     loadChannels(repo),
     loadMcp(repo),
     loadTools(repo),
+    loadExtraction(repo),
   ]);
   if (state.repo !== repo) return true;
   if (!ok) {
@@ -214,6 +218,7 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   if (state.view === 'history') showHistory({ force: true, nav });
   else if (state.view === 'agents') showAgents({ force: true, nav });
   else if (state.view === 'mcp') showMcp({ force: true, nav });
+  else if (state.view === 'extraction' && state.extraction) showExtraction({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
   return true;
 }
@@ -240,6 +245,8 @@ function renderFiles() {
       <span>Thread agents</span>${agentsTag()}</div>
     <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="Tools its agents get where they are turned on, and MCP servers they call from code mode">
       <span>Tools and MCP servers</span>${toolsTag()}${mcpTag()}</div>
+    ${b.kind === 'team' ? `<div class="row${state.view === 'extraction' ? ' on' : ''}" id="extraction" title="What labeling finds in the threads of ${esc(b.slug === 'admin' ? 'every channel' : `${b.name}'s channels`)}: facts and the tech stack">
+      <span>Extraction rules</span>${extractionTag()}</div>` : ''}
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
@@ -252,6 +259,7 @@ function renderFiles() {
   $('history').onclick = () => showHistory();
   $('agents').onclick = () => showAgents();
   $('mcp').onclick = () => showMcp();
+  if ($('extraction')) $('extraction').onclick = () => showExtraction();
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -690,6 +698,10 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} can post replies in their threads themselves, as the opspile app, without a person reading them first. They still keep drafts for anything a person should review.`,
     off: (where) => `Agents of ${where} only keep drafts again, from their next message.`,
   },
+  extraction_rules: {
+    on: (where) => `From their next message, the agents of ${where} can add, change and delete the extraction rules and the tech stack of their team, which apply to every channel of the team from the next labeling of a thread.`,
+    off: (where) => `Agents of ${where} stop changing extraction rules with their next message. The rules they saved stay.`,
+  },
   computer: {
     on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer), and curl, which reaches the internet without a filter.`,
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
@@ -754,6 +766,241 @@ function bindTools() {
       renderMcp({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
+}
+
+// ---- extraction rules -------------------------------------------------------------------
+//
+// A team's extraction rules and tech stack (src/extract.js), over /api/kb/extraction
+// (src/extractadmin.js): regular expressions or scripts that find facts in the threads of the
+// team's channels (every channel, for the admin team), and the technologies Clef asks about.
+// The admin team's apply too, and show below the team's own, read-only.
+
+async function loadExtraction(repo) {
+  const b = state.bases.find((x) => x.repo === repo);
+  if (!b || b.kind !== 'team') { state.extraction = null; return; }
+  const { ok, body } = await call(`/api/kb/extraction?repo=${encodeURIComponent(repo)}`);
+  if (state.repo !== repo) return;
+  state.extraction = ok ? body : null;
+}
+
+/** "5 rules · 3 tech" next to "Extraction rules". */
+function extractionTag() {
+  const x = state.extraction;
+  if (!x) return '<span class="tag missing">unknown</span>';
+  const rules = x.rules.filter((r) => r.enabled).length;
+  const tech = x.tech.filter((t) => t.enabled).length;
+  if (!rules && !tech) return `<span class="tag missing">${x.global ? 'none' : 'admin team\'s'}</span>`;
+  return `<span class="tag agent">${[rules && `${rules} rule${rules === 1 ? '' : 's'}`, tech && `${tech} tech`].filter(Boolean).join(' · ')}</span>`;
+}
+
+async function showExtraction({ force = false, nav = 'push' } = {}) {
+  if (!force && state.file && !(await leave())) return false;
+  if (!force) showPane('editor');
+  state.view = 'extraction';
+  state.file = null;
+  state.editRule = null;
+  state.editTech = null;
+  renderFiles();
+  toUrl(nav);
+  renderExtraction();
+  return true;
+}
+
+const mayRules = () => Boolean(state.extraction?.may);
+const ruleWhat = (r) => (r.kind === 'script' ? 'script' : r.target === 'tech' ? `detects ${r.field}` : `→ ${r.field}`);
+
+function ruleRow(r, own) {
+  const edit = own && mayRules();
+  const detail = r.kind === 'script' ? `${r.script.split('\n').length} lines of JavaScript`
+    : [r.pattern, r.flags && `flags ${r.flags}`, r.value && `value ${r.value}`, r.transform, r.exclude && `not ${r.exclude}`].filter(Boolean).join('  ·  ');
+  const by = r.by ? `Changed by ${r.by}, ${ago(r.at)}` : '';
+  return `<div class="ch rule${r.enabled ? '' : ' off'}">
+    <div class="who">
+      <div class="nm">${esc(r.name)}<span class="src mono">${esc(ruleWhat(r))}</span></div>
+      <div class="sub pat mono">${esc(detail)}</div>
+      ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
+    </div>
+    ${edit ? `<span class="acts"><button data-redit="${r.id}">Edit</button><button class="danger" data-rdel="${r.id}">Delete</button></span>` : ''}
+    <span class="state${r.enabled ? ' on' : ''}">${r.enabled ? 'On' : 'Off'}</span>
+    ${own ? `<button class="switch" role="switch" aria-checked="${r.enabled}" aria-label="Run ${esc(r.name)}" data-ron="${r.id}"${edit ? '' : ' disabled'}></button>` : '<span class="switch-gap"></span>'}
+  </div>`;
+}
+
+function techRow(t, own) {
+  const x = state.extraction;
+  const mine = own ? null : x.tech.find((y) => y.tech === t.tech);
+  const edit = own && mayRules();
+  const by = t.by ? `Changed by ${t.by}, ${ago(t.at)}` : '';
+  const replaced = mine ? `<div class="sub">${mine.enabled ? `Replaced for ${esc(base().name)} by its own` : `Turned off for ${esc(base().name)}`}</div>` : '';
+  const local = !own && !mine && mayRules() ? `<span class="acts"><button data-tlocal="${esc(t.tech)}">Change for ${esc(base().name)}</button><button data-toff="${esc(t.tech)}">Turn off here</button></span>` : '';
+  return `<div class="ch rule${t.enabled ? '' : ' off'}${mine ? ' replaced' : ''}">
+    <div class="who">
+      <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span></div>
+      <div class="sub">Does this thread show that the customer uses ${esc(t.description)}?</div>
+      ${replaced}
+      ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
+    </div>
+    ${edit ? `<span class="acts"><button data-tedit="${esc(t.tech)}">Edit</button><button class="danger" data-tdel="${esc(t.tech)}">Delete</button></span>` : local}
+    <span class="state${t.enabled ? ' on' : ''}">${t.enabled ? 'On' : 'Off'}</span>
+    ${own ? `<button class="switch" role="switch" aria-checked="${t.enabled}" aria-label="Ask about ${esc(t.name)}" data-ton="${esc(t.tech)}"${edit ? '' : ' disabled'}></button>` : '<span class="switch-gap"></span>'}
+  </div>`;
+}
+
+function ruleForm(r = {}) {
+  const kind = r.kind || 'regex';
+  const hide = (k) => (kind === k ? '' : ' hidden');
+  const opt = (v, cur, label) => `<option value="${v}"${v === (cur || '') ? ' selected' : ''}>${label}</option>`;
+  return `<form class="mcpform" id="ruleForm" autocomplete="off">
+    <h3>${r.id ? `Edit ${esc(r.name)}` : 'Add a rule'}</h3>
+    <label for="rName">Name</label><input id="rName" placeholder="What it finds, e.g. Order ids" value="${esc(r.name || '')}" required>
+    <label for="rKind">Kind</label><select id="rKind" style="max-width:360px">${opt('regex', kind, 'Regular expression')}${opt('script', kind, 'Script: JavaScript, without network access')}</select>
+    <label for="rTarget" data-kind="regex"${hide('regex')}>Finds</label><select id="rTarget" data-kind="regex" style="max-width:360px"${hide('regex')}>${opt('fact', r.target || 'fact', 'A fact: its field and value')}${opt('tech', r.target, 'A technology the customer uses')}</select>
+    <label for="rField" data-kind="regex"${hide('regex')}>Field or tech id</label><input id="rField" data-kind="regex" class="mono" placeholder="site, ticket, … or akamai" value="${esc(r.field || '')}" style="max-width:240px"${hide('regex')}>
+    <label for="rPattern" data-kind="regex"${hide('regex')}>Pattern</label><input id="rPattern" data-kind="regex" class="mono" placeholder="\\bORD-(\\d{6})\\b" value="${esc(r.pattern || '')}"${hide('regex')}>
+    <label for="rFlags" data-kind="regex"${hide('regex')}>Flags</label><input id="rFlags" data-kind="regex" class="mono" placeholder="i, m, s, u (always global)" value="${esc(r.flags || '')}" style="max-width:240px"${hide('regex')}>
+    <label for="rValue" data-kind="regex"${hide('regex')}>Value</label><input id="rValue" data-kind="regex" class="mono" placeholder="$0, the match; $1… its groups, e.g. $2/$1" value="${esc(r.value || '')}" style="max-width:360px"${hide('regex')}>
+    <label for="rTransform" data-kind="regex"${hide('regex')}>Case</label><select id="rTransform" data-kind="regex" style="max-width:240px"${hide('regex')}>${opt('', r.transform, 'As written')}${opt('lower', r.transform, 'lower case')}${opt('upper', r.transform, 'UPPER CASE')}</select>
+    <label for="rExclude" data-kind="regex"${hide('regex')}>Not</label><input id="rExclude" data-kind="regex" class="mono" placeholder="optional: values this matches are dropped" value="${esc(r.exclude || '')}"${hide('regex')}>
+    <label for="rScript" data-kind="script"${hide('script')}>Script</label><textarea id="rScript" data-kind="script" class="mono" rows="9" placeholder="export default function (thread) {&#10;  // thread: { text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }&#10;  return [{ field: 'order', value: '123456' }, { tech: 'akamai' }];&#10;}"${hide('script')}>${esc(r.script || '')}</textarea>
+    ${kind === 'script' && !state.extraction.scripts ? '<span class="hint" data-kind="script">This deployment has no Worker Loader (LOADER): scripts are kept, but do not run.</span>' : ''}
+    <label for="rSample">Try it on</label><textarea id="rSample" class="mono" rows="3" placeholder="Paste a message, then Test">${esc(state.sample || '')}</textarea>
+    <span class="hint" id="rFound"></span>
+    <span class="apply"><button class="primary" id="rSave">${r.id ? 'Save' : 'Add'}</button><button type="button" id="rTest">Test</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}</span>
+  </form>`;
+}
+
+function techForm(t = {}) {
+  const editing = Boolean(t.tech && state.extraction.tech.some((y) => y.tech === t.tech));
+  return `<form class="mcpform" id="techForm" autocomplete="off">
+    <h3>${editing ? `Edit ${esc(t.name)}` : t.tech ? `Change ${esc(t.name)} for ${esc(base().name)}` : 'Add a technology'}</h3>
+    <label for="tId">Id</label><input id="tId" class="mono" placeholder="akamai" value="${esc(t.tech || '')}" required pattern="[a-z][a-z0-9_]*" style="max-width:240px"${t.tech ? ' readonly' : ''}>
+    <label for="tName">Name</label><input id="tName" placeholder="What ${esc(state.extraction.global ? 'the inbox' : `${base().name}'s inbox`)} shows, e.g. Akamai" value="${esc(t.name || '')}" required style="max-width:360px">
+    <label for="tDesc">Clef is asked</label><input id="tDesc" placeholder="Akamai as CDN" value="${esc(t.description || '')}" required>
+    <span class="hint">"Does this thread show that the customer uses <i>…</i>?", about every thread of ${esc(state.extraction.global ? 'every channel' : `${base().name}'s channels`)}.</span>
+    <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>
+  </form>`;
+}
+
+function renderExtraction(note) {
+  const b = base();
+  const x = state.extraction;
+  if (!x) {
+    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Extraction rules</span></div><div class="empty">Could not load the rules.</div>`;
+    return;
+  }
+  const where = x.global ? 'every channel' : `the channels of ${b.name}`;
+  const explain = `What labeling finds in the threads of ${where}, from their next labeling on: rules (regular expressions or scripts) that find facts, such as sites, tickets or error codes, or detect a technology; and the tech stack Clef is asked about. ${x.global ? 'Every team\'s channels get these, and their own on top.' : 'The admin team\'s apply too, below; a technology of the admin team\'s can be changed or turned off for these channels only.'} ${mayRules() ? '' : `Only ${whoEdits()} change them.`}`;
+  const editing = state.editRule ? x.rules.find((r) => r.id === state.editRule) : null;
+  const inherited = x.inherited;
+  const techEditing = state.editTech ? (x.tech.find((t) => t.tech === state.editTech) || inherited?.tech.find((t) => t.tech === state.editTech)) : null;
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Extraction rules and tech stack for ${esc(where)}</span></div>
+    <div class="note${note ? ` ${note.kind}` : ''}" id="note">${esc(note ? note.text : explain)}</div>
+    <div class="channels">
+      <h3 class="group">Rules</h3>
+      ${x.rules.map((r) => ruleRow(r, true)).join('') || `<div class="empty">${x.global ? 'No rules.' : `No rules of ${esc(b.name)}'s own yet.`}</div>`}
+      ${inherited ? `<details class="inherited"><summary>The admin team's rules, for every channel (${inherited.rules.length})</summary>${inherited.rules.map((r) => ruleRow(r, false)).join('')}</details>` : ''}
+      ${mayRules() ? ruleForm(editing || {}) : ''}
+      <h3 class="group">Tech stack</h3>
+      ${x.tech.map((t) => techRow(t, true)).join('') || `<div class="empty">${x.global ? 'No technologies.' : `No technologies of ${esc(b.name)}'s own yet.`}</div>`}
+      ${inherited ? `<details class="inherited"${state.editTech && !x.tech.some((t) => t.tech === state.editTech) ? ' open' : ''}><summary>The admin team's tech stack, for every channel (${inherited.tech.length})</summary>${inherited.tech.map((t) => techRow(t, false)).join('')}</details>` : ''}
+      ${mayRules() ? techForm(techEditing || {}) : ''}
+    </div>`;
+  bindExtraction();
+}
+
+function bindExtraction() {
+  const x = state.extraction;
+  if (!mayRules()) return;
+  const repo = state.repo;
+  const stale = () => state.repo !== repo || state.view !== 'extraction';
+  const reload = async (text) => {
+    await loadExtraction(repo);
+    if (stale()) return;
+    renderFiles();
+    renderExtraction(text && { kind: 'ok', text });
+  };
+  const send = async (method, path, body) => {
+    const r = await call(`/api/kb/extraction${path}`, { method, body: JSON.stringify({ repo, ...body }) });
+    if (!r.ok && !stale()) renderExtraction({ kind: 'err', text: r.body.error || 'That did not work.' });
+    return r.ok ? r.body : null;
+  };
+  const rule = (id) => x.rules.find((r) => r.id === Number(id));
+  const tech = (id) => x.tech.find((t) => t.tech === id) || x.inherited?.tech.find((t) => t.tech === id);
+  for (const el of $('editor').querySelectorAll('[data-ron]')) {
+    el.onclick = async () => {
+      const r = rule(el.dataset.ron);
+      if (await send('POST', '/rule', { id: r.id, enabled: !r.enabled })) reload(`${r.name} is ${r.enabled ? 'off' : 'on'}.`);
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-redit]')) {
+    el.onclick = () => { state.editRule = Number(el.dataset.redit); renderExtraction(); $('rName').focus(); };
+  }
+  for (const el of $('editor').querySelectorAll('[data-rdel]')) {
+    el.onclick = async () => {
+      const r = rule(el.dataset.rdel);
+      if (!(await ask(`Delete the rule ${r.name}?`, 'The facts it found stay until the threads are labeled again.', 'Delete'))) return;
+      if (await send('DELETE', '/rule', { id: r.id })) { state.editRule = null; reload(`Deleted ${r.name}.`); }
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-ton]')) {
+    el.onclick = async () => {
+      const t = tech(el.dataset.ton);
+      if (await send('POST', '/tech', { ...t, enabled: !t.enabled })) reload(`${t.name} is ${t.enabled ? 'off' : 'on'}.`);
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-tedit], [data-tlocal]')) {
+    el.onclick = () => { state.editTech = el.dataset.tedit || el.dataset.tlocal; renderExtraction(); $('tName').focus(); };
+  }
+  for (const el of $('editor').querySelectorAll('[data-toff]')) {
+    el.onclick = async () => {
+      const t = tech(el.dataset.toff);
+      if (await send('POST', '/tech', { tech: t.tech, name: t.name, description: t.description, enabled: false })) reload(`Clef is not asked about ${t.name} in ${base().name}'s channels any more.`);
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-tdel]')) {
+    el.onclick = async () => {
+      const t = tech(el.dataset.tdel);
+      if (!(await ask(`Delete ${t.name}?`, 'Clef is not asked about it any more. What channels showed of it stays.', 'Delete'))) return;
+      if (await send('DELETE', '/tech', { tech: t.tech })) { state.editTech = null; reload(`Deleted ${t.name}.`); }
+    };
+  }
+  const form = $('ruleForm');
+  const given = () => {
+    const kind = $('rKind').value;
+    return kind === 'script' ? { name: $('rName').value.trim(), kind, script: $('rScript').value }
+      : {
+        name: $('rName').value.trim(), kind, target: $('rTarget').value, field: $('rField').value.trim(),
+        pattern: $('rPattern').value, flags: $('rFlags').value.trim(), value: $('rValue').value.trim(),
+        transform: $('rTransform').value, exclude: $('rExclude').value,
+      };
+  };
+  $('rKind').onchange = () => {
+    for (const el of form.querySelectorAll('[data-kind]')) el.hidden = el.dataset.kind !== $('rKind').value;
+  };
+  $('rTest').onclick = async () => {
+    state.sample = $('rSample').value;
+    $('rFound').textContent = 'Testing…';
+    const r = await call('/api/kb/extraction/test', { method: 'POST', body: JSON.stringify({ repo, rule: { name: 'test', ...given() }, text: state.sample }) });
+    if (stale()) return;
+    const found = r.ok ? [...r.body.facts.map((f) => `${f.field}: ${f.value}`), ...r.body.tech.map((t) => `tech: ${t}`)] : null;
+    $('rFound').innerHTML = !r.ok ? `<span class="err">${esc(r.body.error)}</span>`
+      : found.length ? `<span class="tags">${found.map((f) => `<span class="src">${esc(f)}</span>`).join('')}</span>` : 'Nothing found.';
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { ...(state.editRule ? { id: state.editRule } : {}), ...given() };
+    const r = await send('POST', '/rule', body);
+    if (r) { state.editRule = null; reload(`Saved ${r.rule.name}: it runs from the next labeling of a thread.`); }
+  };
+  if ($('rCancel')) $('rCancel').onclick = () => { state.editRule = null; renderExtraction(); };
+  $('techForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await send('POST', '/tech', {
+      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), enabled: true,
+    });
+    if (r) { state.editTech = null; reload(`Saved ${r.tech.name}: Clef is asked about it from the next labeling of a thread.`); }
+  };
+  if ($('tCancel')) $('tCancel').onclick = () => { state.editTech = null; renderExtraction(); };
 }
 
 // ---- global MCP servers ---------------------------------------------------------------
@@ -1425,7 +1672,7 @@ document.querySelector('main').addEventListener('click', (e) => {
 window.addEventListener('popstate', async () => {
   const q = new URLSearchParams(location.search);
   const repo = q.get('repo');
-  const view = ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : 'file';
+  const view = VIEWS.includes(q.get('view')) ? q.get('view') : 'file';
   const path = q.get('path') || SYSTEM_PROMPT;
   let moved;
   if (!repo || !state.bases.some((b) => b.repo === repo)) {
@@ -1446,6 +1693,8 @@ window.addEventListener('popstate', async () => {
     moved = state.view === 'agents' || await showAgents({ nav: 'replace' });
   } else if (view === 'mcp') {
     moved = state.view === 'mcp' || await showMcp({ nav: 'replace' });
+  } else if (view === 'extraction') {
+    moved = state.view === 'extraction' || await showExtraction({ nav: 'replace' });
   } else {
     moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
   }
@@ -1502,7 +1751,7 @@ window.addEventListener('popstate', async () => {
   // `team` with `view` (the inbox's agent: its team's thread agents, at `channel`) names a
   // view of the team's knowledge base too.
   const named = exact || (pick && pick.kind === 'team' && !q.get('org'));
-  const view = named && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined;
+  const view = named && VIEWS.includes(q.get('view')) ? q.get('view') : undefined;
   state.focusChannel = view === 'agents' ? q.get('channel') : null;
   if (pick) {
     await openRepo(pick.repo, {
@@ -1511,7 +1760,7 @@ window.addEventListener('popstate', async () => {
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if ((exact && q.get('path')) || ['history', 'agents'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error')))) showPane('editor');
+    if ((exact && q.get('path')) || ['history', 'agents', 'extraction'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');

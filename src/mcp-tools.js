@@ -19,8 +19,11 @@ import {
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { PICKER, react, resolve } from './react.js';
-import { QUESTIONS, vocab } from './label.js';
-import { isAdmin } from './review.js';
+import { QUESTIONS, topicNames, vocab } from './label.js';
+import {
+  config, deleteRule, deleteTech, saveRule, saveTech, testRule,
+} from './extract.js';
+import { inTeam, isAdmin, managesTeam } from './review.js';
 import { mayWork, memberOf, teamless } from './shares.js';
 
 /**
@@ -138,8 +141,8 @@ const MULTI_ARGS = { topic: 'topics', tech: 'tech' };
 const facetArgs = (args) => Object.fromEntries([...FACET_ARGS, ...Object.keys(MULTI_ARGS)]
   .map((k) => [k, list(args[k])]));
 /** `{ error }` when a topic or tech filter names an id opspile does not know. */
-const checkMulti = (f, prefix = '') => Object.entries(MULTI_ARGS)
-  .map(([k, v]) => checkValues(`${prefix}${k}`, f[k], Object.keys(vocab()[v])))
+const checkMulti = (f, names, prefix = '') => Object.entries(MULTI_ARGS)
+  .map(([k, v]) => checkValues(`${prefix}${k}`, f[k], Object.keys(names[v])))
   .find(Boolean) || null;
 /** `{ error }` when a filter (in `exclude` with `prefix`) has a value it does not know. */
 const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
@@ -169,7 +172,9 @@ async function listThreads(env, me, args) {
   }
   const f = facetArgs(args);
   const x = facetArgs(args.exclude || {});
-  const bad = checkFacets(f) || checkFacets(x, 'exclude.') || checkMulti(f) || checkMulti(x, 'exclude.');
+  const names = await vocab(env);
+  const bad = checkFacets(f) || checkFacets(x, 'exclude.') || checkMulti(f, names)
+    || checkMulti(x, names, 'exclude.');
   if (bad) {
     return bad;
   }
@@ -570,6 +575,99 @@ async function seedTool(env, me, args) {
   return res.error ? res : { data: { ok: true, accepted: Boolean(res.data.accepted) } };
 }
 
+// ---- extraction rules and the tech stack ------------------------------------------------
+
+/**
+ * The team an extraction tool works on, `{ team }`, or `{ error }`: one of the person's (any,
+ * for the admin team); for a change, one they manage, and not in a read-only view.
+ */
+function ruleTeam(me, args, { write = false } = {}) {
+  const team = String(args.team || '').trim();
+  if (!team) {
+    return { error: `Give a \`team\`: ${me.teams.map((t) => t.slug).join(', ') || 'you are on none'}.` };
+  }
+  if (!inTeam(me, team)) {
+    return { error: `Not one of your teams: ${team}. Your teams: ${me.teams.map((t) => t.slug).join(', ')}.` };
+  }
+  if (write && me.readonly) {
+    return READ_ONLY;
+  }
+  if (write && !managesTeam(me, team)) {
+    return { error: `Only the admin team and the managers of ${team} change its rules and tech stack.` };
+  }
+  return { team };
+}
+const byName = (me) => me.name || me.email || String(me.id);
+const fromExtract = (r, key) => (r.error ? { error: `${r.error}.` } : { data: { ok: true, [key]: r[key] } });
+
+async function listRules(env, me, args) {
+  const { team, error } = ruleTeam(me, args);
+  return error ? { error } : { data: await config(env, team) };
+}
+
+async function saveRuleTool(env, me, args) {
+  const { team, error } = ruleTeam(me, args, { write: true });
+  return error ? { error } : fromExtract(await saveRule(env, team, args, byName(me)), 'rule');
+}
+
+async function deleteRuleTool(env, me, args) {
+  const { team, error } = ruleTeam(me, args, { write: true });
+  return error ? { error } : fromExtract({ ...await deleteRule(env, team, args.id), deleted: args.id }, 'deleted');
+}
+
+async function saveTechTool(env, me, args) {
+  const { team, error } = ruleTeam(me, args, { write: true });
+  return error ? { error } : fromExtract(await saveTech(env, team, args, byName(me)), 'tech');
+}
+
+async function deleteTechTool(env, me, args) {
+  const { team, error } = ruleTeam(me, args, { write: true });
+  return error ? { error } : fromExtract({ ...await deleteTech(env, team, args.tech), deleted: args.tech }, 'deleted');
+}
+
+/**
+ * test_extraction_rule. A regex rule anyone on a team may try; a script runs code in a Dynamic
+ * Worker, so, as on the Agents page (src/extractadmin.js), only for those who may save one: for
+ * `team`, or the thread's team.
+ */
+async function testRuleTool(env, me, args) {
+  const key = String(args.thread || '');
+  const rule = args.rule || {};
+  const data = key ? await loadThread(env, me, key) : null;
+  if (key && (!data || !await mayWork(env, me)(data.thread.teams, data.thread))) {
+    return NOT_FOUND;
+  }
+  if (rule.kind === 'script') {
+    const team = args.team || (data && data.thread.team);
+    const may = team ? ruleTeam(me, { team }, { write: true })
+      : { error: 'Give the `team` whose rule this is: scripts are tested by those who may save them.' };
+    if (may.error) {
+      return may;
+    }
+  } else if (!data && teamless(me)) {
+    return { error: 'You are on no ops team: extraction rules are the teams\'.' };
+  }
+  const found = data
+    ? await testRule(env, rule, { thread: data.thread, messages: data.messages })
+    : await testRule(env, rule, { text: String(args.text || '') });
+  return found.error ? { error: `${found.error}.` } : { data: found };
+}
+
+const TEAM_ARG = { type: 'string', description: 'Ops team slug from whoami; the admin team\'s rules apply to every channel' };
+const RULE_PROPS = {
+  name: { type: 'string', description: 'What the rule finds, for people' },
+  kind: { type: 'string', enum: ['regex', 'script'], description: 'regex (the default), or script: an ES module whose default export gets the thread ({ text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }) and returns [{ field, value }] facts and [{ tech }] detections; it runs without network access' },
+  target: { type: 'string', enum: ['fact', 'tech'], description: 'fact (the default): write `field`; tech: detect the technology whose id is `field`' },
+  field: { type: 'string', description: 'Fact field (site, ticket, url, …; lower case, digits and _) or technology id' },
+  pattern: { type: 'string', description: 'JavaScript regular expression (always global)' },
+  flags: { type: 'string', description: 'Any of i, m, s, u' },
+  value: { type: 'string', description: 'Template of the value: $0 the match (the default), $1… its groups' },
+  transform: { type: 'string', enum: ['', 'lower', 'upper'] },
+  exclude: { type: 'string', description: 'Regular expression: values it matches are dropped' },
+  script: { type: 'string', description: 'kind script: the module' },
+  enabled: { type: 'boolean', description: 'false keeps the rule but does not run it' },
+};
+
 // ---- admin team only ------------------------------------------------------------------
 
 const MAX_TRACE = 400;
@@ -673,8 +771,8 @@ export const TOOLS = [
         waiting_on: { ...TEXT_ITEMS(WAITING), description: 'Who has the next move: us (Adobe), the customer, a vendor, or nobody' },
         urgency: TEXT_ITEMS(URGENCY),
         kind: TEXT_ITEMS(KINDS),
-        topic: { ...TEXT_ITEMS(Object.keys(vocab().topics)), description: 'What the thread is about; any of them' },
-        tech: { ...TEXT_ITEMS(Object.keys(vocab().tech)), description: 'Tech stack of the thread\'s channel; any of them' },
+        topic: { ...TEXT_ITEMS(Object.keys(topicNames())), description: 'What the thread is about; any of them' },
+        tech: { type: 'array', items: { type: 'string' }, description: 'Tech stack of the thread\'s channel, by id (akamai, sharepoint, …: list_extraction_rules lists them); any of them' },
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
         platform: TEXT_ITEMS(PLATFORMS),
@@ -685,8 +783,8 @@ export const TOOLS = [
             waiting_on: TEXT_ITEMS(WAITING),
             urgency: TEXT_ITEMS(URGENCY),
             kind: TEXT_ITEMS(KINDS),
-            topic: TEXT_ITEMS(Object.keys(vocab().topics)),
-            tech: TEXT_ITEMS(Object.keys(vocab().tech)),
+            topic: TEXT_ITEMS(Object.keys(topicNames())),
+            tech: { type: 'array', items: { type: 'string' } },
             type: TEXT_ITEMS(['conversation', 'alert']),
             platform: TEXT_ITEMS(PLATFORMS),
             customer: CUSTOMER_ARG,
@@ -860,6 +958,106 @@ export const TOOLS = [
       readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
     },
     run: seedTool,
+  },
+  {
+    name: 'list_extraction_rules',
+    title: 'List extraction rules',
+    description: 'Returns an ops team\'s extraction rules (regular expressions or scripts that find facts such as sites, tickets and URLs in its threads, or detect a technology the customer uses) and its tech stack (the technologies Clef asks about in every thread, with the description it is asked), and the admin team\'s, which apply to every channel too. A change applies from the next labeling of a thread.',
+    inputSchema: {
+      type: 'object', properties: { team: TEAM_ARG }, required: ['team'], additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: listRules,
+  },
+  {
+    name: 'test_extraction_rule',
+    title: 'Test an extraction rule',
+    description: 'Runs an extraction rule, saved or not, on some text or on a thread\'s messages, and returns the facts and technologies it finds. Changes nothing; use it before save_extraction_rule. A script rule only for those who may save it (the admin team and the managers of the thread\'s team, or of `team`).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rule: {
+          type: 'object', properties: RULE_PROPS, required: ['name'], additionalProperties: false,
+        },
+        text: { type: 'string', description: 'Text to run it on' },
+        thread: { type: 'string', description: 'Or a thread key from list_threads: its messages' },
+        team: { ...TEAM_ARG, description: 'For a script without a thread: the team whose rule it is (scripts are tested by the admin team and the team\'s managers)' },
+      },
+      required: ['rule'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: testRuleTool,
+  },
+  {
+    name: 'save_extraction_rule',
+    title: 'Save an extraction rule',
+    description: 'Adds an extraction rule to an ops team, or changes the one `id` names (only the fields given). The admin team\'s rules apply to every channel, another team\'s to its channels. For the admin team and the team\'s managers. Test it first with test_extraction_rule.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        team: TEAM_ARG,
+        id: { type: 'integer', description: 'The rule to change (list_extraction_rules); left out, a new one' },
+        ...RULE_PROPS,
+      },
+      required: ['team'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    },
+    run: saveRuleTool,
+  },
+  {
+    name: 'delete_extraction_rule',
+    title: 'Delete an extraction rule',
+    description: 'Deletes an extraction rule of an ops team. The facts it found stay until the threads are labeled again. For the admin team and the team\'s managers.',
+    inputSchema: {
+      type: 'object',
+      properties: { team: TEAM_ARG, id: { type: 'integer' } },
+      required: ['team', 'id'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
+    },
+    run: deleteRuleTool,
+  },
+  {
+    name: 'save_tech',
+    title: 'Save a technology',
+    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. For the admin team and the team\'s managers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        team: TEAM_ARG,
+        tech: { type: 'string', description: 'Id: lower case letters, digits and _, such as akamai' },
+        name: { type: 'string', description: 'What the inbox shows' },
+        description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
+        enabled: { type: 'boolean' },
+      },
+      required: ['team', 'tech'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    },
+    run: saveTechTool,
+  },
+  {
+    name: 'delete_tech',
+    title: 'Delete a technology',
+    description: 'Deletes a technology from an ops team\'s tech stack. What channels showed of it stays. For the admin team and the team\'s managers.',
+    inputSchema: {
+      type: 'object',
+      properties: { team: TEAM_ARG, tech: { type: 'string' } },
+      required: ['team', 'tech'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
+    },
+    run: deleteTechTool,
   },
   {
     name: 'get_thread_trace',
