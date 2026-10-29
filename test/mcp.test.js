@@ -357,6 +357,14 @@ describe('mcp tools', () => {
       },
     }), boss);
     assert.equal(tech.body.result.structuredContent.tech.name, 'Sitecore');
+    // A member tests regex rules; a script runs code, and is tested by those who may save it.
+    const script = { name: 'Script', kind: 'script', script: 'export default () => [];' };
+    const notYours = await callTool(e, 'test_extraction_rule', { rule: script, thread: SLACK });
+    assert.match(notYours.body.result.content[0].text, /managers of helix/);
+    const noTeam = await callTool(e, 'test_extraction_rule', { rule: script, text: 'x' });
+    assert.match(noTeam.body.result.content[0].text, /Give the `team`/);
+    const ran = await send(e, req('tools/call', { name: 'test_extraction_rule', arguments: { rule: script, team: 'helix', text: 'x' } }), boss);
+    assert.match(ran.body.result.content[0].text, /LOADER/);
     const after = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
     assert.deepEqual([after.rules.length, after.tech.map((t) => t.tech)], [1, ['sitecore']]);
   });

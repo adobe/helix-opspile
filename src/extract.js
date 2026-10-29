@@ -71,6 +71,64 @@ const TRANSFORMS = ['lower', 'upper'];
 
 const clean = (v, max) => String(v ?? '').trim().slice(0, max);
 
+/**
+ * Whether `pattern` repeats a group that itself repeats without bound, as `(a+)+`, `(\w*)*`
+ * or `(?:x|y+){2,}`: the shape that backtracks exponentially on text that almost matches. A
+ * regular expression cannot be stopped once it runs, and the Worker's clock stands still while
+ * it does, so this is checked before a rule runs, not timed while it does. `(?:\.x+)*` is
+ * refused too, though harmless: write it with one repetition, as `[x.]*x`.
+ */
+export function nestedRepeat(pattern) {
+  const src = String(pattern || '');
+  // Per open group: whether something in it repeats without bound.
+  const groups = [];
+  let inner = false;
+  // Whether the atom just read repeats without bound inside (a closed group's `inner`).
+  let last = false;
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '\\') {
+      i += 1;
+      last = false;
+    } else if (c === '[') {
+      // A character class: to its closing bracket.
+      i += 1;
+      if (src[i] === '^') {
+        i += 1;
+      }
+      if (src[i] === ']') {
+        i += 1;
+      }
+      while (i < src.length && src[i] !== ']') {
+        if (src[i] === '\\') {
+          i += 1;
+        }
+        i += 1;
+      }
+      last = false;
+    } else if (c === '(') {
+      groups.push(inner);
+      inner = false;
+      last = false;
+    } else if (c === ')') {
+      last = inner;
+      inner = (groups.pop() || false) || inner;
+    } else if (c === '*' || c === '+' || (c === '{' && /^\{\d*,\}/.test(src.slice(i)))) {
+      if (last) {
+        return true;
+      }
+      inner = true;
+      last = false;
+      if (c === '{') {
+        i = src.indexOf('}', i);
+      }
+    } else {
+      last = false;
+    }
+  }
+  return false;
+}
+
 /** A rule's regular expressions, compiled: `{ re, exclude }`, or `{ error }`. */
 export function compile(rule) {
   const flags = String(rule.flags || '');
@@ -90,6 +148,12 @@ export function compile(rule) {
   }
   if (re.test('')) {
     return { error: 'the pattern matches empty text: it would match everywhere' };
+  }
+  if (nestedRepeat(rule.pattern) || nestedRepeat(rule.exclude)) {
+    return {
+      error: 'the pattern repeats a group that repeats itself, as (a+)+: on text that almost'
+        + ' matches, that takes forever. Repeat once, as [a.]*a instead of (?:\\.?a+)+',
+    };
   }
   re.lastIndex = 0;
   if (rule.exclude) {
@@ -345,13 +409,17 @@ export async function techFor(env, team) {
     .sort((x, y) => x.tech.localeCompare(y.tech));
 }
 
-/** The names of every technology any team has, by id (the admin team's name wins). */
-export async function techNames(env) {
+/**
+ * The names of every technology any team has, by id: `team`'s own name, else the admin
+ * team's, else another team's.
+ */
+export async function techNames(env, team = null) {
   if (!env || !env.DB) {
     return {};
   }
+  // `team`'s own names first: a team that renamed one of the admin team's sees its name.
   const { results: rows } = await env.DB.prepare(`SELECT tech, name FROM tech_stack
-    ORDER BY team = ? DESC, team`).bind(GLOBAL_TEAM).all();
+    ORDER BY team = ? DESC, team = ? DESC, team`).bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all();
   const out = {};
   for (const r of rows || []) {
     out[r.tech] = out[r.tech] || r.name;
@@ -521,9 +589,15 @@ export async function deleteRule(env, team, id) {
 
 /** Saves technology `input.tech` of `team`, new or changed, as `by`: `{ tech }` or `{ error }`. */
 export async function saveTech(env, team, input, by) {
-  const old = input.tech ? await env.DB.prepare('SELECT * FROM tech_stack WHERE team = ? AND tech = ?')
-    .bind(team, String(input.tech).trim()).first() : null;
-  const { tech, error } = checkTech(input, old ? techOut(old) : {});
+  const id = String(input.tech || '').trim();
+  const rowOf = (slug) => env.DB.prepare('SELECT * FROM tech_stack WHERE team = ? AND tech = ?')
+    .bind(slug, id).first();
+  const old = id ? await rowOf(team) : null;
+  // A team's first change to one of the admin team's starts from it: `{ tech, enabled: false }`
+  // turns it off for the team's channels, `{ tech, name }` renames it there.
+  const shared = !old && id && team !== GLOBAL_TEAM ? await rowOf(GLOBAL_TEAM) : null;
+  const base = old || shared;
+  const { tech, error } = checkTech(input, base ? { ...techOut(base), enabled: true } : {});
   if (error) {
     return { error };
   }

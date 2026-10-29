@@ -625,18 +625,31 @@ async function deleteTechTool(env, me, args) {
   return error ? { error } : fromExtract({ ...await deleteTech(env, team, args.tech), deleted: args.tech }, 'deleted');
 }
 
+/**
+ * test_extraction_rule. A regex rule anyone on a team may try; a script runs code in a Dynamic
+ * Worker, so, as on the Agents page (src/extractadmin.js), only for those who may save one: for
+ * `team`, or the thread's team.
+ */
 async function testRuleTool(env, me, args) {
   const key = String(args.thread || '');
-  let found;
-  if (key) {
-    const data = await loadThread(env, me, key);
-    if (!data || !await mayWork(env, me)(data.thread.teams, data.thread)) {
-      return NOT_FOUND;
-    }
-    found = await testRule(env, args.rule || {}, { thread: data.thread, messages: data.messages });
-  } else {
-    found = await testRule(env, args.rule || {}, { text: String(args.text || '') });
+  const rule = args.rule || {};
+  const data = key ? await loadThread(env, me, key) : null;
+  if (key && (!data || !await mayWork(env, me)(data.thread.teams, data.thread))) {
+    return NOT_FOUND;
   }
+  if (rule.kind === 'script') {
+    const team = args.team || (data && data.thread.team);
+    const may = team ? ruleTeam(me, { team }, { write: true })
+      : { error: 'Give the `team` whose rule this is: scripts are tested by those who may save them.' };
+    if (may.error) {
+      return may;
+    }
+  } else if (!data && teamless(me)) {
+    return { error: 'You are on no ops team: extraction rules are the teams\'.' };
+  }
+  const found = data
+    ? await testRule(env, rule, { thread: data.thread, messages: data.messages })
+    : await testRule(env, rule, { text: String(args.text || '') });
   return found.error ? { error: `${found.error}.` } : { data: found };
 }
 
@@ -959,7 +972,7 @@ export const TOOLS = [
   {
     name: 'test_extraction_rule',
     title: 'Test an extraction rule',
-    description: 'Runs an extraction rule, saved or not, on some text or on a thread\'s messages, and returns the facts and technologies it finds. Changes nothing; use it before save_extraction_rule.',
+    description: 'Runs an extraction rule, saved or not, on some text or on a thread\'s messages, and returns the facts and technologies it finds. Changes nothing; use it before save_extraction_rule. A script rule only for those who may save it (the admin team and the managers of the thread\'s team, or of `team`).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -968,6 +981,7 @@ export const TOOLS = [
         },
         text: { type: 'string', description: 'Text to run it on' },
         thread: { type: 'string', description: 'Or a thread key from list_threads: its messages' },
+        team: { ...TEAM_ARG, description: 'For a script without a thread: the team whose rule it is (scripts are tested by the admin team and the team\'s managers)' },
       },
       required: ['rule'],
       additionalProperties: false,
@@ -1012,7 +1026,7 @@ export const TOOLS = [
   {
     name: 'save_tech',
     title: 'Save a technology',
-    description: 'Adds a technology to an ops team\'s tech stack, or changes it: Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the inbox shows `name`. The same `tech` id as one of the admin team\'s replaces it in the team\'s channels; `enabled: false` there removes it. For the admin team and the team\'s managers.',
+    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. For the admin team and the team\'s managers.',
     inputSchema: {
       type: 'object',
       properties: {

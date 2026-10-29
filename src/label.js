@@ -191,7 +191,9 @@ export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
   .map(([id, t]) => [id, t.name]));
 
 /** The names the inbox shows for tech stack and topic ids. */
-export const vocab = async (env) => ({ tech: await techNames(env), topics: topicNames() });
+export const vocab = async (env, team = null) => ({
+  tech: await techNames(env, team), topics: topicNames(),
+});
 
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },

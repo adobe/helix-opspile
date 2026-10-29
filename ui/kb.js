@@ -874,7 +874,7 @@ function techForm(t = {}) {
   return `<form class="mcpform" id="techForm" autocomplete="off">
     <h3>${editing ? `Edit ${esc(t.name)}` : t.tech ? `Change ${esc(t.name)} for ${esc(base().name)}` : 'Add a technology'}</h3>
     <label for="tId">Id</label><input id="tId" class="mono" placeholder="akamai" value="${esc(t.tech || '')}" required pattern="[a-z][a-z0-9_]*" style="max-width:240px"${t.tech ? ' readonly' : ''}>
-    <label for="tName">Name</label><input id="tName" placeholder="What the inbox shows, e.g. Akamai" value="${esc(t.name || '')}" required style="max-width:360px">
+    <label for="tName">Name</label><input id="tName" placeholder="What ${esc(state.extraction.global ? 'the inbox' : `${base().name}'s inbox`)} shows, e.g. Akamai" value="${esc(t.name || '')}" required style="max-width:360px">
     <label for="tDesc">Clef is asked</label><input id="tDesc" placeholder="Akamai as CDN" value="${esc(t.description || '')}" required>
     <span class="hint">"Does this thread show that the customer uses <i>…</i>?", about every thread of ${esc(state.extraction.global ? 'every channel' : `${base().name}'s channels`)}.</span>
     <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>

@@ -673,7 +673,10 @@ and an unchanged thread is never labeled twice):
   Delivery or Document Authoring link, an AEM Cloud Service, Assets or App Builder host, an
   Akamai error reference, a Cloudflare ray id, a Fastly or CloudFront header, another git host.
   A rule is a pattern with a value template (`$2/$1`), a case and an `exclude` pattern, that
-  writes a fact of its `field` or detects technology `field`. A script is an ES module whose
+  writes a fact of its `field` or detects technology `field`. A regular expression cannot be
+  stopped once it runs (and a Worker's clock stands still while it does), so a pattern that
+  repeats a group that itself repeats without bound, as `(a+)+`, is refused when it is saved
+  and when it runs: that shape backtracks without end on text that almost matches. A script is an ES module whose
   default export gets the thread and returns `[{ field, value }, { tech }]`; it runs in a
   Dynamic Worker of its own (`LOADER`), without network access, within two seconds. Rules are
   edited on the Agents page (**Extraction rules** of a team's knowledge base), with the MCP
@@ -693,6 +696,8 @@ and an unchanged thread is never labeled twice):
   off, it is not asked there). Clef gets at most 24 questions per call; the rest are asked in
   calls of their own, at the same time. The channel keeps the highest probability any thread
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
+  The inbox shows a team's own name for a technology in its inbox and threads, the admin
+  team's elsewhere.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
@@ -1134,7 +1139,8 @@ tools are not installed, so the rest of the environment answers `not_supported`.
 **`extraction_rules`.** The agent reads, tests and changes its team's extraction rules and tech
 stack (`list_extraction_rules`, `test_extraction_rule`, `save_extraction_rule`,
 `delete_extraction_rule`, `save_tech`, `delete_tech`; see "Labels and facts"), as
-`opspile-agent/<model>`. What it saves applies to every channel of its team from the next
+`opspile-agent/<model>`. Testing a script rule (MCP `test_extraction_rule`, the page's Test)
+runs code in a Dynamic Worker, so it is for those who may save the rule, as saving is. What it saves applies to every channel of its team from the next
 labeling of a thread; it cannot change the admin team's, which apply to every channel. Its
 section of the prompt asks it to add a rule only for what recurs and the existing rules miss,
 to test it first, and never to put a customer's name or a secret into one.

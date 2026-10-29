@@ -15,8 +15,8 @@ import { describe, it } from 'node:test';
 import { AGENT_TOOLS } from '../src/agent/agenttools.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
 import {
-  checkRule, extract, GLOBAL_TEAM, rulesFor, runScript, saveRule, saveTech, techFor, techNames,
-  testRule,
+  checkRule, extract, GLOBAL_TEAM, nestedRepeat, rulesFor, runScript, saveRule, saveTech, techFor,
+  techNames, testRule,
 } from '../src/extract.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { ADMIN_TEAM } from '../src/review.js';
@@ -125,6 +125,20 @@ describe('a team\'s rules and tech stack', () => {
     assert.equal((await techNames(e)).akamai, 'Akamai');
   });
 
+  it('change one of the admin team\'s for a team from what the admin team says, and show its name there', async () => {
+    const e = env();
+    let r = await saveTech(e, 'helix', { tech: 'gdrive', enabled: false }, 'Bo');
+    assert.deepEqual([r.tech.name, r.tech.enabled], ['Google Drive', false]);
+    assert.match(r.tech.description, /Google Drive or Google Docs/);
+    r = await saveTech(e, 'helix', { tech: 'eds', name: 'Helix sites' }, 'Bo');
+    assert.deepEqual([r.tech.name, r.tech.enabled], ['Helix sites', true]);
+    assert.equal((await techNames(e, 'helix')).eds, 'Helix sites');
+    assert.equal((await techNames(e, 'edge')).eds, 'Edge Delivery');
+    assert.equal((await techNames(e)).eds, 'Edge Delivery');
+    // A technology nobody has needs its name and description.
+    assert.match((await saveTech(e, 'helix', { tech: 'nothing_yet' }, 'Bo')).error, /name/);
+  });
+
   it('are checked: a pattern that is no regular expression, matches nothing, or names no field', () => {
     assert.match(checkRule({ name: 'x', field: 'a', pattern: '(' }).error, /not a regular expression/);
     assert.match(checkRule({ name: 'x', field: 'a', pattern: 'a*' }).error, /matches empty text/);
@@ -134,6 +148,24 @@ describe('a team\'s rules and tech stack', () => {
     }).error, /flags/);
     assert.match(checkRule({ name: 'x', kind: 'script', script: 'return 1' }).error, /default-exports/);
     assert.equal(checkRule({ name: 'x', field: 'a', pattern: 'a' }).rule.kind, 'regex');
+  });
+
+  it('refuse a group that repeats something that repeats, which backtracks without end', async () => {
+    for (const p of ['(a+)+$', '(\\w*)*x', '(?:x|y+){2,}', '(?:(a+)b)+']) {
+      assert.equal(nestedRepeat(p), true, p);
+      assert.match(checkRule({ name: 'x', field: 'a', pattern: p }).error, /repeats a group/);
+    }
+    for (const p of ['a+b+', '(ab)+', '(a+)?', '[(a+)]+', '\\(a+\\)+', '(a{1,3})+']) {
+      assert.equal(nestedRepeat(p), false, p);
+    }
+    assert.match(checkRule({
+      name: 'x', field: 'a', pattern: 'a', exclude: '(b+)*',
+    }).error, /repeats a group/);
+    // The admin team's own rules pass.
+    const e = env();
+    for (const r of await rulesFor(e, 'helix')) {
+      assert.equal(checkRule(r).error, undefined, r.name);
+    }
   });
 
   it('can be scripts, which run in a Dynamic Worker without network access', async () => {

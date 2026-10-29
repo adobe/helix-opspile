@@ -461,7 +461,8 @@ export async function inbox(env, me, team, {
         ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
       WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
       .bind(keys, TECH_MIN).all(),
-    vocab(env),
+    // The team's names for its technologies (the personal view, across teams: the admin team's).
+    vocab(env, personal ? null : team),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -725,7 +726,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     },
     tech: tech || [],
     topics: topicList(model && model.topics),
-    vocab: await vocab(env),
+    vocab: await vocab(env, row.team),
     members: group.map((m) => ({
       thread: m.thread,
       root_at: m.root_at,
