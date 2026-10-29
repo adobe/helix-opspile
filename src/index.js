@@ -20,6 +20,7 @@ import kbJs from '../ui/kb.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
+import tableJs from '../ui/table.js' with { type: 'text' };
 import headerCss from '../ui/header.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
@@ -57,6 +58,7 @@ const SCRIPTS = {
   'app.js': appJs,
   'header.js': headerJs,
   'rank.js': rankJs,
+  'table.js': tableJs,
   'header.css': headerCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);

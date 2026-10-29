@@ -110,7 +110,7 @@ async function keptCopy(env, f, name) {
 }
 
 /** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
-async function download(env, f) {
+export async function download(env, f) {
   let { url } = f;
   let name = f.name || url.split('/').pop().split('?')[0];
   if (f.source === 'teams') {

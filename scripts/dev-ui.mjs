@@ -847,6 +847,21 @@ async function api(req, res, url) {
     res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
     return res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#e8eef7"/><rect x="40" y="40" width="1200" height="60" rx="8" fill="#c9d6ea"/><rect x="40" y="130" width="760" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="170" width="980" height="24" rx="6" fill="#b4c4de"/><rect x="40" y="210" width="640" height="24" rx="6" fill="#b4c4de"/><text x="640" y="470" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#5b6b85">${decodeURIComponent(u.split('/').pop()).replace(/[<>&]/g, '')}</text></svg>`);
   }
+  if (url.pathname === '/api/file') {
+    // A text file of a message (src/fileview.js): the fixtures' uploads, as text.
+    const id = (/^\/__dev\/files\/([\w-]+)\//.exec(url.searchParams.get('u') || '') || [])[1];
+    const f = id && store.uploads.get(id);
+    if (!f || !thread(url.searchParams.get('t'))) {
+      return json(res, { error: 'not a file of this thread' }, 404);
+    }
+    if (!/^text\/|json/.test(f.type)) {
+      return json(res, { error: `cannot preview this kind of file (${f.type})` }, 415);
+    }
+    res.writeHead(200, {
+      'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'x-file-name': encodeURIComponent(f.name), 'x-file-type': f.type,
+    });
+    return res.end(Buffer.from(f.bytes));
+  }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
     // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
     // for a few seconds after the thread is first asked about, then leaves a note.
