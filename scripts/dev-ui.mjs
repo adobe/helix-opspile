@@ -560,9 +560,11 @@ function thread(key) {
     }],
     messages,
     profiles: profiles(messages.map((m) => m.authorKey)),
-    // As src/profiles.js's mentionKinds: who the people the messages mention are.
+    // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
+    // the platform's accounts (a channel member who never posted) alike.
     mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
-      .map((name) => [name, [...store.people.values()].find((p) => p.name === name)])
+      .map((name) => [name, [...store.people.values(), ...store.members]
+        .find((p) => p.name === name)])
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
