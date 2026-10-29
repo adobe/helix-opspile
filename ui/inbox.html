@@ -525,6 +525,13 @@
   .bubble .file-act:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
   .bubble .file-act[aria-expanded="true"] { background: color-mix(in srgb, currentColor 14%, transparent); }
   .bubble .file-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* A video or audio file plays in its card, above its name; a video at most this wide, in the
+     shape of what it shows once that is known (16:9 until then). */
+  .bubble .file.has-player { flex-wrap: wrap; width: min(520px, 100%); row-gap: 8px; }
+  .bubble .file .file-player { flex: 1 0 100%; display: block; min-width: 0; }
+  .bubble .file video.file-player { width: 100%; aspect-ratio: 16 / 9; max-height: 420px; background: #000; border-radius: 7px; }
+  .bubble .file audio.file-player { height: 36px; }
+  .bubble .file.play-failed .file-player { display: none; }
   .bubble .file a.file-go { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%;
     color: inherit; text-decoration: none; font-size: 14px; opacity: .7; }
   .bubble .file a.file-go:hover { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }

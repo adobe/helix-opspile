@@ -280,12 +280,16 @@ function fileHome(href) {
  * it lives, and for tables and text a Preview button (ui/inbox.js opens it). Without `href`, a
  * file that is not there to open (one being sent, one opspile cannot see), `note` says why.
  *
- * @param {{ name: string, href?: string, note?: string, preview?: boolean, type?: string }}
- *   file `name` and `href` as HTML (escaped, the link sanitized), as micromark writes them;
- *   `type`: its extension, where the name has none
+ * A video or audio file with `fileUrl` (render's option) plays in the card: a `<video>` (with
+ * Slack's still of it as the poster) or an `<audio>`, which load nothing until played.
+ *
+ * @param {{ name: string, href?: string, note?: string, preview?: boolean, type?: string,
+ *   fileUrl?: (href: string, what: string) => string|undefined }} file `name` and `href` as
+ *   HTML (escaped, the link sanitized), as micromark writes them; `type`: its extension, where
+ *   the name has none
  */
 export function fileCard({
-  name, href = '', note = '', preview = true, type = '',
+  name, href = '', note = '', preview = true, type = '', fileUrl = () => undefined,
 }) {
   const { kind, label, ext } = fileKind(type ? `.${type}` : decode(name));
   const home = href ? fileHome(decode(href)) : '';
@@ -301,17 +305,26 @@ export function fileCard({
     : '';
   // The same link as the name's, as a button for the eye (the name is the one to tab to).
   const go = href ? `<a class="file-go" href="${href}" target="_blank" rel="noopener" title="${title}" tabindex="-1" aria-hidden="true">↗</a>` : '';
-  return `<div class="file" data-kind="${kind}"${home ? ` data-home="${home}"` : ''}><span class="file-ico" aria-hidden="true">${badge}</span>`
+  const stream = href && (kind === 'video' || kind === 'audio') ? fileUrl(decode(href), 'stream') : '';
+  // Slack makes a still of a video; the others do not.
+  const poster = stream && kind === 'video' && home === 'Slack' ? fileUrl(decode(href), 'poster') : '';
+  let player = '';
+  if (stream && kind === 'video') {
+    player = `<video class="file-player" controls playsinline preload="none" src="${encode(stream)}"${poster ? ` poster="${encode(poster)}"` : ''} aria-label="${title.replace(/^Open[^:]*: /, 'Play: ')}"></video>`;
+  } else if (stream) {
+    player = `<audio class="file-player" controls preload="none" src="${encode(stream)}" aria-label="${title.replace(/^Open[^:]*: /, 'Play: ')}"></audio>`;
+  }
+  return `<div class="file${player ? ' has-player' : ''}" data-kind="${kind}"${home ? ` data-home="${home}"` : ''}>${player}<span class="file-ico" aria-hidden="true">${badge}</span>`
     + `<span class="file-nm">${nm}<span class="file-sub">${encode(sub)}</span></span>${act}${go}</div>`;
 }
 
 /** The cards of a message's linked files and the ones opspile cannot see. */
-function fileCards({ links, unseen }) {
+function fileCards({ links, unseen }, fileUrl) {
   const list = links.map((line) => {
     // micromark writes the link, so its address is sanitized as any other link's.
     const html = micromark(repair(line.slice(2)), OPTIONS);
     const a = /<a href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/.exec(html);
-    return a ? fileCard({ name: a[2], href: a[1] }) : '';
+    return a ? fileCard({ name: a[2], href: a[1], fileUrl }) : '';
   });
   for (const what of unseen) {
     // Slack says what kind of file it is ("CSV file").
@@ -335,10 +348,13 @@ function fileCards({ links, unseen }) {
  * @param {(token: string) => ({ name: string, href: string, title?: string,
  *   inbox?: boolean })|undefined} [options.channel] the channel a `#name` or `#C…` names: a
  *   link to it, as `#name` (`inbox`: the link is to the inbox, and opens in this tab)
+ * @param {(href: string, what: 'stream'|'poster') => string|undefined} [options.fileUrl]
+ *   where the page loads an attached video or audio file (`stream`) and a video's still
+ *   (`poster`) from: with it, they play in their cards
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
-  channel = () => undefined,
+  channel = () => undefined, fileUrl = () => undefined,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -395,5 +411,5 @@ export function render(src, {
     return text
       .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
-  }).join('')).trim() + (files ? fileCards(files) : '');
+  }).join('')).trim() + (files ? fileCards(files, fileUrl) : '');
 }

@@ -388,8 +388,10 @@ function md(src, thread = '') {
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
+    // A message's video and audio files play in the page, through the Worker (src/fileview.js).
+    const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf,
+      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -4804,6 +4806,24 @@ function restorePreviews(pane) {
   }
 }
 function wireFiles() {
+  // Players (fileCard): a video takes the shape of what it shows once that is known; one plays
+  // at a time; one the browser cannot play (or opspile cannot load) says so, and links to it.
+  document.addEventListener('loadedmetadata', (e) => {
+    const v = e.target;
+    if (v.matches?.('video.file-player') && v.videoWidth && v.videoHeight) v.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+  }, true);
+  document.addEventListener('play', (e) => {
+    if (!e.target.matches?.('.file-player')) return;
+    for (const m of document.querySelectorAll('.file-player')) if (m !== e.target && !m.paused) m.pause();
+  }, true);
+  document.addEventListener('error', (e) => {
+    const m = e.target;
+    if (!m.matches?.('.file-player') || !m.error) return;
+    const fileEl = m.closest('.file');
+    const sub = fileEl?.querySelector('.file-sub');
+    fileEl?.classList.add('play-failed');
+    if (sub) sub.textContent = `Cannot play it here${fileEl.dataset.home ? `: open it in ${fileEl.dataset.home}` : ''}`;
+  }, true);
   document.addEventListener('click', (e) => {
     const btn = e.target.closest?.('.file [data-preview]');
     if (!btn) return;

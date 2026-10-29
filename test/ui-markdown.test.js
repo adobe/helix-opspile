@@ -57,6 +57,17 @@ describe('ui markdown', () => {
     assert.doesNotMatch(unseen, /data-preview|file-go/);
   });
 
+  it('plays video and audio files in their cards, with Slack\'s still as the poster', () => {
+    const fileUrl = (u, what) => `/api/file/${what}?u=${encodeURIComponent(u)}`;
+    const html = render('Attachments:\n- [rec.mov](https://acme.slack.com/files/U1/F1/rec.mov)\n- [a.mp3](https://cdn.discordapp.com/attachments/1/2/a.mp3)\n- [b.mp4](https://cdn.discordapp.com/attachments/1/2/b.mp4)', { fileUrl });
+    assert.match(html, /<div class="file has-player" data-kind="video" data-home="Slack"><video class="file-player" controls playsinline preload="none" src="\/api\/file\/stream\?u=https%3A%2F%2Facme\.slack\.com%2Ffiles%2FU1%2FF1%2Frec\.mov" poster="\/api\/file\/poster\?u=[^"]+" aria-label="Play: rec\.mov"><\/video>/);
+    assert.match(html, /<audio class="file-player" controls preload="none" src="\/api\/file\/stream\?u=[^"]+a\.mp3"/);
+    // Only Slack makes stills.
+    assert.match(html, /<video [^>]*b\.mp4" aria-label/);
+    // Without a place to load them from, they are cards as any other file.
+    assert.doesNotMatch(render('Attachments:\n- [rec.mov](https://acme.slack.com/files/U1/F1/rec.mov)'), /<video|has-player/);
+  });
+
   it('keeps the links of file cards as safe as other links', () => {
     const html = render('Attachments:\n- [x.csv](javascript:alert(1))\n- [<b>y</b>.txt](https://files.example/y.txt)');
     assert.doesNotMatch(html, /javascript:/);
