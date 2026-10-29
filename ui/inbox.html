@@ -178,6 +178,10 @@
   .faces .av { width: 20px; height: 20px; font-size: 9px; margin-left: -5px; border: 2px solid var(--col); border-radius: 50%; }
   .faces .av:first-child { margin-left: 0; }
   .t .replies { flex: none; }
+  /* The latest reply: what is left of the line, cut off before the reactions, which keep theirs. */
+  .t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--mute); }
+  .t .snip + .tags { flex: none; }
   .t.unread .replies.re { font-weight: 650; color: var(--accent); }
   .moods { display: flex; flex: none; }
   .moods .em { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px;
@@ -713,8 +717,6 @@
   :root[data-design="a"] .t.unread .when { color: var(--accent); font-weight: 650; }
   :root[data-design="a"] .t .replies { flex: none; white-space: nowrap; }
   :root[data-design="a"] .t .replies .men { color: var(--red); font-weight: 650; }
-  :root[data-design="a"] .t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; color: var(--mute); }
   :root[data-design="a"] .t .tags { flex: none; }
   :root[data-design="a"] .t .faces .av, :root[data-design="a"] .t .moods .em { border-color: var(--row-bg); }
   :root[data-design="a"] .t .dot.ring { box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 3.5px var(--ring); }

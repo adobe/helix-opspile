@@ -812,6 +812,16 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
+/**
+ * The latest reply, "First name: text", as far as it fits before the reactions, as Messages
+ * does: the inbox sends it (see `preview`). Not for a thread without replies (its latest
+ * message is its title) or a search result (it shows the message that matched).
+ */
+function snippet(t, hit, replies) {
+  const p = replies && !hit ? preview(t) : null;
+  return p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
+}
+
 function row(t, hit = null) {
   if (design === 'a') return rowA(t, hit);
   if (design === 'b') return rowB(t, hit);
@@ -832,7 +842,7 @@ function row(t, hit = null) {
     <div class="l2">
       <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
       <span class="faces">${faces}</span>
-      ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
+      ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}${snippet(t, hit, replies)}
       <span class="tags">${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
@@ -885,9 +895,7 @@ function rowA(t, hit) {
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
   const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
-  // The latest reply: the inbox sends it (see `preview`).
-  const p = replies && !hit ? preview(t) : null;
-  const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
+  const said = snippet(t, hit, replies);
   const cust = oneCustomer() ? ''
     : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
@@ -911,9 +919,9 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
   .replace(/\s+/g, ' ')
   .trim();
 /**
- * The preview of designs A and B: the thread's latest message as the inbox sends it
- * (`last_text`, from `threads`), else from the thread cache (a thread the cron has not filled in
- * yet, see src/previews.js), else who wrote last.
+ * A row's preview (the list, and designs A and B): the thread's latest message as the inbox
+ * sends it (`last_text`, from `threads`), else from the thread cache (a thread the cron has not
+ * filled in yet, see src/previews.js), else who wrote last.
  */
 function preview(t) {
   if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
@@ -3175,14 +3183,15 @@ function pump() {
     inflight.set(key, get(threadUrl(key))
       .then((data) => {
         if (!fresh(key)) state.cache.set(key, { data, at: Date.now(), sig });
-        if (design === 'a' || design === 'b') previewSoon();
+        // A row whose preview the inbox did not send takes it from the copy (`preview`).
+        if (design !== 'c' && !searchEntry(key)?.last_text) previewSoon();
         return data;
       })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
   }
 }
-/** Designs A and B: the rows again once fetched threads give them their previews, one frame later. */
+/** The rows again once fetched threads give them their previews, one frame later. */
 let previewFrame = 0;
 function previewSoon() {
   if (!previewFrame) previewFrame = requestAnimationFrame(() => { previewFrame = 0; renderThreads(); });
