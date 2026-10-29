@@ -20,7 +20,7 @@
  */
 
 import { channelPath, render } from '../src/channels.js';
-import { titleOf } from '../src/threads.js';
+import { previewOf, titleOf } from '../src/threads.js';
 
 const MIN = 60 * 1000;
 const TENANT = 'T-FAKE';
@@ -426,6 +426,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       last_id: last ? last.id : null,
       last_author: last ? last.author.name : null,
       last_staff: last ? Number(last.author.staff) : null,
+      last_text: last ? previewOf(last.body) : null,
       any_at: ats.length ? ats[ats.length - 1] : null,
       messages: live.length,
       updated_at: new Date(now).toISOString(),

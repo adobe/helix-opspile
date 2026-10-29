@@ -376,6 +376,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   classification), people and their platform identities, ops teams, and read watermarks. It
   answers the inbox queries, for example "everything waiting on us for my team" or
   "everything from this customer in the last 7 days".
+  It keeps one piece of text: each message's first 200 characters as one line of plain text
+  (`messages.preview`, written by the normalizer), and the latest one of every thread
+  (`threads.last_text`, derived with the other `last_*` columns), so the inbox's rows show
+  the latest reply without reading the thread. Threads indexed before it was kept (migration
+  0035) get it from the cron, a few hundred per run, the most recent first
+  (`src/previews.js`, from the latest message's file in pile 2).
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
   them back to D1 in batches.

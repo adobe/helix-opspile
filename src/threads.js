@@ -31,6 +31,29 @@ export function titleOf(subject, body) {
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line;
 }
 
+/** How much of a message the inbox's rows show of it (they cut it off sooner, with `…`). */
+export const PREVIEW_MAX = 200;
+
+/**
+ * A message's markdown body as one line of plain text, for the inbox's rows: code blocks and
+ * images as `[code]` and `[image]`, links as their text, no list, quote or heading marks and no
+ * emphasis. Emoji shortcodes (`:rotating_light:`) are kept: the inbox shows them as emoji.
+ */
+export function previewOf(body) {
+  const text = String(body || '')
+    .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' [image] ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+    .replace(/^\s*(?:[-*+]|\d+\.|>|#+|\|)\s*/gm, '')
+    .replace(/[*~`|]/g, '')
+    // `_` only as emphasis at word edges, so `:rotating_light:` keeps its name.
+    .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > PREVIEW_MAX ? `${text.slice(0, PREVIEW_MAX - 1)}…` : text;
+}
+
 /**
  * Moves a watermark forward (never back). `via` is post, react or open.
  */
@@ -52,20 +75,21 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
  *
  * @param {object} db D1
  * @param {object} m `{ source, tenant, channelId, rootId, id, thread, at, author, person,
- *   staff, counted, deleted, title, org, team, kind, channelName, path }`
+ *   staff, counted, deleted, title, preview, org, team, kind, channelName, path }`
  */
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
     (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title,
-     permalink, author_key)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     permalink, author_key, preview)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
       deleted = MAX(messages.deleted, excluded.deleted),
       title = COALESCE(excluded.title, messages.title),
       permalink = COALESCE(excluded.permalink, messages.permalink),
-      author_key = COALESCE(excluded.author_key, messages.author_key)`)
+      author_key = COALESCE(excluded.author_key, messages.author_key),
+      preview = COALESCE(excluded.preview, messages.preview)`)
     .bind(
       m.source,
       m.tenant,
@@ -81,6 +105,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.title || null,
       m.permalink || null,
       m.authorKey || null,
+      m.preview ?? null,
     )
     .run();
 
@@ -88,19 +113,19 @@ export async function indexMessage(db, m, now = new Date()) {
   // The thread row is derived from its messages, so it is the same in any order.
   await db.prepare(`INSERT INTO threads
     (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, title, path,
-     root_at, last_at, last_id, last_author, last_staff, any_at, messages, updated_at)
+     root_at, last_at, last_id, last_author, last_staff, last_text, any_at, messages, updated_at)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
       COALESCE(
         (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''),
         (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
           ORDER BY at LIMIT 1)),
       ?11, ?12,
-      l.at, l.id, l.author, l.staff,
+      l.at, l.id, l.author, l.staff, l.preview,
       (SELECT MAX(at) FROM messages WHERE thread = ?1 AND deleted = 0),
       (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0),
       ?13
     FROM (SELECT NULL) LEFT JOIN (
-      SELECT at, id, author, staff FROM messages
+      SELECT at, id, author, staff, preview FROM messages
       WHERE thread = ?1 AND counted = 1 AND deleted = 0 ORDER BY at DESC LIMIT 1
     ) l ON 1
     ON CONFLICT (thread) DO UPDATE SET
@@ -110,6 +135,7 @@ export async function indexMessage(db, m, now = new Date()) {
       root_at = CASE WHEN ?14 THEN excluded.root_at ELSE COALESCE(threads.root_at, excluded.root_at) END,
       last_at = excluded.last_at, last_id = excluded.last_id,
       last_author = excluded.last_author, last_staff = excluded.last_staff,
+      last_text = excluded.last_text,
       any_at = excluded.any_at, messages = excluded.messages, updated_at = excluded.updated_at`)
     .bind(
       m.thread,

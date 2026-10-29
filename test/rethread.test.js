@@ -410,13 +410,16 @@ describe('fold', () => {
       ...extra,
     });
     const [g, solo] = fold([
-      t('a', '2026-10-20T10:00:00Z', { title: 'first', attention: 'me' }),
-      t('b', '2026-10-21T10:00:00Z', { logical_thread: 'a', attention: 'adobe', label: { next_actor: 'us' } }),
+      t('a', '2026-10-20T10:00:00Z', { title: 'first', attention: 'me', last_text: 'older' }),
+      t('b', '2026-10-21T10:00:00Z', {
+        logical_thread: 'a', attention: 'adobe', label: { next_actor: 'us' }, last_text: 'newer',
+      }),
       t('c', '2026-10-19T10:00:00Z', { title: 'other' }),
     ]);
     assert.deepEqual([g.thread, g.title, g.last_at, g.messages, g.attention, g.label.next_actor], [
       'a', 'first', '2026-10-21T10:00:00Z', 2, 'adobe', 'us',
     ]);
+    assert.equal(g.last_text, 'newer'); // the latest member's
     assert.deepEqual(g.members.map((m) => m.thread), ['a', 'b']);
     assert.equal(solo.thread, 'c');
   });

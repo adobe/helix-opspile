@@ -325,8 +325,10 @@ describe('processKey', () => {
     assert.equal((await processKey(e, react)).result, 'skip'); // message not known yet
     await processKey(e, root);
     const [t] = e.DB.rows('SELECT * FROM threads');
-    assert.deepEqual([t.org, t.team, t.title, t.last_author, t.last_staff, t.channel_name], [
-      'acme', 'helix', 'help', 'Cy', 0, 'aem-acme',
+    assert.deepEqual([
+      t.org, t.team, t.title, t.last_author, t.last_staff, t.last_text, t.channel_name,
+    ], [
+      'acme', 'helix', 'help', 'Cy', 0, 'help', 'aem-acme',
     ]);
     assert.equal((await processKey(e, react)).result, 'reaction');
     assert.deepEqual(e.DB.rows('SELECT person, read_at, via FROM watermarks'), [

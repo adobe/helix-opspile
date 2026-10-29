@@ -885,7 +885,7 @@ function rowA(t, hit) {
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
   const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
-  // The latest reply, once the thread is in the cache (rows in view are fetched ahead).
+  // The latest reply: the inbox sends it (see `preview`).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
@@ -911,11 +911,12 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
   .replace(/\s+/g, ' ')
   .trim();
 /**
- * Design B's preview: the thread's latest message, once the thread is in the cache (rows in view
- * are fetched ahead, see `preload`), else who wrote last. A preview the list can always show
- * would need the inbox to send the latest message's text (a column of `threads`).
+ * The preview of designs A and B: the thread's latest message as the inbox sends it
+ * (`last_text`, from `threads`), else from the thread cache (a thread the cron has not filled in
+ * yet, see src/previews.js), else who wrote last.
  */
 function preview(t) {
+  if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
   const ms = (state.cache.get(t.thread)?.data?.messages || [])
     .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
   const m = ms[ms.length - 1];

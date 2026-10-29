@@ -44,6 +44,7 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepPreviews } from './previews.js';
 
 const SCRIPTS = {
   'inbox.js': inboxJs, 'admin.js': adminJs, 'kb.js': kbJs, 'app.js': appJs,
@@ -194,8 +195,8 @@ export default {
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
  * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
- * is not in (SLACK_JOIN_TEAMS), and enqueue the threads whose message and thread vectors are
- * behind.
+ * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
+ * behind, and fill in the latest message's text of threads indexed before it was kept.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -235,6 +236,9 @@ export default {
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    ctx.waitUntil(sweepPreviews(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
   },
 };
 
