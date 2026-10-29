@@ -3484,18 +3484,20 @@ function toUrl(push = true, entry = null) {
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
 }
-/**
- * The switch to the knowledge-base editor (admin team) opens the knowledge base that fits what
- * is on screen: the open thread's customer's (or the one customer filtered on), else the team's;
- * the editor picks whichever of them exists. `back` is this inbox as it is now, so the editor's
- * "Inbox" returns to it: team, filters, sort, unread, the open thread and "view as".
- */
-function kbHref() {
-  const q = new URLSearchParams();
+/** The customer on screen: the open thread's, else the one filtered on. */
+function customerOnScreen() {
   const open = state.open && (state.data?.threads.find((t) => t.thread === state.open)
     || state.cache.get(state.open)?.data?.thread);
   const customers = state.sel.customer;
-  const org = open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
+  return open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
+}
+/**
+ * The knowledge-base editor for what is on screen: the customer's knowledge base (see
+ * customerOnScreen), else the team's; the editor picks whichever of them exists.
+ */
+function kbHref() {
+  const q = new URLSearchParams();
+  const org = customerOnScreen();
   if (org) q.set('org', org);
   if (state.team && !personal()) q.set('team', state.team);
   return `/inbox/kb${q.size ? `?${q}` : ''}`;
@@ -3826,10 +3828,21 @@ async function start() {
     main.classList.remove('instant');
   });
   // The pages (ui/header.js): the editor and the admin pages for the admin team and team
-  // managers. Agents, not opened yet in this tab, opens on the open thread's customer (else the
-  // filtered one, else the team on screen); the open requests are the admin team's own, not
-  // shown while viewing as someone.
-  Header.init(state.me, { fallback: { agents: kbHref }, count: !state.as });
+  // managers. What is on screen picks what they open on: Agents and Orgs the customer on
+  // screen, Teams the team picked (one you may manage); with nothing on screen they open as
+  // they were left, and Agents, not opened yet in this tab, on the team. The open requests are
+  // the admin team's own, not shown while viewing as someone.
+  const teamOnScreen = () => (!personal() && state.team
+    && (state.me.admin || state.me.manages?.includes(state.team)) ? state.team : null);
+  Header.init(state.me, {
+    prefer: {
+      agents: () => (customerOnScreen() ? kbHref() : null),
+      teams: () => (teamOnScreen() ? `/inbox/admin?tab=teams&team=${encodeURIComponent(teamOnScreen())}` : null),
+      orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
+    },
+    fallback: { agents: kbHref },
+    count: !state.as,
+  });
   if (state.me.admin) {
     const sel = $('as');
     $('asBox').hidden = false;

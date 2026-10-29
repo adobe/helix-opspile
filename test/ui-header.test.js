@@ -95,6 +95,19 @@ describe('the header', () => {
     assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
   });
 
+  it('opens a page where the page on screen sends it, before where it was left', () => {
+    const { Header } = tab('/inbox?team=t');
+    let customer = 'acme';
+    Header.init({ admin: true }, {
+      count: false,
+      prefer: { agents: () => (customer ? `/inbox/kb?org=${customer}` : null) },
+    });
+    Header.remember('/inbox/kb?repo=r');
+    assert.equal(Header.href('agents'), '/inbox/kb?org=acme');
+    customer = null;
+    assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
+  });
+
   it('keeps nothing from another origin or another path', () => {
     const { Header, storage } = tab('/inbox');
     storage.clear();

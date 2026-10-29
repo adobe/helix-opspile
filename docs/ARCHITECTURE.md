@@ -358,9 +358,12 @@ and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left 
 browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
 **Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
 **Agents** with its knowledge base and file, and each admin section with what was picked in it.
-Agents, not opened yet in the tab, opens from the inbox on the knowledge base of the open
-thread's customer (or of the one customer filtered on) if it has one, else the team's; the
-inbox, not opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
+From the inbox, what is on screen picks what the others open on: Agents and Orgs the customer
+on screen (the open thread's, or the one customer filtered on; Agents its knowledge base if it
+has one, else the team's), Teams the team picked (in the team views, for whoever may manage it).
+With nothing on screen for them, they open as they were left, and Agents, not opened yet in the
+tab, on the team's. The inbox, not
+opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
 address on links made before, is still taken.) The editor's URL names the knowledge base and
 the file (or the history), and each one opened is a history entry, so the browser's Back and
 Forward step through them; going between the admin sections is one too. The editor itself is

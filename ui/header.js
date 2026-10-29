@@ -19,7 +19,8 @@
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
  * as", the editor with its knowledge base and file, and each admin section with what was
- * picked in it. The page you are on does nothing when clicked; on a phone it opens the menu of
+ * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
+ * customer on screen, and Teams to the team picked. The page you are on does nothing when clicked; on a phone it opens the menu of
  * the others.
  */
 window.Header = (() => {
@@ -35,7 +36,7 @@ window.Header = (() => {
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
-  const opts = { fallback: {}, go: null };
+  const opts = { prefer: {}, fallback: {}, go: null };
   let shut = 0;
 
   /** Which page an address on this origin is, or null. */
@@ -57,10 +58,14 @@ window.Header = (() => {
     try { sessionStorage.setItem(KEY + id, `${u.pathname}${u.search}`); } catch { /* private mode */ }
   }
   const kept = (id) => { try { return sessionStorage.getItem(KEY + id); } catch { return null; } };
-  /** Where a page opens: as it was left, else what the page on screen suggests, else its start. */
+  /**
+   * Where a page opens: where the page on screen sends it (`prefer`: the inbox sends Agents and
+   * Orgs to the customer on screen, Teams to its team), else as it was left, else where the
+   * page on screen suggests (`fallback`), else its start.
+   */
   function href(id) {
     if (pageOf(location.href) === id) return `${location.pathname}${location.search}`;
-    return kept(id) || opts.fallback[id]?.() || PAGES.find((p) => p.id === id).href;
+    return opts.prefer[id]?.() || kept(id) || opts.fallback[id]?.() || PAGES.find((p) => p.id === id).href;
   }
 
   const links = () => document.querySelectorAll('header a[data-page], .pagemenu a[data-page]');
@@ -93,7 +98,8 @@ window.Header = (() => {
   }
 
   /** The pages you may open, once the page knows who you are (`me` from /api/me). */
-  function init(me, { fallback = {}, go = null, count = true } = {}) {
+  function init(me, { prefer = {}, fallback = {}, go = null, count = true } = {}) {
+    Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
     const shown = me.admin ? PAGES : me.manages?.length ? PAGES.filter((p) => !p.admin) : [];
