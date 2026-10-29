@@ -713,6 +713,8 @@ describe('backfill, mentions and labels', () => {
               },
               urgency: { type: 'score', score: 2.6 },
               resolved: { type: 'noul', noul: 0.05 },
+              'topic.cdn': { type: 'noul', noul: 0.9 },
+              'topic.seo': { type: 'noul', noul: 0.2 },
             },
           };
         }
@@ -742,6 +744,9 @@ describe('backfill, mentions and labels', () => {
     const asked = Object.keys(calls[0].input.questions);
     assert.deepEqual(asked.slice(0, 4), Object.keys(QUESTIONS));
     assert.ok(asked.includes('tech.eds'));
+    assert.ok(asked.includes('topic.cdn'));
+    assert.deepEqual(r.topics, ['cdn']);
+    assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
     assert.equal(calls[1].input.reference_date, '2026-10-21');
     const [label] = e.DB.rows('SELECT next_actor, kind, urgency, resolved_p FROM labels');

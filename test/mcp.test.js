@@ -310,6 +310,27 @@ describe('mcp tools', () => {
     assert.match(typo.body.result.content[0].text, /No threads from customer acne to exclude/);
   });
 
+  it('list_threads filters by topic and by the channel\'s tech stack', async () => {
+    const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model,
+      labeled_at, topics) VALUES (?, 'incident', 0.9, '2026-10-21T10:05:00Z', 'clef', '2026-10-21T10:06:00Z',
+      '{"cdn":0.93,"performance":0.81}')`).run(SLACK);
+    e.DB.sqlite.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
+      VALUES ('slack', 'E1', 'C1', 'akamai', 0.95, ?, '2026-10-21T10:06:00Z'),
+        ('slack', 'E1', 'C1', 'fastly', 0.4, ?, '2026-10-21T10:06:00Z')`).run(SLACK, SLACK);
+    const r = structured(await callTool(e, 'list_threads', {}));
+    assert.deepEqual([r.threads[0].topics, r.threads[0].tech], [['cdn', 'performance'], ['akamai']]);
+    const n = async (args) => structured(await callTool(e, 'list_threads', args)).matched;
+    assert.equal(await n({ topic: ['cdn', 'seo'] }), 1);
+    assert.equal(await n({ topic: ['seo'] }), 0);
+    assert.equal(await n({ tech: ['akamai'] }), 1);
+    // Below the threshold, a technology is not the channel's.
+    assert.equal(await n({ tech: ['fastly'] }), 0);
+    assert.equal(await n({ exclude: { topic: ['performance'] } }), 0);
+    const bad = await callTool(e, 'list_threads', { topic: ['weather'] });
+    assert.match(bad.body.result.content[0].text, /Invalid topic: weather/);
+  });
+
   it('get_thread returns messages with ids, and nothing for other teams', async () => {
     const t = structured(await callTool(env(), 'get_thread', { thread: SLACK }));
     assert.equal(t.customer, 'acme');

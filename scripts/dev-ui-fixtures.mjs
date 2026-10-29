@@ -116,15 +116,17 @@ const CHANNELS = {
     team: 'platform',
     members: ['kira'],
     appPosting: true,
+    // The channel's tech stack (channel_tech), for the Tech stack filter.
+    tech: ['eds', 'akamai', 'sharepoint'],
   },
   aemGlobex: {
-    source: 'slack', channelId: 'C0GLOBEX01', name: 'aem-globex', org: 'globex', team: 'platform',
+    source: 'slack', channelId: 'C0GLOBEX01', name: 'aem-globex', org: 'globex', team: 'platform', tech: ['eds', 'da', 'fastly'],
   },
   initech: {
-    source: 'slack', channelId: 'C0INITECH1', name: 'initech-support', org: 'initech', team: 'platform',
+    source: 'slack', channelId: 'C0INITECH1', name: 'initech-support', org: 'initech', team: 'platform', tech: ['commerce', 'cloudflare'],
   },
   aemUmbrella: {
-    source: 'slack', channelId: 'C0UMBRELLA', name: 'aem-umbrella', org: 'umbrella', team: 'platform',
+    source: 'slack', channelId: 'C0UMBRELLA', name: 'aem-umbrella', org: 'umbrella', team: 'platform', tech: ['eds', 'ue', 'aemcs'],
   },
   alerts: {
     source: 'slack',
@@ -557,6 +559,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
         kind_p: 0.8,
         urgency: label.urgency,
         resolved_p: label.resolved_p,
+        topics: label.topics || [],
         labeled_through: entry.row.any_at,
         reviewed: [],
       });
@@ -596,7 +599,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ],
     reads: { priya: 332 },
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 2.4, resolved_p: 0.1,
+      kind: 'incident', next_actor: 'us', urgency: 2.4, resolved_p: 0.1, topics: ['cdn', 'publishing'],
     },
     facts: [['ticket', 'OPS-1042'], ['site', 'acme-preview']],
     // Written by the thread agent, long enough to fold: the draft line shows its first line.
@@ -622,7 +625,30 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ],
     reads: { lena: 'latest', priya: 'latest' },
     label: {
-      kind: 'question', next_actor: 'customer', urgency: 0.6, resolved_p: 0.4,
+      kind: 'question', next_actor: 'customer', urgency: 0.6, resolved_p: 0.4, topics: ['seo'],
+    },
+  });
+
+  // The kinds about people and meetings, not work: a farewell and handover, a call moved.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 900, 'Friday is my last day on the project; Jonas takes over the authoring side.'],
+      ['lena', 880, 'Thanks for everything, Mei! Welcome aboard, Jonas.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'people', next_actor: 'nobody', urgency: 0.1, resolved_p: 0.7,
+    },
+  });
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['sam', 400, 'Can we move Thursday\'s go-live check-in to 15:00 CET?'],
+      ['priya', 390, 'Works for us, I updated the invite.'],
+    ],
+    label: {
+      kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['golive'],
     },
   });
 
@@ -665,7 +691,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ],
     reads: { dana: 'latest' },
     label: {
-      kind: 'incident', next_actor: 'nobody', urgency: 0.6, resolved_p: 0.8,
+      kind: 'incident', next_actor: 'nobody', urgency: 0.6, resolved_p: 0.8, topics: ['seo'],
     },
   });
 
@@ -681,7 +707,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ],
     reads: { dana: 170 },
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.2,
+      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.2, topics: ['cdn', 'seo'],
     },
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });
@@ -712,7 +738,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
     },
     label: {
-      kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1,
+      kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1, topics: ['publishing'],
     },
   });
 

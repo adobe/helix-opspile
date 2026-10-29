@@ -651,18 +651,28 @@ Two minutes after a person posts, the thread is labeled (later posts reuse the s
 and an unchanged thread is never labeled twice):
 
 - **Clef** answers four questions: who acts next (`us`, `customer`, `vendor`, `nobody`), what
-  kind of thread it is (`incident`, `security`, `question`, `request`, `alert`, `other`),
-  urgency (0–3) and whether it is resolved. The state it reads is the thread as text, with
-  every author marked as Adobe staff or customer.
+  kind of thread it is (`incident`, `security`, `question`, `request`, `access`, `people`,
+  `meeting`, `other`; alerts are `alert` without asking), urgency (0–3) and whether it is
+  resolved. The state it reads is the thread as text, with every author marked as Adobe staff
+  or customer. `access` is about permissions and getting into tools; people joining, leaving,
+  being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
+- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`:
+  authoring, sign-in and permissions, commerce, project status, go-live and migration, CDN and
+  caching, performance, preview and publishing, SEO, integrations). The kind says what the
+  thread asks for, the topics what it is about: an incident and a question can both be about
+  the CDN. A thread keeps the topics at 0.8 or above (`labels.topics`).
 - **Rules** extract CVE ids, ticket keys, Edge Delivery `org/site` pairs, GitHub repos and URLs.
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the
   platform, the kind of thread and Edge Delivery itself; a customer or product name the model
-  still writes is removed afterwards.
+  still writes is removed afterwards. When the model finds nothing to name ("None", "No title
+  available"), the thread has no title, and the inbox shows its first words.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …). The channel keeps the
   highest probability any thread showed, so every thread of a customer shows their stack.
+- The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
+  the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
   kept (0.8, and 0.6 for the free-text problem).
