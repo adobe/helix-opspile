@@ -29,29 +29,11 @@ const state = {
   editing: null,
   // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
   edits: new Map(),
-  // Design C: the threads this page has shown unread, whose rows keep two lines once read.
-  tall: new Set(),
 };
 
-// ---------------------------------------------------------------- design explorations
-// Three ways the thread list could set unread threads apart, to compare before one is picked:
-// `?design=a` (unread rows white), `b` (iMessage-like rows) or `c` (read rows recede to one
-// line). The choice is kept in this browser; `?design=` goes back to the list as it is.
-const DESIGNS = ['a', 'b', 'c'];
-const design = (() => {
-  const asked = new URLSearchParams(location.search).get('design');
-  try {
-    if (asked !== null) {
-      if (DESIGNS.includes(asked)) localStorage.setItem('opspile.design', asked);
-      else localStorage.removeItem('opspile.design');
-    }
-    const kept = localStorage.getItem('opspile.design');
-    return DESIGNS.includes(kept) ? kept : null;
-  } catch {
-    return DESIGNS.includes(asked) ? asked : null;
-  }
-})();
-if (design) document.documentElement.dataset.design = design;
+// The thread list's design explorations (`?design=a|b|c`) are over: A is the list. A choice one
+// of them left in this browser is let go.
+try { localStorage.removeItem('opspile.design'); } catch { /* storage is off */ }
 
 // ---------------------------------------------------------------- helpers
 async function get(path) {
@@ -812,37 +794,10 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
-function row(t, hit = null) {
-  if (design === 'a') return rowA(t, hit);
-  if (design === 'b') return rowB(t, hit);
-  if (design === 'c') return rowC(t, hit);
-  const status = statusOf(t);
-  const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
-    key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
-  })).join('');
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  const fresh = !hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
-  const n = t.occurrences || (t.members || []).length;
-  const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
-  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
-    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
-      ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
-      <span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
-      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
-    <div class="l2">
-      <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
-      <span class="faces">${faces}</span>
-      ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
-      <span class="tags">${moods(t)}</span>
-    </div>${hit ? hitLine(hit) : ''}</div>`;
-}
-
-// The design explorations' rows (see DESIGNS). Each row says, in its classes, what the designs
-// set apart: resolved, an unread mention of you, critical or hot; C also whether it is short.
+// What a row sets apart, in its classes: resolved, an unread mention of you, critical or hot.
 const isResolved = (t) => checked(t) || resolvedOf(t) === 'resolved';
 const mentionsMe = (t) => t.unread && (t.unreadMentions > 0 || t.mentionedMe);
 function flags(t) {
-  if (!design) return '';
   const status = statusOf(t);
   let out = '';
   if (isResolved(t)) out += ' resolved';
@@ -851,17 +806,8 @@ function flags(t) {
   return out;
 }
 const resolvedMark = (t) => (isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '');
-function mentionMark(t) {
-  if (!mentionsMe(t)) return '';
-  const n = t.unreadMentions || 1;
-  return `<b class="at" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">@${n > 1 ? n : ''}</b>`;
-}
-const urgencyMark = (t) => {
-  const u = urgencyOf(t);
-  return URGENCY_EMOJI[u] && !isResolved(t) ? `<span class="urg" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>` : '';
-};
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
-const draftMark = (t, label = '✎ Draft') => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">${label}</span>` : '');
+const draftMark = (t) => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : '');
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
 const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
 
@@ -869,11 +815,11 @@ const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${st
 const oneCustomer = () => state.sel.customer?.size === 1;
 
 /**
- * A, white unread rows: the list as it is, with unread rows white and read ones tinted. The
- * customer is left out when the filters pick one; the second line says "Y replies, X mentions"
- * and, as far as there is room before the reactions, the latest reply, as Messages does.
+ * A thread's row: unread rows are white and read ones tinted. The customer is left out when
+ * the filters pick one; the second line says "Y replies, X mentions" and, as far as there is
+ * room before the reactions, the latest reply, as Messages does.
  */
-function rowA(t, hit) {
+function row(t, hit = null) {
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -885,7 +831,8 @@ function rowA(t, hit) {
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
   const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
-  // The latest reply: the inbox sends it (see `preview`).
+  // The latest reply: the inbox sends it (see `preview`). Not for a thread without replies (its
+  // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
@@ -911,63 +858,16 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
   .replace(/\s+/g, ' ')
   .trim();
 /**
- * The preview of designs A and B: the thread's latest message as the inbox sends it
- * (`last_text`, from `threads`), else from the thread cache (a thread the cron has not filled in
- * yet, see src/previews.js), else who wrote last.
+ * A row's preview: the thread's latest message as the inbox sends it (`last_text`, from
+ * `threads`), else from the thread cache (a thread the cron has not filled in yet, see
+ * src/previews.js).
  */
 function preview(t) {
   if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
   const ms = (state.cache.get(t.thread)?.data?.messages || [])
     .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
   const m = ms[ms.length - 1];
-  if (m) return { who: m.author?.name || '', text: plain(m.body).slice(0, 220) };
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  return { who: t.last_author || '', text: '', replies };
-}
-
-/**
- * B, after iMessage: the customer's logo, the title, two lines of the latest message, the time
- * and a chevron; unread is a blue dot at the leading edge. No avatars, reactions or tags: the
- * status is a small dot on the logo, urgency an emoji before the title, a mention an @.
- */
-function rowB(t, hit) {
-  const status = statusOf(t);
-  const p = preview(t);
-  const icon = orgIcon(t);
-  const org = orgName(t);
-  const logo = `<span class="ava" style="background:${hue(org)}" aria-hidden="true">${esc(initials(org))}${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.remove()">` : ''}</span>`;
-  const said = p.text ? `${p.who ? `${esc(p.who)}: ` : ''}${emojify(p.text)}`
-    : [p.who && esc(p.who), p.replies ? `${p.replies} ${p.replies === 1 ? 'reply' : 'replies'}` : ''].filter(Boolean).join(' · ');
-  return `${rowOpen(t, hit, '')}
-    <div class="l1"><span class="ud" aria-hidden="true"></span>${status === 'quiet' ? '' : `<span class="st c-${status}${ourMove(t) ? ' ring' : ''}" title="${esc(statusTitle(t, status))}"></span>`}
-      <span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
-      <span class="side">${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>${isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '<span class="chev" aria-hidden="true">›</span>'}</span></div>
-    <div class="l2">${logo}<span class="pv">${draftMark(t, 'Draft')}<b class="org">${esc(org)}</b> ${said}</span>
-    </div>${hit ? hitLine(hit) : ''}</div>`;
-}
-
-/**
- * C, dense: a thread this page has shown unread has two lines (the latest author and the
- * replies under the title); a read one is one line, greyed: title, customer, time. A row
- * keeps its height once read (`state.tall`), so a click or j / k moves no row.
- */
-function rowC(t, hit) {
-  const status = statusOf(t);
-  if (t.unread) state.tall.add(t.thread);
-  const short = !hit && !state.tall.has(t.thread);
-  const icon = orgIcon(t);
-  const org = orgName(t);
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  const n = t.occurrences || (t.members || []).length;
-  const count = n > 1 ? `${n}×` : (replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : '');
-  return `${rowOpen(t, hit, short ? ' short' : '')}
-    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
-      ${draftMark(t)}${resolvedMark(t)}<span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
-      <span class="org">${esc(org)}</span>${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
-    <div class="l2">
-      <span class="cust">${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy">` : ''}${esc(org)}</span>
-      ${t.last_author ? `<span class="last">${esc(t.last_author)}</span>` : ''}${count ? `<span class="replies">${count}</span>` : ''}
-    </div>${hit ? hitLine(hit) : ''}</div>`;
+  return m ? { who: m.author?.name || '', text: plain(m.body).slice(0, 220) } : null;
 }
 
 // ---------------------------------------------------------------- search
@@ -3175,14 +3075,15 @@ function pump() {
     inflight.set(key, get(threadUrl(key))
       .then((data) => {
         if (!fresh(key)) state.cache.set(key, { data, at: Date.now(), sig });
-        if (design === 'a' || design === 'b') previewSoon();
+        // A row whose preview the inbox did not send takes it from the copy (`preview`).
+        if (!searchEntry(key)?.last_text) previewSoon();
         return data;
       })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
   }
 }
-/** Designs A and B: the rows again once fetched threads give them their previews, one frame later. */
+/** The rows again once fetched threads give them their previews, one frame later. */
 let previewFrame = 0;
 function previewSoon() {
   if (!previewFrame) previewFrame = requestAnimationFrame(() => { previewFrame = 0; renderThreads(); });
@@ -3556,7 +3457,6 @@ function toUrl(push = true, entry = null) {
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
   if (state.search.q) q.set('q', state.search.q);
-  if (design) q.set('design', design);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
 }
