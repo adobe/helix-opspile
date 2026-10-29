@@ -41,7 +41,9 @@ const MAX_INDEX = 8000;
 // Messages of another thread of the channel the agent reads: its first and the latest ones.
 const MAX_OTHER = 100;
 
-const ORG_TYPE = { customer: 'Customer', partner: 'Partner', vendor: 'Vendor' };
+const ORG_TYPE = {
+  customer: 'Customer', partner: 'Partner', vendor: 'Vendor', internal: 'Internal',
+};
 const text = (t) => ({ output: [{ type: 'text', text: t }] });
 const fail = (t) => ({ output: [{ type: 'text', text: t }], isError: true });
 

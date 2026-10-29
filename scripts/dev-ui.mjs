@@ -92,7 +92,7 @@ const ARRIVE_MS = 8000;
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
-const ORG_TYPES = { initech: 'vendor' };
+const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 

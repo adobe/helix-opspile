@@ -61,7 +61,7 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
 const TARGETS = ['team', 'org', 'kind'];
 const KINDS = ['channel', 'alert', 'ignore'];
-const TYPES = ['customer', 'partner', 'vendor'];
+const TYPES = ['customer', 'partner', 'vendor', 'internal'];
 const ICON = /^(https:\/\/\S{1,500}|[a-z0-9.-]+\.[a-z]{2,})$/i;
 const MAX_TEXT = 200;
 

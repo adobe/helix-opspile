@@ -622,6 +622,11 @@ describe('admin: orgs', () => {
     const acme = inbox.body.threads.find((t) => t.org === 'acme');
     assert.deepEqual([acme.org_name, acme.org_icon, acme.org_type], ['ACME Corp', 'acme.example', 'partner']);
     assert.equal(inbox.body.threads.find((t) => t.org === 'globex').org_name, null);
+    // Adobe's own channels are internal (the inbox groups them apart from customers).
+    r = await call(e, ADA, 'PUT', '/api/admin/orgs', { slug: 'globex', type: 'internal' });
+    assert.equal(r.body.org.type, 'internal');
+    const again = await call(e, ADA, 'GET', '/api/inbox?team=helix');
+    assert.equal(again.body.threads.find((t) => t.org === 'globex').org_type, 'internal');
 
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/orgs', { slug: 'acme' })).status, 200);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/orgs', { slug: 'acme' })).status, 404);

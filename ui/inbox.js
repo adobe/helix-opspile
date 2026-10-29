@@ -84,7 +84,7 @@ const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
 // the favicon of the customer's usual mail domain. `favicon()` takes either.
 const orgName = (t) => t.org_name || t.org;
 const orgIcon = (t) => t.org_icon || t.customerDomain || null;
-const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor' };
+const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor', internal: 'Internal' };
 const backlink = (t, label) => (t.permalink
   ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
 
@@ -547,18 +547,20 @@ const involvesColor = (v) => {
   if (v.startsWith('team:')) return 'c-team';
   return `c-${personKind(v.slice(7))}`;
 };
-// Orgs by type, as the admin team set it; "other" when nobody outside Adobe writes there.
-const ORG_GROUPS = ['partner', 'vendor', 'customer', 'other'];
+// Orgs by the type the admin team set (customer unless set); "other" for threads not filed
+// under an org yet (`_unassigned`). Not guessed from who posted: a customer's new
+// conversation that only Adobe has written in yet is still the customer's.
+const ORG_GROUPS = ['partner', 'vendor', 'customer', 'internal', 'other'];
 const ORG_GROUP_LABEL = {
-  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', other: 'Other',
+  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', internal: 'Internal', other: 'Other',
 };
 function orgGroup(org) {
-  const ts = (state.data?.threads || []).filter((t) => t.org === org && t.kind !== 'alert');
-  if (!ts.some((t) => (t.participants || []).some((x) => !x.staff))) return 'other';
-  return ORG_TYPE[ts[0].org_type] ? ts[0].org_type : 'customer';
+  if (!org || org.startsWith('_')) return 'other';
+  const type = (state.data?.threads || []).find((x) => x.org === org)?.org_type;
+  return ORG_GROUPS.includes(type) && type !== 'other' ? type : 'customer';
 }
 const ORG_COLOR = {
-  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', other: 'c-none',
+  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', internal: 'c-none', other: 'c-none',
 };
 const URGENCY_COLOR = {
   critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
