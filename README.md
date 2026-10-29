@@ -450,8 +450,9 @@ wrote into `.rank/` (gitignored; it holds production threads, so it stays on you
    browser, and you pick the one the team should turn to first (← →, ↓ for "same", `s` to skip,
    `u` to undo). Then it shows what Clef, the model and the old score said, and how often each
    agrees with you so far (Clef's also by how sure it was, and where asking it the other way
-   round changed its mind). It can show any pair, the ones Clef was unsure of, or where the model
-   and Clef, or the model and the old score, disagree; "Blind" hides the answers. Your answers go
+   round changed its mind). It can show any pair, pairs where one or both threads are still pending,
+   the ones Clef was unsure of, or where the model and Clef, or the model and the old score,
+   disagree; "Blind" hides the answers. Your answers go
    to `.rank/human.jsonl`.
 4. `npm run rank -- train [--l2 3] [--human 0] [--without a,b] [--dry-run]` fits the weights
    (pairwise logistic regression), prints how often the model, the hand-made score it replaces

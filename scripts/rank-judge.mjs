@@ -138,8 +138,14 @@ function view(rec, now, staffByName) {
   };
 }
 
+/** Something is pending in it: it waits on someone and is not resolved. */
+const live = (e) => e && e.kind !== 'alert' && e.waiting_on && e.waiting_on !== 'nobody'
+  && e.resolution?.verdict !== 'resolved' && (e.label?.resolved_p ?? 0) < 0.5;
+
 const MODES = {
   random: () => true,
+  live: (g, s, by) => live(by(g.a)) || live(by(g.b)),
+  'both-live': (g, s, by) => live(by(g.a)) && live(by(g.b)),
   close: (g) => Math.abs(g.p - 0.5) < 0.2,
   'model-vs-clef': (g, s) => (s.model(g.a) > s.model(g.b)) !== (g.p > 0.5),
   'model-vs-classic': (g, s) => (s.model(g.a) > s.model(g.b)) !== (s.classic(g.a) > s.classic(g.b)),
@@ -218,7 +224,8 @@ export async function judge({
         const s = await scores();
         const done = new Set((await readHuman(humanFile, snap)).map((h) => `${h.a}|${h.b}`));
         const mode = MODES[url.searchParams.get('mode')] || MODES.random;
-        const open = games.filter((g) => !done.has(`${g.a}|${g.b}`) && mode(g, s));
+        const entry = (k) => byKey.get(k)?.entry;
+        const open = games.filter((g) => !done.has(`${g.a}|${g.b}`) && mode(g, s, entry));
         if (!open.length) {
           return send(res, 200, { done: true, stats: await stats() });
         }

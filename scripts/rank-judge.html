@@ -30,7 +30,10 @@
   button.pick { padding: 8px 18px; font-weight: 600; }
   button kbd { font: 12px ui-monospace, monospace; color: var(--mute); margin-left: 6px; }
   main { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; min-height: 0; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  main { overflow: hidden; }
+  footer { background: var(--bg); position: relative; z-index: 1; }
+  .err { color: var(--bad); }
   .side { background: var(--pane); border: 2px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
   .side.chosen { border-color: var(--accent); }
   .side .head { padding: 10px 14px; border-bottom: 1px solid var(--line); }
@@ -68,6 +71,8 @@
   <span class="q" id="asof"></span>
   <select id="mode" title="Which of Clef's games to show">
     <option value="random">Any pair</option>
+    <option value="live">At least one still pending</option>
+    <option value="both-live">Both still pending</option>
     <option value="close">Clef unsure (30–70%)</option>
     <option value="model-vs-clef">Model ≠ Clef</option>
     <option value="model-vs-classic">Model ≠ old score</option>
@@ -85,6 +90,7 @@
     <button id="undo" title="Take back your last answer">Undo<kbd>u</kbd></button>
   </div>
   <div class="reveal" id="reveal"></div>
+  <div class="err" id="err" hidden></div>
 </footer>
 <script src="/markdown.js"></script>
 <script>
@@ -95,6 +101,26 @@
   const emoji = (name) => EMOJI[name];
   const md = (s) => { try { return Markdown.render(s, { emoji }); } catch { return `<p>${esc(s)}</p>`; } };
   const pct = (x) => `${Math.round(x * 100)}%`;
+  // Every call to the server: a failure (the server stopped, the share's sign-in expired) says
+  // so under the buttons, with a way on, instead of leaving the page as it was.
+  async function call(path, init) {
+    const r = await fetch(path, { ...init, redirect: 'manual' });
+    const type = r.headers.get('content-type') || '';
+    if (!r.ok || !type.includes('json')) {
+      throw new Error(r.type === 'opaqueredirect' || !type.includes('json')
+        ? 'Signed out of the share: reload the page.' : `The server said ${r.status}.`);
+    }
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    return j;
+  }
+  function failed(e, retry) {
+    busy = false;
+    $('err').hidden = false;
+    $('err').innerHTML = `${esc(e.message || e)} <button id="retry">Try again</button> <button onclick="location.reload()">Reload</button>`;
+    $('retry').onclick = () => { $('err').hidden = true; retry(); };
+  }
+  let busy = false;
   let pair = null;
   let shownAt = 0;
   let revealed = false;
@@ -136,10 +162,17 @@
       <span class="stat"><small>old score</small> ${rate(s.classic)}</span>`;
   }
   async function next() {
+    if (busy) return;
+    busy = true;
+    $('err').hidden = true;
+    let r;
+    try {
+      r = await call(`/api/pair?mode=${encodeURIComponent($('mode').value)}`);
+    } catch (e) { failed(e, next); return; }
+    busy = false;
     revealed = false;
     $('reveal').classList.remove('on');
     $('picks').classList.remove('off');
-    const r = await fetch(`/api/pair?mode=${encodeURIComponent($('mode').value)}`).then((x) => x.json());
     if (r.done) {
       pair = null;
       $('main').innerHTML = '<div class="empty">No pairs left in this mode. Pick another, or let Clef play more rounds.</div>';
@@ -154,11 +187,17 @@
     shownAt = Date.now();
   }
   async function pick(p) {
-    if (!pair || revealed) return;
-    const res = await fetch('/api/judge', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ a: pair.a, b: pair.b, left: pair.left.key, pick: p, ms: Date.now() - shownAt }),
-    }).then((x) => x.json());
+    if (!pair || revealed || busy) return;
+    busy = true;
+    $('err').hidden = true;
+    let res;
+    try {
+      res = await call('/api/judge', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ a: pair.a, b: pair.b, left: pair.left.key, pick: p, ms: Date.now() - shownAt }),
+      });
+    } catch (e) { failed(e, () => pick(p)); return; }
+    busy = false;
     renderStats(res.stats);
     if (p === 'skip' || $('blind').checked) { next(); return; }
     revealed = true;
@@ -178,14 +217,17 @@
     $('next').focus();
   }
   async function undo() {
-    const r = await fetch('/api/undo', { method: 'POST' }).then((x) => x.json());
+    if (busy) return;
+    let r;
+    try { r = await call('/api/undo', { method: 'POST' }); } catch (e) { failed(e, undo); return; }
     renderStats(r.stats);
     next();
   }
   document.querySelector('footer').addEventListener('click', (e) => {
     const b = e.target.closest('[data-pick]');
-    if (b) pick(b.dataset.pick);
+    if (b) { b.blur(); pick(b.dataset.pick); }
   });
+  for (const c of [$('mode'), $('blind')]) c.addEventListener('change', () => c.blur());
   $('undo').onclick = undo;
   document.addEventListener('keydown', (e) => {
     const el = e.target instanceof Element ? e.target : null;
@@ -195,7 +237,7 @@
     if (k) { e.preventDefault(); pick(k); }
     if (e.key === 'u') undo();
   });
-  renderStats(await fetch('/api/stats').then((x) => x.json()));
+  call('/api/stats').then(renderStats, () => {});
   next();
 })();
 </script>
