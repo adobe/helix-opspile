@@ -15,7 +15,9 @@ import {
 } from './agent/enabled.js';
 import { writeKnowledge } from './agent/kbwrite.js';
 import { isEntry, SYSTEM_PROMPT } from './agent/okf.js';
-import { commitLog, listFiles, readText } from './agent/repos.js';
+import {
+  commitLog, countFiles, listFiles, readText,
+} from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
 import { isAdmin, managesTeam } from './review.js';
@@ -191,12 +193,8 @@ export async function countEntries(env, { limit = 60, parallel = 6 } = {}) {
   const repos = (results || []).map((r) => r.repo);
   const count = async (repo) => {
     try {
-      const res = await listFiles(env, repo, '', { recursive: true });
-      if (res.error) {
-        return false;
-      }
-      await recordEntries(env, repo, (res.entries || [])
-        .filter((e) => e.type !== 'tree' && isEntry(e.path)).length);
+      // The whole tree, not a listing: one is capped, and a short count would stay.
+      await recordEntries(env, repo, (await countFiles(env, repo, isEntry)).count);
       return true;
     } catch (e) {
       console.error(JSON.stringify({

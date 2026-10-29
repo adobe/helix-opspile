@@ -364,8 +364,8 @@ The list of knowledge bases has the ops teams first, then the customers and vend
 activity (the default: most entries first, then most tools and MCP servers turned on for their
 threads) or by name, as the person last chose in that browser. An entry is a file other than
 `index.md`, `log.md` and `systemprompt.md`; `knowledge_bases.entries` keeps the count, which
-every write updates (and opening a knowledge base in the editor), and the cron counts the
-knowledge bases not counted yet, a batch per run.
+every write updates (and opening a knowledge base in the editor, when its listing is complete),
+and the cron counts the knowledge bases not counted yet, a batch per run, over their whole tree.
 
 **Thread agents per channel.** The editor shows, for each knowledge base, the channels it
 learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether

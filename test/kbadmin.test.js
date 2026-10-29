@@ -18,6 +18,7 @@ import { agentEnabled } from '../src/agent/enabled.js';
 import { api } from '../src/api.js';
 import { countEntries } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
+import { fakeRepo, quiet } from './fakes.js';
 import { gitServer, hasGit } from './git-server.js';
 
 // Made-up people and slugs only.
@@ -46,6 +47,43 @@ describe('system prompts', () => {
     assert.equal(checkChanges(change, { staff: true }), null);
     assert.match(checkChanges([{ path: 'systemprompt.md', content: 'x'.repeat(17 * 1024) }], { staff: true }), /at most 16 KB/);
     assert.equal(checkChanges([{ path: 'systemprompt.md', delete: true }], { staff: true }), null);
+  });
+});
+
+describe('counting entries', () => {
+  it('counts every entry of a knowledge base larger than a listing', async () => {
+    // More entries than one listing holds (400), at the root and below, as in #178.
+    const files = { 'index.md': 'i', 'log.md': 'l', 'systemprompt.md': 's' };
+    for (let i = 0; i < 450; i += 1) {
+      files[`e${String(i).padStart(3, '0')}.md`] = 'e';
+    }
+    for (let i = 0; i < 30; i += 1) {
+      files[`deep/d${i}/x.md`] = 'x';
+      files[`deep/d${i}/index.md`] = 'i';
+    }
+    const DB = d1();
+    DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-org-big', 'org', 'big', 'r', '2026-10-22T00:00:00Z'),
+      ('kb-org-empty', 'org', 'empty', 'r', '2026-10-22T00:00:00Z')`);
+    const repos = { 'kb-org-big': files, 'kb-org-empty': {} };
+    const env = { DB, ARTIFACTS: { get: async (name) => fakeRepo(repos[name]) } };
+    assert.deepEqual(await countEntries(env), { counted: 2, failed: 0 });
+    assert.deepEqual(DB.rows('SELECT repo, entries FROM knowledge_bases ORDER BY repo'), [
+      { repo: 'kb-org-big', entries: 480 }, { repo: 'kb-org-empty', entries: 0 },
+    ]);
+  });
+
+  it('leaves a knowledge base uncounted when it cannot be read', async () => {
+    const DB = d1();
+    DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-org-broken', 'org', 'broken', 'r', '2026-10-22T00:00:00Z')`);
+    const repo = fakeRepo({ 'a/x.md': 'x' });
+    repo.readTree = async () => {
+      throw new Error('unavailable');
+    };
+    const env = { DB, ARTIFACTS: { get: async () => repo } };
+    assert.deepEqual(await quiet(() => countEntries(env)), { counted: 0, failed: 1 });
+    assert.equal(DB.rows('SELECT entries FROM knowledge_bases')[0].entries, null);
   });
 });
 
