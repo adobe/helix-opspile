@@ -104,6 +104,14 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).status, 200);
       assert.equal((await (await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).may, false);
+      // A member sees a server's URL bare: no user info, query or fragment, in its errors neither.
+      const secret = 'https://u:p@s.example/mcp?token=t0ken#x';
+      DB.sqlite.exec(`INSERT INTO mcp_servers (scope, slug, name, url, enabled, updated_at, check_error)
+        VALUES ('team', 'helix', 'status', '${secret}', 1, 'x', 'HTTP 401 from ${secret}')`);
+      const [seen] = (await (await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).servers;
+      assert.deepEqual([seen.url, seen.checkError], ['https://s.example/mcp', 'HTTP 401 from https://s.example/mcp']);
+      const [managed] = (await (await call(env, ADMIN, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).servers;
+      assert.equal(managed.url, secret);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/tools?repo=kb-team-helix')).status, 200);
       // Not another team's, not a customer's.
       for (const repo of ['kb-team-edge', 'kb-org-acme']) {
