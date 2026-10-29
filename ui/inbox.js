@@ -2721,7 +2721,7 @@ async function postWith(path, payload, files = []) {
 // (src/mention-match.js).
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
-const mention = { list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
+const mention = { kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
 // The box suggestions are for: the reply box, or the message being edited, whichever has the
 // focus; the list of suggestions next to it.
 const mentionBox = () => (document.activeElement?.classList?.contains('editbox') ? document.activeElement : $('reply'));
@@ -2739,8 +2739,10 @@ function mentionQuery(box, key) {
 
 function suggest(key) {
   const box = mentionBox();
-  const hit = box && mentionQuery(box, key);
   clearTimeout(mention.timer);
+  const em = box && emojiQuery(box);
+  if (em) { suggestEmoji(key, em); return; }
+  const hit = box && mentionQuery(box, key);
   if (!hit) { closeMentions(); return; }
   const seq = ++mention.seq;
   mention.timer = setTimeout(async () => {
@@ -2751,9 +2753,62 @@ function suggest(key) {
     if (seq !== mention.seq || state.open !== key) return;
     // A space after a name that matches nobody ends the mention.
     if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
-    Object.assign(mention, { list: people, i: 0, from: hit.from });
+    Object.assign(mention, { kind: 'person', list: people, i: 0, from: hit.from });
     renderMentions(key);
   }, hit.q ? 120 : 0);
+}
+
+// Typing : and two more characters of a name suggests emoji, by Slack's names (which replies
+// to every platform take, src/shortcodes.js): first those whose name (or another platform's
+// name for them) has what was typed (src/emojinames.js `matchEmoji`), at once; then, until
+// the list is full, those Clef thinks were meant (GET /api/emoji: its candidates by Clef's
+// probability, no threshold), so `:celebr` finds 🥳 too. Picking one writes `:name: `; the
+// reply goes out as the platform knows it.
+const EMOJI_AT = /(?:^|[\s(]):([a-z0-9_+-]{2,40})$/i;
+const EMOJI_MAX = 8;
+// Clef's rankings by what was typed, as promises, so typing back and forth asks once.
+const clefEmoji = new Map();
+
+function emojiQuery(box) {
+  if (box.selectionStart !== box.selectionEnd) return null;
+  const m = EMOJI_AT.exec(box.value.slice(0, box.selectionStart));
+  return m ? { q: m[1].toLowerCase(), from: box.selectionStart - m[1].length - 1 } : null;
+}
+
+function clefRanking(q) {
+  if (!clefEmoji.has(q)) {
+    if (clefEmoji.size >= 200) clefEmoji.delete(clefEmoji.keys().next().value);
+    clefEmoji.set(q, get(`/api/emoji?q=${encodeURIComponent(q)}`).then((d) => d.emoji || [], () => {
+      clefEmoji.delete(q);
+      return [];
+    }));
+  }
+  return clefEmoji.get(q);
+}
+
+function suggestEmoji(key, hit) {
+  const found = Markdown.matchEmoji(SLACK_EMOJI.names, SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
+    .map((name) => ({ emoji: name }));
+  if (!found.length) closeMentions();
+  const seq = ++mention.seq;
+  Object.assign(mention, { kind: 'emoji', list: found, i: 0, from: hit.from });
+  if (found.length) renderMentions(key);
+  if (found.length >= EMOJI_MAX || !/[a-z]/.test(hit.q)) return;
+  mention.timer = setTimeout(async () => {
+    const ranked = await clefRanking(hit.q);
+    if (seq !== mention.seq || state.open !== key) return;
+    // One line per emoji: Clef's that are not in the list yet, until it is full.
+    const have = new Set(mention.list.map((e) => emojiByName(e.emoji)));
+    const more = [];
+    for (const name of ranked) {
+      const c = emojiByName(name);
+      if (more.length >= EMOJI_MAX - mention.list.length) break;
+      if (c && !have.has(c)) { have.add(c); more.push({ emoji: name, clef: true }); }
+    }
+    if (!more.length) return;
+    mention.list = [...mention.list, ...more];
+    renderMentions(key);
+  }, clefEmoji.has(hit.q) ? 0 : 200);
 }
 
 function renderMentions(key) {
@@ -2761,14 +2816,18 @@ function renderMentions(key) {
   const box = mentionBox();
   if (!ul || !box) return;
   if (!mention.list.length) { closeMentions(); return; }
+  ul.setAttribute('aria-label', mention.kind === 'emoji' ? 'Emoji' : 'People to mention');
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}</li>`).join('');
+    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
   ul.onmousedown = (e) => e.preventDefault();
   ul.onclick = (e) => { const li = e.target.closest('li'); if (li) pickMention(key, Number(li.dataset.i)); };
 }
+
+/** An emoji suggestion: the emoji, its name, and whether Clef suggested it. */
+const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${esc(emoji(p.emoji))}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint" title="Suggested by Clef">Clef</span>' : ''}`;
 
 function closeMentions() {
   mention.list = [];
@@ -2803,14 +2862,16 @@ function pickMention(key, i) {
   const box = mentionBox();
   const p = mention.list[i];
   if (!box || !p) return;
-  const insert = `@${p.name} `;
+  const insert = p.emoji ? `:${p.emoji}: ` : `@${p.name} `;
   box.value = box.value.slice(0, mention.from) + insert + box.value.slice(box.selectionStart);
   const at = mention.from + insert.length;
   box.focus();
   box.setSelectionRange(at, at);
-  if (!mention.picked.has(key)) mention.picked.set(key, new Map());
-  mention.picked.get(key).set(p.name, p);
-  mention.names.add(p.name);
+  if (!p.emoji) {
+    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+    mention.picked.get(key).set(p.name, p);
+    mention.names.add(p.name);
+  }
   closeMentions();
   if (box.classList.contains('editbox') && state.editing) {
     Object.assign(state.editing, { text: box.value, caret: at });

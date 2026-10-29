@@ -31,6 +31,7 @@ import { CLEF } from './label.js';
 // Clef is asked about at most this many names per reply, each once per isolate.
 export const MAX_ASK = 3;
 export const CLEF_TIMEOUT_MS = 2500;
+export const SUGGEST_TIMEOUT_MS = 4000;
 export const MIN_CLEF = 0.5;
 const MAX_SIMILAR = 8;
 const MAX_CANDIDATES = 16;
@@ -144,21 +145,46 @@ export function candidates(code) {
 
 // Clef's answers by typed name: a Slack name, or null for none.
 const answers = new Map();
+// Clef's rankings for the composer's suggestions, by what was typed.
+const rankings = new Map();
 // Custom emoji by workspace (`<source>:<tenant>`): `{ names, at }`.
 const customs = new Map();
 
 /** Forgets what Clef said and which custom emoji there are (for tests). */
 export function forget() {
   answers.clear();
+  rankings.clear();
   customs.clear();
 }
 
-function remember(code, name) {
-  if (answers.size >= CACHE_MAX) {
-    answers.delete(answers.keys().next().value);
+function remember(code, name, cache = answers) {
+  if (cache.size >= CACHE_MAX) {
+    cache.delete(cache.keys().next().value);
   }
-  answers.set(code, name);
+  cache.set(code, name);
   return name;
+}
+
+/** The choices of a Clef question over `list` (Slack names): `e<i>` for `list[i]`. */
+function emojiCriteria(list) {
+  const criteria = {};
+  list.forEach((name, i) => {
+    criteria[`e${i}`] = `${emojiChar(name)} :${name}: (${EMOJI_KEYWORDS[name] || name})`;
+  });
+  return criteria;
+}
+
+/** `run()`, or null once `timeoutMs` passed. */
+async function inTime(run, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([run(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -169,16 +195,12 @@ export async function askClef(env, code, list, timeoutMs = CLEF_TIMEOUT_MS) {
   if (answers.has(code)) {
     return answers.get(code);
   }
-  const criteria = { none: 'None of these emoji: the name means something else' };
-  list.forEach((name, i) => {
-    criteria[`e${i}`] = `${emojiChar(name)} :${name}: (${EMOJI_KEYWORDS[name] || name})`;
-  });
-  let timer;
-  const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
-  });
+  const criteria = {
+    none: 'None of these emoji: the name means something else',
+    ...emojiCriteria(list),
+  };
   try {
-    const res = await Promise.race([env.AI.run(CLEF, {
+    const res = await inTime(() => env.AI.run(CLEF, {
       model: 'clef',
       state: `A person wrote the emoji shortcode :${code}: in a chat message, but no emoji has`
         + ' that name.',
@@ -189,7 +211,7 @@ export async function askClef(env, code, list, timeoutMs = CLEF_TIMEOUT_MS) {
           criteria,
         },
       },
-    }), timeout]);
+    }), timeoutMs);
     if (!res) {
       // Too slow this time: not remembered, so a later reply asks again.
       return null;
@@ -201,8 +223,49 @@ export async function askClef(env, code, list, timeoutMs = CLEF_TIMEOUT_MS) {
   } catch (e) {
     console.log(JSON.stringify({ route: 'shortcodes', error: String(e && e.message) }));
     return null;
-  } finally {
-    clearTimeout(timer);
+  }
+}
+
+/**
+ * The composer's emoji suggestions for `typed`, what follows a `:` being typed: the
+ * `candidates` of it, as Slack names, most likely first by Clef's probabilities, all of them
+ * (no threshold: the composer fills its list with them after the names that have `typed`
+ * in them). Empty when Clef fails or takes longer than `timeoutMs`; rankings are remembered.
+ */
+export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS) {
+  const q = String(typed || '').toLowerCase().replace(/^:+|:+$/g, '').slice(0, 60);
+  if (!env.AI || q.length < 2 || !/[a-z]/.test(q)) {
+    return [];
+  }
+  if (rankings.has(q)) {
+    return rankings.get(q);
+  }
+  const list = candidates(q);
+  try {
+    const res = await inTime(() => env.AI.run(CLEF, {
+      model: 'clef',
+      state: `A person is typing an emoji shortcode in a chat message and has typed :${q} so`
+        + ' far; they have not finished the name, and may not know its exact spelling.',
+      questions: {
+        emoji: {
+          type: 'choice',
+          instructions: `Which emoji is the person most likely looking for with :${q}?`,
+          criteria: emojiCriteria(list),
+        },
+      },
+    }), timeoutMs);
+    const a = res && res.answers && res.answers.emoji;
+    if (!a) {
+      return [];
+    }
+    const p = a.probabilities || { [a.choice]: a.confidence ?? 1 };
+    const ranked = list.map((name, i) => ({ name, p: Number(p[`e${i}`]) || 0 }))
+      .sort((x, y) => y.p - x.p) // stable: candidates' order where Clef is unsure
+      .map((e) => e.name);
+    return remember(q, ranked, rankings);
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'emoji', error: String(e && e.message) }));
+    return [];
   }
 }
 

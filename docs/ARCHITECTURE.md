@@ -585,6 +585,15 @@ ones), at most three names per reply, within 2.5 seconds; it needs a probability
 the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
 way. The inbox shows every platform's names as emoji the same way.
 
+**Emoji suggestions.** Typing `:` and two more characters of a name in the reply box (or in a
+message being edited) suggests up to eight emoji, as typing `@` suggests people. First, at
+once, those whose Slack name, or another platform's name for them, has what was typed: the
+whole name, then names it starts, then names with a part it starts, then any, one name per
+emoji (`matchEmoji`, `src/emojinames.js`). When that leaves room, Clef fills the list
+(`GET /api/emoji`): it ranks the candidates above by how likely each is what is being
+typed, with no threshold, and the list takes them in that order, skipping the emoji it
+already has, until it is full. Picking one writes `:name: `.
+
 **Files.** A reply can carry files (`src/attach.js`): the 📎 button beside the reply box,
 files dropped anywhere on the open thread (which shows where they go, or why they cannot), or
 an image pasted into the reply box (a screenshot, named for when it was taken). They wait as

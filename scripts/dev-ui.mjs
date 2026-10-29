@@ -64,7 +64,7 @@ import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
-import { resolveShortcodes } from '../src/shortcodes.js';
+import { rankEmoji, resolveShortcodes } from '../src/shortcodes.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { snippet, terms } from '../src/search.js';
@@ -180,6 +180,16 @@ const CHECKS = new Set(['white_check_mark', '✅']);
  */
 const DEV_CLEF = {
   async run(model, { state, questions }) {
+    const { criteria } = questions.emoji;
+    if (!criteria.none) {
+      // The composer's suggestions (rankEmoji): the candidates in their order, after a while.
+      await new Promise((r) => {
+        setTimeout(r, 500);
+      });
+      const keys = Object.keys(criteria);
+      const probabilities = Object.fromEntries(keys.map((k, i) => [k, (keys.length - i) / 100]));
+      return { answers: { emoji: { choice: 'e0', probabilities } } };
+    }
     const code = (/:([^:]+):/.exec(state) || [])[1] || '';
     const e0 = questions.emoji.criteria.e0 || '';
     const choice = code && e0.includes(code) ? 'e0' : 'none';
@@ -823,6 +833,10 @@ async function api(req, res, url) {
           + '- Filed *cdn-503-after-config-change* in the ACME knowledge base',
       };
     return json(res, { enabled: true, turn });
+  }
+  if (url.pathname === '/api/emoji') {
+    // As src/shortcodes.js ranks them, with a Clef that keeps the candidates' order.
+    return json(res, { emoji: await rankEmoji({ AI: DEV_CLEF }, url.searchParams.get('q')) });
   }
   if (url.pathname === '/api/mentionable') {
     // As D1 would answer (src/post.js): the accounts of the platform, ranked as the Worker
