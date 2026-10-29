@@ -20,6 +20,7 @@
  */
 
 import { channelPath, render } from '../src/channels.js';
+import { quoteMarkdown } from '../src/markdown.js';
 import { previewOf, titleOf } from '../src/threads.js';
 
 const MIN = 60 * 1000;
@@ -762,6 +763,30 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // Messages that quote another (forwarded in Slack, or a link to it): a card of the quoted
+  // message under the text, in a customer's bubble and in the viewer's own.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 75, `Following up on this one, it happened again this morning.\n\n${quoteMarkdown({
+        author: 'Mei Lin',
+        url: 'https://slack.example.com/archives/C0GLOBEX01/p1792000000000100',
+        at: new Date(now - 2 * 86400000).toISOString(),
+        text: 'Search results show unpublished pages, for example `/en/drafts/q3-launch`.\nIt started after the last index rebuild.',
+      })}`],
+      ['dana', 70, `First step in that direction: the rebuild now skips unpublished pages.\n\n${quoteMarkdown({
+        author: 'Tom Okafor',
+        url: 'https://slack.example.com/archives/C0GLOBEX01/p1792000000000200',
+        at: new Date(now - 26 * 60 * MIN).toISOString(),
+        text: 'We should keep drafts out of the index entirely, not just hide them in the results.',
+      })}`],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'customer', urgency: 0.4, resolved_p: 0.3,
+    },
+  });
+
   // Your own messages can be edited in place (✎ on hover): one already edited, one with a
   // typo, and one the viewer posted as the opspile app, which she may edit as the app.
   seed({
@@ -800,7 +825,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     reads: { dana: 3990 },
   });
 
-  // Read and unread side by side, for the thread list's designs (?design=a|b|c): critical and
+  // Read and unread side by side, for the thread list: critical and
   // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
   seed({
     ch: CHANNELS.aemUmbrella,

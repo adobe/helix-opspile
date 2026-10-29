@@ -69,6 +69,13 @@
   .row.dir:hover { background: none; }
   .row .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); }
   .row .tag.missing { border-style: dashed; }
+  .row .n { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* Customers and vendors: by activity or by name. */
+  h2.sorted { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
+  .seg button { border: 0; border-radius: 0; padding: 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0;
+    text-transform: none; color: var(--mute); background: none; }
+  .seg button[aria-pressed="true"] { background: var(--sel); color: var(--ink); }
   .tools { display: flex; gap: 6px; margin: 10px 4px 0; flex-wrap: wrap; }
   .empty { color: var(--mute); padding: 24px; }
   .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -77,13 +84,13 @@
   .bar .title { flex: 1; font-weight: 600; }
   .bar .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
   .note { padding: 8px 12px; color: var(--mute); border-bottom: 1px solid var(--line); font-size: 13px; }
+  /* Nothing to say (a concept that was just opened): no empty strip. */
+  .note:empty { display: none; }
   .note.warn { color: var(--yellow); }
   .note.err { color: var(--red); }
   .note.ok { color: var(--green); }
-  textarea { flex: 1; width: 100%; border: 0; resize: none; padding: 12px 14px; outline: none;
-    background: var(--code); color: var(--ink); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    tab-size: 2; }
-  textarea[readonly] { color: var(--mute); }
+  /* The text field, CodeMirror (src/ui-editor.js), fills what the bar and the note leave. */
+  .text { flex: 1; min-height: 0; display: flex; font-size: 13px; }
   .foot { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
   .foot input { flex: 1; }
   .log { padding: 4px 12px 12px; }
@@ -150,6 +157,15 @@
   .ch.global .per .row2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ch.global .per select { font-size: 12px; }
   .ch.global .per .na { color: var(--faint); font-style: normal; font-size: 12px; }
+  .ch.global .per .row2[hidden], .ch.global .per .none[hidden] { display: none; }
+  .ch.global .per .find { display: block; width: calc(100% - 14px); max-width: 320px; margin: 6px 0 2px 14px; font-size: 12px; }
+  .ch.global .per .none { color: var(--faint); font-size: 12px; padding: 4px 0 4px 14px; }
+  /* A customer's: the per-channel switches are all it has, so they are shown, not folded. */
+  .ch.global .per.flat { margin-top: 4px; }
+  .ch.global .per.flat .row2, .ch.global .per.flat .none { padding-left: 0; }
+  .ch.global .per.flat .find { margin-left: 0; width: 100%; }
+  /* A team's thread agents by default, above its channels. */
+  .ch.default { background: var(--col); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin: 8px 0 4px; }
   .ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px;
     margin-top: 4px; }
   .ch.global .setup input { width: 200px; }
@@ -168,7 +184,7 @@
   #files > .up + h2 { margin-top: 0; }
   /* A text field under 16px makes iOS zoom in on it when it is focused. */
   @media (hover: none) and (pointer: coarse) {
-    input, select, textarea { font-size: 16px; }
+    input, select, textarea, .text { font-size: 16px; }
   }
   @media (max-width: 1099px) {
     main { grid-template-columns: minmax(170px, 22%) minmax(200px, 27%) minmax(0, 1fr); }
@@ -208,6 +224,7 @@
   <section id="files"></section>
   <section id="editor"><div class="empty">Pick a knowledge base.</div></section>
 </main>
+<script src="editor.js"></script>
 <script type="module" src="kb.js"></script>
 <script src="app.js"></script>
 </body>

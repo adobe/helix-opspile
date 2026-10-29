@@ -62,7 +62,7 @@ export async function discarded(agent, { by, body, version }) {
 export async function discardNote(agent, payload) {
   const { env } = agent;
   const t = await agent.target();
-  if (!payload || !t.key || modelProblem(env) || !await agentEnabled(env, t.channelId)) {
+  if (!payload || !t.key || modelProblem(env) || !await agentEnabled(env, t.channelId, t.team)) {
     return { result: 'skip', reason: 'no agent' };
   }
   const keys = [t.key, ...(t.threads || [])];

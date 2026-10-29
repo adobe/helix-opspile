@@ -13,7 +13,7 @@
 import git from 'isomorphic-git';
 import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
-import { SYSTEM_PROMPT } from '../src/agent/okf.js';
+import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
 
 /**
  * Fake knowledge bases for `npm run ui:dev`: real git repos in memory, written by the same
@@ -28,7 +28,14 @@ const SEED = {
     kind: 'team',
     files: {
       [SYSTEM_PROMPT]: '---\ntype: System Prompt\ntitle: Agent instructions for Platform ops\n---\n\nSign drafts with the team name, never a person\'s.\n',
-      'playbooks/cdn-purge.md': '---\ntype: Playbook\ntitle: CDN purge takes long\ndescription: What to check when a purge seems slow.\n---\n\n1. Check the cache TTL.\n2. Check for a second CDN in front.\n',
+      // Frontmatter, folded when it opens, and Markdown, both highlighted (src/ui-editor.js).
+      'playbooks/cdn-purge.md': [
+        '---', 'type: Playbook', 'title: CDN purge takes long',
+        'description: "What to check when a purge seems slow."', 'tags: [cdn, cache]', 'reviewed: 2026-03-02',
+        '---', '', '# CDN purge takes long', '', 'A purge is **usually** done in a few seconds; *slow* ones have a cause.',
+        '', '## Check', '', '1. The cache TTL: `curl -sI https://www.example.com/ | grep -i age`.',
+        '2. A second CDN in front, see [the site](../sites/www.md).', '', '> Ask the customer before purging everything.', '',
+      ].join('\n'),
     },
   },
   'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },
@@ -39,6 +46,17 @@ const SEED = {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
     },
   },
+  // More customers, so that the list's sort (by activity: entries, then tools) has something to do.
+  'kb-org-initech': {
+    name: 'initech',
+    kind: 'org',
+    files: {
+      'sites/support.md': '---\ntype: Site\ntitle: support\ndescription: Their support portal.\n---\n\nOn the legacy stack until the migration.\n',
+      'people/contacts.md': '---\ntype: Reference\ntitle: Contacts\ndescription: Who to ask at Initech.\n---\n\nThe release manager, for anything about go-lives.\n',
+    },
+  },
+  'kb-org-globex': { name: 'globex', kind: 'org', files: {} },
+  'kb-org-umbrella': { name: 'umbrella', kind: 'org', files: {} },
 };
 
 export async function createKnowledgeBases() {
@@ -56,7 +74,7 @@ export async function createKnowledgeBases() {
         message: 'Seed', by: 'human:dana@staff.example', at: '2026-10-20T09:00:00.000Z', logEntry: '**Creation**: seed',
       });
     }
-    repos.set(repo, { ...seed, fs });
+    repos.set(repo, { ...seed, fs, entries: changes.filter((c) => isEntry(c.path)).length });
   }
 
   const blobHash = async (fs, path) => (await git.hashBlob({
@@ -77,6 +95,7 @@ export async function createKnowledgeBases() {
       slug: repo.replace(/^kb-(team|org)-/, ''),
       name: r.name,
       created_at: '2026-10-20T09:00:00.000Z',
+      entries: r.entries,
     })).sort((x, y) => y.kind.localeCompare(x.kind) || x.slug.localeCompare(y.slug)),
     has: (repo) => repos.has(repo),
     async files(repo) {

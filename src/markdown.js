@@ -55,6 +55,69 @@ export const sizeTitle = (w, h) => {
 export const mdLink = (label, url, image = false, size = null) => `${image ? '!' : ''}[${String(label).replace(/[[\]\\]/g, '\\$&')}](${mdUrl(url)}${image && size ? ` "${size}"` : ''})`;
 
 /**
+ * The title of the link a quoted message starts with (quoteMarkdown): the inbox shows such a
+ * quote as a card of the message, not as text someone quoted by hand.
+ */
+export const QUOTE_TITLE = 'Quoted message';
+
+/** A quote's first line: `> [author](link "Quoted message, <ISO time>")`. */
+export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:, ([^"\n]*))?"\)[ \t]*$/;
+
+/**
+ * A message that a message quotes (Slack: one forwarded, or the preview under a link to it), as
+ * a markdown quote: its author, linked to it (the title says it is a quote, and when it was
+ * posted), a blank line, then its text, itself markdown.
+ *
+ * @param {{ author?: string, url: string, at?: string, text?: string }} quote
+ */
+export function quoteMarkdown({
+  author, url, at, text,
+}) {
+  const label = String(author || 'Message').replace(/\s+/g, ' ').replace(/[[\]\\]/g, '\\$&');
+  const when = at && !/["\n]/.test(at) ? `, ${at}` : '';
+  const head = `[${label}](${mdUrl(url)} "${QUOTE_TITLE}${when}")`;
+  const body = String(text || '').trim();
+  return [head, ...(body ? ['', ...body.split('\n')] : [])]
+    .map((l) => (l ? `> ${l}` : '>')).join('\n');
+}
+
+/** Calls `fn(head, lines)` for each quote of a message (quoteMarkdown); the rest stays. */
+function eachQuote(body, fn) {
+  const lines = String(body || '').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const head = QUOTE_HEAD.exec(lines[i]);
+    if (head) {
+      let j = i + 1;
+      while (j < lines.length && /^>/.test(lines[j]) && !QUOTE_HEAD.test(lines[j])) {
+        j += 1;
+      }
+      out.push(...fn(head, lines.slice(i + 1, j)));
+      i = j - 1;
+    } else {
+      out.push(lines[i]);
+    }
+  }
+  return out.join('\n');
+}
+
+/**
+ * A message's body without the messages it quotes: what its author wrote, for mentions, the
+ * vectors of what people talk about, and editing it.
+ */
+export function withoutQuotes(body) {
+  return eachQuote(body, () => []).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** A message's body with each quote's first line as `> <author> wrote:`, for plain text. */
+export function quotesAsText(body) {
+  return eachQuote(body, (head, rest) => [
+    `> ${head[1].replace(/\\(.)/g, '$1')} wrote:`,
+    ...rest.filter((l, k) => k > 0 || l.trim() !== '>'),
+  ]);
+}
+
+/**
  * Slack mrkdwn to markdown.
  *
  * @param {string} text

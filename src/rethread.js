@@ -12,6 +12,7 @@
 
 import { parse, render } from './channels.js';
 import { CLEF } from './label.js';
+import { QUOTE_HEAD, quotesAsText } from './markdown.js';
 import { notifyRoom } from './notify.js';
 import { sha256 } from './raw.js';
 import { teamsOf } from './shares.js';
@@ -23,7 +24,8 @@ import { teamsOf } from './shares.js';
  * new topic". In conversations, Clef reads the channel's latest conversations and the similar
  * ones as a transcript and says which one the new root continues, if any.
  * A match sets `logicalThread` on the new thread, pointing at the earliest thread of the
- * group, so repeated alerts and follow-ups fold into one inbox entry.
+ * group, so repeated alerts and follow-ups fold into one inbox entry. A root that quotes a
+ * message (Slack: forwarded, or a link to it) was started on purpose, and stays on its own.
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -71,7 +73,7 @@ const SNIPPET = 600;
  * tell different failures apart.
  */
 export function skeleton(text) {
-  return String(text || '')
+  return quotesAsText(text)
     // A field whose whole value is a link (the page an alert fired on) is context, not
     // identity; short upper-case codes in a field (coupons, ids) are values, too.
     .split('\n')
@@ -189,6 +191,13 @@ export const CONVERSATION_INSTRUCTIONS = 'The new message was posted in a chat c
   + 'about, or says that it changes the subject ("in other news", "another question").';
 
 const groupOf = (t) => t.logical_thread || t.thread;
+/**
+ * Whether a root quotes a message (src/markdown.js quoteMarkdown). Forwarding a message into the
+ * channel, or linking to one, starts a topic on purpose: people who meant to continue the earlier
+ * conversation would have replied there, and the text after a quote ("first step in that
+ * direction") reads like a follow-up of whatever was said last.
+ */
+export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE_HEAD.test(l));
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
 
@@ -379,7 +388,10 @@ export async function rethread(env, key, { force = false } = {}) {
 
   let match = null;
   let asked = null;
-  if (burst) {
+  const quoting = quotes(root.parsed.body);
+  if (quoting) {
+    // On its own: see quotes().
+  } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
     // The channel's latest conversations and the similar ones, read as a transcript.
@@ -472,7 +484,7 @@ export async function rethread(env, key, { force = false } = {}) {
     }
   }
   // The next root, if it is by the same person minutes later, continues this one.
-  const next = author && await env.DB.prepare(`SELECT t.thread, t.logical_thread, m.author_key
+  const next = author && await env.DB.prepare(`SELECT t.*, m.author_key
     FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
@@ -485,7 +497,9 @@ export async function rethread(env, key, { force = false } = {}) {
       new Date(Date.parse(thread.root_at) + BURST_MS).toISOString(),
     ).first();
   const nextFree = next && (!next.logical_thread || joined.includes(next.logical_thread));
-  if (nextFree && next.author_key === author) {
+  const nextBurst = nextFree && next.author_key === author;
+  const nextRoot = nextBurst && await rootBody(env, next);
+  if (nextBurst && !(nextRoot && quotes(nextRoot.parsed.body))) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
         rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
     joined.push(next.thread);
@@ -520,6 +534,7 @@ export async function rethread(env, key, { force = false } = {}) {
     result: logical ? 'rethreaded' : 'new-topic',
     via: match ? match.via : null,
     p: match ? match.p : null,
+    ...(quoting ? { reason: 'quotes a message' } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
   };

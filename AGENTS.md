@@ -33,9 +33,10 @@ code and docs, is the decision model that labels threads and channels.
   inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
   which keeps where each page was left in the browser tab, and you with your menu. Change it
   there, not in a page.
-- Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand) and
-  `src/ui-markdown.bundle.js` (from `scripts/ui-markdown.mjs`, not committed). `npm run build`
-  builds the bundle, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and
+- Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
+  `src/ui-markdown.bundle.js` and `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
+  editor's text field; both from `scripts/ui-markdown.mjs`, not committed). `npm run build`
+  builds the bundles, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and
   `cf dev`. Run `npm ci` first in a fresh checkout.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but

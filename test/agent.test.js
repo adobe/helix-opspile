@@ -11,7 +11,6 @@
  */
 
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import {
   after, afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -32,7 +31,7 @@ import {
 import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
-import { setAgent } from '../src/agent/enabled.js';
+import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
   agentStatus, pokeAgent, seedAgent, tellDiscarded,
 } from '../src/agent/stub.js';
@@ -42,7 +41,7 @@ import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tool
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
-import { fakeBucket, quiet } from './fakes.js';
+import { fakeBucket, fakeRepo, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -65,57 +64,6 @@ const USERS = {
   },
 };
 const THREAD = 'slack:E1:C1:1792584000.000100';
-
-const sha = (s) => createHash('sha1').update(s).digest('hex');
-
-/** An Artifacts repo in memory, from `{ path: content }`, readable like the binding. */
-function fakeRepo(files) {
-  const blobs = new Map();
-  const trees = new Map();
-  function tree(prefix) {
-    const names = new Map();
-    for (const path of Object.keys(files)) {
-      if (path.startsWith(prefix)) {
-        const [first, ...rest] = path.slice(prefix.length).split('/');
-        names.set(first, rest.length ? 'tree' : 'blob');
-      }
-    }
-    const entries = [...names].map(([name, type]) => {
-      if (type === 'blob') {
-        const content = files[`${prefix}${name}`];
-        const hash = sha(`blob ${content}`);
-        blobs.set(hash, content);
-        return {
-          name, type, hash, mode: '100644',
-        };
-      }
-      return {
-        name, type, hash: tree(`${prefix}${name}/`), mode: '40000',
-      };
-    });
-    const hash = sha(`tree ${prefix} ${JSON.stringify(entries)}`);
-    trees.set(hash, entries);
-    return hash;
-  }
-  const root = Object.keys(files).length ? tree('') : null;
-  return {
-    async log() {
-      return root ? [{
-        hash: sha(`commit ${root}`), treeHash: root, message: 'seed', author: { name: 'x' }, committedAt: 1792584000,
-      }] : [];
-    },
-    async readTree(hash) {
-      return trees.get(hash) || null;
-    },
-    async readBlob(hash) {
-      return blobs.has(hash) ? new Blob([blobs.get(hash)]) : null;
-    },
-    async info() {
-      return { remote: 'https://made-up.example/git/ns/x.git' };
-    },
-    [Symbol.dispose]() {},
-  };
-}
 
 function fakeArtifacts(repos) {
   const calls = [];
@@ -236,6 +184,15 @@ describe('thread agents', () => {
     assert.deepEqual(DB.rows('SELECT channel_id, enabled, changed_by FROM agent_channels ORDER BY channel_id'), [
       { channel_id: 'C1', enabled: 1, changed_by: 'Bo' }, { channel_id: 'C2', enabled: 1, changed_by: 'Ada' },
     ]);
+    // A team's default turns on its channels nobody switched; a channel's switch wins.
+    await setTeamDefault(e, 'helix', true, 'Ada');
+    assert.equal(await agentEnabled(e, 'C3', 'helix'), true);
+    assert.equal(await agentEnabled(e, 'C3', 'edge'), false);
+    assert.equal(await agentEnabled(e, 'C3'), false);
+    await setAgent(e, 'C3', false, 'Bo');
+    assert.equal(await agentEnabled(e, 'C3', 'helix'), false);
+    await setTeamDefault(e, 'helix', false, 'Ada');
+    assert.equal(await agentEnabled(e, 'C4', 'helix'), false);
   });
 
   it('check every message not written by staff with Clef, and withhold flagged ones', async () => {

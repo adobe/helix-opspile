@@ -64,6 +64,8 @@ export default [
         ...globals.browser,
         // The markdown renderer, src/ui-markdown.js, bundled (`markdown.js` in the page).
         Markdown: 'readonly',
+        // The knowledge-base editor's text field, src/ui-editor.js, bundled (`editor.js`).
+        Editor: 'readonly',
         // Every page's header, ui/header.js.
         Header: 'readonly',
         // The team order's model, ui/rank.js (the inbox).

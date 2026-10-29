@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  htmlToMarkdown, markdownToMrkdwn, mdLink, mdUrl, slackToMarkdown,
+  htmlToMarkdown, markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, slackToMarkdown,
+  withoutQuotes,
 } from '../src/markdown.js';
 
 describe('mdLink', () => {
@@ -141,5 +142,36 @@ describe('markdownToMrkdwn', () => {
     );
     // An unclosed fence still ends the code block.
     assert.equal(markdownToMrkdwn('```\nopen'), '```\nopen\n```');
+  });
+});
+
+describe('quotes', () => {
+  const quote = quoteMarkdown({
+    author: 'Ada [ops]',
+    url: 'https://example.slack.com/archives/C1/p1?thread_ts=0.1&cid=C1',
+    at: '2026-10-21T11:43:20.000Z',
+    text: 'Preview is down\n\n```\n503\n```',
+  });
+  const body = `Any news?\n\n${quote}\n\nAttachments:\n- [a.txt](https://files.example/a)`;
+
+  it('quotes a message under a line with its author, linked to it', () => {
+    assert.equal(quote, [
+      '> [Ada \\[ops\\]](https://example.slack.com/archives/C1/p1?thread_ts=0.1&cid=C1 "Quoted message, 2026-10-21T11:43:20.000Z")',
+      '>',
+      '> Preview is down',
+      '>',
+      '> ```',
+      '> 503',
+      '> ```',
+    ].join('\n'));
+    assert.equal(quoteMarkdown({ url: 'https://example.slack.com/archives/C1/p2' }), '> [Message](https://example.slack.com/archives/C1/p2 "Quoted message")');
+  });
+
+  it('takes the quotes out of a body, or makes their first line plain text', () => {
+    assert.equal(withoutQuotes(body), 'Any news?\n\nAttachments:\n- [a.txt](https://files.example/a)');
+    assert.equal(withoutQuotes(quote), '');
+    assert.equal(quotesAsText(body), 'Any news?\n\n> Ada [ops] wrote:\n> Preview is down\n>\n> ```\n> 503\n> ```\n\nAttachments:\n- [a.txt](https://files.example/a)');
+    // A quote typed by hand is the author's own text.
+    assert.equal(withoutQuotes('> as you said\n\nyes'), '> as you said\n\nyes');
   });
 });

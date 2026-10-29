@@ -21,11 +21,13 @@ import { CLEF } from './label.js';
  *
  * - a name Slack knows stays; another platform's name or spelling becomes Slack's
  *   (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`; src/emojinames.js)
- * - a custom emoji of the workspace (one somebody reacted with) stays as it is
+ * - a custom emoji of the workspace (one somebody reacted with, or on Slack one of
+ *   `emoji.list`) stays as it is
  * - for any other name, Clef picks the closest emoji from a short list of candidates
- *   (`:completed:` is ✅), or none; then the name stays as typed
+ *   (`:completed:` is ✅), or none; then the name stays as typed. On Slack only once its
+ *   custom emoji are known: until then the name could be one of them.
  *
- * Slack gets `:name:`, Teams and Discord the character. Code is left alone.
+ * Slack gets `:name:`, Teams and Discord the character. Code and addresses are left alone.
  */
 
 // Clef is asked about at most this many names per reply, each once per isolate.
@@ -37,6 +39,9 @@ const MAX_SIMILAR = 8;
 const MAX_CANDIDATES = 16;
 const CACHE_MAX = 500;
 const CUSTOM_TTL_MS = 10 * 60 * 1000;
+// Slack's emoji.list again after a failure (no `emoji:read`, Slack down) after this long.
+const LIST_RETRY_MS = 60 * 1000;
+const LIST_TIMEOUT_MS = 2000;
 
 /**
  * Emoji people mean most in a reply; always candidates, after the names that look alike.
@@ -48,8 +53,90 @@ export const COMMON = [
 
 /** A `:name:`, with an optional `::skin-tone-N`, not inside a word, a time or a URL. */
 const CODE = /(?<![\p{L}\p{N}]):([a-z0-9_+-]{1,60}(?:::skin-tone-[2-6])?):(?![\p{L}\p{N}])/gu;
-/** Fenced and inline code. */
-const CODE_SPAN = /(```[\s\S]*?```|`[^`\n]+`)/;
+/** A fence's line, after `>` quote markers and indentation: ``` or ~~~, or longer. */
+const FENCE = /^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})(.*?)\r?\n?$/;
+/**
+ * What a text block's inline scan stops at: an escaped character, a run of backticks, an
+ * autolink, a link's destination, a bare address (`https://…`, `www.…`).
+ */
+const INLINE = /\\[\s\S]|`+|<[a-z][a-z0-9+.-]{1,31}:[^\s<>]*>|\]\((?:<[^<>\n]*>|(?:[^\s()\\]|\\.|\((?:[^\s()\\]|\\.)*\))*)|(?<![\p{L}\p{N}+.-])(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>]*/giu;
+
+/** `chunks` (`{ s, code }`) as alternating parts: text first, code at odd indices. */
+function alternate(chunks) {
+  const parts = [''];
+  for (const { s, code } of chunks) {
+    if (s) {
+      if ((parts.length % 2 === 0) === code) {
+        parts[parts.length - 1] += s;
+      } else {
+        parts.push(s);
+      }
+    }
+  }
+  return parts;
+}
+
+/** A text block's code spans and addresses (code) and the rest (not), as chunks. */
+function inline(text, out) {
+  let at = 0;
+  INLINE.lastIndex = 0;
+  for (let m = INLINE.exec(text); m; m = INLINE.exec(text)) {
+    const [s] = m;
+    let end = m.index + s.length;
+    if (s[0] === '\\') {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    if (s[0] === '`') {
+      // A span ends at the next run of as many backticks, within the paragraph.
+      const close = new RegExp(`(?<!\`)\`{${s.length}}(?!\`)`, 'g');
+      close.lastIndex = end;
+      const c = close.exec(text);
+      if (!c || /\n[ \t]*\n/.test(text.slice(end, c.index))) {
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      end = c.index + s.length;
+      INLINE.lastIndex = end;
+    }
+    out.push(
+      { s: text.slice(at, m.index), code: false },
+      { s: text.slice(m.index, end), code: true },
+    );
+    at = end;
+  }
+  out.push({ s: text.slice(at), code: false });
+}
+
+/**
+ * `text` (Markdown) in parts, those at odd indices left alone: CommonMark's fenced code
+ * (``` or ~~~ of any length, to a closing fence at least as long or the end), code spans
+ * (a run of backticks to the next run of as many), autolinks, link destinations and bare
+ * addresses.
+ */
+export function codeParts(text) {
+  const chunks = [];
+  let block = '';
+  let fence = null;
+  for (const line of String(text).split(/(?<=\n)/)) {
+    const m = FENCE.exec(line);
+    if (fence) {
+      chunks.push({ s: line, code: true });
+      if (m && !m[2].trim() && m[1][0] === fence[0] && m[1].length >= fence.length) {
+        fence = null;
+      }
+    } else if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
+      inline(block, chunks);
+      block = '';
+      [, fence] = m;
+      chunks.push({ s: line, code: true });
+    } else {
+      block += line;
+    }
+  }
+  inline(block, chunks);
+  return alternate(chunks);
+}
 
 const lookup = emojiLookup(SLACK_EMOJI, EMOJI_ALIASES, SKIN_TONES);
 
@@ -270,27 +357,63 @@ export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS) {
 }
 
 /**
- * The workspace's own emoji opspile has seen: the names people reacted with that are not
- * standard ones (Slack stores the name, Discord `:name:`).
+ * The custom emoji of the Slack workspace of the bot token (`emoji.list`, bot scope
+ * `emoji:read`; their names, aliases too), or null when Slack does not say. Every Slack
+ * thread opspile has is in that workspace (or org).
+ */
+async function slackEmoji(env) {
+  if (!env.SLACK_BOT_TOKEN) {
+    return null;
+  }
+  try {
+    const data = await inTime(async () => {
+      const res = await fetch('https://slack.com/api/emoji.list', {
+        headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` },
+      });
+      return res.json();
+    }, LIST_TIMEOUT_MS);
+    if (!data || !data.ok || !data.emoji || typeof data.emoji !== 'object') {
+      throw new Error(`slack emoji.list: ${data ? data.error : 'timeout'}`);
+    }
+    return Object.keys(data.emoji);
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'shortcodes', error: String(e && e.message) }));
+    return null;
+  }
+}
+
+/**
+ * The workspace's own emoji: `{ names, all }`. `names` are those opspile has seen, the names
+ * people reacted with that are not standard ones (Slack stores the name, Discord `:name:`),
+ * and on Slack those of `emoji.list`; `all` whether that is all of them (Slack's list came).
  */
 async function customEmoji(env, source, tenant) {
   const k = `${source}:${tenant}`;
   const hit = customs.get(k);
-  if (hit && Date.now() - hit.at < CUSTOM_TTL_MS) {
-    return hit.names;
+  if (hit && Date.now() - hit.at < (hit.all || source !== 'slack' ? CUSTOM_TTL_MS : LIST_RETRY_MS)) {
+    return hit;
   }
   const names = new Set();
-  try {
-    const { results } = await env.DB.prepare(`SELECT DISTINCT emoji FROM reactions
-      WHERE thread >= ? AND thread < ? LIMIT 5000`).bind(`${k}:`, `${k};`).all();
-    for (const r of results || []) {
-      names.add(String(r.emoji).replace(/^:|:$/g, '').split('::skin-tone-')[0]);
-    }
-  } catch {
-    // None known.
+  const [listed] = await Promise.all([
+    source === 'slack' ? slackEmoji(env) : null,
+    (async () => {
+      try {
+        const { results } = await env.DB.prepare(`SELECT DISTINCT emoji FROM reactions
+          WHERE thread >= ? AND thread < ? LIMIT 5000`).bind(`${k}:`, `${k};`).all();
+        for (const r of results || []) {
+          names.add(String(r.emoji).replace(/^:|:$/g, '').split('::skin-tone-')[0]);
+        }
+      } catch {
+        // None known.
+      }
+    })(),
+  ]);
+  for (const name of listed || []) {
+    names.add(name);
   }
-  customs.set(k, { names, at: Date.now() });
-  return names;
+  const own = { names, all: Boolean(listed), at: Date.now() };
+  customs.set(k, own);
+  return own;
 }
 
 /**
@@ -303,7 +426,7 @@ export async function resolveShortcodes(env, text, {
   source, tenant, clef = true, timeoutMs = CLEF_TIMEOUT_MS,
 } = {}) {
   const body = String(text || '');
-  const parts = body.split(CODE_SPAN);
+  const parts = codeParts(body);
   const typed = new Set();
   parts.forEach((p, i) => {
     if (i % 2 === 0) {
@@ -326,10 +449,14 @@ export async function resolveShortcodes(env, text, {
       unknown.push(code);
     }
   }
-  if (unknown.length && env.DB && tenant) {
+  // On Slack, a name nobody has may be a custom emoji nobody reacted with: Clef may replace
+  // it only once the workspace's own emoji are all known.
+  let guess = source !== 'slack';
+  if (unknown.length && tenant) {
     const own = await customEmoji(env, source, tenant);
+    guess = guess || own.all;
     unknown.splice(0, unknown.length, ...unknown.filter((c) => {
-      if (own.has(c.split('::skin-tone-')[0])) {
+      if (own.names.has(c.split('::skin-tone-')[0])) {
         to.set(c, null);
         return false;
       }
@@ -337,7 +464,8 @@ export async function resolveShortcodes(env, text, {
     }));
   }
   // Clef only for what looks like a name: letters, more than one character.
-  const ask = clef && env.AI ? unknown.filter((c) => /[a-z]/.test(c) && c.length > 1) : [];
+  const ask = clef && guess && env.AI
+    ? unknown.filter((c) => /[a-z]/.test(c) && c.length > 1) : [];
   await Promise.all(ask.slice(0, MAX_ASK).map(async (code) => {
     const name = await askClef(env, code, candidates(code), timeoutMs);
     if (name) {

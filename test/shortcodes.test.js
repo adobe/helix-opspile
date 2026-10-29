@@ -11,7 +11,9 @@
  */
 
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import {
+  afterEach, beforeEach, describe, it,
+} from 'node:test';
 import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from '../src/emoji.js';
 import { emojiLookup, matchEmoji, squash } from '../src/emojinames.js';
 import { CLEF } from '../src/label.js';
@@ -96,8 +98,32 @@ const choose = (name, p) => (criteria) => {
   return { answers: { emoji: { choice, probabilities: { [choice]: p } } } };
 };
 
+const realFetch = globalThis.fetch;
+/**
+ * Slack's `emoji.list` answering `answer()` (its JSON) for the bot token; other requests
+ * fail. The calls are in `calls`.
+ */
+function slackEmoji(answer) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url));
+    assert.equal(`${u.origin}${u.pathname}`, 'https://slack.com/api/emoji.list');
+    assert.equal(new Headers(init.headers).get('authorization'), 'Bearer xoxb-made-up');
+    calls.push(u.search);
+    return Response.json(answer());
+  };
+  return calls;
+}
+const LIST = {
+  ok: true,
+  emoji: { 'party-parrot': 'https://emoji.example/p.png', foo: 'alias:party-parrot' },
+};
+
 describe('shortcodes in a reply', () => {
   beforeEach(() => forget());
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
 
   it('writes Slack names on Slack, characters on Teams and Discord', async () => {
     const text = 'oops :facepalm: :thumbs-up::skin-tone-2: :eyes:';
@@ -114,10 +140,62 @@ describe('shortcodes in a reply', () => {
     assert.equal((await resolveShortcodes({}, text, { source: 'teams' })).text, text);
   });
 
+  it('leaves every address alone: bare, autolinks, link destinations', async () => {
+    for (const text of [
+      'https://example.com/:eyes:/status',
+      'see https://example.com/:eyes:',
+      'ftp://example.com/:eyes:',
+      'www.example.com/:eyes:/x',
+      '<https://example.com/:eyes:/status>',
+      '[look](/a/:eyes:/b)',
+      '[look](<a/:eyes:/b c>)',
+      '[look](https://example.com/(x):eyes:)',
+      '[look]: https://example.com/:eyes:',
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await resolveShortcodes({}, text, { source: 'teams' })).text, text, text);
+    }
+    // A link's label is text; what follows an address too.
+    assert.equal(
+      (await resolveShortcodes({}, '[:eyes: look](https://example.com/:eyes:) :tada:', { source: 'teams' })).text,
+      '[👀 look](https://example.com/:eyes:) 🎉',
+    );
+    assert.equal((await resolveShortcodes({}, 'https://example.com :eyes:', { source: 'teams' })).text, 'https://example.com 👀');
+  });
+
+  it('leaves all Markdown code alone: any fence, any code span', async () => {
+    for (const text of [
+      '~~~\n:eyes:\n~~~',
+      '~~~~ js\n:eyes:\n~~~\n:eyes:\n~~~~',
+      '````\n```\n:eyes:\n```\n````',
+      '  ```\n:eyes:\n  ```',
+      '> ```\n> :eyes:\n> ```',
+      '```\n:eyes: never closed',
+      '``a`:eyes:``',
+      '`` a`:eyes: ``',
+      '```a``:eyes:```',
+      'one `:eyes:\nover two lines`',
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await resolveShortcodes({}, text, { source: 'teams' })).text, text, text);
+    }
+    // After a fence or span, text again; unmatched backticks are text.
+    const res = (t) => resolveShortcodes({}, t, { source: 'teams' }).then((r) => r.text);
+    assert.equal(await res('~~~\n:eyes:\n~~~\n:tada:'), '~~~\n:eyes:\n~~~\n🎉');
+    assert.equal(await res('``:eyes:` :tada:'), '``👀` 🎉');
+    assert.equal(await res('\\`:eyes:` :tada:'), '\\`👀` 🎉');
+    assert.equal(await res('``a`b`` :eyes:'), '``a`b`` 👀');
+    // A span does not run over a blank line.
+    assert.equal(await res('`a\n\n:eyes:`'), '`a\n\n👀`');
+  });
+
   it('asks Clef for a name nobody has, once', async () => {
+    slackEmoji(() => LIST);
     const AI = ai((code, criteria) => choose('white_check_mark', 0.55)(criteria));
-    const env = { AI };
-    const res = await resolveShortcodes(env, 'all :completed: :completed:', { source: 'slack' });
+    const env = { AI, SLACK_BOT_TOKEN: 'xoxb-made-up' };
+    const res = await resolveShortcodes(env, 'all :completed: :completed:', {
+      source: 'slack', tenant: 'T1',
+    });
     assert.equal(res.text, 'all :white_check_mark: :white_check_mark:');
     assert.equal(AI.calls.length, 1);
     const { criteria } = AI.calls[0].questions.emoji;
@@ -131,9 +209,9 @@ describe('shortcodes in a reply', () => {
 
   it('leaves the name when Clef is not sure, says none, fails or is slow', async () => {
     const unsure = { AI: ai((code, criteria) => choose('white_check_mark', 0.45)(criteria)) };
-    assert.equal((await resolveShortcodes(unsure, ':completed:', { source: 'slack' })).text, ':completed:');
+    assert.equal((await resolveShortcodes(unsure, ':completed:', { source: 'teams' })).text, ':completed:');
     const none = { AI: ai(() => ({ answers: { emoji: { choice: 'none', probabilities: { none: 0.9 } } } })) };
-    assert.equal((await resolveShortcodes(none, ':foo:', { source: 'slack' })).text, ':foo:');
+    assert.equal((await resolveShortcodes(none, ':foo:', { source: 'teams' })).text, ':foo:');
     const failing = {
       AI: {
         run: async () => {
@@ -141,19 +219,19 @@ describe('shortcodes in a reply', () => {
         },
       },
     };
-    assert.equal((await resolveShortcodes(failing, ':shipped:', { source: 'slack' })).text, ':shipped:');
+    assert.equal((await resolveShortcodes(failing, ':shipped:', { source: 'teams' })).text, ':shipped:');
     const slow = { AI: { run: () => new Promise(() => {}) } };
-    const res = await resolveShortcodes(slow, ':done-done:', { source: 'slack', timeoutMs: 10 });
+    const res = await resolveShortcodes(slow, ':done-done:', { source: 'teams', timeoutMs: 10 });
     assert.equal(res.text, ':done-done:');
   });
 
   it('asks about a few names per reply, and only about names', async () => {
     const AI = ai(() => ({ answers: {} }));
-    await resolveShortcodes({ AI }, ':aa: :bb: :cc: :dd: :ee: :7: :x1:', { source: 'slack' });
+    await resolveShortcodes({ AI }, ':aa: :bb: :cc: :dd: :ee: :7: :x1:', { source: 'discord' });
     assert.equal(AI.calls.length, MAX_ASK);
     AI.calls.length = 0;
-    await resolveShortcodes({ AI }, ':42:', { source: 'slack', clef: true });
-    await resolveShortcodes({ AI }, ':zz:', { source: 'slack', clef: false });
+    await resolveShortcodes({ AI }, ':42:', { source: 'discord', clef: true });
+    await resolveShortcodes({ AI }, ':zz:', { source: 'discord', clef: false });
     assert.equal(AI.calls.length, 0);
   });
 
@@ -162,8 +240,9 @@ describe('shortcodes in a reply', () => {
     DB.sqlite.prepare(`INSERT INTO reactions (message, thread, emoji, user_key)
       VALUES ('slack:E1:C1:1.2', 'slack:E1:C1:1.1', 'party-blob', 'slack:E1:U1'),
         ('discord:G1:C2:5', 'discord:G1:C2:4', ':ship_it_squirrel:', 'discord:G1:U2')`).run();
+    slackEmoji(() => LIST);
     const AI = ai((code, criteria) => choose('tada', 0.95)(criteria));
-    const env = { DB, AI };
+    const env = { DB, AI, SLACK_BOT_TOKEN: 'xoxb-made-up' };
     const res = await resolveShortcodes(env, ':party-blob: :party-hat:', { source: 'slack', tenant: 'E1' });
     assert.equal(res.text, ':party-blob: :tada:');
     assert.deepEqual(AI.calls.map((c) => c.state.match(/:([^:]+):/)[1]), ['party-hat']);
@@ -172,6 +251,44 @@ describe('shortcodes in a reply', () => {
     // Another workspace's emoji are not this one's.
     const other = await resolveShortcodes(env, ':party-blob:', { source: 'slack', tenant: 'E2' });
     assert.equal(other.text, ':tada:');
+  });
+
+  it('keeps a Slack custom emoji nobody reacted with, from emoji.list', async () => {
+    const calls = slackEmoji(() => LIST);
+    const AI = ai((code, criteria) => choose(code === 'foo' ? 'fox_face' : 'white_check_mark', 0.69)(criteria));
+    const env = { DB: d1(), AI, SLACK_BOT_TOKEN: 'xoxb-made-up' };
+    const res = await resolveShortcodes(env, ':foo: :party-parrot: :facepalm: :completed:', {
+      source: 'slack', tenant: 'T1',
+    });
+    assert.equal(res.text, ':foo: :party-parrot: :face_palm: :white_check_mark:');
+    assert.deepEqual(AI.calls.map((c) => c.state.match(/:([^:]+):/)[1]), ['completed']);
+    // Remembered per workspace; only asked for when a name is not a standard one.
+    await resolveShortcodes(env, ':foo: :eyes:', { source: 'slack', tenant: 'T1' });
+    await resolveShortcodes(env, ':eyes:', { source: 'slack', tenant: 'T2' });
+    assert.equal(calls.length, 1);
+    // Not asked for on other platforms, which have no Slack emoji.
+    await resolveShortcodes(env, ':foo:', { source: 'teams', tenant: 'T1' });
+    assert.equal(calls.length, 1);
+  });
+
+  it('leaves unknown names on Slack as typed while its emoji are not known', async () => {
+    const AI = ai((code, criteria) => choose('fox_face', 0.69)(criteria));
+    // No bot token, or one without emoji:read, or Slack failing: Clef is not asked.
+    const noToken = await resolveShortcodes({ AI }, ':foo: :facepalm:', { source: 'slack', tenant: 'T0' });
+    assert.equal(noToken.text, ':foo: :face_palm:');
+    const env = { AI, SLACK_BOT_TOKEN: 'xoxb-made-up' };
+    const calls = slackEmoji(() => ({ ok: false, error: 'missing_scope' }));
+    assert.equal((await resolveShortcodes(env, ':foo:', { source: 'slack', tenant: 'T1' })).text, ':foo:');
+    assert.equal((await resolveShortcodes(env, ':foo:', { source: 'slack', tenant: 'T1' })).text, ':foo:');
+    assert.equal(calls.length, 1, 'a failure is remembered for a while');
+    globalThis.fetch = async () => {
+      throw new Error('network');
+    };
+    assert.equal((await resolveShortcodes(env, ':foo:', { source: 'slack', tenant: 'T3' })).text, ':foo:');
+    assert.equal((await resolveShortcodes(env, ':foo:', { source: 'slack' })).text, ':foo:');
+    assert.equal(AI.calls.length, 0);
+    // Elsewhere Clef still picks one.
+    assert.equal((await resolveShortcodes({ AI }, ':foo:', { source: 'teams' })).text, '🦊');
   });
 });
 

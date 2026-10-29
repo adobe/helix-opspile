@@ -17,7 +17,9 @@ const state = {
   sel: { type: new Set(['conversation']) },
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
-  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, keep: new Set(), scores: new Map(),
+  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
+  // The thread list on screen, while it stays the same list (see syncList).
+  list: newList(),
   cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
@@ -29,29 +31,11 @@ const state = {
   editing: null,
   // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
   edits: new Map(),
-  // Design C: the threads this page has shown unread, whose rows keep two lines once read.
-  tall: new Set(),
 };
 
-// ---------------------------------------------------------------- design explorations
-// Three ways the thread list could set unread threads apart, to compare before one is picked:
-// `?design=a` (unread rows white), `b` (iMessage-like rows) or `c` (read rows recede to one
-// line). The choice is kept in this browser; `?design=` goes back to the list as it is.
-const DESIGNS = ['a', 'b', 'c'];
-const design = (() => {
-  const asked = new URLSearchParams(location.search).get('design');
-  try {
-    if (asked !== null) {
-      if (DESIGNS.includes(asked)) localStorage.setItem('opspile.design', asked);
-      else localStorage.removeItem('opspile.design');
-    }
-    const kept = localStorage.getItem('opspile.design');
-    return DESIGNS.includes(kept) ? kept : null;
-  } catch {
-    return DESIGNS.includes(asked) ? asked : null;
-  }
-})();
-if (design) document.documentElement.dataset.design = design;
+// The thread list's design explorations (`?design=a|b|c`) are over: A is the list. A choice one
+// of them left in this browser is let go.
+try { localStorage.removeItem('opspile.design'); } catch { /* storage is off */ }
 
 // ---------------------------------------------------------------- helpers
 async function get(path) {
@@ -102,7 +86,7 @@ const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
 // the favicon of the customer's usual mail domain. `favicon()` takes either.
 const orgName = (t) => t.org_name || t.org;
 const orgIcon = (t) => t.org_icon || t.customerDomain || null;
-const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor' };
+const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor', internal: 'Internal' };
 const backlink = (t, label) => (t.permalink
   ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
 
@@ -565,18 +549,20 @@ const involvesColor = (v) => {
   if (v.startsWith('team:')) return 'c-team';
   return `c-${personKind(v.slice(7))}`;
 };
-// Orgs by type, as the admin team set it; "other" when nobody outside Adobe writes there.
-const ORG_GROUPS = ['partner', 'vendor', 'customer', 'other'];
+// Orgs by the type the admin team set (customer unless set); "other" for threads not filed
+// under an org yet (`_unassigned`). Not guessed from who posted: a customer's new
+// conversation that only Adobe has written in yet is still the customer's.
+const ORG_GROUPS = ['partner', 'vendor', 'customer', 'internal', 'other'];
 const ORG_GROUP_LABEL = {
-  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', other: 'Other',
+  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', internal: 'Internal', other: 'Other',
 };
 function orgGroup(org) {
-  const ts = (state.data?.threads || []).filter((t) => t.org === org && t.kind !== 'alert');
-  if (!ts.some((t) => (t.participants || []).some((x) => !x.staff))) return 'other';
-  return ORG_TYPE[ts[0].org_type] ? ts[0].org_type : 'customer';
+  if (!org || org.startsWith('_')) return 'other';
+  const type = (state.data?.threads || []).find((x) => x.org === org)?.org_type;
+  return ORG_GROUPS.includes(type) && type !== 'other' ? type : 'customer';
 }
 const ORG_COLOR = {
-  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', other: 'c-none',
+  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', internal: 'c-none', other: 'c-none',
 };
 const URGENCY_COLOR = {
   critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
@@ -650,9 +636,9 @@ function valuesOf(f, t) {
   if (!byThread.has(t)) byThread.set(t, facetValues(f, t));
   return byThread.get(t);
 }
-// Unread only keeps the threads read since it was turned on, so a row does not vanish
-// when you open it.
-const passes = (t, except) => (!state.unread || t.unread || state.keep.has(t.thread))
+// Unread only keeps every thread the list has shown since it was opened (see syncList), so a
+// row does not vanish when you, or you elsewhere, read it.
+const passes = (t, except) => (!state.unread || keptUnread(t))
   && (!personal() || t.kind !== 'alert')
   && viewFacets().every((f) => f.id === except || facetPasses(f, t));
 /**
@@ -765,6 +751,7 @@ const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === 
 
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
+  syncList();
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
@@ -812,37 +799,10 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
-function row(t, hit = null) {
-  if (design === 'a') return rowA(t, hit);
-  if (design === 'b') return rowB(t, hit);
-  if (design === 'c') return rowC(t, hit);
-  const status = statusOf(t);
-  const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
-    key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
-  })).join('');
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  const fresh = !hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : '';
-  const n = t.occurrences || (t.members || []).length;
-  const occurrences = n > 1 ? `<span class="replies">${n}×</span>` : '';
-  return `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${fresh}${hit ? ' hit' : ''}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>
-    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(STATUS_HINT[status])}${ourMove(t) ? ' · our move' : ''}"></span>
-      ${t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : ''}
-      <span class="title">${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}</span>
-      <span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
-    <div class="l2">
-      <span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>
-      <span class="faces">${faces}</span>
-      ${occurrences}${replies && !occurrences ? `<span class="replies re">${replies} ${replies === 1 ? 'reply' : 'replies'}</span>` : ''}
-      <span class="tags">${moods(t)}</span>
-    </div>${hit ? hitLine(hit) : ''}</div>`;
-}
-
-// The design explorations' rows (see DESIGNS). Each row says, in its classes, what the designs
-// set apart: resolved, an unread mention of you, critical or hot; C also whether it is short.
+// What a row sets apart, in its classes: resolved, an unread mention of you, critical or hot.
 const isResolved = (t) => checked(t) || resolvedOf(t) === 'resolved';
 const mentionsMe = (t) => t.unread && (t.unreadMentions > 0 || t.mentionedMe);
 function flags(t) {
-  if (!design) return '';
   const status = statusOf(t);
   let out = '';
   if (isResolved(t)) out += ' resolved';
@@ -851,17 +811,8 @@ function flags(t) {
   return out;
 }
 const resolvedMark = (t) => (isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '');
-function mentionMark(t) {
-  if (!mentionsMe(t)) return '';
-  const n = t.unreadMentions || 1;
-  return `<b class="at" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">@${n > 1 ? n : ''}</b>`;
-}
-const urgencyMark = (t) => {
-  const u = urgencyOf(t);
-  return URGENCY_EMOJI[u] && !isResolved(t) ? `<span class="urg" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>` : '';
-};
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
-const draftMark = (t, label = '✎ Draft') => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">${label}</span>` : '');
+const draftMark = (t) => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : '');
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
 const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
 
@@ -869,11 +820,11 @@ const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${st
 const oneCustomer = () => state.sel.customer?.size === 1;
 
 /**
- * A, white unread rows: the list as it is, with unread rows white and read ones tinted. The
- * customer is left out when the filters pick one; the second line says "Y replies, X mentions"
- * and, as far as there is room before the reactions, the latest reply, as Messages does.
+ * A thread's row: unread rows are white and read ones tinted. The customer is left out when
+ * the filters pick one; the second line says "Y replies, X mentions" and, as far as there is
+ * room before the reactions, the latest reply, as Messages does.
  */
-function rowA(t, hit) {
+function row(t, hit = null) {
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -885,7 +836,8 @@ function rowA(t, hit) {
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
   const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
-  // The latest reply: the inbox sends it (see `preview`).
+  // The latest reply: the inbox sends it (see `preview`). Not for a thread without replies (its
+  // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
@@ -911,63 +863,16 @@ const plain = (text) => String(text || '').replace(EMOJI_CODE, (m, n) => emojiBy
   .replace(/\s+/g, ' ')
   .trim();
 /**
- * The preview of designs A and B: the thread's latest message as the inbox sends it
- * (`last_text`, from `threads`), else from the thread cache (a thread the cron has not filled in
- * yet, see src/previews.js), else who wrote last.
+ * A row's preview: the thread's latest message as the inbox sends it (`last_text`, from
+ * `threads`), else from the thread cache (a thread the cron has not filled in yet, see
+ * src/previews.js).
  */
 function preview(t) {
   if (t.last_text) return { who: t.last_author || '', text: plain(t.last_text).slice(0, 220) };
   const ms = (state.cache.get(t.thread)?.data?.messages || [])
     .filter((m) => m.author?.kind !== 'system' && !m.deletedAt && !m.pending);
   const m = ms[ms.length - 1];
-  if (m) return { who: m.author?.name || '', text: plain(m.body).slice(0, 220) };
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  return { who: t.last_author || '', text: '', replies };
-}
-
-/**
- * B, after iMessage: the customer's logo, the title, two lines of the latest message, the time
- * and a chevron; unread is a blue dot at the leading edge. No avatars, reactions or tags: the
- * status is a small dot on the logo, urgency an emoji before the title, a mention an @.
- */
-function rowB(t, hit) {
-  const status = statusOf(t);
-  const p = preview(t);
-  const icon = orgIcon(t);
-  const org = orgName(t);
-  const logo = `<span class="ava" style="background:${hue(org)}" aria-hidden="true">${esc(initials(org))}${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.remove()">` : ''}</span>`;
-  const said = p.text ? `${p.who ? `${esc(p.who)}: ` : ''}${emojify(p.text)}`
-    : [p.who && esc(p.who), p.replies ? `${p.replies} ${p.replies === 1 ? 'reply' : 'replies'}` : ''].filter(Boolean).join(' · ');
-  return `${rowOpen(t, hit, '')}
-    <div class="l1"><span class="ud" aria-hidden="true"></span>${status === 'quiet' ? '' : `<span class="st c-${status}${ourMove(t) ? ' ring' : ''}" title="${esc(statusTitle(t, status))}"></span>`}
-      <span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
-      <span class="side">${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span>${isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '<span class="chev" aria-hidden="true">›</span>'}</span></div>
-    <div class="l2">${logo}<span class="pv">${draftMark(t, 'Draft')}<b class="org">${esc(org)}</b> ${said}</span>
-    </div>${hit ? hitLine(hit) : ''}</div>`;
-}
-
-/**
- * C, dense: a thread this page has shown unread has two lines (the latest author and the
- * replies under the title); a read one is one line, greyed: title, customer, time. A row
- * keeps its height once read (`state.tall`), so a click or j / k moves no row.
- */
-function rowC(t, hit) {
-  const status = statusOf(t);
-  if (t.unread) state.tall.add(t.thread);
-  const short = !hit && !state.tall.has(t.thread);
-  const icon = orgIcon(t);
-  const org = orgName(t);
-  const replies = Math.max(0, (t.messages || 1) - 1);
-  const n = t.occurrences || (t.members || []).length;
-  const count = n > 1 ? `${n}×` : (replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : '');
-  return `${rowOpen(t, hit, short ? ' short' : '')}
-    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
-      ${draftMark(t)}${resolvedMark(t)}<span class="title">${urgencyMark(t)}${titleHtml(t, hit)}</span>
-      <span class="org">${esc(org)}</span>${mentionMark(t)}<span class="when" title="${esc(lastOf(t) || '')}">${ago(lastOf(t))}</span></div>
-    <div class="l2">
-      <span class="cust">${icon ? `<img src="${esc(favicon(icon))}" alt="" loading="lazy">` : ''}${esc(org)}</span>
-      ${t.last_author ? `<span class="last">${esc(t.last_author)}</span>` : ''}${count ? `<span class="replies">${count}</span>` : ''}
-    </div>${hit ? hitLine(hit) : ''}</div>`;
+  return m ? { who: m.author?.name || '', text: plain(m.body).slice(0, 220) } : null;
 }
 
 // ---------------------------------------------------------------- search
@@ -1177,6 +1082,93 @@ const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
 
 function renderThreads() { inPass(threadRows); }
+
+/*
+ * The thread list stays put while it is the same list: the same view, filters and unread only
+ * (`listKey`). Reading a thread changes its score, its status and whether it is unread; none of
+ * that moves or hides a row you have seen, and new threads do not push the rows you look at
+ * away. While the list lasts:
+ * - every thread it has shown stays in it (`held`), read or not, whatever its filters say now:
+ *   unread only is "unread when the list was opened", and what came in since;
+ * - the rows you have seen (in view, or scrolled past: `seen`) keep their order; the rows below
+ *   them are sorted as the view sorts, as older pages come in behind them;
+ * - threads that come in (`arrived`: activity since the list was opened, and not in it yet) are
+ *   added at the end of a team's list, its queue, and at the top of the personal view, latest
+ *   activity first. There, a thread further down that you have not seen comes up to the top
+ *   too when it has activity. In a team's list, a critical or hot one (nobody at Adobe has
+ *   seen it) comes in right below the rows you have seen instead, not at the end.
+ * A new list (another view or filter, unread only on or off, or a click on the view already
+ * shown) is sorted afresh. The thread open then (`open`) stays in it when read, if it passes
+ * the new filters.
+ */
+function newList(key = null, open = null) {
+  return {
+    key, open, fresh: true, order: [], held: new Set(), seen: new Set(), arrived: new Set(), since: '',
+  };
+}
+/** Whether unread only keeps `t`: unread, shown by the list already, or open when the list was opened. */
+const keptUnread = (t) => t.unread || state.list.held.has(t.thread) || t.thread === state.list.open;
+const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]) => [id, [...s].sort()])
+  .sort((a, b) => a[0].localeCompare(b[0]));
+const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
+  setsKey(state.sel), setsKey(state.not)]);
+const activityOf = (t) => String(lastOf(t) || t.any_at || '');
+/** A new list, when what the list is of changed. */
+function syncList() {
+  if (!state.data) return;
+  const key = listKey();
+  if (state.list.key === key) return;
+  state.list = newList(key, state.open);
+  state.list.since = state.data.threads.reduce((m, t) => (activityOf(t) > m ? activityOf(t) : m), '');
+}
+/** A thread the list shows: one it has shown already (not an alert in the personal view), or one that passes. */
+const onList = (t) => (state.list.held.has(t.thread) && (!personal() || t.kind !== 'alert')) || passes(t);
+/** The view's order: latest activity first (personal), or what needs me most (a team). */
+function viewSort(ts) {
+  if (personal()) return ts.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
+  // Scores are computed when the inbox loads, not when you read a thread.
+  return ts.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+}
+/** The threads of the list (`sorted`, in the view's order), in the order the list shows them. */
+function placeRows(sorted) {
+  const L = state.list;
+  let out = sorted;
+  if (!L.fresh) {
+    const placed = new Set(L.order);
+    const unseen = sorted.filter((t) => !L.seen.has(t.thread));
+    for (const t of unseen) {
+      if ((personal() || !placed.has(t.thread)) && activityOf(t) > L.since) L.arrived.add(t.thread);
+    }
+    const by = new Map(sorted.map((t) => [t.thread, t]));
+    const pinned = L.order.filter((k) => L.seen.has(k) && by.has(k)).map((k) => by.get(k));
+    const come = unseen.filter((t) => L.arrived.has(t.thread));
+    const rest = unseen.filter((t) => !L.arrived.has(t.thread));
+    const urgent = (t) => ['critical', 'hot'].includes(statusOf(t));
+    out = personal() ? [...come, ...pinned, ...rest]
+      : [...pinned, ...come.filter(urgent), ...rest, ...come.filter((t) => !urgent(t))];
+  }
+  L.fresh = false;
+  L.order = out.map((t) => t.thread);
+  for (const k of L.order) L.held.add(k);
+  return out;
+}
+/** The rows in view, and the ones above them, are seen: they keep their order from now on. */
+function noteSeen() {
+  const box = $('threads');
+  const rows = box.querySelector('.rows')?.children;
+  if (!rows?.length || searching() || !box.clientHeight) return;
+  const bottom = Math.min(box.getBoundingClientRect().bottom, window.innerHeight);
+  let lo = 0;
+  let hi = rows.length - 1;
+  let last = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].getBoundingClientRect().top < bottom) { last = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  for (let i = 0; i <= last; i += 1) if (rows[i].dataset.thread) state.list.seen.add(rows[i].dataset.thread);
+}
+let seenFrame = 0;
+const seenSoon = () => { if (!seenFrame) seenFrame = requestAnimationFrame(() => { seenFrame = 0; noteSeen(); }); };
 /** The personal view (the default), then each of the viewer's teams: one switch, the active one highlighted. */
 function viewSwitch() {
   const mine = personal();
@@ -1205,12 +1197,9 @@ function threadRows() {
   const box = $('threads');
   if (!state.data) return;
   listHead(box);
+  syncList();
   if (searching()) { searchRows(box); return; }
-  const shown = state.data.threads.filter((t) => passes(t));
-  if (personal()) shown.sort((a, b) => String(lastOf(b)).localeCompare(String(lastOf(a))));
-  // Team order is computed when the inbox loads, not when you read a thread, so a click
-  // never moves the row you clicked.
-  else shown.sort((a, b) => (state.scores.get(b.thread) ?? smartScore(b)) - (state.scores.get(a.thread) ?? smartScore(a)));
+  const shown = placeRows(viewSort(state.data.threads.filter(onList)));
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
@@ -1287,6 +1276,7 @@ function threadRows() {
   cardGone();
   state.order = shown.map((t) => t.thread);
   state.prevKeys = known;
+  noteSeen();
 }
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
 
@@ -2096,7 +2086,7 @@ async function sendDraft(key, asApp) {
   if (!d) return;
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (asApp) {
-    const error = await sendAsApp(key, d.body, d.updated_at);
+    const error = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [] });
     toast(error ? `Nothing was sent: ${error}.` : 'Sent as the opspile app.');
   } else {
     await send(key, data.thread, d);
@@ -2407,11 +2397,14 @@ window.addEventListener('beforeunload', (e) => {
 
 /**
  * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
- * the app post; `base` is the version of the shared draft it sends, which it uses up. Resolves
- * to null, or the error.
+ * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
+ * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
+ * mentions, as when you send it. Resolves to null, or the error.
  */
-async function sendAsApp(key, text, base, files = []) {
-  const res = await postWith('/api/post/app', { thread: key, text, ...(base ? { draft: base } : {}) }, files);
+async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [] } = {}) {
+  const res = await postWith('/api/post/app', {
+    thread: key, text, ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
+  }, files);
   if (!res.ok) return res.data.error || `could not send (${res.status})`;
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -2438,7 +2431,7 @@ function startEdit(id) {
   const pending = state.edits.get(id);
   state.editing = {
     // The text only: the files listed at its end are not part of it, and stay as they are.
-    id, key, text: pending ? pending.body : withoutAttachments(m.body).trim(), as: m.editable, focus: true,
+    id, key, text: pending ? pending.body : ownText(m.body), as: m.editable, focus: true,
   };
   repaint(key);
 }
@@ -2460,7 +2453,7 @@ async function saveEdit() {
   const body = ed.text.trim();
   if (!body) { toast('Write something, or press Esc to keep the message as it is.'); return; }
   closeMentions();
-  if (!m || body === withoutAttachments(m.body).trim()) { cancelEdit(); return; }
+  if (!m || body === ownText(m.body)) { cancelEdit(); return; }
   const at = ed.id.indexOf('|');
   const mentions = mentionsIn(ed.key, body);
   state.editing = null;
@@ -2647,6 +2640,8 @@ function withoutAttachments(body) {
   const list = text.slice(at).replace(/^\n?[ \t]*Attachments:[ \t]*/, '').split('\n').map((l) => l.trim()).filter(Boolean);
   return list.length && list.every((l) => FILE_LINE.test(l)) ? text.slice(0, at) : text;
 }
+/** What the author of a message wrote: no files, nor the messages it quotes (they stay as they are). */
+const ownText = (body) => Markdown.withoutQuotes(withoutAttachments(body)).trim();
 
 /** The 📎 button, paste in the reply box. Dropping is wired once, on the pane (wireDrop). */
 function wireAttach(key, thread) {
@@ -3030,7 +3025,6 @@ function markRead(t) {
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
   }
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
-  if (state.unread && t.unread) state.keep.add(t.thread);
   Object.assign(t, {
     unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
   });
@@ -3216,14 +3210,15 @@ function pump() {
     inflight.set(key, get(threadUrl(key))
       .then((data) => {
         if (!fresh(key)) state.cache.set(key, { data, at: Date.now(), sig });
-        if (design === 'a' || design === 'b') previewSoon();
+        // A row whose preview the inbox did not send takes it from the copy (`preview`).
+        if (!searchEntry(key)?.last_text) previewSoon();
         return data;
       })
       .catch(() => null) // opening it will try again
       .finally(() => { inflight.delete(key); pump(); }));
   }
 }
-/** Designs A and B: the rows again once fetched threads give them their previews, one frame later. */
+/** The rows again once fetched threads give them their previews, one frame later. */
 let previewFrame = 0;
 function previewSoon() {
   if (!previewFrame) previewFrame = requestAnimationFrame(() => { previewFrame = 0; renderThreads(); });
@@ -3290,7 +3285,10 @@ function listen(team, live) {
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {
       if (ev.folded) for (const k of [ev.thread, ...ev.folded]) if (k !== state.open) state.cache.delete(k);
-      reloadSoon(ev.folded?.includes(state.open) ? state.open : ev.thread);
+      // Re-filed under another org or team (a rule change): cached copies say where they were.
+      if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
+      const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
+      reloadSoon(open ? state.open : ev.thread);
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
@@ -3509,7 +3507,7 @@ async function noteMention(ev, team) {
  * synchronous, so nothing on screen sees it.
  */
 function inBell(b, data, t) {
-  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'keep', 'coPeople'];
+  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'list', 'coPeople'];
   const saved = Object.fromEntries(keys.map((k) => [k, state[k]]));
   const savedPass = pass;
   const sets = (o) => Object.fromEntries(Object.entries(o).map(([id, vs]) => [id, new Set(vs)]));
@@ -3522,7 +3520,7 @@ function inBell(b, data, t) {
       sel: sets(b.sel),
       not: sets(b.not),
       unread: false,
-      keep: new Set(),
+      list: newList(),
     });
     state.coPeople = coParticipants();
     return inPass(() => passes(t));
@@ -3580,8 +3578,8 @@ function noteEvent(ev, team) {
   bellsSoon(team);
 }
 
-function setUnread(on, open = state.open) {
-  if (on !== state.unread) state.keep = new Set(on && open ? [open] : []);
+/** Unread only, on or off: a new list (see syncList), which keeps the open thread. */
+function setUnread(on) {
   state.unread = on;
 }
 
@@ -3597,7 +3595,6 @@ function toUrl(push = true, entry = null) {
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
   if (state.search.q) q.set('q', state.search.q);
-  if (design) q.set('design', design);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
 }
@@ -3644,7 +3641,7 @@ function fromUrl() {
   }
   state.sort = personalAsked(q) ? 'personal' : 'team';
   onePick();
-  setUnread(q.get('unread') === '1', q.get('t'));
+  setUnread(q.get('unread') === '1');
   state.as = Number(q.get('as')) || null;
   return { open: q.get('t'), review: q.get('review') === '1', q: q.get('q') || '' };
 }
@@ -3841,10 +3838,13 @@ async function start() {
     if (t) prefetch(t.dataset.thread, { urgent: true });
   });
   $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
+  $('threads').addEventListener('scroll', seenSoon, { passive: true });
+  window.addEventListener('resize', seenSoon, { passive: true });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
     const view = e.target.closest('[data-view]');
-    if (view) { switchView(view.dataset.view || null); return; }
+    // A click on the view already shown sorts it afresh, without the threads unread only kept.
+    if (view) { if (view.getAttribute('aria-checked') === 'true') state.list.key = null; switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
@@ -4153,7 +4153,7 @@ const WEBMCP_TOOLS = [
         },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
         sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, whichever team they belong to, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
-        unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
+        unread_only: { type: 'boolean', description: 'Only threads the viewer has not read (a thread read while the list is shown stays in it)' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
     },
@@ -4366,7 +4366,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'post_as_bot',
-    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Only in channels where the team lets the app post ("Post messages" in the knowledge-base editor). No mentions; Discord takes up to 2000 characters. Pass `draft` (the shared draft\'s `saved`) when it sends that draft, so it is used up.',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel including customers, after a confirmation dialog. Only in channels where the team lets the app post ("Post messages" in the knowledge-base editor). An @Name is a real mention where the user picked that person in the reply box, or the shared draft it sends mentions them; Discord takes up to 2000 characters. Pass `draft` (the shared draft\'s `saved`) when it sends that draft, so it is used up.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4392,7 +4392,11 @@ const WEBMCP_TOOLS = [
       const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
       if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent.');
       if (!yes) return fail('The user declined to send, so nothing was sent.');
-      const error = await sendAsApp(key, body, draft);
+      // The people the shared draft it sends mentions, and those picked in the reply box.
+      const d = draft && data.draft?.updated_at === draft ? data.draft : null;
+      const mentions = [...new Map([...(d?.mentions || []), ...mentionsIn(key, body)]
+        .map((m) => [m.id, m])).values()];
+      const error = await sendAsApp(key, body, draft, { mentions });
       return error ? fail(`Nothing was sent: ${error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
     },
   },

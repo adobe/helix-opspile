@@ -23,6 +23,7 @@ import {
   isHolding, share, sharesByChannel, unshare,
 } from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
+import { faviconProxy, findIcons, orgDomain } from './favicons.js';
 import {
   closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, settleRequests,
 } from './requests.js';
@@ -60,7 +61,7 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
 const TARGETS = ['team', 'org', 'kind'];
 const KINDS = ['channel', 'alert', 'ignore'];
-const TYPES = ['customer', 'partner', 'vendor'];
+const TYPES = ['customer', 'partner', 'vendor', 'internal'];
 const ICON = /^(https:\/\/\S{1,500}|[a-z0-9.-]+\.[a-z]{2,})$/i;
 const MAX_TEXT = 200;
 
@@ -790,7 +791,35 @@ async function removeMember(env, me, body) {
 
 // ---- orgs -------------------------------------------------------------------------------
 
-/** Every org: the ones with a row, and every slug the rules filed threads or a base under. */
+/**
+ * The mail domains of the people outside Adobe who post in an org's threads (all orgs', or
+ * `slug`'s), most people first: `Map<org, [domain]>`. Free mail and tenant domains are left
+ * out; the first is the org's usual mail domain, whose favicon it has without an icon.
+ */
+async function mailDomains(env, slug = null) {
+  const list = await rows(env, `SELECT t.org, LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain,
+      COUNT(DISTINCT m.thread || ' ' || m.author_key) AS n
+    FROM messages m JOIN threads t ON t.thread = m.thread
+    JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
+    WHERE m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'
+      AND (?1 IS NULL OR t.org = ?1)
+    GROUP BY t.org, domain ORDER BY t.org, n DESC, domain`, slug);
+  const by = new Map();
+  for (const r of list) {
+    if (orgDomain(env, r.domain)) {
+      if (!by.has(r.org)) {
+        by.set(r.org, []);
+      }
+      by.get(r.org).push(r.domain);
+    }
+  }
+  return by;
+}
+
+/**
+ * Every org: the ones with a row, and every slug the rules filed threads or a base under.
+ * `domain` is its usual mail domain, whose favicon it is shown with when it has no icon.
+ */
 async function listOrgs(env) {
   const list = await rows(env, `SELECT s.slug, o.name, COALESCE(o.type, 'customer') AS type, o.icon,
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug) AS channels,
@@ -801,6 +830,10 @@ async function listOrgs(env) {
     LEFT JOIN orgs o ON o.slug = s.slug
     WHERE s.slug != ?
     ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED);
+  const domains = await mailDomains(env);
+  for (const o of list) {
+    o.domain = (domains.get(o.slug) || [])[0] || null;
+  }
   return json({ orgs: list, types: TYPES });
 }
 
@@ -820,6 +853,7 @@ async function org(env, slug) {
     org: row || {
       slug, name: null, type: 'customer', icon: null,
     },
+    domains: ((await mailDomains(env, slug)).get(slug) || []).slice(0, 3),
     rules: orgRules,
     channels,
     types: TYPES,
@@ -868,6 +902,22 @@ async function saveOrg(env, body, create) {
 async function deleteOrg(env, body) {
   const { meta } = await env.DB.prepare('DELETE FROM orgs WHERE slug = ?').bind(clean(body.slug)).run();
   return meta.changes ? json({ ok: true }) : json({ error: 'this org has no name, icon or type to delete' }, 404);
+}
+
+/**
+ * GET /api/admin/org-icons?slug=[&fresh=1]: icons for an org, found on the websites its name
+ * and its people's mail domains suggest and ranked by Clef (src/favicons.js), likeliest first.
+ */
+async function orgIcons(env, slug, fresh) {
+  if (!SLUG.test(slug)) {
+    return bad('give an org slug');
+  }
+  const row = await env.DB.prepare('SELECT name, type FROM orgs WHERE slug = ?').bind(slug).first();
+  const domains = ((await mailDomains(env, slug)).get(slug) || []).slice(0, 3);
+  const icons = await findIcons(env, {
+    slug, name: row && row.name, type: (row && row.type) || 'customer', domains,
+  }, { fresh });
+  return json({ icons });
 }
 
 // ---- routes -----------------------------------------------------------------------------
@@ -941,6 +991,8 @@ export async function admin(request, env, url, me) {
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'));
+    case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
+    case 'GET favicon': return faviconProxy(q('domain'));
     default: return json({ error: 'not found' }, 404);
   }
 }

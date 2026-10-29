@@ -67,6 +67,15 @@
   .row .sub, .sub { color: var(--faint); font-size: 12px; }
   .ico { width: 16px; height: 16px; border-radius: 3px; flex: none; }
   .ico.none { background: var(--line); }
+  label.only { display: flex; gap: 6px; align-items: center; color: var(--mute); font-size: 13px; margin: 0 2px 8px; }
+  /* An org's icon suggestions: one button each, most likely first. */
+  .icons { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+  .iconpick { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 104px; padding: 8px 6px 6px; }
+  .iconpick img { width: 32px; height: 32px; object-fit: contain; image-rendering: auto; }
+  .iconpick .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .iconpick.weak { opacity: .55; }
+  .iconpick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; opacity: 1; }
+  .icons .again { align-self: center; }
   .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); white-space: nowrap; }
   .tag.partner { color: var(--purple); border-color: var(--purple); }
   .tag.vendor { color: var(--yellow); border-color: var(--yellow); }

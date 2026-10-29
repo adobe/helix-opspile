@@ -39,6 +39,41 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  */
 
 const PREVIEW_TOKEN = 'preview-token';
+
+// The preview's favicons: a letter on a colour, per domain; none for the ones Google would not
+// know (the Worker answers 404 then, and the page shows the org without an icon).
+const NO_FAVICON = /(^|\.)(globex|initech|parked)\.example$/;
+const HUES = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f'];
+function devFavicon(domain) {
+  const d = String(domain || '').replace(/^www\./, '');
+  if (!/\.example$/.test(d) || NO_FAVICON.test(d)) {
+    return new Response('no favicon', { status: 404, headers: { 'content-type': 'text/plain' } });
+  }
+  const hue = HUES[[...d].reduce((h, c) => h + c.charCodeAt(0), 0) % HUES.length];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="${hue}"/>`
+    + `<text x="32" y="44" font-family="sans-serif" font-size="36" font-weight="700" fill="#fff" text-anchor="middle">${d[0].toUpperCase()}</text></svg>`;
+  return new Response(svg, { headers: { 'content-type': 'image/svg+xml' } });
+}
+const DEV_SVG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#0f766e"/><path d="M20 34l8 8 16-18" stroke="#fff" stroke-width="6" fill="none"/></svg>')}`;
+/** Suggestions for an org: its website's favicon fits, a look-alike's and a partner's do not. */
+function devIcons(slug) {
+  const s = String(slug || 'org');
+  return [
+    {
+      icon: `${s}corp.example`, src: `${s}corp.example`, host: `${s}corp.example`, via: 'favicon', p: 0.94,
+    },
+    {
+      icon: `${s}-group.example`, src: `${s}-group.example`, host: `${s}-group.example`, via: 'favicon', p: 0.38,
+    },
+    {
+      icon: 'agency.example', src: 'agency.example', host: 'agency.example', via: 'favicon', p: 0.07,
+    },
+    // An SVG the site names: offered, but Clef does not read SVGs.
+    {
+      icon: `https://www.${s}corp.example/logo.svg`, src: DEV_SVG, host: `www.${s}corp.example`, via: 'site', p: null, svg: true,
+    },
+  ];
+}
 const tools = (list, property) => list.map(([name, description, readOnly]) => ({
   name,
   description,
@@ -425,6 +460,18 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     }
   }
   seedAdminChannels(DB);
+  // The people outside Adobe post in their org's threads, so each org has a usual mail
+  // domain: the org list shows its favicon when the org has no icon (src/admin.js).
+  for (const p of store.people.values()) {
+    const t = !p.staff && p.org && [...store.threads.values()].find(({ row }) => row.org === p.org);
+    if (t) {
+      const key = `${t.row.source}:${t.row.tenant}:U-MAIL-${p.id}`;
+      DB.sqlite.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at)
+        VALUES (?, ?, ?, 'person', ?, ?, ?, ?)`).run(t.row.source, t.row.tenant, `U-MAIL-${p.id}`, p.name, p.email, p.id, t.row.last_at);
+      DB.sqlite.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, person, staff, counted, deleted, author_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0, ?)`).run(t.row.source, t.row.tenant, t.row.channel_id, `mail-${p.id}`, t.row.thread, t.row.last_at, p.id, key);
+    }
+  }
   DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, icon, updated_at) VALUES
     ('acme', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('initech', 'Initech', 'vendor', NULL, '2026-10-20T09:00:00Z'),
@@ -447,8 +494,8 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
-    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
-      VALUES (?, ?, ?, 'dev', ?)`).run(b.repo, b.kind, b.slug, b.created_at);
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, entries)
+      VALUES (?, ?, ?, 'dev', ?, ?)`).run(b.repo, b.kind, b.slug, b.created_at, b.entries ?? null);
   }
   const queued = [];
   const env = {
@@ -482,9 +529,16 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
   });
-  // The computer is on for the platform team already.
-  DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at)
-    VALUES ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
+  // The computer is on for the platform team already, and posting in one of its channels: the
+  // per-channel lists put the channels switched on their own first.
+  DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
+    ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
+    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z');
+    INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
+      VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // Edge ops has thread agents by default: its channels nobody switched have them.
+  DB.sqlite.exec(`INSERT INTO agent_teams (team, enabled, changed_by, changed_at)
+    VALUES ('edge', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // Dana is in the admin team here, or (`--manager`) only the manager of Edge ops.
   if (manager) {
     DB.sqlite.exec("DELETE FROM team_members WHERE team = 'admin' AND person = 1; UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
@@ -521,6 +575,14 @@ export function createAdmin(store, { manager = false, bases = [] } = {}) {
   };
 
   return Object.assign(async (req, url, body) => {
+    // Org icons without the internet: the fake orgs' favicons, and suggestions as Clef ranks
+    // them (src/favicons.js). `globex.example`, a mail domain, has no favicon.
+    if (url.pathname === '/api/admin/favicon') {
+      return devFavicon(url.searchParams.get('domain'));
+    }
+    if (url.pathname === '/api/admin/org-icons') {
+      return Response.json({ icons: devIcons(url.searchParams.get('slug')) });
+    }
     const res = await admin(toRequest(req, url, body), env, url, me);
     // Re-filing runs right away here.
     while (queued.length) {

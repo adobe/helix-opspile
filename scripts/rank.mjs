@@ -613,7 +613,7 @@ async function weekly(o) {
     throw new Error('no inbox origin: run `npm run ui:session -- <origin>` once, or pass --origin');
   }
   run(process.execPath, ['scripts/dev-ui-session.mjs', origin]);
-  // Production may not record picks yet (before the deploy of migration 0037).
+  // Production may not record picks yet (before the deploy of migration 0040).
   await events().catch((e) => console.log(`no picks this week: ${e.message}`));
   await pull({ ...o, n: o.n });
   await duel({ ...o, rounds: o.rounds || 12 });

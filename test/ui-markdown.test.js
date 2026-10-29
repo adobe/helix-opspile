@@ -16,6 +16,7 @@ import { describe, it } from 'node:test';
 import { bundle } from '../scripts/ui-markdown.mjs';
 import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
+import { quoteMarkdown } from '../src/markdown.js';
 import { mentionPattern, render } from '../src/ui-markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
@@ -161,5 +162,18 @@ describe('ui markdown', () => {
     // eslint-disable-next-line no-new-func
     const Markdown = new Function('document', `${script}\nreturn Markdown;`)(document);
     assert.equal(Markdown.render('**hi**\nthere &copy;'), '<p><strong>hi</strong><br />\nthere ©</p>');
+  });
+});
+
+describe('quoted messages', () => {
+  it('shows a quoted message as a card: its author, linked to it, and when it was posted', () => {
+    const html = md(`Any news?\n\n${quoteMarkdown({
+      author: 'Ada Lovelace', url: 'https://example.slack.com/archives/C1/p1?thread_ts=0.1&cid=C1', at: '2026-10-21T11:43:20.000Z', text: 'Preview is *down* for :eyes:',
+    })}`);
+    assert.match(html, /^<p>Any news\?<\/p><blockquote class="quote"><p class="quote-by"><a target="_blank" rel="noopener" href="https:\/\/example\.slack\.com\/archives\/C1\/p1\?thread_ts=0\.1&amp;cid=C1" title="Open the quoted message"><b>Ada Lovelace<\/b><\/a> <time datetime="2026-10-21T11:43:20\.000Z">[^<]+<\/time><\/p><p>Preview is <em>down<\/em> for 👀<\/p><\/blockquote>$/);
+  });
+
+  it('keeps a quote typed by hand a quote', () => {
+    assert.equal(md('> [Ada](https://example.com/a)\n>\n> said so'), '<blockquote><p><a target="_blank" rel="noopener" href="https://example.com/a">Ada</a></p><p>said so</p></blockquote>');
   });
 });

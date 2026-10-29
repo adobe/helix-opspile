@@ -19,7 +19,7 @@ import { entryOf } from './drafts.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
 import { platformName } from './platforms.js';
-import { target as replyTarget } from './post.js';
+import { knownMentions, target as replyTarget } from './post.js';
 import { resolveShortcodes } from './shortcodes.js';
 
 /**
@@ -74,13 +74,15 @@ export async function recordAppPost(env, me, t, id) {
 }
 
 /**
- * POST /api/post/app `{ thread, text }`, and `files` (src/attach.js, what the platform's bot
- * can attach): posts `text` in the thread as the opspile app, for a staff member of one of the
- * thread's teams, with its emoji `:names:` as the platform knows them (`text` in the answer).
- * The reply arrives like any other message, through the platform's events, by the app.
+ * POST /api/post/app `{ thread, text, mentions? }`, and `files` (src/attach.js, what the
+ * platform's bot can attach): posts `text` in the thread as the opspile app, for a staff member
+ * of one of the thread's teams, with its emoji `:names:` as the platform knows them (`text` in
+ * the answer). `mentions` are account ids from /api/mentionable, as for POST /api/post: each
+ * `@Name` of one of them becomes a platform mention (src/agent/posting.js). The reply arrives
+ * like any other message, through the platform's events, by the app.
  */
 export async function postApp(env, me, request, inTeam, files = []) {
-  const { thread: key, text } = request || {};
+  const { thread: key, text, mentions: ids } = request || {};
   const body = String(text || '').trim();
   if (!body && !files.length) {
     return json({ error: 'write something' }, 400);
@@ -99,10 +101,11 @@ export async function postApp(env, me, request, inTeam, files = []) {
   if (refused) {
     return json({ error: refused }, 400);
   }
-  const { text: sent } = await resolveShortcodes(env, body, {
-    source: check.target.source, tenant: check.target.tenant,
-  });
-  const res = await postAsApp(env, check.entry.key, sent, { files });
+  const [{ text: sent }, mentions] = await Promise.all([
+    resolveShortcodes(env, body, { source: check.target.source, tenant: check.target.tenant }),
+    knownMentions(env, check.target, ids),
+  ]);
+  const res = await postAsApp(env, check.entry.key, sent, { files, mentions });
   if (res.error) {
     return json({ error: res.error }, /^too long/.test(res.error) ? 400 : 502);
   }

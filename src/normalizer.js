@@ -22,7 +22,9 @@ import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
 import { discordApi } from './discord.js';
-import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
+import {
+  discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
+} from './markdown.js';
 import { normalize, slackLinkIn } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
@@ -177,15 +179,30 @@ async function toMarkdown(env, message) {
   if (message.format !== 'mrkdwn') {
     return message.text;
   }
-  const ids = [...new Set([...message.text.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]
-    .map((m) => m[1]))].slice(0, MAX_MENTIONS);
+  const quotes = message.quotes || [];
+  const mentioned = [message.text, ...quotes.map((q) => q.text)].join('\n');
+  const ids = [...new Set([
+    ...[...mentioned.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)].map((m) => m[1]),
+    ...quotes.map((q) => q.authorId).filter(Boolean),
+  ])].slice(0, MAX_MENTIONS);
   const names = new Map();
   for (const id of ids) {
     // eslint-disable-next-line no-await-in-loop
     const identity = await getIdentity(env, { source: 'slack', tenant: message.tenant, userId: id });
     names.set(id, identity.person_name || identity.name);
   }
-  return slackToMarkdown(message.text, (id) => names.get(id));
+  const name = (id) => names.get(id);
+  // A quoted message goes below the text, as Slack shows it, and above the files.
+  return [
+    slackToMarkdown(message.text, name),
+    ...quotes.map((q) => quoteMarkdown({
+      author: (q.authorId && name(q.authorId)) || q.author,
+      url: q.url,
+      at: q.at,
+      text: slackToMarkdown(q.text, name),
+    })),
+    message.files,
+  ].filter(Boolean).join('\n\n');
 }
 
 /** Team members of any team, for mentions by name (loaded once per batch). */
@@ -209,7 +226,7 @@ async function mentionsOf(env, message, body, author, cache) {
       found.set(person, 'id');
     }
   }
-  for (const p of mentionedByName(body, await teamPeople(env, cache))) {
+  for (const p of mentionedByName(withoutQuotes(body), await teamPeople(env, cache))) {
     if (!found.has(p.id)) {
       found.set(p.id, 'name');
     }
@@ -383,7 +400,7 @@ export async function processKey(env, key, cache = {}) {
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
-  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId);
+  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId, cls.team);
   // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
   // poked once that is decided, so it is the group's agent, not one of the root's own.
   if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {

@@ -15,6 +15,8 @@ import { ensureChannelKnowledgeBases } from './kb.js';
 import { loadRules, toChannel } from './lookup.js';
 import { segment } from './raw.js';
 import { classify } from './rules.js';
+import { notifyRoom } from './notify.js';
+import { teamsOf } from './shares.js';
 
 /**
  * Re-filing channels after a rule change. A channel's org and team are part of its pile-2
@@ -204,6 +206,7 @@ export async function refile(env, job) {
   const rowOf = new Map((current || []).map((r) => [r.thread, r]));
   const pathOf = new Map((current || []).map((r) => [r.thread, r.path]));
   const refiled = [];
+  const fromTeams = new Set();
   let budget = MAX_OBJECTS;
   let threads = 0;
   let objects = 0;
@@ -232,12 +235,24 @@ export async function refile(env, job) {
       const was = rowOf.get(thread);
       if (was && (was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind)) {
         refiled.push(thread);
+        fromTeams.add(was.team);
       }
     } else {
       left.push([thread, folder]);
     }
   }
   await revectorize(env, refiled, cls.kind);
+  // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
+  // inbox loaded before the move keeps the old org (or team) otherwise, until something else
+  // reloads it.
+  if (refiled.length && env.ROOMS) {
+    const rooms = await teamsOf(env, {
+      source: job.source, channel_id: job.channelId, team: cls.team,
+    });
+    await notifyRoom(env, [...fromTeams, ...rooms], {
+      type: 'thread', thread: refiled[0], moved: refiled,
+    });
+  }
   if (left.length) {
     await env.NORMALIZE.send({ refile: { ...job, threads: left } });
   }

@@ -25,9 +25,6 @@
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
- * The banner's "design" links switch the thread list between the design explorations
- * (`?design=a|b|c`, see DESIGNS in ui/inbox.js) on the same address; "now" is the list as it is.
- *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
  *
@@ -96,7 +93,7 @@ const ARRIVE_MS = 8000;
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
-const ORG_TYPES = { initech: 'vendor' };
+const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -693,6 +690,12 @@ async function api(req, res, url) {
   if (url.pathname.startsWith('/api/admin/')) {
     const body = req.method === 'GET' ? null : await readJson(req);
     const r = await adminApi(req, url, body);
+    // Images (an org's favicon): as they are.
+    if (!(r.headers.get('content-type') || 'application/json').includes('json')) {
+      res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'text/plain' })
+        .end(Buffer.from(await r.arrayBuffer()));
+      return true;
+    }
     return json(res, await r.json(), r.status);
   }
   if (url.pathname === '/api/me' && as) {
@@ -1249,34 +1252,15 @@ const RELOAD_CLIENT = `<script>(() => {
   es.onmessage = () => location.reload();
 })();</script>`;
 
-/**
- * The thread list's design explorations (`?design=a|b|c`, see DESIGNS in ui/inbox.js), one
- * click apart in the banner: the same address with another design.
- */
-const DESIGN_SWITCH = [['', 'now'], ['a', 'A'], ['b', 'B'], ['c', 'C']]
-  .map(([d, label]) => `<a data-design-pick="${d}" href="?design=${d}" style="color:#fff;padding:0 5px;`
-    + `border-radius:4px;text-decoration:none">${label}</a>`)
-  .join('');
-const DESIGN_CLIENT = `<script>(() => {
-  const now = new URLSearchParams(location.search).get('design') ?? localStorage.getItem('opspile.design') ?? '';
-  for (const a of document.querySelectorAll('[data-design-pick]')) {
-    const q = new URLSearchParams(location.search);
-    q.set('design', a.dataset.designPick);
-    a.href = '?' + q;
-    if (a.dataset.designPick === now) a.style.background = 'rgba(255,255,255,.3)';
-  }
-})();</script>`;
-
-function banner(name) {
+function banner() {
   const prod = backendState.mode === 'prod';
   const label = prod
     ? 'production API · read-only'
     : `fake data${backendState.expired ? ' · production session not accepted: npm run ui:session' : ''}`;
   const color = prod ? '#2e9e5b' : '#b4540a';
-  const designs = name === 'inbox.html' ? ` · design ${DESIGN_SWITCH}${DESIGN_CLIENT}` : '';
   return '<div id="dev-banner" style="position:fixed;left:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:9999;'
     + `font:12px system-ui;padding:3px 8px;border-radius:6px;background:${color};color:#fff">`
-    + `${label}${designs}</div>`;
+    + `${label}</div>`;
 }
 
 /**
@@ -1331,7 +1315,7 @@ async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
   const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
-  return served.replace('</body>', `${banner(name)}${rail}${RELOAD_CLIENT}\n</body>`);
+  return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
 
 function reloadStream(req, res) {

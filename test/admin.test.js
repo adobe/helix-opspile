@@ -190,6 +190,8 @@ describe('admin: team managers', () => {
       }],
       ['POST', '/api/admin/assign', { target: 'team', channelId: 'C3', value: 'helix' }],
       ['GET', '/api/admin/orgs'],
+      ['GET', '/api/admin/org-icons?slug=acme'],
+      ['GET', '/api/admin/favicon?domain=acme.example'],
     ]) {
       // eslint-disable-next-line no-await-in-loop
       assert.equal((await as(e, me, method, path, body)).status, 403, `${method} ${path}`);
@@ -620,10 +622,36 @@ describe('admin: orgs', () => {
     const acme = inbox.body.threads.find((t) => t.org === 'acme');
     assert.deepEqual([acme.org_name, acme.org_icon, acme.org_type], ['ACME Corp', 'acme.example', 'partner']);
     assert.equal(inbox.body.threads.find((t) => t.org === 'globex').org_name, null);
+    // Adobe's own channels are internal (the inbox groups them apart from customers).
+    r = await call(e, ADA, 'PUT', '/api/admin/orgs', { slug: 'globex', type: 'internal' });
+    assert.equal(r.body.org.type, 'internal');
+    const again = await call(e, ADA, 'GET', '/api/inbox?team=helix');
+    assert.equal(again.body.threads.find((t) => t.org === 'globex').org_type, 'internal');
 
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/orgs', { slug: 'acme' })).status, 200);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/orgs', { slug: 'acme' })).status, 404);
     assert.equal((await call(e, ADA, 'GET', '/api/admin/org?slug=nothing')).status, 404);
+  });
+
+  it('names the usual mail domain of an org\'s people, whose favicon it has without an icon', async () => {
+    const e = { ...env(), STAFF_DOMAINS: 'staff.example' };
+    const person = (id, email, staff, threads) => {
+      e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+        VALUES ('slack', 'E1', ?, 'person', ?, ?, '2026-10-22T00:00:00Z')`).run(id, id, email);
+      threads.forEach((root, i) => e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at,
+          staff, counted, deleted, author_key) VALUES ('slack', 'E1', 'C1', ?, ?, '2026-10-22T00:00:00Z', ?, 1, 0, ?)`)
+        .run(`${id}-${i}`, `slack:E1:C1:${root}`, staff, `slack:E1:${id}`));
+    };
+    person('U1', 'wile@acme.example', 0, ['1.1']);
+    person('U2', 'road@runner.example', 0, ['1.1', '2.1']);
+    person('U3', 'bugs@runner.example', 0, ['2.1']);
+    person('U4', 'ada@staff.example', 1, ['1.1', '2.1']);
+    person('U5', 'someone@gmail.com', 0, ['1.1', '2.1']);
+    const r = await call(e, ADA, 'GET', '/api/admin/orgs');
+    assert.deepEqual(r.body.orgs.map((o) => [o.slug, o.domain]), [['acme', 'runner.example'], ['globex', null]]);
+    const one = await call(e, ADA, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(one.body.domains, ['runner.example', 'acme.example']);
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/org-icons?slug=Not%20a%20slug')).status, 400);
   });
 });
 

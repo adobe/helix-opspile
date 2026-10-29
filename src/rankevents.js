@@ -11,7 +11,7 @@
  */
 
 /**
- * What people pick in the thread list (`rank_events`, migration 0037), for the team order to
+ * What people pick in the thread list (`rank_events`, migration 0040), for the team order to
  * learn from: `POST /api/rank/pick` when someone opens a thread by clicking it in the list,
  * with the threads on screen then and their features; `GET /api/rank/events` gives them to
  * the admin team's training (scripts/rank.mjs), page by page.

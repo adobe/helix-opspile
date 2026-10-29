@@ -317,4 +317,98 @@ describe('inbox page', () => {
     assert.ok(baseScore({ ...old, last_at: ago(1) }) > baseScore(old));
     assert.ok(baseScore(closed) > baseScore({ ...closed, last_at: ago(24) }));
   });
+
+  describe('thread list', () => {
+    // The list's functions, on a fake inbox: `passes` filters on `customer` (and unread only, as
+    // the page's does), `statusOf` is the thread's `status`, and a team's scores are `score`.
+    function list({ personal = false } = {}) {
+      let api;
+      const state = {
+        data: { team: 'ops', as: null, threads: [] },
+        sel: {},
+        not: {},
+        unread: false,
+        open: null,
+        scores: new Map(),
+      };
+      const passes = (t) => (!state.unread || api.keptUnread(t))
+        && (!state.sel.customer?.size || state.sel.customer.has(t.org));
+      const names = 'newList, keptUnread, syncList, onList, viewSort, placeRows';
+      api = piece('function newList(', '/** The rows in view', names, {
+        state,
+        passes,
+        personal: () => personal,
+        scopeOf: (d) => d.team,
+        lastOf: (t) => t.last_at,
+        smartScore: (t) => t.score,
+        statusOf: (t) => t.status || 'quiet',
+      });
+      state.list = api.newList();
+      const shown = () => {
+        api.syncList();
+        const sorted = api.viewSort(state.data.threads.filter(api.onList));
+        return api.placeRows(sorted).map((t) => t.thread);
+      };
+      const see = (...keys) => keys.forEach((k) => state.list.seen.add(k));
+      return { state, shown, see };
+    }
+    const thread = (key, o = {}) => ({
+      thread: key, org: 'acme', unread: true, last_at: '2026-01-01T10:00:00Z', score: 1, ...o,
+    });
+
+    it('keeps a read row where it was, in a team view and in unread only', () => {
+      const { state, shown, see } = list();
+      state.unread = true;
+      state.data.threads = [thread('a', { score: 3 }), thread('b', { score: 2 }), thread('c', { score: 1 })];
+      assert.deepEqual(shown(), ['a', 'b', 'c']);
+      see('a', 'b', 'c');
+      // Read, it drops in score and is no longer unread (a live update after the read).
+      state.data.threads[0] = thread('a', { score: 0, unread: false });
+      assert.deepEqual(shown(), ['a', 'b', 'c']);
+      // Unread only, turned off and on again: a new list, without the read thread.
+      state.unread = false;
+      shown();
+      state.unread = true;
+      assert.deepEqual(shown(), ['b', 'c']);
+    });
+
+    it('sorts the rows below the ones seen, and adds arrivals at the end of a team list', () => {
+      const { state, shown, see } = list();
+      state.data.threads = [thread('a', { score: 3 }), thread('b', { score: 2 }), thread('c', { score: 1 })];
+      shown();
+      see('a');
+      state.data.threads[2] = thread('c', { score: 5 });
+      state.data.threads.push(thread('new', { score: 9, last_at: '2026-01-01T11:00:00Z' }));
+      assert.deepEqual(shown(), ['a', 'c', 'b', 'new']);
+      // A critical one, though, comes in right below the rows seen.
+      state.data.threads.push(thread('fire', { status: 'critical', last_at: '2026-01-01T12:00:00Z' }));
+      assert.deepEqual(shown(), ['a', 'fire', 'c', 'b', 'new']);
+    });
+
+    it('puts arrivals at the top of the personal view, without moving the rows seen', () => {
+      const { state, shown, see } = list({ personal: true });
+      state.data.threads = [thread('a', { last_at: '2026-01-01T10:02:00Z' }),
+        thread('b', { last_at: '2026-01-01T10:01:00Z' }), thread('c', { last_at: '2026-01-01T10:00:00Z' })];
+      assert.deepEqual(shown(), ['a', 'b', 'c']);
+      see('a', 'b');
+      // b has a new message: seen, it stays; c, below, comes up to the top, and so does a new one.
+      state.data.threads[1] = thread('b', { last_at: '2026-01-01T11:00:00Z' });
+      state.data.threads[2] = thread('c', { last_at: '2026-01-01T11:01:00Z' });
+      state.data.threads.push(thread('new', { last_at: '2026-01-01T11:02:00Z' }));
+      assert.deepEqual(shown(), ['new', 'c', 'a', 'b']);
+    });
+
+    it('keeps the open thread through a filter change only if it passes the new filters', () => {
+      const { state, shown } = list();
+      state.unread = true;
+      state.data.threads = [thread('acme1', { unread: false }), thread('globex1', { org: 'globex' }),
+        thread('globex2', { org: 'globex', unread: false })];
+      state.open = 'acme1';
+      state.sel.customer = new Set(['globex']);
+      assert.deepEqual(shown(), ['globex1']);
+      state.open = 'globex2';
+      state.sel.customer = new Set(['globex', 'initech']);
+      assert.deepEqual(shown(), ['globex1', 'globex2']);
+    });
+  });
 });

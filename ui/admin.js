@@ -28,12 +28,26 @@
  */
 const state = {
   me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
-  requests: [], openRequests: 0, names: {},
+  requests: [], openRequests: 0, names: {}, noIcon: false,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
-const ico = (icon) => (icon ? `<img class="ico" src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.className='ico none';this.removeAttribute('src')">` : '<span class="ico none"></span>');
+const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `/api/admin/favicon?domain=${encodeURIComponent(icon)}`);
+// The domains whose favicon did not load: Google has none (the Worker answers 404 for its
+// globe, src/favicons.js). Learned as the icons load (the error listener at the start).
+const missing = new Set();
+/**
+ * An org's icon as the inbox shows it: its own, else the favicon of its usual mail domain
+ * (`domain`), else none, which the list shows as an empty square.
+ */
+const ico = (icon, domain) => {
+  const shown = icon || domain;
+  if (!shown || missing.has(shown)) return `<span class="ico none" title="${shown ? `No favicon for ${esc(shown)}` : 'No icon'}"></span>`;
+  const title = icon || `The favicon of ${domain}, the mail domain of its people`;
+  return `<img class="ico" src="${esc(favicon(shown))}" data-icon="${esc(shown)}" alt="" title="${esc(title)}">`;
+};
+/** Whether an org has no icon the inbox can show (as far as the page knows). */
+const iconless = (o) => { const shown = o.icon || o.domain; return !shown || missing.has(shown); };
 const ago = (at) => {
   if (!at) return '';
   const d = (Date.now() - Date.parse(at)) / 86400000;
@@ -43,6 +57,8 @@ const FIELD_LABEL = {
   name: 'Channel name', group_name: 'Teams team or Discord server name', connected: 'Slack Connect team id', channel_id: 'Channel id',
 };
 const UNASSIGNED = '_unassigned';
+/** From this probability on, Clef says an icon is the org's (src/favicons.js). */
+const FITS = 0.5;
 
 async function send(path, method, body) {
   const res = await fetch(path, {
@@ -317,17 +333,23 @@ function drawList() {
       ${decided.length ? `<h2>Decided</h2>${decided.map(row).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page. Confirming one assigns the channel to the team, as adding it on the team's page does.</p>`;
   } else {
-    const rows = state.orgs.filter((o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f)).map((o) => `
+    const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
+      && (!state.noIcon || iconless(o))).map((o) => `
       <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
-        ${ico(o.icon)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
+        ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
         <span class="sub">${o.channels} ch</span></div>`).join('');
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter ${state.orgs.length} orgs" value="${esc(state.filter)}">
+      <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
       ${rows || '<div class="empty">Nothing matches.</div>'}
       <h2>New org</h2><form class="form" id="newOrg"><input id="noName" placeholder="Display name" class="grow" required>
         <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
+    $('noIcon').onchange = (e) => {
+      state.noIcon = e.target.checked;
+      renderList();
+    };
     $('newOrg').onsubmit = async (e) => {
       e.preventDefault();
       const body = { name: $('noName').value, type: $('noType').value };
@@ -1376,19 +1398,23 @@ async function showOrg(slug) {
   const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
   if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
-  const { org, rules, channels, types } = r.body;
+  const {
+    org, rules, channels, types, domains = [],
+  } = r.body;
   const v = {
     target: 'org', value: slug, org, rules, channels,
   };
+  const domain = domains[0] || null;
   state.view = v;
   $('detail').innerHTML = `
-    <div class="title">${backButton()}<span id="oIco">${ico(org.icon)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
+    <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
       <label for="oIcon">Icon</label><span style="display:flex;gap:8px;align-items:center"><input id="oIcon" class="mono" style="flex:1" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
-    </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain. A domain shows its favicon; an https URL is used as the image.</p></div>
+      <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
+    </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
     ${channelsCard('org')}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
@@ -1401,7 +1427,8 @@ async function showOrg(slug) {
     if (document.activeElement !== $('oName')) $('oName').value = o.name || '';
     if (document.activeElement !== $('oIcon')) $('oIcon').value = o.icon || '';
     for (const x of $('oType').querySelectorAll('[data-type]')) x.setAttribute('aria-pressed', String(x.dataset.type === o.type));
-    $('oIco').innerHTML = ico(o.icon);
+    $('oIco').innerHTML = ico(o.icon, domain);
+    markIcons();
     $('oDelete').hidden = !o.updated_at;
     const row = state.orgs.find((x) => x.slug === slug);
     if (row) Object.assign(row, { name: o.name, icon: o.icon, type: o.type });
@@ -1422,8 +1449,48 @@ async function showOrg(slug) {
     status('ok', 'Saved.');
     if (v === state.view) show(res.body.org);
   };
-  $('oName').onchange = () => save();
-  $('oIcon').onchange = () => save();
+  // The icon suggestions (src/favicons.js), each a button that makes it the org's icon.
+  let found = [];
+  const markIcons = () => {
+    const now = $('oIcon').value.trim();
+    for (const b of $('oIcons').querySelectorAll('[data-icon]')) b.setAttribute('aria-pressed', String(b.dataset.icon === now));
+  };
+  const tile = (c) => {
+    const share = c.p === null || c.p === undefined ? '' : `${Math.round(c.p * 100)}%`;
+    const what = c.via === 'favicon' ? `The favicon of ${c.host}` : `${c.icon}, named by ${c.host}`;
+    // Clef does not read SVGs: they are offered without its verdict.
+    const verdict = c.svg ? ': an SVG, which Clef does not check' : share && `: ${share} the org's, says Clef`;
+    return `<button type="button" class="iconpick${c.p !== null && c.p < FITS ? ' weak' : ''}" data-icon="${esc(c.icon)}"
+      title="${esc(`${what}${c.title ? ` (“${c.title}”)` : ''}${verdict}`)}"><img src="${esc(c.via === 'favicon' ? favicon(c.icon) : c.src)}" alt="">
+      <span class="host">${esc(c.host)}${c.via === 'site' ? ' <span class="sub">site</span>' : ''}</span><span class="sub">${c.svg ? 'SVG' : share}</span></button>`;
+  };
+  const drawIcons = () => {
+    $('oIcons').innerHTML = `${found.map(tile).join('') || '<span class="sub">No icon found on the websites its name suggests.</span>'}
+      <button type="button" class="again" id="oIconsAgain" title="Fetch the icons and ask Clef again">Look again</button>`;
+    markIcons();
+    for (const b of $('oIcons').querySelectorAll('[data-icon]')) {
+      b.onclick = () => {
+        $('oIcon').value = b.dataset.icon;
+        markIcons();
+        save();
+      };
+    }
+    $('oIconsAgain').onclick = () => press($('oIconsAgain'), () => lookForIcons(true));
+  };
+  const lookForIcons = async (fresh) => {
+    const res = await call(`/api/admin/org-icons?slug=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`);
+    if (v !== state.view) return;
+    if (!res.ok) {
+      $('oIcons').innerHTML = `<span class="sub">Could not look for icons: ${esc(res.body.error || res.status)}</span>`;
+      return;
+    }
+    found = res.body.icons || [];
+    drawIcons();
+  };
+  lookForIcons(false);
+  // A new name suggests other websites.
+  $('oName').onchange = () => save().then(() => lookForIcons(false));
+  $('oIcon').onchange = () => { markIcons(); save(); };
   for (const b of $('oType').querySelectorAll('[data-type]')) {
     b.onclick = () => {
       for (const x of $('oType').querySelectorAll('[data-type]')) x.setAttribute('aria-pressed', String(x === b));
@@ -1462,6 +1529,17 @@ async function showOrg(slug) {
     go: (id, url) => (['teams', 'orgs', 'requests'].includes(id) ? openUrl(url) : location.assign(url)),
   });
   if (!(await load())) return;
+  // An icon that does not load: Google has no favicon for the domain (or the image is gone).
+  // The org is then shown without one, and counts as one without an icon.
+  let redraw = 0;
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.classList.contains('ico') || !img.dataset.icon) return;
+    missing.add(img.dataset.icon);
+    img.replaceWith(Object.assign(document.createElement('span'), { className: 'ico none', title: `No favicon for ${img.dataset.icon}` }));
+    clearTimeout(redraw);
+    redraw = setTimeout(() => { if (state.tab === 'orgs') renderList(); }, 300);
+  }, true);
   $('detail').addEventListener('click', (e) => {
     if (e.target.closest('[data-back]')) { unselect(); return; }
     // A link to another team or org here (a request's team) opens it as the header does.

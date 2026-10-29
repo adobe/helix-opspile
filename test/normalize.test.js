@@ -150,7 +150,41 @@ describe('normalize (slack)', () => {
       text: 'log',
       files: [{ name: 'a.txt', permalink: 'https://files.example/a' }],
     }));
-    assert.match(message.text, /- \[a\.txt\]\(https:\/\/files\.example\/a\)$/);
+    assert.match(message.files, /- \[a\.txt\]\(https:\/\/files\.example\/a\)$/);
+  });
+
+  it('keeps the messages a Slack message quotes apart from its text', () => {
+    const { message } = normalize(SKEY, slack({
+      type: 'message',
+      channel: 'C1',
+      user: 'U1',
+      ts: '1.5',
+      text: 'see this',
+      attachments: [
+        {
+          is_share: true,
+          author_id: 'U2',
+          author_name: 'Some App',
+          author_subname: 'Ada',
+          ts: '1792583000.000100',
+          from_url: 'https://example.slack.com/archives/C1/p1792583000000100',
+          text: 'hi <@U3>',
+        },
+        { is_msg_unfurl: true, from_url: 'https://example.slack.com/archives/C2/p2' },
+        { from_url: 'https://docs.example/a', title: 'Docs', text: 'About' },
+      ],
+    }));
+    assert.equal(message.text, 'see this');
+    assert.deepEqual(message.quotes, [
+      {
+        authorId: 'U2', author: 'Ada', at: '2026-10-21T11:43:20.000Z', url: 'https://example.slack.com/archives/C1/p1792583000000100', text: 'hi <@U3>',
+      },
+      {
+        authorId: undefined, author: undefined, at: undefined, url: 'https://example.slack.com/archives/C2/p2', text: '',
+      },
+    ]);
+    // Whom a quoted message mentions, this one does not.
+    assert.deepEqual(message.mentionIds, []);
   });
 
   it('gives Slack images their size, so the inbox can reserve the space', () => {
@@ -165,7 +199,7 @@ describe('normalize (slack)', () => {
         name: 'shot.png', mimetype: 'image/png', url_private: 'https://files.example/shot.png', original_w: 1200, original_h: 800,
       }],
     }));
-    assert.match(message.text, /!\[shot\.png\]\(https:\/\/files\.example\/shot\.png "1200x800"\)/);
+    assert.match(message.files, /!\[shot\.png\]\(https:\/\/files\.example\/shot\.png "1200x800"\)/);
   });
 });
 

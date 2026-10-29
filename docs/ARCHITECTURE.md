@@ -107,6 +107,21 @@ URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an
 one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
 the agents show the name and the type.
 
+The org list in the admin pages shows each org with the icon the inbox resolves for it (its
+own, else the favicon of its usual mail domain: the most common one among the people outside
+Adobe who post in its threads, free mail and tenant domains left out), and an empty square
+where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons
+come through `/api/admin/favicon`, which answers 404 where Google's favicon service has only
+its globe. An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
+mail domains, slug and name suggest (`<slug>.com`, `www.<slug>.com`, `<name>.com`, …) and the
+icons those sites name (`<link rel="icon">`, `apple-touch-icon`), each image with what Clef
+thinks of it: whether the site is the org's own (not a namesake's, an agency's or a parked
+domain's; Clef is told each site's title where it can be read) and whether the image is a logo
+rather than a stock icon. Picking one makes it the org's icon. Sites are asked with a browser's
+user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which Clef cannot
+read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
+verdict.
+
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
@@ -201,6 +216,12 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
              discord:<guildId>:<channelId>:<rootMessageId>
 ```
 
+- A message that quotes another (Slack: one forwarded with it, `is_share`, or the preview Slack
+  adds under a link to a message, `is_msg_unfurl`) has it below its text and above its files, as
+  a markdown quote whose first line is its author, linked to it with the title
+  `"Quoted message, <ISO time>"` (`quoteMarkdown` in [src/markdown.js](../src/markdown.js)). The
+  inbox shows it as a card. Its words are not its author's: they count for no mentions, nor for
+  the vectors of what people talk about, and editing the message leaves the quote alone.
 - New messages are new objects, so concurrent replies never contend for the same file.
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
@@ -244,6 +265,12 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   continues or that it is a new topic. A match needs a probability of at least 0.8. Comparing
   the new root with each candidate on its own spread Clef's answer over several candidates and
   left most of a chat in pieces. Platform notices ("… has joined the channel") are left alone.
+- **Quotes:** a root that quotes a message (below) stays on its own, whatever Clef or a burst
+  would say. Forwarding a message into the channel, or linking to one, starts a topic on purpose:
+  whoever meant to continue that conversation would have replied in it, and the text that goes
+  with a quote ("first step in that direction") reads like a follow-up of whatever was said last.
+  The root after it can still continue it. In the transcripts Clef reads, a quote is
+  `> <author> wrote:` and its text.
 
 A match sets `logicalThread` on that one message file and on its thread row, always pointing at
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing
@@ -336,13 +363,24 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
+The list of knowledge bases has the ops teams first, then the customers and vendors, by
+activity (the default: most entries first, then most tools and MCP servers turned on for their
+threads) or by name, as the person last chose in that browser. An entry is a file other than
+`index.md`, `log.md` and `systemprompt.md`; `knowledge_bases.entries` keeps the count, which
+every write updates (and opening a knowledge base in the editor, when its listing is complete),
+and the cron counts the knowledge bases not counted yet, a batch per run, over their whole tree.
+
 **Thread agents per channel.** The editor shows, for each knowledge base, the channels it
 learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
 each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
 an agent in any of their channels. The admin team, and the managers of the team that owns a
-channel (the team of its latest thread), turn its agent on or off there, after a question in
-the page. The switch is a row in `agent_channels` with who set it and when; a channel nobody
-has switched yet follows `AGENT_CHANNELS`, the deployment's default. Alert channels have no
+channel (the team of its latest thread), turn its agent on or off there, right away (no
+question: it is one channel, and switches back as easily). The switch is a row in
+`agent_channels` with who set it and when. A team's knowledge base also has the team's
+default, **On by default** (`agent_teams`, after a question in the page, since it switches many
+channels at once): on, every channel of the team that nobody switched has an agent, the
+channels it gets later too. A channel nobody switched has an agent when its team's default or
+`AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
 
@@ -354,7 +392,9 @@ name, an `https://` URL, what it is for (the agents are told), request headers f
 credentials (sent once, sealed with `TOKEN_KEY`, then shown by name only) and optionally the
 only tools agents may call. Adding or changing one connects to it and lists its tools. Above
 them are the [global servers](#global-mcp-servers), with a switch for the team (in a team's
-knowledge base) and one per channel the knowledge base learns from.
+knowledge base) and one per channel the knowledge base learns from. In a team's knowledge base
+the per-channel switches fold, the channels switched on their own first and then by name, with a
+filter when there are many; in a customer's they are all there is, so they are shown unfolded.
 
 For admins and team managers, every page has the same header (`ui/header.js`,
 `ui/header.css`): a switch between **Inbox**, **Agents** (this editor: the agents' knowledge
@@ -456,10 +496,19 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   customers get answered first (`npm run rank`, see the README), plus how close the thread is to
   you (mentioned you, you posted, 🛟 or 👀 by a colleague). Opening a thread by clicking it in
   the list records the pick, with the threads on screen and their features, in `rank_events`
-  (`POST /api/rank/pick`, migration 0037), for that training. A facet value with threads
+  (`POST /api/rank/pick`, migration 0040), for that training. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.
+- **The list stays put** while it is the same list (the same view, filters and unread only):
+  reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
+  read or not (unread only is "unread when the list was opened"); the rows in view, and those
+  scrolled past, keep their order, and the rows below them are sorted as the view sorts.
+  Threads that come in since (new ones, or with unread only, read ones with a new message)
+  are added at the end of a team's list, except critical and hot ones, which come in right
+  below the rows you have seen; in the personal view, threads with activity since that you
+  have not seen in it come to the top. Another filter or view, unread only, or a click on the
+  view already shown sorts it afresh; the thread open then stays, if it passes the filters.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
   in the inbox already open, or in a new one. There are two kinds, settings of the person in
@@ -589,14 +638,19 @@ with the browser's "Leave page?": the bubble lives in the page only, and the pos
 off.
 
 **Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
-Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling
-is Slack's (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`, from the GitHub and
+Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling is
+Slack's (`:facepalm:` is `:face_palm:`, `:thumbs-up:` is `:thumbsup:`, from the GitHub and
 Discord names in `src/emoji.js` and by leaving out separators, `src/emojinames.js`), and a
-workspace's own emoji (one somebody reacted with) stays. For any other name, Clef picks the
-closest emoji from at most 16 candidates (the most alike by name and CLDR keywords, then common
-ones), at most three names per reply, within 2.5 seconds; it needs a probability of 0.5, else
-the name stays as typed. Answers are remembered per isolate. Edits (`POST /api/edit`) go the same
-way. The inbox shows every platform's names as emoji the same way.
+workspace's own emoji (one somebody reacted with, and on Slack every one of `emoji.list`, bot
+scope `emoji:read`, remembered per isolate for ten minutes) stays. For any other name, Clef
+picks the closest emoji from at most 16 candidates (the most alike by name and CLDR keywords,
+then common ones), at most three names per reply, within 2.5 seconds; it needs a probability of
+0.5, else the name stays as typed. On Slack, Clef is asked only once `emoji.list` answered:
+without it (no `emoji:read`, Slack failing; tried again after a minute) a name that is not a
+standard one may be a custom emoji and stays as typed. Answers are remembered per isolate. Code
+(fenced blocks of three or more backticks or tildes, code spans of any number of backticks) and
+addresses (bare, autolinks in `<…>`, link destinations) are left alone. Edits (`POST /api/edit`)
+go the same way. The inbox shows every platform's names as emoji the same way.
 
 **Emoji suggestions.** Typing `:` and two more characters of a name in the reply box (or in a
 message being edited) suggests up to eight emoji, as typing `@` suggests people. First, at
@@ -632,9 +686,15 @@ used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the sa
 thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in
 channels whose **Post messages** switch is on (the channel's, else its team's) on a platform
 whose bot is set up, for staff of the thread's teams. The switch says whether the app speaks
-in a channel at all, whoever writes the text. The post names no person and carries no
-mentions; it comes back through ingestion by the app, and a thread agent there is told about
-it like any message.
+in a channel at all, whoever writes the text. The post names no person (who wrote it is
+kept in `app_posts` only). The people picked with `@` (or that the shared draft it sends
+mentions) are mentioned as in a reply: `<@U…>` on Slack, in `text` and in the `markdown`
+block, which keeps the id form as a mention; `<@id>` on Discord, whose `allowed_mentions` ping
+those people and nobody else (no `@everyone`, no roles); on Teams an `<at>Name</at>` in the
+bot's text with a `mention` entity by the person's Entra object id, which the Bot Framework
+takes. A picked Teams bot stays plain text there: Teams gives no bot what another bot writes.
+It comes back through ingestion by the app, and a thread agent there is told about it like
+any message.
 
 **Editing.** A message sent from opspile, or from the platform, can be edited in the inbox the
 way it was sent (`POST /api/edit`, `src/edit.js`): hovering one of your own messages shows ✎,
@@ -645,7 +705,7 @@ delegated `ChannelMessage.ReadWrite`; that takes the tenant's admin consent, so 
 only once `TEAMS_EDITS` says it was given. A message you posted as the opspile app is recorded
 in `app_posts` (user state, like drafts) and is yours to edit as the app, where the app may
 still post: Slack `chat.update` with the bot token, the Teams bot's update activity, Discord
-`PATCH` with the bot. Nobody else's messages, and nothing on Discord as a person, are offered.
+`PATCH` with the bot, with mentions as when it was posted. Nobody else's messages, and nothing on Discord as a person, are offered.
 The accounts the message mentioned (`@Name` in its markdown, one account by that name) stay
 mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
 edit made on the platform, and the inbox shows the new text and "(edited)" meanwhile. A Slack
@@ -766,7 +826,7 @@ inbox, on any message of the thread:
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
 in the channels where agents are on: the admin team and team managers switch them per channel
-in the knowledge-base editor, and `AGENT_CHANNELS` is the default for the rest. Each is a Durable Object
+in the knowledge-base editor, and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
@@ -945,7 +1005,7 @@ away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack w
 token (`chat.postMessage` in the thread, the Markdown in a `markdown` block, which Slack renders
 itself, and `text` in mrkdwn for notifications and for the message file), on Discord with the bot, in the Discord thread when
 the conversation is one and as an inline reply to its first message otherwise, with mentions
-switched off. On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
+switched off (but for the people a person posting as the app picked, see "Replying"). On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
 post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is
 installed in. The bot is the opspile Entra app itself, single tenant, registered as an Azure
 Bot with the Teams channel, and packaged as a notification-only Teams app in the org catalog

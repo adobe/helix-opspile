@@ -18,7 +18,7 @@ import { parse } from '../src/channels.js';
 import { runBackfill, slackBackfillKey } from '../src/backfill.js';
 import { ruleFacts } from '../src/facts.js';
 import { labelThread, QUESTIONS } from '../src/label.js';
-import { resetSlackDomains } from '../src/lookup.js';
+import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
@@ -73,8 +73,10 @@ describe('processKey', () => {
   const realFetch = globalThis.fetch;
   let calls;
   let channelInfo;
+  let teamDown;
   beforeEach(() => {
     calls = [];
+    teamDown = false;
     channelInfo = { id: 'C1', name: 'aem-acme', context_team_id: 'T1' };
     resetSlackDomains();
     globalThis.fetch = async (url) => {
@@ -84,6 +86,9 @@ describe('processKey', () => {
         return Response.json({ ok: true, channel: channelInfo });
       }
       if (u.pathname === '/api/team.info') {
+        if (teamDown) {
+          return Response.json({ ok: false, error: 'internal_error' });
+        }
         const domains = { T1: 'acme-support', T2: 'acme-internal' };
         const domain = domains[u.searchParams.get('team')];
         return Response.json(domain ? { ok: true, team: { id: u.searchParams.get('team'), domain } }
@@ -145,6 +150,54 @@ describe('processKey', () => {
     assert.deepEqual(meta.raw, [key]);
     const [who] = e.DB.rows("SELECT title FROM identities WHERE user_id = 'U2'");
     assert.equal(who.title, 'CTO');
+  });
+
+  it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const from = 'https://example.slack.com/archives/C1/p1792583000000100?thread_ts=1792582000.000100&cid=C1';
+    const e = env({
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000100',
+        text: 'First step in that direction',
+        attachments: [
+          {
+            is_share: true,
+            is_msg_unfurl: true,
+            author_id: 'U2',
+            author_subname: 'cy',
+            ts: '1792583000.000100',
+            from_url: from,
+            text: '*Pages* for <@U1> &amp; friends',
+          },
+          // A link's preview is not a quote.
+          { from_url: 'https://docs.example/a', title: 'Docs', text: 'About' },
+        ],
+        files: [{ name: 'a.txt', permalink: 'https://files.example/a' }],
+      }),
+    });
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000100/1792584000.000100.md';
+    const { body } = parse(e.CHANNELS.objects.get(path).body);
+    assert.equal(body, [
+      'First step in that direction',
+      '',
+      `> [Cy](${from} "Quoted message, 2026-10-21T11:43:20.000Z")`,
+      '>',
+      '> **Pages** for @Ada Staff & friends',
+      '',
+      'Attachments:',
+      '- [a.txt](https://files.example/a)',
+    ].join('\n'));
+    // Whom the quoted message mentions, this one does not.
+    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM mentions')[0].n, 0);
+    const [row] = e.DB.rows('SELECT title, last_text FROM threads');
+    assert.deepEqual(row, {
+      title: 'First step in that direction',
+      last_text: 'First step in that direction Cy wrote: Pages for @Ada Staff & friends Attachments: a.txt',
+    });
   });
 
   it('looks up Slack Connect file stubs once, keeps the answer in pile 1, and skips it', async () => {
@@ -308,6 +361,22 @@ describe('processKey', () => {
     channelInfo = { ...channelInfo, context_team_id: 'T1' };
     await processKey(e, k2);
     assert.equal(link(), 'https://acme-support.slack.com/archives/C1/p11');
+  });
+
+  it('asks for a workspace again a day after its lookup failed, and keeps one that answered', async () => {
+    const e = env({});
+    const t0 = Date.parse(NOW_ISO);
+    const hours = (h) => t0 + h * 60 * 60 * 1000;
+    const ch = (channelId, now) => getChannel(e, { source: 'slack', tenant: 'E1', channelId }, now);
+    teamDown = true;
+    assert.equal((await quiet(() => ch('C1', t0))).domain, null);
+    teamDown = false;
+    // Within the day the row is fresh; after it, the lookup is made again and now answers.
+    assert.equal((await ch('C1', hours(1))).domain, null);
+    assert.equal((await ch('C1', hours(25))).domain, 'acme-support');
+    // Another channel of the same workspace, the same day: no second team.info.
+    assert.equal((await ch('C2', hours(26))).domain, 'acme-support');
+    assert.equal(calls.filter((c) => c === '/api/team.info').length, 2);
   });
 
   it('caches channels and people in D1', async () => {

@@ -81,6 +81,25 @@ function slackFiles(files) {
 const blockText = (t) => (t && typeof t.text === 'string' ? t.text : '');
 
 /**
+ * The messages a Slack message quotes: one forwarded with it (`is_share`), or the preview Slack
+ * adds under a link to a message (`is_msg_unfurl`). Each is `{ authorId, author, at, url, text }`,
+ * the text in mrkdwn; src/normalizer.js puts them below the message's text (quoteMarkdown).
+ * Other attachments (link previews, bots' legacy attachments) are not quotes.
+ */
+export function slackQuotes(attachments) {
+  return (Array.isArray(attachments) ? attachments : [])
+    .filter((a) => a && (a.is_share || a.is_msg_unfurl) && a.from_url)
+    .map((a) => ({
+      authorId: a.author_id || undefined,
+      // A message posted through an app names the app, and the person as the sub-name.
+      author: a.author_subname || a.author_name || undefined,
+      at: a.ts ? iso(a.ts) : undefined,
+      url: a.from_url,
+      text: typeof a.text === 'string' ? a.text : '',
+    }));
+}
+
+/**
  * Block Kit to mrkdwn, for messages whose blocks say more than their `text` (bots and
  * apps). `rich_text` blocks are what Slack's own composer sends; for those, `text` already
  * holds the same content, so they are not rendered.
@@ -142,6 +161,7 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     };
   }
   const files = slackFiles(msg.files);
+  const quotes = slackQuotes(msg.attachments);
   return {
     source: 'slack',
     tenant,
@@ -155,8 +175,10 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     authorRef,
     subtype: msg.subtype,
     format: 'mrkdwn',
-    text: [slackBlocks(msg.blocks) || msg.text || '', files && `\n\nAttachments:\n${files}`]
-      .filter(Boolean).join(''),
+    // The text, the messages it quotes, then its files (markdown already): src/normalizer.js.
+    text: slackBlocks(msg.blocks) || msg.text || '',
+    quotes: quotes.length ? quotes : undefined,
+    files: files ? `Attachments:\n${files}` : undefined,
     reactions: slackReactions(msg),
     mentionIds: [...new Set([...String(msg.text || '').matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)]
       .map((m) => m[1]))],
