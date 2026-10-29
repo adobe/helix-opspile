@@ -4379,18 +4379,20 @@ const settled = (anim, fn) => {
 const onScreen = (r) => r.width && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
 /**
  * The keyframes that turn `el` (laid out where it ends) into the thumbnail at `from`, cropped
- * as the thumbnail crops it (`object-fit: cover`).
+ * as the thumbnail crops it (`object-fit: cover`, from the top left).
  */
 function morph(el, from) {
   const to = el.getBoundingClientRect();
   if (!to.width || !to.height || !onScreen(from)) return null;
   const scale = Math.max(from.width / to.width, from.height / to.height);
-  const dx = from.left + from.width / 2 - (to.left + to.width / 2);
-  const dy = from.top + from.height / 2 - (to.top + to.height / 2);
-  const x = Math.max(0, (to.width - from.width / scale) / 2);
-  const y = Math.max(0, (to.height - from.height / scale) / 2);
+  // Thumbnails are cropped from the top left (`object-position: left top`): what is cut off is
+  // to the right and below.
+  const x = Math.max(0, to.width - from.width / scale);
+  const y = Math.max(0, to.height - from.height / scale);
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2) + (scale * x) / 2;
+  const dy = from.top + from.height / 2 - (to.top + to.height / 2) + (scale * y) / 2;
   return [
-    { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, clipPath: `inset(${y}px ${x}px round ${10 / scale}px)` },
+    { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, clipPath: `inset(0 ${x}px ${y}px 0 round ${8 / scale}px)` },
     { transform: 'none', clipPath: 'inset(0 round 6px)' },
   ];
 }

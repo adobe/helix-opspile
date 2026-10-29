@@ -510,11 +510,14 @@
   /* A gallery: two or more images in a row, as a grid of thumbnails (cropped; the lightbox
      shows them whole). Three to a row, and a last row of two where one or two are left over,
      so no row has a gap. */
-  .bubble .gallery { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; width: min(100%, 480px);
-    margin: 6px 0; border-radius: 10px; overflow: hidden; }
+  .bubble .gallery { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; width: min(100%, 600px);
+    margin: 10px 0; }
+  /* Screenshots say what they are at the top left (a title bar, a header): the crop keeps it. Each
+     tile has its own corners and a hairline, so light screenshots stay apart on a light bubble. */
   .bubble .gallery > img.att { grid-column: span 2; width: 100%; height: auto; aspect-ratio: 4 / 3; max-height: none;
-    min-width: 0; min-height: 0; margin: 0; border-radius: 2px; object-fit: cover;
-    background: color-mix(in srgb, currentColor 8%, transparent); transition: filter .15s; }
+    min-width: 0; min-height: 0; margin: 0; border-radius: 8px; object-fit: cover; object-position: left top;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 14%, transparent); transition: filter .15s; }
   .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2),
   .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2) + img,
   .bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4),
