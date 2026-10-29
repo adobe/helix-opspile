@@ -201,6 +201,12 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
              discord:<guildId>:<channelId>:<rootMessageId>
 ```
 
+- A message that quotes another (Slack: one forwarded with it, `is_share`, or the preview Slack
+  adds under a link to a message, `is_msg_unfurl`) has it below its text and above its files, as
+  a markdown quote whose first line is its author, linked to it with the title
+  `"Quoted message, <ISO time>"` (`quoteMarkdown` in [src/markdown.js](../src/markdown.js)). The
+  inbox shows it as a card. Its words are not its author's: they count for no mentions, nor for
+  the vectors of what people talk about, and editing the message leaves the quote alone.
 - New messages are new objects, so concurrent replies never contend for the same file.
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
@@ -244,6 +250,12 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   continues or that it is a new topic. A match needs a probability of at least 0.8. Comparing
   the new root with each candidate on its own spread Clef's answer over several candidates and
   left most of a chat in pieces. Platform notices ("… has joined the channel") are left alone.
+- **Quotes:** a root that quotes a message (below) stays on its own, whatever Clef or a burst
+  would say. Forwarding a message into the channel, or linking to one, starts a topic on purpose:
+  whoever meant to continue that conversation would have replied in it, and the text that goes
+  with a quote ("first step in that direction") reads like a follow-up of whatever was said last.
+  The root after it can still continue it. In the transcripts Clef reads, a quote is
+  `> <author> wrote:` and its text.
 
 A match sets `logicalThread` on that one message file and on its thread row, always pointing at
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing

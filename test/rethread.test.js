@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { fold } from '../src/api.js';
 import { parse, render } from '../src/channels.js';
+import { quoteMarkdown } from '../src/markdown.js';
 import { ago, rethread, skeleton } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -352,6 +353,48 @@ describe('conversations', () => {
     await rethread(env, a);
     assert.equal((await rethread(env, b)).result, 'new-topic');
     assert.equal(env.clefCalls.length, 1);
+  });
+
+  it('leaves a root that quotes a message on its own, and out of a burst', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.99 }) };
+    const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+    const quote = (id) => quoteMarkdown({
+      author: 'Ada', url: `https://example.slack.com/archives/C1/p${id}`, at: at(0), text: 'We should rank people by what they know',
+    });
+    const a = await seed(env, '14.0', `I just merged the change that lets everyone in.\n\n${quote(1)}`, at(0));
+    const b = await seed(env, '14.1', 'Looks good on stage', at(59));
+    const c = await seed(env, '14.2', `First step in that direction\n\n${quote(2)}`, at(60));
+    const d = await seed(env, '14.3', 'and the next one is up for review', at(61));
+    conversation(env, [[a, at(0), '14.0', 'U1'], [b, at(59), '14.1', 'U1'], [c, at(60), '14.2', 'U1'],
+      [d, at(61), '14.3', 'U1']]);
+    await rethread(env, a);
+    // Clef would have put the quoting root into the first one, and it follows a root by the
+    // same person within minutes: it is new all the same.
+    assert.deepEqual(await rethread(env, c), {
+      result: 'new-topic', via: null, p: null, reason: 'quotes a message',
+    });
+    assert.equal(env.clefCalls.length, 0);
+    // The root before it, re-threaded later, does not pull it in either.
+    await rethread(env, b);
+    assert.equal(env.DB.rows('SELECT logical_thread FROM threads WHERE thread = ?', c)[0].logical_thread, null);
+    // What follows it within minutes continues it, as any burst.
+    assert.deepEqual(env.DB.rows('SELECT logical_thread, logical_via FROM threads WHERE thread = ?', d), [
+      { logical_thread: c, logical_via: 'burst' },
+    ]);
+  });
+
+  it('reads a quote in the transcript as who wrote it, not as a link', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+    const at0 = new Date(T0).toISOString();
+    const at1 = new Date(T0 + 30 * 60000).toISOString();
+    const a = await seed(env, '15.0', `Look at this\n\n${quoteMarkdown({
+      author: 'Ada', url: 'https://example.slack.com/archives/C1/p1', at: at0, text: 'Preview is down',
+    })}`, at0);
+    const b = await seed(env, '15.1', 'Is preview back?', at1);
+    conversation(env, [[a, at0, '15.0', 'U1'], [b, at1, '15.1', 'U2']]);
+    await rethread(env, a);
+    await rethread(env, b);
+    assert.match(env.clefCalls[0].state, /\[A, 30 minutes before\] Look at this\n\n> Ada wrote:\n> Preview is down\n/);
   });
 
   it('leaves platform notices alone', async () => {
