@@ -426,7 +426,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   were mentioned in (all of their threads, not only the ones you are in; no alerts), puts the
   latest activity first and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Its live updates come from the rooms of all your teams. A **team's** view
+  views. Its live updates come from the rooms of all your teams. Someone on no team (no-team
+  mode, `SIGNIN_DOMAINS`) has only this view, of the channels of every team they posted or were
+  mentioned in, with the live updates of the rooms of the teams those channels are filed under.
+  A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's

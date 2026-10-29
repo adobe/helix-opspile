@@ -143,7 +143,7 @@ export async function edit(env, me, request, inTeam) {
     thread: key, id, text, mentions: ids,
   } = request || {};
   const t = key && await env.DB.prepare(`${THREAD} WHERE t.thread = ?`).bind(String(key)).first();
-  if (!t || !inTeam(await teamsOf(env, t))) {
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
     return json({ error: 'not found' }, 404);
   }
   const msg = await env.DB.prepare(`SELECT id, person, author_key, permalink FROM messages

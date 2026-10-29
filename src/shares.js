@@ -75,6 +75,56 @@ export const memberOf = (me) => (teams) => [].concat(teams || [])
   .some((team) => (me.teams || []).some((t) => t.slug === team));
 
 /**
+ * Whether `me` is on no ops team: someone who signed in from one of SIGNIN_DOMAINS (see
+ * `personForEmail` in src/api.js). They have the personal view only, of every channel.
+ */
+export const teamless = (me) => Boolean(me) && !(me.teams || []).length;
+
+/**
+ * SQL: the channels person `param` (an SQL parameter) posted or was mentioned in, as rows of
+ * `(source, channel_id)`: the channels of their personal view. Both by index (migrations 0004,
+ * 0030).
+ */
+export const personalChannels = (param) => `SELECT source, channel_id FROM messages
+    WHERE person = ${param}
+  UNION SELECT c.source, c.channel_id FROM mentions n JOIN threads c ON c.thread = n.thread
+    WHERE n.person = ${param}`;
+
+/** Whether person `person` posted or was mentioned in channel `place` (`source`, `channel_id`). */
+export async function inPersonalChannel(env, person, place) {
+  if (!person || !place || !place.source || place.channel_id == null) {
+    return false;
+  }
+  const row = await env.DB.prepare(`SELECT 1 AS yes FROM (${personalChannels('?1')})
+    WHERE source = ?2 AND channel_id = ?3 LIMIT 1`)
+    .bind(person, place.source, String(place.channel_id)).first();
+  return Boolean(row);
+}
+
+/**
+ * Who may work a thread (read, reply, react, resolve, draft): `(teams, place) => Promise<bool>`
+ * for a thread whose inbox teams are `teams` and whose channel is `place` (a row with `source`
+ * and `channel_id`). A member of one of the teams may; someone on no team may in the channels
+ * of their personal view.
+ */
+export const mayWork = (env, me) => async (teams, place) => memberOf(me)(teams)
+  || (teamless(me) && inPersonalChannel(env, me.id, place));
+
+/**
+ * The rooms (teams, by slug) whose live updates someone on no team gets: the teams their
+ * personal view's channels are filed under. Team members get their teams' rooms.
+ */
+export async function roomsOf(env, me) {
+  if (!teamless(me)) {
+    return (me.teams || []).map((t) => t.slug);
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT team FROM threads
+    WHERE (source, channel_id) IN (${personalChannels('?1')}) AND team IS NOT NULL
+    ORDER BY team`).bind(me.id).all();
+  return (results || []).map((r) => r.team);
+}
+
+/**
  * The team a viewer sees a thread as: `wanted` if the thread is in its inbox and the viewer is
  * in it, else the first of the thread's teams the viewer is in, else the team it is filed
  * under.

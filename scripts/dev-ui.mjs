@@ -19,6 +19,7 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
+ *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
@@ -82,6 +83,9 @@ const SIMULATE = !process.argv.includes('--no-sim');
 const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
+// Dana on no team, signed in from one of SIGNIN_DOMAINS (no-team mode): the personal view only,
+// of every team's channels she posted or was mentioned in.
+const NO_TEAM = process.argv.includes('--no-team');
 const SIM_EVERY_MS = 25 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
 // Sending a reply, as production's take: the platform takes it in about 900 ms (POST
@@ -96,6 +100,12 @@ const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
 const store = createStore(Date.now(), { big: process.argv.includes('--big') });
+if (NO_TEAM) {
+  for (const t of store.teams) {
+    t.members = t.members.filter((id) => id !== store.me.id);
+  }
+  store.me = { ...store.me, teams: [] };
+}
 const kb = await createKnowledgeBases();
 const adminApi = createAdmin(store, { manager: MANAGER, bases: kb.list() });
 const ME = store.me.id;
@@ -327,8 +337,10 @@ function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
   const channels = personal ? myChannels() : null;
+  // On no team: every team's channels.
   const inScope = (r) => (personal
-    ? mine.includes(r.team) && r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
+    ? (!mine.length || mine.includes(r.team)) && r.kind !== 'alert'
+      && channels.has(`${r.source}:${r.channel_id}`)
     : r.team === team);
   const all = [...store.threads.values()]
     .map((e) => e.row)
@@ -345,7 +357,8 @@ function inbox(team, before = null, personal = false, only = null) {
       ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
     }));
   const scope = personal ? mine : [team];
-  const teamIds = new Set(members(...scope).map((m) => m.id));
+  // The viewer's own marks and mentions count, on a team or not.
+  const teamIds = new Set([ME, ...members(...scope).map((m) => m.id)]);
   const keys = new Set(rows.map((r) => r.thread));
   // As in src/api.js: the team's marks, plus every staff member's (for "unseen by Adobe").
   const marks = [...store.watermarks.values()]
@@ -409,9 +422,12 @@ function search(team, q, personal = false) {
     return words.length ? words.filter((w) => t.includes(w)).length / words.length : 0;
   };
   const hits = [];
+  // On no team, the channels of the personal view, of every team.
+  const channels = myChannels();
+  const inPersonal = (r) => (NO_TEAM ? channels.has(`${r.source}:${r.channel_id}`)
+    : store.teams.some((t) => t.slug === r.team && t.members.includes(ME)));
   const rows = [...store.threads.values()].map((e) => e.row)
-    .filter((r) => (personal
-      ? store.teams.some((t) => t.slug === r.team && t.members.includes(ME)) : r.team === team)
+    .filter((r) => (personal ? inPersonal(r) : r.team === team)
       && r.kind !== 'ignore' && words.length);
   for (const r of rows) {
     const title = share(r.title);
@@ -698,6 +714,11 @@ async function api(req, res, url) {
       teams: MANAGER ? teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
+      // The rooms of the teams of the personal view's channels, on no team (src/shares.js).
+      rooms: teams.length ? teams.map((t) => t.slug)
+        : [...new Set([...store.threads.values()]
+          .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
+          .map((e) => e.row.team))].sort(),
       connected: { slack: true, teams: true },
       react: { slack: true, teams: true },
       edit: { slack: true, teams: true },
