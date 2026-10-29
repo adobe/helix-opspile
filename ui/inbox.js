@@ -1508,22 +1508,51 @@ function message(m, prev, fresh, followed = false) {
 
 // ---------------------------------------------------------------- the thread agent
 // Its latest turn, under the last message (GET /api/agent): what it is doing while it works,
-// its note for the team once done. Asked when a thread opens or changes, and every few
-// seconds while it works, or while a new message waits for it to start.
+// its note for the team once done: its thinking. Asked when a thread opens or changes, and
+// every few seconds while it works, or while a new message waits for it to start. Not where
+// you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
+// avatar and name open the agent settings of the thread's team, at the thread's channel.
 const AGENT_NAME = 'Opspile Agent';
 const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
 
+/** The open thread's row (its channel, its team), from the thread as it was fetched. */
+const threadRow = (key) => state.cache.get(key)?.data?.thread || null;
+
+/** Whether you see the agent's thinking in a channel: its own setting, else yours everywhere. */
+function tracesShown(channel) {
+  const own = state.settings?.channelTraces?.[channel];
+  return typeof own === 'boolean' ? own : state.settings?.traces !== false;
+}
+
+/** The agent settings of the thread's team, at its channel (ui/kb.js). */
+function agentHref(key) {
+  const t = threadRow(key);
+  const team = t?.team || (!personal() && state.team) || null;
+  if (!team) return null;
+  const q = new URLSearchParams({ team, view: 'agents' });
+  if (t?.channel_id) q.set('channel', t.channel_id);
+  return `/inbox/kb?${q}`;
+}
+
 function agentItem(key) {
   const { turn, latest } = state.agents.get(key) || {};
   if (!turn) return '';
+  if (!tracesShown(threadRow(key)?.channel_id)) return '';
   // A note is about the thread as it was: someone posted since (or is sending), it is gone.
   if (turn.state !== 'working' && latest && latest > (turn.endedAt || turn.startedAt)) return '';
   const body = turn.state === 'working' ? `<span class="spin" aria-hidden="true"></span>${esc(turn.text)}…` : md(turn.text);
   const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
+  const href = agentHref(key);
+  const team = threadRow(key)?.team;
+  const teamName = state.teams?.find((t) => t.slug === team)?.name || team;
+  const tip = `${AGENT_NAME}'s settings${teamName ? ` in ${teamName}` : ''}`;
+  const face = href ? `<a class="face" href="${esc(href)}" title="${esc(tip)}" aria-label="${esc(tip)}">${avatar(AGENT_NAME, '/icon-192.png')}</a>`
+    : `<span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>`;
+  const name = href ? `<a href="${esc(href)}" title="${esc(tip)}" tabindex="-1"><b>${AGENT_NAME}</b></a>` : `<b>${AGENT_NAME}</b>`;
   return `<div class="msg adobe agent ${turn.state === 'done' ? '' : turn.state}" aria-label="${label}"${turn.state === 'working' ? ' aria-live="polite"' : ''}>
-    <span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
-    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble">${body}</div></div></div>`;
+    ${face}
+    <div class="col"><div class="who">${name}</div><div class="bubble">${body}</div></div></div>`;
 }
 
 /** Puts the agent's turn into the open feed (or takes it out), without rebuilding the rest. */
@@ -1546,6 +1575,12 @@ function placeAgent(key) {
 async function loadAgent(key, { latest = null } = {}) {
   const known = state.agents.get(key);
   clearTimeout(known?.timer);
+  // Hidden here: not asked (shown again, renderTraces asks).
+  if (!tracesShown(threadRow(key)?.channel_id)) {
+    if (known) known.timer = null;
+    placeAgent(key);
+    return;
+  }
   let res;
   try {
     res = await get(`/api/agent?thread=${encodeURIComponent(key)}`);
@@ -3406,17 +3441,82 @@ function bellHref(b) {
   return `/inbox?${q}`;
 }
 
-/** Changes settings at once here, then on the server; back as they were if that fails. */
+/**
+ * Changes settings at once here, then on the server; back as they were if that fails. As
+ * src/settings.js: `channelTraces` changes the channels it names (null: as everywhere again).
+ */
 async function saveSettings(patch) {
   const before = state.settings;
-  state.settings = { ...before, ...patch };
-  renderNotify(); renderThreads(); syncSockets();
+  const next = { ...before, ...patch };
+  if (patch.channelTraces) {
+    next.channelTraces = { ...before.channelTraces };
+    for (const [id, on] of Object.entries(patch.channelTraces)) {
+      if (on === null) delete next.channelTraces[id]; else next.channelTraces[id] = on;
+    }
+  }
+  state.settings = next;
+  const shown = () => { renderNotify(); renderTraces(); renderThreads(); };
+  shown(); syncSockets(); tracesChanged(before);
   const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
-  if (res.ok) { state.settings = res.data; renderNotify(); renderThreads(); return true; }
+  if (res.ok) { state.settings = res.data; shown(); return true; }
+  const tried = state.settings;
   state.settings = before;
-  renderNotify(); renderThreads(); syncSockets();
-  toast(`Could not save the notification settings: ${res.data.error || res.status}`);
+  shown(); syncSockets(); tracesChanged(tried);
+  toast(`Could not save your settings: ${res.data.error || res.status}`);
   return false;
+}
+
+// ---------------------------------------------------------------- the agent's thinking
+// Whether the thread agent's thinking shows under the threads (agentItem), in the user menu:
+// everywhere, and in the open thread's channel, which wins. The Agents page has them too, by
+// channel. Not while viewing as someone else.
+
+/** The open thread's channel, as the menu names it. */
+function channelLabel(t) {
+  const name = t.channel_name || t.channel_id;
+  return t.source === 'teams' ? name : `#${name}`;
+}
+
+function renderTraces() {
+  const box = $('tracesBox');
+  box.hidden = Boolean(state.as) || !state.settings;
+  if (box.hidden) return;
+  const all = state.settings.traces !== false;
+  $('tracesAll').setAttribute('aria-checked', String(all));
+  const t = state.open && threadRow(state.open);
+  $('tracesHere').hidden = !t?.channel_id;
+  if (t?.channel_id) {
+    const own = state.settings.channelTraces?.[t.channel_id];
+    $('tracesChannelLabel').textContent = `In ${channelLabel(t)}, the open thread's channel`;
+    $('tracesChannel').options[0].textContent = `As everywhere (${all ? 'shown' : 'hidden'})`;
+    $('tracesChannel').value = typeof own === 'boolean' ? (own ? 'on' : 'off') : '';
+  }
+  const set = Object.keys(state.settings.channelTraces || {}).length;
+  $('tracesHint').textContent = `What it is doing while it works, and its note once done; only for you.${set
+    ? ` Set in ${set} channel${set === 1 ? '' : 's'} on ${set === 1 ? 'its' : 'their'} own, which win${set === 1 ? 's' : ''}: Agents lists them.` : ''}`;
+}
+
+/** The open thread's agent, after the settings changed from `before`: shown (asked again) or gone. */
+function tracesChanged(before) {
+  const key = state.open;
+  const channel = key && threadRow(key)?.channel_id;
+  if (!channel) return;
+  const was = typeof before?.channelTraces?.[channel] === 'boolean' ? before.channelTraces[channel] : before?.traces !== false;
+  if (was === tracesShown(channel)) return;
+  if (tracesShown(channel)) loadAgent(key); else placeAgent(key);
+}
+
+function wireTraces() {
+  $('tracesAll').onclick = () => saveSettings({ traces: state.settings.traces === false });
+  $('tracesChannel').onchange = () => {
+    const channel = state.open && threadRow(state.open)?.channel_id;
+    if (!channel) return;
+    const v = $('tracesChannel').value;
+    saveSettings({ channelTraces: { [channel]: v === '' ? null : v === 'on' } });
+  };
+  // The open thread's channel, as the menu opens.
+  $('menu').addEventListener('beforetoggle', (e) => { if (e.newState === 'open') renderTraces(); });
+  renderTraces();
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
@@ -3862,7 +3962,9 @@ async function start() {
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
   state.rooms = roomsOf(state.me);
-  state.settings = state.me.settings || { mentions: true, bells: [] };
+  state.settings = state.me.settings || {
+    mentions: true, bells: [], traces: true, channelTraces: {},
+  };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
     : `Connected your ${accountOf(q.get('connected'))} account. Replies are sent as you.`);
@@ -4006,7 +4108,8 @@ async function start() {
     main.getBoundingClientRect();
     main.classList.remove('instant');
   });
-  // The pages (ui/header.js): the editor and the admin pages for the admin team and team
+  // The pages (ui/header.js): the editor for every member of a team (read-only, but for their
+  // own settings, unless they manage it), the admin pages for the admin team and team
   // managers. What is on screen picks what they open on: Agents and Orgs the customer on
   // screen, Teams the team picked (one you may manage); with nothing on screen they open as
   // they were left, and Agents, not opened yet in this tab, on the team. The open requests are
@@ -4056,6 +4159,7 @@ async function start() {
     showReview(state.review);
   }
   wireNotify();
+  wireTraces();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);

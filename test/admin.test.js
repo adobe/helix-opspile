@@ -199,9 +199,10 @@ describe('admin: team managers', () => {
     // They search every channel, to ask for one (see the requests below).
     r = await as(e, me, 'GET', '/api/admin/channels?q=random');
     assert.deepEqual(r.body.channels.map((c) => [c.channelId, c.team]), [['C3', '_unassigned']]);
-    // A plain member has no admin pages at all.
+    // A plain member has no admin pages at all, and sees the agents read-only.
     assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/teams')).status, 403);
-    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 403);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 200);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/agent', { team: 'edge', enabled: true })).status, 403);
   });
 
   it('edit their teams\' knowledge base, and no other', async () => {
@@ -216,6 +217,12 @@ describe('admin: team managers', () => {
     assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 404);
     assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
     assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
+    // A member of edge reads edge's, and changes none.
+    const cy = await as(e, asMe(CY), 'GET', '/api/kb');
+    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false]]);
+    assert.deepEqual(r.body.bases.map((b) => b.may), [true]);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-team-helix')).status, 404);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
   });
 
   it('are everyone in a self-managed team; turning it off keeps the roles', async () => {

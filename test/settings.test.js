@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
-import { withDefaults } from '../src/settings.js';
+import { DEFAULTS, withDefaults } from '../src/settings.js';
 import { d1 } from './d1.js';
 
 // Made-up people and teams only.
@@ -32,12 +32,14 @@ async function call(DB, method, body, viewer = me) {
 }
 
 describe('settings', () => {
-  it('notifies of mentions by default, with no bells', async () => {
+  it('notifies of mentions by default, with no bells, and shows the agent\'s thinking', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
-    assert.deepEqual((await call(DB, 'GET')).body, { mentions: true, bells: [] });
+    assert.deepEqual((await call(DB, 'GET')).body, {
+      mentions: true, bells: [], traces: true, channelTraces: {},
+    });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
-    assert.deepEqual((await res.json()).settings, { mentions: true, bells: [] });
+    assert.deepEqual((await res.json()).settings, { ...DEFAULTS });
   });
 
   it('keeps what is changed, and the rest as it was', async () => {
@@ -51,6 +53,8 @@ describe('settings', () => {
         { view: 'helix', sel: { kind: ['access', 'incident'], type: ['conversation'] }, not: {} },
         { view: '~personal', sel: {}, not: {} },
       ],
+      traces: true,
+      channelTraces: {},
     });
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
@@ -69,7 +73,7 @@ describe('settings', () => {
       // eslint-disable-next-line no-await-in-loop
       assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body));
     }
-    assert.deepEqual((await call(DB, 'GET')).body, { mentions: true, bells: [] });
+    assert.deepEqual((await call(DB, 'GET')).body, { ...DEFAULTS });
   });
 
   it('drops the bells of a team the person left, and duplicates', () => {
@@ -78,11 +82,35 @@ describe('settings', () => {
     assert.deepEqual(s.bells, [{ view: 'helix', sel: {}, not: {} }]);
   });
 
+  it('hide the agent\'s thinking everywhere, and per channel, where a channel\'s wins', async () => {
+    const DB = d1({ people: PEOPLE, teams: TEAMS });
+    let r = await call(DB, 'PUT', { traces: false });
+    assert.deepEqual([r.body.traces, r.body.channelTraces, r.body.mentions], [false, {}, true]);
+    r = await call(DB, 'PUT', { channelTraces: { C1: true, '19:abc@thread.tacv2': false } });
+    assert.deepEqual(r.body.channelTraces, { C1: true, '19:abc@thread.tacv2': false });
+    // Only the channels named change; null lets one follow `traces` again.
+    r = await call(DB, 'PUT', { channelTraces: { '19:abc@thread.tacv2': null, 123456: false } });
+    assert.deepEqual(r.body.channelTraces, { C1: true, 123456: false });
+    assert.equal(r.body.traces, false);
+    assert.deepEqual((await call(DB, 'GET')).body, r.body);
+    for (const body of [
+      { traces: 'no' },
+      { channelTraces: ['C1'] },
+      { channelTraces: { C1: 'off' } },
+      { channelTraces: { 'a b': false } },
+      { channelTraces: Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`C${i}`, false])) },
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body).slice(0, 80));
+    }
+    assert.deepEqual((await call(DB, 'GET')).body, r.body);
+  });
+
   it('is read-only, and someone else\'s are not shown, while viewing as them', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
     await call(DB, 'PUT', { mentions: false });
     const as = { ...me, readonly: true, viewer: { id: 9, name: 'Admin' } };
     assert.equal((await call(DB, 'PUT', { mentions: true }, as)).status, 403);
-    assert.deepEqual((await call(DB, 'GET', undefined, as)).body, { mentions: true, bells: [] });
+    assert.deepEqual((await call(DB, 'GET', undefined, as)).body, { ...DEFAULTS });
   });
 });

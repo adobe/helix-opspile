@@ -88,12 +88,51 @@ describe('counting entries', () => {
 });
 
 describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed' }, () => {
-  it('is for the admin team only', async () => {
-    const env = { DB: d1() };
-    for (const path of ['/api/kb', '/api/kb/files?repo=kb-team-helix']) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await call(env, MEMBER, 'GET', path);
-      assert.equal(res.status, 403);
+  it('shows a team\'s members its knowledge base, read-only', async () => {
+    const srv = await gitServer();
+    try {
+      srv.create('kb-team-helix');
+      const DB = d1({ teams: [{ slug: 'helix', name: 'Helix ops' }, { slug: 'edge', name: 'Edge ops' }] });
+      DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+        ('kb-org-acme', 'org', 'acme', 'r', '2026-10-22T00:00:00Z'),
+        ('kb-team-helix', 'team', 'helix', 'r', '2026-10-22T00:00:00Z'),
+        ('kb-team-edge', 'team', 'edge', 'r', '2026-10-22T00:00:00Z')`);
+      const env = { DB, ARTIFACTS: srv.artifacts };
+      const bases = await (await call(env, MEMBER, 'GET', '/api/kb')).json();
+      assert.deepEqual(bases.bases.map((b) => [b.repo, b.may]), [['kb-team-helix', false]]);
+      assert.equal((await call(env, MEMBER, 'GET', '/api/kb/files?repo=kb-team-helix')).status, 200);
+      assert.equal((await call(env, MEMBER, 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
+      assert.equal((await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).status, 200);
+      assert.equal((await (await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).may, false);
+      // A member sees a server's URL bare: no user info, query or fragment, in its errors neither.
+      const secret = 'https://u:p@s.example/mcp?token=t0ken#x';
+      DB.sqlite.exec(`INSERT INTO mcp_servers (scope, slug, name, url, enabled, updated_at, check_error)
+        VALUES ('team', 'helix', 'status', '${secret}', 1, 'x', 'HTTP 401 from ${secret}')`);
+      const [seen] = (await (await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).servers;
+      assert.deepEqual([seen.url, seen.checkError], ['https://s.example/mcp', 'HTTP 401 from https://s.example/mcp']);
+      const [managed] = (await (await call(env, ADMIN, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).servers;
+      assert.equal(managed.url, secret);
+      assert.equal((await call(env, MEMBER, 'GET', '/api/kb/tools?repo=kb-team-helix')).status, 200);
+      // Not another team's, not a customer's.
+      for (const repo of ['kb-team-edge', 'kb-org-acme']) {
+        // eslint-disable-next-line no-await-in-loop
+        assert.equal((await call(env, MEMBER, 'GET', `/api/kb/files?repo=${repo}`)).status, 404);
+        // eslint-disable-next-line no-await-in-loop
+        assert.equal((await call(env, MEMBER, 'GET', `/api/kb/mcp?repo=${repo}`)).status, 404);
+      }
+      // Nothing changes.
+      for (const [path, body] of [
+        ['/api/kb/file', { repo: 'kb-team-helix', path: 'a.md', content: 'x' }],
+        ['/api/kb/agent', { team: 'helix', enabled: true }],
+        ['/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true }],
+        ['/api/kb/mcp', { repo: 'kb-team-helix', name: 'x', url: 'https://x.example/mcp' }],
+      ]) {
+        // eslint-disable-next-line no-await-in-loop
+        assert.equal((await call(env, MEMBER, path === '/api/kb/mcp' ? 'POST' : 'PUT', path, body)).status, 403, path);
+      }
+      assert.equal((await (await call(env, MEMBER, 'GET', '/api/kb/log?repo=kb-team-helix')).json()).commits.length, 0);
+    } finally {
+      await srv.close();
     }
   });
 

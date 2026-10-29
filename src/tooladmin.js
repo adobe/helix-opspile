@@ -35,7 +35,7 @@ const bad = (error) => json({ error }, 400);
 const shownSwitch = (r) => r && { enabled: Boolean(r.enabled), by: r.changed_by, at: r.changed_at };
 
 async function list(env, me, repo) {
-  const owner = await ownerOf(env, me, repo);
+  const owner = await ownerOf(env, me, repo, { read: true });
   if (!owner) {
     return json({ error: 'no such knowledge base' }, 404);
   }

@@ -25,7 +25,7 @@ import {
 import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
-import { isAdmin, managesTeam } from './review.js';
+import { inTeam, isAdmin, managesTeam } from './review.js';
 
 /**
  * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
@@ -117,11 +117,16 @@ async function shown(env, row) {
 /** Whether `me` may manage the servers of `scope`/`slug`: whoever edits its knowledge base. */
 const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && managesTeam(me, slug));
 
-/** The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null. */
-export async function ownerOf(env, me, repo) {
+/**
+ * The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null.
+ * With `read`, of one `me` may look at: a member of its team sees its servers, read-only.
+ */
+export async function ownerOf(env, me, repo, { read = false } = {}) {
   const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
     .bind(String(repo)).first();
-  return base && mayManage(me, base.kind, base.slug) ? { scope: base.kind, slug: base.slug } : null;
+  const may = base && (mayManage(me, base.kind, base.slug)
+    || (read && base.kind === 'team' && inTeam(me, base.slug)));
+  return may ? { scope: base.kind, slug: base.slug } : null;
 }
 
 /** `{ name: value }` from the request: an object, or `[{ name, value }]`. */
@@ -370,7 +375,7 @@ async function globalsView(env, me, owner, only) {
           installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
           configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
         };
-      } else if (app) {
+      } else if (app && mayManage(me, owner.scope, owner.slug)) {
         // Team managers install it on their repositories; the admin team then allows that.
         const { slug, htmlUrl, installUrl } = shownApp(app);
         view.github = { app: { slug, htmlUrl, installUrl } };
@@ -591,16 +596,48 @@ async function githubCreated(env, me, url) {
   }
 }
 
+/**
+ * A server's URL without what may carry a credential (user info, the query, the fragment), for
+ * whoever only looks at it; null when it does not parse.
+ */
+export function bareUrl(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A server as a member of its team sees it, read-only: its URL bare (see bareUrl), also where
+ * an error repeats it.
+ */
+function readOnly(server) {
+  const bare = bareUrl(server.url) || '';
+  const mask = (s) => (s && server.url ? String(s).split(server.url).join(bare) : s);
+  return {
+    ...server,
+    url: bare,
+    checkError: mask(server.checkError),
+    ...(server.oauth ? { oauth: { ...server.oauth, error: mask(server.oauth.error) } } : {}),
+  };
+}
+
 async function list(env, me, repo) {
-  const owner = await ownerOf(env, me, repo);
+  const owner = await ownerOf(env, me, repo, { read: true });
   if (!owner) {
     return json({ error: NO_BASE }, 404);
   }
   const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
     ORDER BY name`).bind(owner.scope, owner.slug).all();
+  const may = mayManage(me, owner.scope, owner.slug);
+  const servers = await Promise.all((results || []).map((r) => shown(env, r)));
   return json({
     repo,
-    servers: await Promise.all((results || []).map((r) => shown(env, r))),
+    // Whether `me` changes them; a member of the team only looks, at bare URLs.
+    may,
+    servers: may ? servers : servers.map(readOnly),
     globals: await globalsView(env, me, owner),
   });
 }
