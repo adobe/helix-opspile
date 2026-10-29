@@ -1458,9 +1458,11 @@ async function showOrg(slug) {
   const tile = (c) => {
     const share = c.p === null || c.p === undefined ? '' : `${Math.round(c.p * 100)}%`;
     const what = c.via === 'favicon' ? `The favicon of ${c.host}` : `${c.icon}, named by ${c.host}`;
+    // Clef does not read SVGs: they are offered without its verdict.
+    const verdict = c.svg ? ': an SVG, which Clef does not check' : share && `: ${share} the org's, says Clef`;
     return `<button type="button" class="iconpick${c.p !== null && c.p < FITS ? ' weak' : ''}" data-icon="${esc(c.icon)}"
-      title="${esc(`${what}${c.title ? ` (“${c.title}”)` : ''}${share ? `: ${share} the org's, says Clef` : ''}`)}"><img src="${esc(c.via === 'favicon' ? favicon(c.icon) : c.src)}" alt="">
-      <span class="host">${esc(c.host)}${c.via === 'site' ? ' <span class="sub">site</span>' : ''}</span><span class="sub">${share}</span></button>`;
+      title="${esc(`${what}${c.title ? ` (“${c.title}”)` : ''}${verdict}`)}"><img src="${esc(c.via === 'favicon' ? favicon(c.icon) : c.src)}" alt="">
+      <span class="host">${esc(c.host)}${c.via === 'site' ? ' <span class="sub">site</span>' : ''}</span><span class="sub">${c.svg ? 'SVG' : share}</span></button>`;
   };
   const drawIcons = () => {
     $('oIcons').innerHTML = `${found.map(tile).join('') || '<span class="sub">No icon found on the websites its name suggests.</span>'}

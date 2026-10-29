@@ -117,7 +117,10 @@ mail domains, slug and name suggest (`<slug>.com`, `www.<slug>.com`, `<name>.com
 icons those sites name (`<link rel="icon">`, `apple-touch-icon`), each image with what Clef
 thinks of it: whether the site is the org's own (not a namesake's, an agency's or a parked
 domain's; Clef is told each site's title where it can be read) and whether the image is a logo
-rather than a stock icon. Picking one makes it the org's icon.
+rather than a stock icon. Picking one makes it the org's icon. Sites are asked with a browser's
+user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which Clef cannot
+read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
+verdict.
 
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;

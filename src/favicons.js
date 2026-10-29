@@ -11,6 +11,7 @@
  */
 
 import { CLEF } from './label.js';
+import { icoToPng } from './ico.js';
 import { domainList } from './lookup.js';
 
 /*
@@ -23,8 +24,9 @@ import { domainList } from './lookup.js';
  * To find one, `findIcons` guesses the org's websites (its mail domains, `<slug>.com`,
  * `<name>.com`, each with and without `www.`), fetches what Google has as their favicons and
  * the icons the sites name themselves (`<link rel="icon">`, `apple-touch-icon`), and asks Clef
- * whether each image is the org's logo. Google answers 404 with a globe for a domain it knows
- * no favicon of; those are not candidates.
+ * whether each image is the org's logo. An .ico of bitmaps is read as a PNG (src/ico.js); an
+ * SVG, which Clef does not read, is offered without its verdict. Google answers 404 with a
+ * globe for a domain it knows no favicon of; those are not candidates.
  */
 
 /** Google's favicon service, 64 px: 200 with the favicon, 404 with a globe when it has none. */
@@ -39,7 +41,7 @@ const NOT_ORG = /(^|\.)(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|ao
 const CC_SLD = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu', 'ne', 'or', 'gv']);
 
 const MAX_HOSTS = 10;
-const MAX_SITE_ICONS = 3;
+const MAX_SITE_ICONS = 4;
 const MAX_CANDIDATES = 8;
 /** Clef reads at most this many images per question set. */
 const IMAGES_PER_ASK = 4;
@@ -50,7 +52,13 @@ const FETCH_MS = 4000;
 export const FITS = 0.5;
 const CACHE_MS = 60 * 60 * 1000;
 const CACHE_MAX = 200;
-const UA = 'Mozilla/5.0 (compatible; opspile; +https://github.com/adobe/helix-opspile)';
+// Sites are asked as a browser would ask: many answer a bot's user agent with an error page.
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)'
+  + ' Chrome/130.0.0.0 Safari/537.36';
+const ACCEPT = {
+  html: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  image: 'image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+};
 
 /** The org's part of a domain: `non.acme.com` is `acme.com`, `shop.acme.com.au` `acme.com.au`. */
 export function registrable(domain) {
@@ -117,28 +125,11 @@ export function sniff(bytes) {
     return 'ico';
   }
   const head = new TextDecoder().decode(b.slice(0, 512)).trimStart().toLowerCase();
-  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+  // An SVG may start with an XML declaration, a doctype or a comment.
+  if (head.startsWith('<') && /<svg[\s>]/.test(head)) {
     return 'svg';
   }
   return null;
-}
-
-/** The largest PNG in an .ico file (modern ones keep their large sizes as PNG), or null. */
-export function icoPng(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const count = bytes.length >= 6 ? view.getUint16(4, true) : 0;
-  let best = null;
-  for (let i = 0; i < count && 6 + 16 * (i + 1) <= bytes.length; i += 1) {
-    const e = 6 + 16 * i;
-    const width = bytes[e] || 256;
-    const size = view.getUint32(e + 8, true);
-    const offset = view.getUint32(e + 12, true);
-    const png = bytes.slice(offset, offset + size);
-    if (offset + size <= bytes.length && sniff(png) === 'png' && (!best || width > best.width)) {
-      best = { width, png };
-    }
-  }
-  return best ? best.png : null;
 }
 
 function base64(bytes) {
@@ -153,7 +144,7 @@ function base64(bytes) {
 function get(url, accept) {
   return fetch(url, {
     redirect: 'follow',
-    headers: { 'user-agent': UA, accept },
+    headers: { 'user-agent': UA, accept, 'accept-language': 'en-US,en;q=0.9' },
     signal: AbortSignal.timeout(FETCH_MS),
   });
 }
@@ -169,13 +160,14 @@ async function bytesOf(res, max) {
 }
 
 /**
- * An image Clef can read (PNG, JPEG, WebP; an .ico's PNG), as `{ type, base64 }`, or null:
- * a 404 (Google's globe), an error, a GIF, an SVG or an .ico of bitmaps. A busy server (429,
- * 5xx, a failed connection) is asked once more.
+ * An image, as `{ type, base64 }`: one Clef can read (PNG, JPEG, WebP; an .ico as a PNG), or an
+ * SVG (`type` image/svg+xml), which the page shows but Clef does not see. Null for a 404
+ * (Google's globe), an error or a GIF. A busy server (429, 5xx, a failed connection) is asked
+ * once more.
  */
 async function image(url, again = true) {
   try {
-    const res = await get(url, 'image/*');
+    const res = await get(url, ACCEPT.image);
     if (again && (res.status === 429 || res.status >= 500)) {
       return image(url, false);
     }
@@ -185,8 +177,11 @@ async function image(url, again = true) {
     let b = await bytesOf(res, MAX_IMAGE_BYTES);
     let type = b && sniff(b);
     if (type === 'ico') {
-      b = icoPng(b);
+      b = await icoToPng(b);
       type = b && 'png';
+    }
+    if (type === 'svg') {
+      return { type: 'image/svg+xml', base64: base64(b) };
     }
     return ['png', 'jpeg', 'webp'].includes(type) ? { type: `image/${type}`, base64: base64(b) } : null;
   } catch (e) {
@@ -194,10 +189,6 @@ async function image(url, again = true) {
   }
 }
 
-/**
- * The icons a page names (`<link rel="icon">`, `shortcut icon`, `apple-touch-icon`), as
- * absolute https URLs, the large ones first. SVGs are left out: Clef does not read them.
- */
 /** An https URL of `href` on the page at `base`, or null. */
 function httpsUrl(href, base) {
   try {
@@ -208,6 +199,10 @@ function httpsUrl(href, base) {
   }
 }
 
+/**
+ * The icons a page names (`<link rel="icon">`, `shortcut icon`, `apple-touch-icon`), as
+ * absolute https URLs: the large ones first, SVGs (which Clef does not read) after the others.
+ */
 export function pageIcons(html, base) {
   const out = [];
   for (const [tag] of String(html).matchAll(/<link\b[^>]*>/gi)) {
@@ -217,10 +212,10 @@ export function pageIcons(html, base) {
     const href = attr('href');
     const icon = href && /(^|\s)(icon|apple-touch-icon(-precomposed)?)(\s|$)/.test(rel);
     const svg = icon && (/svg/i.test(attr('type') || '') || /\.svg(\?|#|$)/i.test(href));
-    const url = icon && !svg && httpsUrl(href, base);
+    const url = icon && httpsUrl(href, base);
     if (url) {
       const size = Math.max(0, ...String(attr('sizes') || '').split(/\s+/).map((x) => parseInt(x, 10) || 0));
-      out.push({ url: url.href, size: size || (rel.includes('apple') ? 180 : 0) });
+      out.push({ url: url.href, size: svg ? -1 : size || (rel.includes('apple') ? 180 : 0) });
     }
   }
   return [...new Map(out.map((x) => [x.url, x])).values()].sort((a, b) => b.size - a.size)
@@ -243,7 +238,7 @@ export function pageTitle(html) {
  */
 async function siteIcons(host) {
   try {
-    const res = await get(`https://${host}/`, 'text/html');
+    const res = await get(`https://${host}/`, ACCEPT.html);
     if (!res.ok || !/html/i.test(res.headers.get('content-type') || '')) {
       return { host, icons: [] };
     }
@@ -344,18 +339,24 @@ async function askClef(env, org, batch) {
   });
 }
 
-/** Candidates with Clef's probability `p` (null when Clef failed), likeliest first. */
+const isSvg = (c) => c.image && c.image.type === 'image/svg+xml';
+
+/**
+ * Candidates with Clef's probability `p`, likeliest first: null for an SVG (Clef does not read
+ * them) and when Clef failed, which come last.
+ */
 export async function rankIcons(env, org, candidates) {
+  const raster = candidates.filter((c) => !isSvg(c));
   const batches = [];
-  for (let i = 0; i < candidates.length; i += IMAGES_PER_ASK) {
-    batches.push(candidates.slice(i, i + IMAGES_PER_ASK));
+  for (let i = 0; i < raster.length; i += IMAGES_PER_ASK) {
+    batches.push(raster.slice(i, i + IMAGES_PER_ASK));
   }
   const ps = await Promise.all(batches.map((b) => askClef(env, org, b).catch((e) => {
     console.log(JSON.stringify({ route: 'favicons', error: String(e && e.message) }));
     return b.map(() => null);
   })));
-  const flat = ps.flat();
-  return candidates.map((c, i) => ({ ...c, p: flat[i] }))
+  const p = new Map(raster.map((c, i) => [c, ps.flat()[i]]));
+  return candidates.map((c) => ({ ...c, p: p.get(c) ?? null }))
     .sort((a, b) => (b.p ?? -1) - (a.p ?? -1));
 }
 
@@ -380,9 +381,10 @@ export async function findIcons(env, org, { fresh = false } = {}) {
   }
   const hosts = candidateHosts(env, org);
   const candidates = (await gatherIcons(hosts)).slice(0, MAX_CANDIDATES);
-  const ranked = env.AI && candidates.length ? await rankIcons(env, org, candidates)
+  const ranked = env.AI && candidates.some((c) => !isSvg(c)) ? await rankIcons(env, org, candidates)
     : candidates.map((c) => ({ ...c, p: null }));
-  const icons = ranked.map(({ image: _, ...c }) => c);
+  const icons = ranked.map(({ image: img, ...c }) => (isSvg({ image: img })
+    ? { ...c, svg: true } : c));
   if (found.size >= CACHE_MAX) {
     found.delete(found.keys().next().value);
   }
