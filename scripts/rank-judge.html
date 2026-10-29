@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opspile · which first?</title>
+<style>
+  :root {
+    --bg: #111418; --pane: #181c22; --line: #2a3038; --ink: #e6e9ee; --mute: #8b95a3;
+    --accent: #5aa2ff; --staff: #2f7cf6; --cust: #c2410c; --bot: #6b7280; --good: #22c55e; --bad: #ef4444;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f5f7; --pane: #fff; --line: #dde1e6; --ink: #1d2025; --mute: #616a75; --accent: #1f6feb; color-scheme: light; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+  header, footer { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  footer { border-top: 1px solid var(--line); border-bottom: 0; justify-content: center; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .q { color: var(--mute); }
+  header .stats { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .stat b { font-size: 15px; }
+  .stat small { color: var(--mute); }
+  select, button { font: inherit; color: inherit; background: var(--pane); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.pick { padding: 8px 18px; font-weight: 600; }
+  button kbd { font: 12px ui-monospace, monospace; color: var(--mute); margin-left: 6px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; min-height: 0; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  main { overflow: hidden; }
+  footer { background: var(--bg); position: relative; z-index: 1; }
+  .err { color: var(--bad); }
+  .side { background: var(--pane); border: 2px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+  .side.chosen { border-color: var(--accent); }
+  .side .head { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .side .title { font-size: 16px; font-weight: 600; }
+  .side .where { color: var(--mute); font-size: 12px; }
+  .side .summary { margin-top: 6px; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .side .summary span { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px; }
+  .msgs { overflow-y: auto; padding: 10px 14px; flex: 1; }
+  .msg { margin: 0 0 12px; }
+  .msg .meta { font-size: 12px; color: var(--mute); }
+  .msg .meta b { color: var(--ink); }
+  .msg .tag { font-size: 10.5px; border-radius: 4px; padding: 0 5px; color: #fff; margin-left: 4px; }
+  .tag.staff { background: var(--staff); } .tag.customer { background: var(--cust); } .tag.bot { background: var(--bot); }
+  .msg .body { overflow-wrap: anywhere; }
+  .msg .body p { margin: 2px 0; }
+  .msg .body pre { white-space: pre-wrap; background: var(--bg); padding: 6px; border-radius: 6px; font-size: 12px; }
+  .msg .body img { max-width: 100%; max-height: 240px; }
+  .msg .rx { font-size: 12px; color: var(--mute); margin-top: 2px; }
+  .msg.latest { border-left: 3px solid var(--accent); padding-left: 8px; }
+  .reveal { display: none; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .reveal.on { display: flex; }
+  .reveal .v { padding: 3px 9px; border-radius: 6px; background: var(--pane); border: 1px solid var(--line); }
+  .reveal .v.ok { border-color: var(--good); }
+  .reveal .v.no { border-color: var(--bad); }
+  .reveal .v[title]:not([title=""]) { cursor: help; text-decoration: underline dotted; }
+  .why { width: 100%; font-size: 12.5px; color: var(--mute); }
+  .picks { display: flex; gap: 10px; }
+  .picks.off { display: none; }
+  .empty { margin: auto; color: var(--mute); }
+  label { color: var(--mute); font-size: 12.5px; }
+  details.more { font-size: 12.5px; color: var(--mute); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Which should the team turn to first?</h1>
+  <span class="q" id="asof"></span>
+  <select id="mode" title="Which of Clef's games to show">
+    <option value="random">Any pair</option>
+    <option value="live">At least one still pending</option>
+    <option value="both-live">Both still pending</option>
+    <option value="close">Clef unsure (30–70%)</option>
+    <option value="model-vs-clef">Model ≠ Clef</option>
+    <option value="model-vs-classic">Model ≠ old score</option>
+  </select>
+  <label><input type="checkbox" id="blind"> Blind (don't show Clef's answers)</label>
+  <div class="stats" id="stats"></div>
+</header>
+<main id="main"><div class="empty">Loading…</div></main>
+<footer>
+  <div class="picks" id="picks">
+    <button class="pick" data-pick="left">← Left first<kbd>←</kbd></button>
+    <button class="pick" data-pick="tie">Same / can't say<kbd>↓</kbd></button>
+    <button class="pick" data-pick="right">Right first →<kbd>→</kbd></button>
+    <button data-pick="skip">Skip<kbd>s</kbd></button>
+    <button id="undo" title="Take back your last answer">Undo<kbd>u</kbd></button>
+  </div>
+  <div class="reveal" id="reveal"></div>
+  <div class="err" id="err" hidden></div>
+</footer>
+<script src="/markdown.js"></script>
+<script>
+(async () => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const EMOJI = await fetch('/emoji.json').then((r) => r.json());
+  const emoji = (name) => EMOJI[name];
+  const md = (s) => { try { return Markdown.render(s, { emoji }); } catch { return `<p>${esc(s)}</p>`; } };
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  // The judges' reasons name the threads A and B: here A is the left one.
+  const sides = (t) => String(t).replace(/\bThread A\b/g, 'the left thread').replace(/\bThread B\b/g, 'the right thread')
+    .replace(/\bA\b(?=['’]s| is| has| was| comes| needs| should)/g, 'Left').replace(/\bB\b(?=['’]s| is| has| was| comes| needs| should)/g, 'Right');
+  // Every call to the server: a failure (the server stopped, the share's sign-in expired) says
+  // so under the buttons, with a way on, instead of leaving the page as it was.
+  async function call(path, init) {
+    const r = await fetch(path, { ...init, redirect: 'manual' });
+    const type = r.headers.get('content-type') || '';
+    if (!r.ok || !type.includes('json')) {
+      throw new Error(r.type === 'opaqueredirect' || !type.includes('json')
+        ? 'Signed out of the share: reload the page.' : `The server said ${r.status}.`);
+    }
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    return j;
+  }
+  function failed(e, retry) {
+    busy = false;
+    $('err').hidden = false;
+    $('err').innerHTML = `${esc(e.message || e)} <button id="retry">Try again</button> <button onclick="location.reload()">Reload</button>`;
+    $('retry').onclick = () => { $('err').hidden = true; retry(); };
+  }
+  let busy = false;
+  let pair = null;
+  let shownAt = 0;
+  let revealed = false;
+  $('blind').checked = localStorage.getItem('rank.blind') === '1';
+  $('mode').value = localStorage.getItem('rank.mode') || 'random';
+  $('blind').onchange = () => localStorage.setItem('rank.blind', $('blind').checked ? '1' : '0');
+  $('mode').onchange = () => { localStorage.setItem('rank.mode', $('mode').value); next(); };
+
+  const ago = (iso, now) => {
+    const h = (now - Date.parse(iso)) / 3600000;
+    if (h < 1) return `${Math.max(1, Math.round(h * 60))} min ago`;
+    if (h < 48) return `${Math.round(h)} h ago`;
+    return `${Math.round(h / 24)} d ago`;
+  };
+  function side(t, which, now) {
+    const last = t.messages.length - 1;
+    const msgs = t.messages.map((m, i) => `<div class="msg${i === last ? ' latest' : ''}">
+      <div class="meta"><b>${esc(m.who)}</b><span class="tag ${m.as}">${m.as === 'staff' ? 'Adobe' : m.as}${m.as === 'customer' && m.org ? ` · ${esc(m.org)}` : ''}</span>
+        · <span title="${esc(m.at)}">${ago(m.at, now)}</span></div>
+      <div class="body">${m.body.trim() ? md(m.body) : '<i style="color:var(--mute)">(no text: a file, card or attachment)</i>'}</div>
+      ${m.reactions.length ? `<div class="rx">${m.reactions.map((r) => `<span title="${esc(r.names.join(', '))}">${esc(r.emoji)} ${r.names.length}${r.staff ? ` (${r.staff} Adobe)` : ''}</span>`).join(' · ')}</div>` : ''}
+    </div>`).join('');
+    return `<section class="side" id="side-${which}">
+      <div class="head">
+        <div class="title">${esc(t.title)}</div>
+        <div class="where">${esc(t.customer)}${t.orgType ? ` (${esc(t.orgType)})` : ''} · ${esc(t.channel)} · ${esc(t.platform)}${t.permalink ? ` · <a href="${esc(t.permalink)}" target="_blank" rel="noopener">open</a>` : ''}</div>
+        <div class="summary">${t.summary.split(' · ').map((s) => `<span>${esc(s)}</span>`).join('')}</div>
+      </div>
+      <div class="msgs">${msgs || '<div class="empty">no messages</div>'}</div>
+    </section>`;
+  }
+  function renderStats(s) {
+    if (!s) return;
+    const rate = (b) => (b.n ? `<b>${pct(b.agree / b.n)}</b> <small>of ${b.n}</small>` : '<b>–</b>');
+    const conf = Object.entries(s.byConfidence).map(([k, b]) => `${k}: ${b.n ? pct(b.agree / b.n) : '–'} (${b.n})`).join(' · ');
+    $('stats').innerHTML = `<span class="stat"><small>judged</small> <b>${s.judged}</b> <small>(${s.ties} same, ${s.skipped} skipped)</small></span>
+      <span class="stat" title="When Clef was sure… ${esc(conf)}; when asking it the other way round changed its mind: ${s.clefFlipped.n ? pct(s.clefFlipped.agree / s.clefFlipped.n) : '–'} (${s.clefFlipped.n})"><small>Clef agrees</small> ${rate(s.clef)}</span>
+      ${Object.entries(s.judges || {}).map(([k, b]) => `<span class="stat" title="Agrees with Clef on ${b.n ? pct(b.clef / b.n) : '–'} of these"><small>${esc(k)}</small> ${rate(b)}</span>`).join('')}
+      <span class="stat"><small>model</small> ${rate(s.model)}</span>
+      <span class="stat"><small>old score</small> ${rate(s.classic)}</span>`;
+  }
+  async function next() {
+    if (busy) return;
+    busy = true;
+    $('err').hidden = true;
+    let r;
+    try {
+      r = await call(`/api/pair?mode=${encodeURIComponent($('mode').value)}`);
+    } catch (e) { failed(e, next); return; }
+    busy = false;
+    revealed = false;
+    $('reveal').classList.remove('on');
+    $('picks').classList.remove('off');
+    if (r.done) {
+      pair = null;
+      $('main').innerHTML = '<div class="empty">No pairs left in this mode. Pick another, or let Clef play more rounds.</div>';
+      renderStats(r.stats);
+      return;
+    }
+    pair = r;
+    $('asof').textContent = `as of ${new Date(r.now).toLocaleString()} · ${r.open} pairs left`;
+    $('main').innerHTML = side(r.left, 'left', r.now) + side(r.right, 'right', r.now);
+    // Start at the latest message, as the inbox opens a thread.
+    for (const el of document.querySelectorAll('.msgs')) el.scrollTop = el.scrollHeight;
+    shownAt = Date.now();
+  }
+  async function pick(p) {
+    if (!pair || revealed || busy) return;
+    busy = true;
+    $('err').hidden = true;
+    let res;
+    try {
+      res = await call('/api/judge', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ a: pair.a, b: pair.b, left: pair.left.key, pick: p, ms: Date.now() - shownAt }),
+      });
+    } catch (e) { failed(e, () => pick(p)); return; }
+    busy = false;
+    renderStats(res.stats);
+    if (p === 'skip' || $('blind').checked) { next(); return; }
+    revealed = true;
+    const el = $(`side-${p}`);
+    if (el) el.classList.add('chosen');
+    const say = (x) => (x > 0.5 ? 'Left' : x < 0.5 ? 'Right' : 'Same');
+    const mark = (x) => (p === 'tie' ? '' : (say(x).toLowerCase() === p ? 'ok' : 'no'));
+    const conf = (x) => pct(Math.max(x, 1 - x));
+    $('picks').classList.add('off');
+    $('reveal').innerHTML = `<span>You: <b>${p === 'tie' ? 'Same' : say(p === 'left' ? 1 : 0)}</b></span>
+      <span class="v ${mark(res.clef)}" title="Asked with this one as A: ${pct(res.clefAsked[0])} left; the other way round: ${pct(res.clefAsked[1])} left">Clef: <b>${say(res.clef)}</b> ${conf(res.clef)}</span>
+      ${(res.judges || []).map((j) => `<span class="v ${mark(j.p)}" title="${esc(j.why.filter(Boolean).join(' — '))}">${esc(j.judge)}: <b>${say(j.p)}</b> ${conf(j.p)}</span>`).join('')}
+      <span class="v ${mark(res.model)}">Model: <b>${say(res.model)}</b> ${conf(res.model)}</span>
+      <span class="v ${mark(res.classic)}">Old score: <b>${say(res.classic)}</b></span>
+      <button id="next">Next <kbd>space</kbd></button>
+      ${(res.judges || []).map((j) => (j.why[0] ? `<div class="why"><b>${esc(j.judge)}:</b> ${esc(sides(j.why[0]))}</div>` : '')).join('')}`;
+    $('reveal').classList.add('on');
+    $('next').onclick = next;
+    $('next').focus();
+  }
+  async function undo() {
+    if (busy) return;
+    let r;
+    try { r = await call('/api/undo', { method: 'POST' }); } catch (e) { failed(e, undo); return; }
+    renderStats(r.stats);
+    next();
+  }
+  document.querySelector('footer').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (b) { b.blur(); pick(b.dataset.pick); }
+  });
+  for (const c of [$('mode'), $('blind')]) c.addEventListener('change', () => c.blur());
+  $('undo').onclick = undo;
+  document.addEventListener('keydown', (e) => {
+    const el = e.target instanceof Element ? e.target : null;
+    if (el?.closest('select, input') || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'tie', '=': 'tie', s: 'skip' }[e.key];
+    if (revealed && (e.key === ' ' || e.key === 'Enter' || k)) { e.preventDefault(); next(); return; }
+    if (k) { e.preventDefault(); pick(k); }
+    if (e.key === 'u') undo();
+  });
+  call('/api/stats').then(renderStats, () => {});
+  next();
+})();
+</script>
+</body>
+</html>

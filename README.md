@@ -428,6 +428,97 @@ session cookie into `.dev-ui-session.json` (gitignored, never printed), and the 
 to the production API, read-only: writes are refused and the page's banner says so. Delete the
 file, or run `npm run ui:session -- --clear`, to go back to fake data.
 
+### Train the team order
+
+Within a status, a team's inbox is ordered by the model in `ui/rank.js`: boosted trees (150
+trees of depth 3, some 20 KB) over some fifty features of a thread, computed in the browser from the inbox entry (how long since the
+last message, whether it waits on us, a customer's first message nobody at Adobe has answered,
+Clef's urgency and resolved, a staff ✅, the kind, unseen by Adobe, reactions, what the last
+message asks, …), in log-odds of "the team should turn to this one first". It is a
+Bradley–Terry model whose strength is that score, learned from games of three kinds:
+
+- **Judges.** A sample of threads (`pull`), paired in an Elo tournament where Clef says which
+  comes first (`duel`); Haiku and Sonnet judge some of the pairs (`llm`), and you judge some
+  (`judge`). Each pair is decided by the highest of those who judged it: you, then Sonnet, then
+  Haiku, then Clef.
+- **Picks.** When someone opens a thread by clicking it in the list, the inbox sends the threads
+  on screen then, their places and their features to `POST /api/rank/pick` (table
+  `rank_events`; not while viewing as someone else or searching). The clicked thread wins over
+  each of them: fully over those above it, less over those below it, which may not have been
+  looked at.
+- **Replies.** When the same person answers several customers on the same day, the customer
+  answered sooner wins over the one answered later, each thread as it was when its customer
+  wrote.
+
+Each source is a share of the training (`DEFAULT_SHARES` in `scripts/rank-combo.mjs`: picks
+30%, replies 20%, Sonnet 20%, you 15%, Clef 10%, Haiku 5%; a source without games gives its share
+to the others), so Clef's thousands of games do not drown out the rest, and what the teams do
+weighs more than what anyone says. The steps, each
+reading what the ones before wrote into `.rank/` (gitignored; it holds production threads, so
+it stays on your machine):
+
+1. `npm run rank -- pull [--n all] [--alerts 0.1]` takes the threads of your teams' inboxes and
+   your personal view (for the admin team, every team's, read as one of its members), with their
+   messages, from the production API, read-only, with the session `npm run ui:session` copied.
+   Alerts are a tenth of the sample. The sample before, and what was judged on it, moves to
+   `.rank/<when it was pulled>/`, and is still trained on.
+2. `npm run rank -- duel [--rounds 12]` plays the tournament with Swiss pairings: Clef reads
+   two threads (their messages and what the inbox shows of them) and the team's policy
+   (`POLICY` in `scripts/rank-lib.mjs`), and says which comes first, asked both ways round. More
+   rounds add to the games played; changing what Clef is shown (`PROMPT_VERSION`) asks again.
+   It calls Workers AI with `CLOUDFLARE_ACCOUNT_ID` (the Worker's account) and
+   `CLOUDFLARE_API_TOKEN`, or the token of `wrangler login`.
+3. `npm run rank -- llm [--judges haiku,sonnet] [--pairs 200]` has Claude models (on Bedrock,
+   with a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, in `AWS_REGION`) judge the same games
+   as Clef, shown the same, asked both ways round, with a sentence of why: the pairs you judged,
+   then `--pairs` more. `--judges name=<model id>` adds others.
+4. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
+   browser, and you pick the one the team should turn to first (← →, ↓ for "same", `s` to skip,
+   `u` to undo). Then it shows what Clef, the Claude judges (with their reasons), the model and
+   the old score said, and how often each agrees with you so far (Clef's also by how sure it
+   was, and where asking it the other way round changed its mind). It can show any pair, pairs
+   where one or both threads are still pending, the ones Clef was unsure of, or where the model
+   and Clef, or the model and the old score, disagree; "Blind" hides the answers. Your answers
+   go to `.rank/human.jsonl`. It follows a new sample by itself.
+5. `npm run rank -- events` fetches the picks recorded since the last time
+   (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
+6. `npm run rank -- train [--model boost|linear] [--trees 150] [--depth 3] [--shares click=0.3,…|counts]
+   [--weights …] [--without a,b] [--dry-run]` fits the model on all samples, picks and replies, prints how often the model
+   picks the winner of each source's games about threads it was not trained on (five folds, by
+   thread), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
+   often each judge agrees with you, and writes the model into `ui/rank.js` (between
+   `// MODEL:` and `// END MODEL`). A feature seen in fewer than `--min-support` threads is not
+   learned, and the policy's signs (`SIGNS` in `scripts/rank-combo.mjs`: resolved lowers a
+   thread; waiting on us, unseen by Adobe and a first message nobody answered raise it) are
+   kept: the trees are monotone in them (a split on such a feature must order its leaves so, as
+   XGBoost's monotone constraints do); in a linear model (`--model linear`, L2 `--l2 30`) a
+   weight the games would turn the other way is held at 0, and the training says which.
+   `--without` leaves features out, to see what they are worth.
+   Only feature names, thresholds and numbers are committed. A tree is `[feature, threshold,
+   left, right]` or a leaf: the browser walks them (some 4 µs a thread), and D1 could as nested
+   `CASE` expressions.
+7. `npm run rank -- compare [--trees 150] [--depth 3]` puts the linear model next to boosted
+   trees and a random forest (`scripts/rank-trees.mjs`, learned from the same games with the same
+   pairwise loss), on the same folds: held-out accuracy per source, log loss, size and the time
+   to score a thread.
+8. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
+   browser, the picks, a new sample, the tournament, the Claude judges on part of it, then the
+   training; with `--pr`, the new weights go to a pull request against main (from a worktree of
+   it, and only when main computes the same features). A bb automation runs it on Mondays.
+9. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
+   sample, whether someone on its team opened it in the inbox and how many read it, and for
+   every time a customer wrote, whether and how soon Adobe answered; by kind, urgency, who has
+   the next move, size, age, platform, team, and what the message says (a question, alarm words,
+   thanks, its length, the time and day), with the odds of an answer within a day from a
+   logistic regression, and how well the model, Clef's ratings and the old score pick the threads
+   that were opened. It writes `.rank/behavior.md`.
+
+A feature is added in `features()` of `ui/rank.js`, which the browser, the picks and the
+training all run; train again after changing one. Picks keep the features they were sent with,
+so a new feature is learned from picks only once the inbox computes it. `Rank.explain(entry)`
+in the console lists what makes up a thread's score. Without a model (`const MODEL = null`) the
+inbox orders by `classicScore`.
+
 ### Agents in the browser (WebMCP)
 
 The inbox registers [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tools, so an agent

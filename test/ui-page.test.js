@@ -348,7 +348,7 @@ describe('inbox page', () => {
 
   it('ranks a thread just resolved below the open ones of its pile', () => {
     const me = 'me';
-    const { baseScore } = piece('function baseScore', '\nconst tpl', 'baseScore', {
+    const { classicScore: baseScore } = piece('function closeness', '\nconst tpl', 'classicScore', {
       lastOf: (t) => t.last_at,
       resolvedP: (t) => (t.resolved ? 1 : 0),
       viewerId: () => me,

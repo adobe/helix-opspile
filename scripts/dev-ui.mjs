@@ -61,6 +61,7 @@ import { channelTokens, SLACK_CHANNEL_ID } from '../src/channelrefs.js';
 import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
+import { cleanPick } from '../src/rankevents.js';
 import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { rankEmoji, resolveShortcodes } from '../src/shortcodes.js';
@@ -1084,6 +1085,12 @@ async function api(req, res, url) {
     console.log(`resolve ${undo ? 'undo' : ''}`);
     broadcast(entry.row.team, { type: 'thread', thread: key });
     return json(res, { ok: true, resolved: !undo });
+  }
+  if (url.pathname === '/api/rank/pick' && req.method === 'POST') {
+    // As production checks it (src/rankevents.js), then only said in the log.
+    const pick = cleanPick(await readJson(req));
+    console.log(pick.error ? `pick refused: ${pick.error}` : `pick ${pick.clicked} over ${pick.shown.length - 1} on screen`);
+    return pick.error ? json(res, pick, 400) : res.writeHead(204).end();
   }
   if (url.pathname === '/api/read' && req.method === 'POST') {
     const { thread: key, at } = await readJson(req);
