@@ -859,10 +859,15 @@ function flags(t) {
   if (status === 'critical' || status === 'hot') out += ' urgent';
   return out;
 }
-const resolvedMark = (t) => (isResolved(t) ? '<span class="ok" title="Resolved">✓</span>' : '');
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
 const draftMark = (t) => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : '');
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
+/** A row's one status mark: the status dot, or a ✓ in its place once the thread is resolved. */
+function statusMark(t, status) {
+  const title = esc(statusTitle(t, status));
+  if (isResolved(t)) return `<span class="ok" title="Resolved · ${title}">✓</span>`;
+  return `<span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${title}"></span>`;
+}
 const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
 
 /** One customer picked in the filters: every row is theirs, so the rows leave it out. */
@@ -892,8 +897,8 @@ function row(t, hit = null) {
   const cust = oneCustomer() ? ''
     : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
-    <div class="l1"><span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${esc(statusTitle(t, status))}"></span>
-      ${draftMark(t)}${resolvedMark(t)}<span class="title">${titleHtml(t, hit)}</span>
+    <div class="l1">${statusMark(t, status)}
+      ${draftMark(t)}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
     <div class="l2">${cust}
       <span class="faces">${faces}</span>

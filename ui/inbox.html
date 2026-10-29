@@ -812,7 +812,9 @@
    * "Y replies, X mentions", then the latest reply as far as it fits before the reactions, grey
    * in unread rows too, so the bold title leads.
    */
-  .t .ok { flex: none; color: var(--green); font-weight: 700; }
+  /* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
+  .t .ok { flex: none; width: 9px; display: flex; justify-content: center;
+    color: var(--green); font-weight: 700; }
   :root { --row-read: #121519; --row-unread: #1f242b; }
   @media (prefers-color-scheme: light) {
     :root { --row-read: #eff1f4; --row-unread: #fff; }
