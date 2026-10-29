@@ -39,6 +39,8 @@ const SEED = {
     },
   },
   'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },
+  // The admin team's: its extraction rules and tech stack apply to every channel.
+  'kb-team-admin': { name: 'Admin', kind: 'team', files: {} },
   'kb-org-acme': {
     name: 'acme',
     kind: 'org',

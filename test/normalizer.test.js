@@ -16,8 +16,7 @@ import {
 } from 'node:test';
 import { parse } from '../src/channels.js';
 import { runBackfill, slackBackfillKey } from '../src/backfill.js';
-import { ruleFacts } from '../src/facts.js';
-import { labelThread, QUESTIONS } from '../src/label.js';
+import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -741,14 +740,21 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(e.queued.filter((q) => q.body.vectorize), []);
     const r = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO));
     assert.deepEqual([r.result, r.next_actor, r.kind, r.facts], ['labeled', 'us', 'incident', 1]);
-    const asked = Object.keys(calls[0].input.questions);
+    // Clef is asked in calls of at most MAX_QUESTIONS: the labels first, then topics and the
+    // tech stack the admin team configured (migration 0043).
+    const clef = calls.filter((c) => c.model.endsWith('/clef'));
+    const sizes = clef.map((c) => Object.keys(c.input.questions).length);
+    assert.ok(sizes.length > 1 && sizes.every((n) => n <= MAX_QUESTIONS));
+    const asked = clef.flatMap((c) => Object.keys(c.input.questions));
     assert.deepEqual(asked.slice(0, 4), Object.keys(QUESTIONS));
     assert.ok(asked.includes('tech.eds'));
     assert.ok(asked.includes('topic.cdn'));
+    // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
+    assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
     assert.deepEqual(r.topics, ['cdn']);
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
-    assert.equal(calls[1].input.reference_date, '2026-10-21');
+    assert.equal(calls.find((c) => c.model.endsWith('/clairic')).input.reference_date, '2026-10-21');
     const [label] = e.DB.rows('SELECT next_actor, kind, urgency, resolved_p FROM labels');
     assert.deepEqual(label, {
       next_actor: 'us', kind: 'incident', urgency: 2.6, resolved_p: 0.05,
@@ -761,7 +767,7 @@ describe('backfill, mentions and labels', () => {
       ['cve', 'site', 'url'],
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
-    assert.equal(calls.length, 3); // Clef, Clairic and the title, once
+    assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
   });
 });
 
@@ -794,21 +800,5 @@ describe('recordBots', () => {
     await recordBots(e, { ...teamsMessage({ botMentions: [{ id: 'b-1', name: 'x' }] }), source: 'slack' });
     await recordBots(e, teamsMessage({ groupId: undefined, botMentions: [{ id: 'b-1', name: 'x' }] }));
     assert.deepEqual(e.DB.rows('SELECT * FROM bot_teams'), []);
-  });
-});
-
-describe('ruleFacts', () => {
-  it('finds CVEs, tickets, Edge Delivery sites, repos and URLs', () => {
-    const facts = ruleFacts([
-      'see https://main--my-site--acme-corp.aem.page/x and site--org.aem.live',
-      'CVE-2026-12345, ticket SITES-1234, https://jira.example.com/browse/ABC-99, github.com/acme/repo.git.',
-      'ABC-1 alone is not a ticket',
-    ]);
-    const by = (f) => facts.filter((x) => x.field === f).map((x) => x.value);
-    assert.deepEqual(by('cve'), ['CVE-2026-12345']);
-    assert.deepEqual(by('ticket'), ['ABC-99', 'SITES-1234']);
-    assert.deepEqual(by('site'), ['acme-corp/my-site', 'org/site']);
-    assert.deepEqual(by('repo'), ['acme/repo']);
-    assert.equal(by('url').length, 2);
   });
 });

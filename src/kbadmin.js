@@ -22,6 +22,7 @@ import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
+import { extractionAdmin } from './extractadmin.js';
 
 /**
  * May `me` edit this knowledge base? The admin team edits all of them; a team manager the
@@ -387,6 +388,11 @@ export async function kbAdmin(request, env, url, me) {
   const tools = await toolAdmin(request, env, url, me);
   if (tools) {
     return tools;
+  }
+  // A team's extraction rules and tech stack (src/extractadmin.js).
+  const extraction = await extractionAdmin(request, env, url, me);
+  if (extraction) {
+    return extraction;
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

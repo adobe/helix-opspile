@@ -960,7 +960,12 @@ function marked(text, words) {
     .map((part, i) => (i % 2 ? `<mark>${emojify(part)}</mark>` : emojify(part))).join('');
 }
 const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', text: 'Words in a message', topic: 'About this' };
-const FACT_LABEL = { url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline' };
+// Fact fields of the admin team's rules (migration 0043) and Clairic's; a team's own show as they are named.
+const FACT_LABEL = {
+  url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline',
+  go_live: 'Go-live', affected_url: 'Affected URL', admin_api: 'Admin API', aemcs_env: 'AEM environment', doc: 'Docs', tool: 'Tool',
+  config_file: 'Config file', http_status: 'Status', header: 'Header', case: 'Support case',
+};
 /** A result's third line: the message that matched, else the fact, else why it matched. */
 function hitLine(hit) {
   const words = state.search.words;
@@ -1412,12 +1417,6 @@ function syncLift(copy) {
 }
 
 // ---------------------------------------------------------------- messages
-const TECH_LABEL = {
-  eds: 'Edge Delivery', da: 'Document Authoring', ue: 'Universal Editor', sharepoint: 'SharePoint',
-  gdrive: 'Google Drive', aemcs: 'AEM Cloud Service', assets: 'Assets', forms: 'Forms', commerce: 'Commerce',
-  cloudflare: 'Cloudflare', akamai: 'Akamai', fastly: 'Fastly', cloudfront: 'CloudFront', github: 'GitHub',
-  bitbucket: 'Bitbucket / Cloud Manager git', target: 'Target', analytics: 'Analytics',
-};
 const QUESTION_LABEL = { next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved' };
 function modelValue(model, q) {
   if (q === 'urgency') return model.urgency == null ? null : String(Math.round(model.urgency));
@@ -1857,7 +1856,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
   const stack = [
     ...(data.topics || []).map((x) => `<span class="tag topic" title="Topic">${esc(data.vocab?.topics?.[x] || x)}</span>`),
-    ...(data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(data.vocab?.tech?.[x.tech] || TECH_LABEL[x.tech] || x.tech)}</span>`),
+    ...(data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(data.vocab?.tech?.[x.tech] || x.tech)}</span>`),
   ].join('');
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(thread.title) || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
       <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·

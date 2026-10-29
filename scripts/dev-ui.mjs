@@ -115,6 +115,9 @@ if (NO_TEAM) {
 }
 const kb = await createKnowledgeBases();
 const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
+// The names of tech stack and topic ids (src/label.js vocab), from the teams' configuration on
+// the admin pages: read again on every request, so a change there shows on the next one.
+let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 // Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
@@ -433,7 +436,7 @@ function inbox(team, before = null, personal = false, only = null) {
     teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
-    vocab: vocab(),
+    vocab: vocabNames,
     threads,
     page,
   };
@@ -580,7 +583,7 @@ function thread(key) {
     model: store.labels.get(key) || null,
     tech: (entry.ch.tech || []).map((tech, i) => ({ tech, p: 0.95 - i * 0.05 })),
     topics: store.labels.get(key)?.topics || [],
-    vocab: vocab(),
+    vocab: vocabNames,
     reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
@@ -653,9 +656,10 @@ async function kbApi(req, res, url) {
   }
   const body = req.method === 'GET' ? {} : await readJson(req);
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
-  // and their switchable tools: src/kbadmin.js itself.
+  // and their switchable tools, and the teams' extraction rules: src/kbadmin.js itself.
   if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools'].includes(url.pathname)
-    || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')) {
+    || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')
+    || url.pathname === '/api/kb/extraction' || url.pathname.startsWith('/api/kb/extraction/')) {
     const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);
     // Back from an MCP server's OAuth sign-in: a redirect to the editor, or a page of text.
     if (r.status >= 300 && r.status < 400) {
@@ -1520,6 +1524,7 @@ const SIGNIN_PAGE = (back) => `<!doctype html><meta charset="utf-8"><title>Sign 
 <button>Sign in</button></form></body>`;
 
 const server = createServer(async (req, res) => {
+  vocabNames = await vocab(adminApi.env);
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname === '/__dev/signout' && req.method === 'POST') {

@@ -25,6 +25,9 @@ import { teamsBotEnabled } from '../teamsbot.js';
  * - `computer`: pi's `bash` tool, run on Cloudflare Computer (src/agent/computer.js): a
  *   just-bash shell in a Dynamic Worker over a filesystem in the agent's own Durable Object,
  *   so each thread keeps its files from one turn to the next, with network access and curl.
+ * - `extraction_rules`: the agent reads, tests and changes its team's extraction rules and
+ *   tech stack (src/extract.js), which apply to every channel of the team from the next
+ *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
  */
 
 export const AGENT_TOOLS = [
@@ -48,6 +51,19 @@ export const AGENT_TOOLS = [
       + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python',
     note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
       + ' leave opspile through it.',
+    platforms: null,
+  },
+  {
+    tool: 'extraction_rules',
+    title: 'Extraction rules',
+    names: ['list_extraction_rules', 'test_extraction_rule', 'save_extraction_rule',
+      'delete_extraction_rule', 'save_tech', 'delete_tech'],
+    description: 'The agent defines detection and extraction rules for its team: regular'
+      + ' expressions or scripts that find facts (sites, tickets, URLs, …) in threads or detect a'
+      + ' technology the customer uses, and the tech stack Clef asks about',
+    note: 'What the agent saves applies to every channel of its team, from the next labeling of'
+      + ' a thread, and shows on this page, attributed to the agent. It cannot change the admin'
+      + ' team\'s rules.',
     platforms: null,
   },
 ];
