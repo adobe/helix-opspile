@@ -83,6 +83,15 @@ const TEAMS = [
   { slug: 'edge', name: 'Edge ops', members: [1, 3] },
 ];
 
+/**
+ * Stats on klickhaus (src/klickhaus.js), as the Worker's KLICKHAUS_URL and KLICKHAUS_TEAMS
+ * would say: for Edge ops alone. Dana, a member who manages no team, sees Inbox · Agents · Stats
+ * in the header; viewing as Priya (Platform ops only) shows no switch. Its rows link back to
+ * `/inbox?view=personal&t=<thread>`, which opens a thread of Dana's teams she never posted in
+ * too (the checkout outage at umbrella, or an alert).
+ */
+const KLICKHAUS = { KLICKHAUS_URL: 'https://klickhaus.example', KLICKHAUS_TEAMS: 'edge' };
+
 const BOT = {
   kind: 'bot', name: 'Alertmanager', org: null, staff: false,
 };
@@ -917,6 +926,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ...people.get(1), teams: TEAMS.map(({ slug, name }) => ({ slug, name })), admin: false,
     },
     teams: TEAMS,
+    klickhaus: KLICKHAUS,
     partners: PARTNERS,
     people,
     members: MEMBERS,

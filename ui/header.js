@@ -16,13 +16,14 @@
  *
  * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
  * Teams too for team managers, and Orgs and Requests too for the admin team (with the number
- * of open requests on Requests). Each page
+ * of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
+ * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
  * as", the editor with its knowledge base and file, and each admin section with what was
  * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
- * customer on screen, and Teams to the team picked. The page you are on does nothing when clicked; on a phone it opens the menu of
- * the others.
+ * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
+ * are on does nothing when clicked; on a phone it opens the menu of the others.
  */
 window.Header = (() => {
   const PAGES = [
@@ -31,13 +32,17 @@ window.Header = (() => {
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
     { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
+    // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
+    { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
   ];
   const KEY = 'opspile.page.';
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
-  const opts = { prefer: {}, fallback: {}, go: null };
+  const opts = {
+    prefer: {}, fallback: {}, go: null, stats: null,
+  };
   let shut = 0;
 
   /** Which page an address on this origin is, or null. */
@@ -65,8 +70,29 @@ window.Header = (() => {
    * page on screen suggests (`fallback`), else its start.
    */
   function href(id) {
+    if (id === 'stats') return opts.prefer.stats?.() || stats();
     if (pageOf(location.href) === id) return `${location.pathname}${location.search}`;
     return opts.prefer[id]?.() || kept(id) || opts.fallback[id]?.() || PAGES.find((p) => p.id === id).href;
+  }
+
+  /**
+   * The Stats page on klickhaus, over the last month, on an org and a team (their slugs), each
+   * if given: klickhaus' `t` and `filters` parameters. A team is any of the row's `teams` (the
+   * one its channel is filed under and those it is shared with), as the team's inbox has it.
+   * Null before /api/me gave its address.
+   */
+  function stats({ org = null, team = null } = {}) {
+    if (!opts.stats) return null;
+    const u = new URL(opts.stats);
+    u.searchParams.set('t', '1mo');
+    const filters = [
+      ...(org ? [{ col: '`org.slug`', value: org, exclude: false }] : []),
+      ...(team ? [{
+        col: 'arrayJoin(`teams`)', value: team, exclude: false, filterCol: '`teams`', filterOp: 'HAS',
+      }] : []),
+    ];
+    if (filters.length) u.searchParams.set('filters', JSON.stringify(filters));
+    return u.href;
   }
 
   const links = () => document.querySelectorAll('header a[data-page], .pagemenu a[data-page]');
@@ -103,12 +129,17 @@ window.Header = (() => {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
+    opts.stats = me.stats?.url || null;
+    const own = PAGES.filter((p) => !p.external);
     let shown = [];
-    if (me.admin) shown = PAGES;
-    else if (me.manages?.length) shown = PAGES.filter((p) => !p.admin);
-    else if (me.teams?.length) shown = PAGES.filter((p) => p.member);
+    if (me.admin) shown = own;
+    else if (me.manages?.length) shown = own.filter((p) => !p.admin);
+    else if (me.teams?.length) shown = own.filter((p) => p.member);
+    if (opts.stats) shown = [...shown, ...PAGES.filter((p) => p.external)];
     const nav = $('pages');
-    const item = (p) => `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`;
+    const item = (p) => (p.external
+      ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
+      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -165,6 +196,11 @@ window.Header = (() => {
   function click(e) {
     const a = e.target.closest('a[data-page]');
     if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    // Another site, in its own tab: the browser opens it, and the menu closes.
+    if (a.target === '_blank') {
+      if ($('pagemenu')?.matches(':popover-open')) $('pagemenu').hidePopover();
+      return;
+    }
     const menu = $('pagemenu');
     if (a.hasAttribute('aria-current')) {
       e.preventDefault();
@@ -197,5 +233,7 @@ window.Header = (() => {
   $('menu')?.addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   sync();
 
-  return { init, sync, setCount, user, role, remember, href, pageOf };
+  return {
+    init, sync, setCount, user, role, remember, href, pageOf, stats,
+  };
 })();

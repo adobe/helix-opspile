@@ -63,6 +63,11 @@ const MOVE_VARS = ['RETIRED_ORIGINS'] as const;
 
 const SLACK_VARS = ['SLACK_JOIN_TEAMS'] as const;
 
+// Stats, optional: KLICKHAUS_URL (klickhaus' origin; the header links its opspile.html) and
+// KLICKHAUS_TEAMS (comma-separated ops team slugs whose members have klickhaus users). The
+// header's Stats entry shows only with both, and only to members of those teams.
+const STATS_VARS = ['KLICKHAUS_URL', 'KLICKHAUS_TEAMS'] as const;
+
 // Discord, optional: DISCORD_GUILDS (comma-separated server ids) turns the poller on, with the
 // secret DISCORD_BOT_TOKEN. DISCORD_STAFF_ROLES: role ids whose members count as staff;
 // DISCORD_HISTORY_DAYS: how far back the first poll reads (default 30); DISCORD_POLL_SECONDS:
@@ -158,7 +163,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );

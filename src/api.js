@@ -49,6 +49,7 @@ import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
+import { statsFor } from './klickhaus.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -810,8 +811,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   const seeing = async (teams, place) => isAdmin(me) || working(teams, place);
 
   if (url.pathname === '/api/me') {
+    // The header's Stats link (src/klickhaus.js), only where it is theirs.
+    const stats = statsFor(env, me);
     return json({
       ...me,
+      ...(stats ? { stats } : {}),
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
       // Whose tokens may edit their own messages (src/edit.js).

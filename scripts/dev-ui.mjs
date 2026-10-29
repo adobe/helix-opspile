@@ -70,6 +70,7 @@ import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import { rankEmoji, resolveShortcodes } from '../src/shortcodes.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
+import { statsFor } from '../src/klickhaus.js';
 import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { readState, waitingOn } from '../src/threads.js';
@@ -711,6 +712,11 @@ async function kbApi(req, res, url) {
 
 const teamsOf = (id) => store.teams.filter((t) => t.members.includes(id))
   .map(({ slug, name }) => ({ slug, name }));
+/** `/api/me`'s Stats link for someone on `teams` (src/klickhaus.js), as a field to spread. */
+const statsOf = (teams) => {
+  const stats = statsFor(store.klickhaus, { teams });
+  return stats ? { stats } : {};
+};
 
 /**
  * The preview's video: eight seconds of ffmpeg's moving test pattern, and its first
@@ -772,6 +778,8 @@ async function api(req, res, url) {
       email: as.email,
       teams: teamsOf(as.id),
       admin: false,
+      // Stats by the teams of whom is looked at, as src/api.js says.
+      ...statsOf(teamsOf(as.id)),
       viewer: { id: ME, name: store.me.name },
       readonly: true,
       connected: {},
@@ -794,6 +802,8 @@ async function api(req, res, url) {
       teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
+      // The header's Stats link (src/klickhaus.js): Dana is in Edge ops, unless --no-team.
+      ...statsOf(teams),
       // The person's teams and the teams of the personal view's channels (src/shares.js).
       rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
         .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
