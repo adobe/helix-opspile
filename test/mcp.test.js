@@ -448,6 +448,18 @@ describe('mcp tools', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('post_as_bot turns names into mentions too', async () => {
+    const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-test' };
+    appOn(e);
+    const ok = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Thanks @Cy', mention: ['Cy'] });
+    assert.equal(structured(ok).ok, true);
+    assert.equal(calls[0].body.text, 'Thanks <@U7>');
+    assert.deepEqual(calls[0].body.blocks, [{ type: 'markdown', text: 'Thanks <@U7>' }]);
+    const unknown = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Hi @Bo', mention: ['Bo'] });
+    assert.match(unknown.body.result.content[0].text, /Nobody named "Bo"/);
+    assert.equal(calls.length, 1);
+  });
+
   it('post_as_bot says when the platform has no opspile bot, and asks the user first', async () => {
     const plain = env();
     appOn(plain);

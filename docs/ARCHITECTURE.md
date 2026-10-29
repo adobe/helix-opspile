@@ -678,9 +678,15 @@ used by the MCP tool `post_as_bot` and the WebMCP tool of the same name): the sa
 thread agent's `post_message` (see "Agent tools"), and allowed exactly where that is, in
 channels whose **Post messages** switch is on (the channel's, else its team's) on a platform
 whose bot is set up, for staff of the thread's teams. The switch says whether the app speaks
-in a channel at all, whoever writes the text. The post names no person and carries no
-mentions; it comes back through ingestion by the app, and a thread agent there is told about
-it like any message.
+in a channel at all, whoever writes the text. The post names no person (who wrote it is
+kept in `app_posts` only). The people picked with `@` (or that the shared draft it sends
+mentions) are mentioned as in a reply: `<@U…>` on Slack, in `text` and in the `markdown`
+block, which keeps the id form as a mention; `<@id>` on Discord, whose `allowed_mentions` ping
+those people and nobody else (no `@everyone`, no roles); on Teams an `<at>Name</at>` in the
+bot's text with a `mention` entity by the person's Entra object id, which the Bot Framework
+takes. A picked Teams bot stays plain text there: Teams gives no bot what another bot writes.
+It comes back through ingestion by the app, and a thread agent there is told about it like
+any message.
 
 **Editing.** A message sent from opspile, or from the platform, can be edited in the inbox the
 way it was sent (`POST /api/edit`, `src/edit.js`): hovering one of your own messages shows ✎,
@@ -691,7 +697,7 @@ delegated `ChannelMessage.ReadWrite`; that takes the tenant's admin consent, so 
 only once `TEAMS_EDITS` says it was given. A message you posted as the opspile app is recorded
 in `app_posts` (user state, like drafts) and is yours to edit as the app, where the app may
 still post: Slack `chat.update` with the bot token, the Teams bot's update activity, Discord
-`PATCH` with the bot. Nobody else's messages, and nothing on Discord as a person, are offered.
+`PATCH` with the bot, with mentions as when it was posted. Nobody else's messages, and nothing on Discord as a person, are offered.
 The accounts the message mentioned (`@Name` in its markdown, one account by that name) stay
 mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
 edit made on the platform, and the inbox shows the new text and "(edited)" meanwhile. A Slack
@@ -991,7 +997,7 @@ away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack w
 token (`chat.postMessage` in the thread, the Markdown in a `markdown` block, which Slack renders
 itself, and `text` in mrkdwn for notifications and for the message file), on Discord with the bot, in the Discord thread when
 the conversation is one and as an inline reply to its first message otherwise, with mentions
-switched off. On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
+switched off (but for the people a person posting as the app picked, see "Replying"). On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
 post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is
 installed in. The bot is the opspile Entra app itself, single tenant, registered as an Azure
 Bot with the Teams channel, and packaged as a notification-only Teams app in the org catalog
