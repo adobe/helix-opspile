@@ -66,6 +66,8 @@ export default [
         Markdown: 'readonly',
         // Every page's header, ui/header.js.
         Header: 'readonly',
+        // The team order's model, ui/rank.js (the inbox).
+        Rank: 'readonly',
       },
     },
     rules: {

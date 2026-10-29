@@ -448,7 +448,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
   A **team's** view
-  (`team=<slug>`) puts what needs you most first and has every facet card. A facet value with threads
+  (`team=<slug>`) puts what needs you most first and has every facet card. First comes the
+  status (unseen and critical, unseen and hot, you, waiting too long, customer silent, team on it,
+  the rest); within a status, the score of `ui/rank.js`, a linear model over what the inbox knows
+  of a thread (how long ago, who is waited on, urgency, resolved, kind, …) learned from Clef's
+  pairwise judgements of production threads (`npm run rank`, see the README), plus how close the
+  thread is to you (mentioned you, you posted, 🛟 or 👀 by a colleague). A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.

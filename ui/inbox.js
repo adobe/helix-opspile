@@ -1089,24 +1089,21 @@ function openHit(key) {
   openThread(key);
 }
 
-// Team order: what needs me most, first. Recency always counts; a thread that waits on
-// us counts more the longer it waits, the more urgent and unresolved it is, and the closer
-// it is to me (mentioned me > I posted > mentioned the team > the team posted). Resolved
-// weighs on all of it, recency too: closing a thread with a last word must not lift it
-// above the open ones in its pile.
+// Team order: what needs me most, first. The status piles come first (STATUS_WEIGHT); within
+// a pile, the model of ui/rank.js says what needs the team most (learned from Clef's
+// judgements of production threads, `npm run rank`), and how close a thread is to me adds to
+// it: mentioned me > I posted > mentioned the team > the team posted, 🛟 by a colleague raises
+// it, 👀 by a colleague lowers it. Without a model, classicScore: recency always counts; a
+// thread that waits on us counts more the longer it waits, the more urgent and unresolved it
+// is, and the closer to me; resolved weighs on all of it.
 const STATUS_WEIGHT = {
   critical: 6, hot: 5, you: 4, waiting: 3, silent: 2, team: 1.5, quiet: 1,
 };
 function smartScore(t) {
   return STATUS_WEIGHT[statusOf(t)] * 100 + baseScore(t);
 }
-function baseScore(t) {
-  const now = Date.now();
-  const last = Date.parse(lastOf(t) || t.any_at || 0) || 0;
-  const ageH = Math.max(0, (now - last) / 3600000);
-  const recency = Math.exp(-ageH / 48);
-  const urgency = 1 + (t.label?.urgency ?? 0.5);
-  const open = 1 - 0.9 * resolvedP(t);
+/** How close a thread is to the viewer, as a factor (1: only the team's). */
+function closeness(t) {
   const me = viewerId();
   const team = teamIds();
   let near = 1;
@@ -1114,14 +1111,27 @@ function baseScore(t) {
   else if ((t.posters || []).includes(me) || signals(t).mine) near = 2;
   else if ((t.mentioned || []).some((m) => team.has(m.person))) near = 1.5;
   else if ((t.posters || []).some((p) => team.has(p))) near = 1.2;
-  const waitsOnUs = t.waiting_on === 'us';
-  const waiting = waitsOnUs ? 1 + Math.log2(1 + ageH / 2) : 0.3;
-  const unseen = t.unseenByAdobe ? 1.5 : 1;
-  const alert = t.kind === 'alert' ? 0.3 : 1;
   const sig = signals(t);
   // 👀 by a colleague lowers it for you; 🛟 by a colleague raises it.
-  const steer = (sig.others && !sig.mine ? 0.5 : 1) * (sig.help ? 2 : 1);
-  return alert * open * (2 * recency + urgency * waiting * near * unseen * steer);
+  return near * (sig.others && !sig.mine ? 0.5 : 1) * (sig.help ? 2 : 1);
+}
+/** Within a pile: the model's log-odds and the viewer's closeness, kept inside the pile. */
+function baseScore(t) {
+  const team = Rank.model ? Rank.score(t) : null;
+  if (team === null) return classicScore(t);
+  return Math.max(-45, Math.min(45, team + Math.log(closeness(t))));
+}
+function classicScore(t) {
+  const now = Date.now();
+  const last = Date.parse(lastOf(t) || t.any_at || 0) || 0;
+  const ageH = Math.max(0, (now - last) / 3600000);
+  const recency = Math.exp(-ageH / 48);
+  const urgency = 1 + (t.label?.urgency ?? 0.5);
+  const open = 1 - 0.9 * resolvedP(t);
+  const waiting = t.waiting_on === 'us' ? 1 + Math.log2(1 + ageH / 2) : 0.3;
+  const unseen = t.unseenByAdobe ? 1.5 : 1;
+  const alert = t.kind === 'alert' ? 0.3 : 1;
+  return alert * open * (2 * recency + urgency * waiting * unseen * closeness(t));
 }
 
 const tpl = document.createElement('template');

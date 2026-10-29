@@ -426,6 +426,34 @@ session cookie into `.dev-ui-session.json` (gitignored, never printed), and the 
 to the production API, read-only: writes are refused and the page's banner says so. Delete the
 file, or run `npm run ui:session -- --clear`, to go back to fake data.
 
+### Train the team order
+
+Within a status, a team's inbox is ordered by the model in `ui/rank.js`: a weighted sum of some
+thirty features of a thread, computed in the browser from the inbox entry (how long since the
+last message, whether it waits on us, Clef's urgency and resolved, a staff ✅, the kind, unseen
+by Adobe, a draft, …), in log-odds of "the team should turn to this one first". Its weights are
+learned from Clef, in three steps, each reading what the step before wrote into `.rank/`
+(gitignored; it holds production threads, so it stays on your machine):
+
+1. `npm run rank -- pull [--n 200] [--alerts 0.1]` takes a random sample of the threads in your
+   teams' inboxes, with their messages, from the production API, read-only, with the session
+   `npm run ui:session` copied.
+2. `npm run rank -- duel [--rounds 12]` plays an Elo tournament with Swiss pairings: Clef reads
+   two threads (their messages and what the inbox shows of them) and the team's policy
+   (`POLICY` in `scripts/rank-lib.mjs`), and says which comes first, asked both ways round. More
+   rounds add to the games played; changing what Clef is shown (`PROMPT_VERSION`) asks again.
+   It calls Workers AI with `CLOUDFLARE_ACCOUNT_ID` (the Worker's account) and
+   `CLOUDFLARE_API_TOKEN`, or the token of `wrangler login`.
+3. `npm run rank -- train [--l2 3] [--dry-run]` fits the weights (pairwise logistic regression),
+   prints how often the model, the hand-made score it replaces (`classicScore` in
+   `ui/inbox.js`) and recency alone agree with Clef on threads held out (five folds), and
+   writes the weights into `ui/rank.js` (between `// MODEL:` and `// END MODEL`). Only feature
+   names and numbers are committed.
+
+A feature is added in `features()` of `ui/rank.js`, which the browser and the training both
+run; train again after changing one. `Rank.explain(entry)` in the console lists what makes up a
+thread's score. Without a model (`const MODEL = null`) the inbox orders by `classicScore`.
+
 ### Agents in the browser (WebMCP)
 
 The inbox registers [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tools, so an agent

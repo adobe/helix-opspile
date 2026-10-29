@@ -40,6 +40,8 @@ code and docs, is the decision model that labels threads and channels.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`.
+- `ui/rank.js` is the team order's model; its `MODEL` block is written by `npm run rank -- train`
+  (README, "Train the team order"), not by hand. `.rank/` holds production threads: never commit it.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
 
