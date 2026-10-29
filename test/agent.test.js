@@ -11,7 +11,6 @@
  */
 
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import {
   after, afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -42,7 +41,7 @@ import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tool
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
-import { fakeBucket, quiet } from './fakes.js';
+import { fakeBucket, fakeRepo, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -65,57 +64,6 @@ const USERS = {
   },
 };
 const THREAD = 'slack:E1:C1:1792584000.000100';
-
-const sha = (s) => createHash('sha1').update(s).digest('hex');
-
-/** An Artifacts repo in memory, from `{ path: content }`, readable like the binding. */
-function fakeRepo(files) {
-  const blobs = new Map();
-  const trees = new Map();
-  function tree(prefix) {
-    const names = new Map();
-    for (const path of Object.keys(files)) {
-      if (path.startsWith(prefix)) {
-        const [first, ...rest] = path.slice(prefix.length).split('/');
-        names.set(first, rest.length ? 'tree' : 'blob');
-      }
-    }
-    const entries = [...names].map(([name, type]) => {
-      if (type === 'blob') {
-        const content = files[`${prefix}${name}`];
-        const hash = sha(`blob ${content}`);
-        blobs.set(hash, content);
-        return {
-          name, type, hash, mode: '100644',
-        };
-      }
-      return {
-        name, type, hash: tree(`${prefix}${name}/`), mode: '40000',
-      };
-    });
-    const hash = sha(`tree ${prefix} ${JSON.stringify(entries)}`);
-    trees.set(hash, entries);
-    return hash;
-  }
-  const root = Object.keys(files).length ? tree('') : null;
-  return {
-    async log() {
-      return root ? [{
-        hash: sha(`commit ${root}`), treeHash: root, message: 'seed', author: { name: 'x' }, committedAt: 1792584000,
-      }] : [];
-    },
-    async readTree(hash) {
-      return trees.get(hash) || null;
-    },
-    async readBlob(hash) {
-      return blobs.has(hash) ? new Blob([blobs.get(hash)]) : null;
-    },
-    async info() {
-      return { remote: 'https://made-up.example/git/ns/x.git' };
-    },
-    [Symbol.dispose]() {},
-  };
-}
 
 function fakeArtifacts(repos) {
   const calls = [];

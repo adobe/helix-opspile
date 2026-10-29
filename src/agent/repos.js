@@ -22,6 +22,7 @@ import { repoName } from '../kb.js';
 const MIRROR_TTL_MS = 6 * 60 * 60 * 1000;
 const PENDING_TTL_MS = 60 * 60 * 1000;
 const MAX_LIST = 400;
+const COUNT_READS = 16;
 const MAX_GREP_FILES = 300;
 const MAX_GREP_HITS = 80;
 const MAX_READ = 60 * 1024;
@@ -173,6 +174,41 @@ export async function listFiles(env, artifact, path, { recursive = false } = {})
     }
     const listed = await walk(repo, at.hash, cleanPath(path), { recursive, limit: MAX_LIST });
     return { commit: head.hash, ...listed };
+  });
+}
+
+/**
+ * How many files of the whole tree `keep(path)` accepts. Unlike `listFiles` this walks every
+ * directory, `COUNT_READS` at a time, and keeps no listing, so the count is never cut short.
+ */
+export async function countFiles(env, artifact, keep = () => true) {
+  return withRepo(env, artifact, async (repo) => {
+    const head = await headOf(repo);
+    if (!head) {
+      return { count: 0, empty: true };
+    }
+    let count = 0;
+    const queue = [{ hash: head.treeHash, prefix: '' }];
+    while (queue.length) {
+      const batch = queue.splice(0, COUNT_READS);
+      // eslint-disable-next-line no-await-in-loop
+      const trees = await Promise.all(batch.map((d) => repo.readTree(d.hash)));
+      for (let i = 0; i < batch.length; i += 1) {
+        const { hash, prefix } = batch[i];
+        if (!trees[i]) {
+          throw new Error(`missing tree ${hash}`);
+        }
+        for (const c of trees[i]) {
+          const path = prefix ? `${prefix}/${c.name}` : c.name;
+          if (c.type === 'tree') {
+            queue.push({ hash: c.hash, prefix: path });
+          } else if (keep(path)) {
+            count += 1;
+          }
+        }
+      }
+    }
+    return { commit: head.hash, count };
   });
 }
 
