@@ -146,7 +146,7 @@ page has the same channel search the admin team adds channels with (every channe
 Teams team, customer or id), and picking one sends a request, "add this channel to this team",
 with an optional note (`channel_requests`, migration 0028; one open request per channel and
 team). The admin team sees the open ones under **Requests** in the admin pages, their number on
-that tab and on the inbox's Admin switch. Opening one runs the manual assignment as a dry run
+Requests in every page's header. Opening one runs the manual assignment as a dry run
 and says what confirming would do: re-file the channel under the team (and which threads move),
 or share it with the team when another team holds it. **Confirm** then makes that assignment,
 exactly as adding the channel on the team's page does, and records who confirmed it and what it
@@ -351,17 +351,24 @@ only tools agents may call. Adding or changing one connects to it and lists its 
 them are the [global servers](#global-mcp-servers), with a switch for the team (in a team's
 knowledge base) and one per channel the knowledge base learns from.
 
-For admins and team managers, the pages' headers have the same switch between **Inbox**,
-**Agents** (this editor: the agents' knowledge bases, channels, MCP servers and instructions)
-and **Admin**, and context goes along between the inbox and the editor. From the inbox, the editor opens the knowledge base
-of the open thread's customer (or of the one customer filtered on) if it has one, else the
-team's; it carries the inbox's URL along (`back=`, only ever a path to `/inbox` on the same
-origin), so **Inbox** returns to it as it was left: team, filters, sort, unread, the open
-thread and "view as". Opened directly, **Inbox** goes to the inbox of the team whose knowledge
-base is open. The editor's URL names the knowledge base and the file (or the history), and
-each one opened is a history entry, so the browser's Back and Forward step through them and
-back to the inbox. The editor itself is always the admin's own, also when they came from a
-"view as" inbox.
+For admins and team managers, every page has the same header (`ui/header.js`,
+`ui/header.css`): a switch between **Inbox**, **Agents** (this editor: the agents' knowledge
+bases, channels, MCP servers and instructions) and **Teams**, and for the admin team **Orgs**
+and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left in that
+browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
+**Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
+**Agents** with its knowledge base and file, and each admin section with what was picked in it.
+From the inbox, what is on screen picks what the others open on: Agents and Orgs the customer
+on screen (the open thread's, or the one customer filtered on; Agents its knowledge base if it
+has one, else the team's), Teams the team picked (in the team views, for whoever may manage it).
+With nothing on screen for them, they open as they were left, and Agents, not opened yet in the
+tab, on the team's. The inbox, not
+opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
+address on links made before, is still taken.) The editor's URL names the knowledge base and
+the file (or the history), and each one opened is a history entry, so the browser's Back and
+Forward step through them; going between the admin sections is one too. The editor itself is
+always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
+the page you are on, with a menu of the others.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is

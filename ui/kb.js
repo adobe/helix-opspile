@@ -23,26 +23,10 @@
 const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
-  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file', back: null,
+  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
   channels: null, configured: true, mcp: null, globals: null, tools: null,
 };
 const $ = (id) => document.getElementById(id);
-const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
-/** You, at the toolbar's right end (the same colour and initials as in the inbox), and its menu. */
-function renderUser(me) {
-  const name = me.name || me.email || '';
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  for (const id of ['userAv', 'menuAv']) {
-    $(id).textContent = initials;
-    $(id).style.background = COLORS[h % COLORS.length];
-  }
-  $('me').textContent = name;
-  $('menuName').textContent = name;
-  $('menuEmail').textContent = me.email || '';
-  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
-}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const base = () => state.bases.find((b) => b.repo === state.repo);
 
@@ -104,29 +88,16 @@ async function leave() {
 }
 
 /**
- * The inbox to return to, from `back=`: only a path on this origin, and only `/inbox` (with its
- * query, which holds the team, filters, sort, unread, the open thread and "view as"), so the
- * parameter cannot send anyone elsewhere.
+ * The inbox, not opened yet in this browser tab (ui/header.js keeps it as it was left): the
+ * inbox of the team whose knowledge base is open.
  */
-function inboxBack(value) {
-  if (!value) return null;
-  try {
-    const u = new URL(value, location.origin);
-    return u.origin === location.origin && u.pathname === '/inbox' ? `${u.pathname}${u.search}` : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The inbox as it was left; opened directly, the inbox of the team whose knowledge base is open. */
-function inboxUrl() {
-  if (state.back) return state.back;
+function teamInbox() {
   const b = base();
-  return b && b.kind === 'team' ? `/inbox?team=${encodeURIComponent(b.slug)}` : '/inbox';
+  return b && b.kind === 'team' ? `/inbox?team=${encodeURIComponent(b.slug)}` : null;
 }
 
 /**
- * The URL names the knowledge base, the file (or the history) and the inbox to return to, so
+ * The URL names the knowledge base and the file (or the history), so
  * reloads and the browser's Back and Forward land where they were. Going to another knowledge
  * base or file is a new history entry (`push`); settling the URL of the same view is not.
  */
@@ -135,12 +106,10 @@ function toUrl(mode = 'push') {
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
   if (['history', 'agents', 'mcp'].includes(state.view)) q.set('view', state.view);
-  if (state.back) q.set('back', state.back);
   const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
     history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
   }
-  $('inbox').href = inboxUrl();
 }
 
 // ---- knowledge bases --------------------------------------------------------------------
@@ -1204,16 +1173,6 @@ window.addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
-// "Inbox": saves what is pending and asks, in the page, about edits that cannot be saved, then
-// goes back to the inbox as it was left. A new tab (⌘-click, middle click) leaves nothing.
-$('inbox').addEventListener('click', async (e) => {
-  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  if (!(await leave())) return;
-  state.file = null; // saved, or discarded on purpose: nothing for pagehide or beforeunload
-  location.assign(inboxUrl());
-});
-$('kbs').addEventListener('click', (e) => e.preventDefault());
 // Phones: back to the column before (what is open stays open).
 document.querySelector('main').addEventListener('click', (e) => {
   const to = e.target.closest('[data-up]');
@@ -1254,19 +1213,33 @@ window.addEventListener('popstate', async () => {
 
 (async () => {
   const q = new URLSearchParams(location.search);
-  state.back = inboxBack(q.get('back'));
-  $('inbox').href = inboxUrl();
+  // `back=`, the inbox as it was left, from links made before ui/header.js kept it.
+  const back = q.get('back');
+  if (back && Header.pageOf(back) === 'inbox') Header.remember(back);
+  if (q.has('back')) {
+    q.delete('back');
+    history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}`);
+  }
   const me = await call('/api/me');
   if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  renderUser(state.me);
+  Header.user(state.me, Header.role(state.me));
   // Team managers see their teams' knowledge bases only (the API lists no others).
   if (!state.me.admin && !state.me.manages?.length) {
     $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team and team managers.</div>';
-    $('editor').innerHTML = `<div class="empty"><a href="${esc(inboxUrl())}">Back to the inbox</a></div>`;
+    $('editor').innerHTML = `<div class="empty"><a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
-  $('pages').hidden = false;
+  // The pages (ui/header.js). Leaving saves what is pending and asks, in the page, about edits
+  // that cannot be saved; a new tab (⌘-click, middle click) leaves nothing.
+  Header.init(state.me, {
+    fallback: { inbox: teamInbox },
+    go: async (id, url) => {
+      if (!(await leave())) return;
+      state.file = null; // saved, or discarded on purpose: nothing for pagehide or beforeunload
+      location.assign(url);
+    },
+  });
   const { ok, body } = await call('/api/kb');
   if (!ok) { $('bases').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the knowledge bases.')}</div>`; return; }
   state.bases = body.bases;
