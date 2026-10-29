@@ -353,6 +353,40 @@ describe('thread agents', () => {
     assert.equal(discardText({ by: 'Ada', body: 'x' }, null), discardText({ by: 'Ada', body: 'x' }));
   });
 
+  it('discard a draft they saved, and leave a colleague\'s alone', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const all = () => true;
+    const target = { key: THREAD, team: 'helix', threads: [THREAD] };
+    const ext = opspileExtension({
+      env: e, hasThread: true, target: async () => target, verdicts: async () => new Map(),
+    });
+    const tools = Object.fromEntries(ext.tools.map((t) => [t.name, t]));
+    const run = async (args) => {
+      const res = await tools.discard_draft.execute(args, {});
+      return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+    };
+    const draft = () => e.DB.prepare('SELECT body FROM drafts').first();
+
+    assert.deepEqual(await run({ base: 'x' }), { text: 'There is no draft.', error: false });
+    const agent = { id: await agentPerson(e) };
+    const saved = await (await saveDraft(e, agent, { thread: THREAD, text: 'Stale' }, all)).json();
+    const stale = await run({ base: '2026-01-01T00:00:00.000Z' });
+    assert.equal(stale.error, true);
+    assert.match(stale.text, /The draft changed[\s\S]*Nothing was discarded[\s\S]*Stale/);
+    assert.deepEqual(await draft(), { body: 'Stale' });
+    assert.deepEqual(await run({ base: saved.draft.updated_at }), { text: 'discarded', error: false });
+    assert.equal(await draft(), null);
+
+    e.DB.sqlite.exec("INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (7, 'ada@staff.example', 'Ada Staff', 1)");
+    const ada = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+    const hers = await (await saveDraft(e, ada, { thread: THREAD, text: 'Mine' }, all)).json();
+    const refused = await run({ base: hers.draft.updated_at });
+    assert.equal(refused.error, true);
+    assert.match(refused.text, /^Ada Staff saved the draft last .* it is theirs, so it was kept/);
+    assert.deepEqual(await draft(), { body: 'Mine' });
+  });
+
   it('are told a discarded draft once Undo has run out, unless it came back', async () => {
     const model = {
       AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'm', BEDROCK_API_KEY: 'k',

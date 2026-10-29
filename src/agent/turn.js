@@ -24,6 +24,7 @@ const DOING = {
   get_draft: 'Reading the draft',
   read_file: 'Reading an attached file',
   update_draft: 'Updating the draft',
+  discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
 };
 
@@ -83,7 +84,12 @@ export function latestTurn(entries, { busy = false } = {}) {
     };
   }
   const changed = assistant.flatMap(calls).map((c) => c.name);
-  const fallback = changed.includes('update_draft') ? 'Updated the draft.' : 'Nothing to change.';
+  let fallback = 'Nothing to change.';
+  if (changed.includes('update_draft')) {
+    fallback = 'Updated the draft.';
+  } else if (changed.includes('discard_draft')) {
+    fallback = 'Discarded the draft.';
+  }
   return {
     ...turn,
     state: 'done',
