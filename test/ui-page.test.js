@@ -293,4 +293,28 @@ describe('inbox page', () => {
       assert.equal(railAt(1920, view), false, `desktop, ${view}`);
     }
   });
+
+  it('ranks a thread just resolved below the open ones of its pile', () => {
+    const me = 'me';
+    const { baseScore } = piece('function baseScore', '\nconst tpl', 'baseScore', {
+      lastOf: (t) => t.last_at,
+      resolvedP: (t) => (t.resolved ? 1 : 0),
+      viewerId: () => me,
+      teamIds: () => new Set([me, 'mate']),
+      signals: () => ({}),
+    });
+    const ago = (h) => new Date(Date.now() - h * 3600000).toISOString();
+    // You wrote the last word and put ✅ on it a moment ago.
+    const closed = {
+      last_at: ago(0), resolved: true, posters: [me], waiting_on: 'nobody', label: { urgency: 1 },
+    };
+    // A colleague's thread, open for a week, nobody waiting, low urgency.
+    const old = {
+      last_at: ago(7 * 24), posters: ['mate'], waiting_on: 'nobody', label: { urgency: 0 },
+    };
+    assert.ok(baseScore(closed) < baseScore(old), 'resolved now < open for a week');
+    // Among the open, recency still counts; so it does among the resolved.
+    assert.ok(baseScore({ ...old, last_at: ago(1) }) > baseScore(old));
+    assert.ok(baseScore(closed) > baseScore({ ...closed, last_at: ago(24) }));
+  });
 });
