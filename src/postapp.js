@@ -86,7 +86,7 @@ export async function postApp(env, me, request, inTeam, files = []) {
     return json({ error: 'write something' }, 400);
   }
   const check = await appPostCheck(env, key);
-  if (!check.entry || !inTeam(check.entry.teams)) {
+  if (!check.entry || !await inTeam(check.entry.teams, check.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!isStaffDomain(env, me.email)) {

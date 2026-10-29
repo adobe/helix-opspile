@@ -11,6 +11,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import { recipients } from './shares.js';
 import { advanceWatermark } from './threads.js';
 
 /** Read events are written to D1 at most this long after they happen. */
@@ -21,6 +22,10 @@ export const FLUSH_MS = 2000;
  * hibernation); a read event from one member is fanned out to everyone at once and
  * written to D1 in batches. The normalizer posts new activity and inferred reads to
  * `/notify`, which is only fanned out (it has already written D1).
+ *
+ * People who are not on the team connect too (`x-opspile-scoped`), for the channels of the
+ * team's that are in their personal view: they hear only about those (src/shares.js,
+ * `recipients`).
  */
 export class TeamRoom extends DurableObject {
   constructor(ctx, env) {
@@ -29,9 +34,13 @@ export class TeamRoom extends DurableObject {
     this.env = env;
   }
 
-  broadcast(event) {
+  async broadcast(event) {
     const data = JSON.stringify(event);
-    for (const ws of this.ctx.getWebSockets()) {
+    const sockets = this.ctx.getWebSockets().map((ws) => {
+      const [person, , scope] = this.ctx.getTags(ws);
+      return { ws, person: Number(person), scoped: scope === 'scoped' };
+    });
+    for (const { ws } of await recipients(this.env, event, sockets)) {
       try {
         ws.send(data);
       } catch {
@@ -49,7 +58,7 @@ export class TeamRoom extends DurableObject {
     if (!pending || at > pending.at) {
       await this.ctx.storage.put(key, { person, thread, at });
     }
-    this.broadcast({
+    await this.broadcast({
       type: 'read', person, thread, at,
     });
     if (!(await this.ctx.storage.getAlarm())) {
@@ -72,12 +81,15 @@ export class TeamRoom extends DurableObject {
     if (url.pathname === '/connect') {
       const person = Number(request.headers.get('x-opspile-person'));
       const readonly = request.headers.get('x-opspile-readonly') === '1';
+      const scoped = request.headers.get('x-opspile-scoped') === '1';
       const pair = new WebSocketPair();
-      this.ctx.acceptWebSocket(pair[1], [String(person), readonly ? 'readonly' : 'readwrite']);
+      this.ctx.acceptWebSocket(pair[1], [
+        String(person), readonly ? 'readonly' : 'readwrite', scoped ? 'scoped' : 'team',
+      ]);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname === '/notify' && request.method === 'POST') {
-      this.broadcast(await request.json());
+      await this.broadcast(await request.json());
       return new Response(null, { status: 204 });
     }
     if (url.pathname === '/read' && request.method === 'POST') {
@@ -96,10 +108,16 @@ export class TeamRoom extends DurableObject {
       return;
     }
     // The person comes from the authenticated connection, never from the message.
-    const [tag, mode] = this.ctx.getTags(ws);
-    // An admin looking as someone else must not move their read state.
-    if (msg.type === 'read' && mode !== 'readonly') {
-      await this.read(Number(tag), msg.thread, msg.at);
+    const [tag, mode, scope] = this.ctx.getTags(ws);
+    // An admin looking as someone else must not move their read state. Someone not on the team
+    // reads only the threads of the channels they hear about.
+    const person = Number(tag);
+    if (msg.type !== 'read' || mode === 'readonly') {
+      return;
+    }
+    const sockets = [{ person, scoped: scope === 'scoped' }];
+    if ((await recipients(this.env, msg, sockets)).length) {
+      await this.read(person, msg.thread, msg.at);
     }
   }
 

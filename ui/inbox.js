@@ -619,8 +619,8 @@ const FACETS = [
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
 ];
 // The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
-// (`state.sort` is 'personal'), the threads of all their teams in the channels they posted or
-// were mentioned in. The personal view (latest activity first) keeps the customer and platform
+// (`state.sort` is 'personal'), the threads of the channels they posted or were mentioned in,
+// whichever team they are filed under. The personal view (latest activity first) keeps the customer and platform
 // cards only, and picks one customer at a time; it shows conversations, not alerts. A team's
 // view has every card. Filters on the cards a view does not show do not apply in it, and are
 // kept for the other.
@@ -1138,7 +1138,7 @@ function renderThreads() { inPass(threadRows); }
 function viewSwitch() {
   const mine = personal();
   const views = [{
-    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, in all your teams, latest activity first',
+    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, latest activity first',
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
   }))];
@@ -2976,6 +2976,7 @@ document.addEventListener('visibilitychange', () => {
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
   state.teams = who.teams;
+  state.rooms = roomsOf(who);
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
   renderUser();
 }
@@ -3019,6 +3020,11 @@ async function loadInbox(early = null) {
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
   }
   state.data = first;
+  // Personal's rooms grow once you are in a channel of another team: listen there too.
+  if (first.rooms && !first.rooms.every((r) => state.rooms?.includes(r))) {
+    state.rooms = first.rooms;
+    syncSockets();
+  }
   if (!state.as) checkBells(scopeKey(), first);
   mergeProfiles(state.data.profiles);
   renderUser();
@@ -3120,8 +3126,13 @@ function prefetchAround(key) {
   if (i < 0) return;
   for (const k of [state.order[i + 2], state.order[i - 1], state.order[i + 1]]) prefetch(k, { urgent: true });
 }
-/** The rooms of the inbox on screen: its team's, or for Personal those of all the viewer's teams. */
-const screenTeams = () => (personal() ? (state.teams || []).map((t) => t.slug) : [state.team]).filter(Boolean);
+/**
+ * The rooms someone's Personal listens to (GET /api/me's `rooms`): their teams', and those of
+ * the teams the channels they posted or were mentioned in are filed under.
+ */
+const roomsOf = (who) => who.rooms || (who.teams || []).map((t) => t.slug);
+/** The rooms of the inbox on screen: its team's, or for Personal its rooms. */
+const screenTeams = () => (personal() ? state.rooms || [] : [state.team]).filter(Boolean);
 /** One socket per team: the ones on screen, and the ones the notifications need (notifyTeams). */
 const wantedTeams = () => [...new Set([...screenTeams(), ...notifyTeams()])];
 /**
@@ -3319,7 +3330,7 @@ function wireNotify() {
 /** The teams whose rooms the notifications need: all of yours for mentions and Personal. */
 function notifyTeams() {
   if (state.as || !state.settings) return [];
-  const all = (state.teams || []).map((t) => t.slug);
+  const all = state.rooms || [];
   const bells = state.settings.bells || [];
   if (state.settings.mentions || bells.some((b) => b.view === PERSONAL_VIEW)) return all;
   return all.filter((slug) => bells.some((b) => b.view === slug));
@@ -3379,7 +3390,8 @@ async function noteMention(ev, team) {
     at: ev.at,
     title: `${ev.author || 'Someone'} mentioned you`,
     body: `${clipNote(title, 80)}${msg?.body ? `\n${clipNote(msg.body)}` : ''}`,
-    url: noteUrl(team, known?.thread || ev.thread),
+    // A room that is not one of your teams' (you are on none): the thread is in Personal.
+    url: noteUrl((state.teams || []).some((t) => t.slug === team) ? team : PERSONAL_VIEW, known?.thread || ev.thread),
   });
 }
 
@@ -3440,7 +3452,7 @@ function checkBells(scope, data) {
 function bellsSoon(team) {
   if (state.as) return;
   const scopes = new Set((state.settings?.bells || []).map((b) => b.view)
-    .filter((v) => v === team || (v === PERSONAL_VIEW && (state.teams || []).some((t) => t.slug === team))));
+    .filter((v) => v === team || (v === PERSONAL_VIEW && (state.rooms || []).includes(team))));
   for (const scope of scopes) {
     // The inbox on screen reloads on its own (reloadSoon), and is checked then.
     if (scope === scopeKey()) continue;
@@ -3690,6 +3702,7 @@ async function start() {
     : get(personalAsked(asked) ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(asked.get('team'))}`).catch(() => null);
   try { state.me = await get('/api/me'); } catch (e) { $('threads').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   state.teams = state.me.teams;
+  state.rooms = roomsOf(state.me);
   state.settings = state.me.settings || { mentions: true, bells: [] };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'
@@ -4038,7 +4051,7 @@ const WEBMCP_TOOLS = [
           description: 'Values to leave out, by the same filters: e.g. { "platform": ["discord"] } hides Discord threads. Each one given replaces what that filter excludes; an empty list stops excluding. A value excluded is no longer picked.',
         },
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
-        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, in all their teams, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
+        sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, whichever team they belong to, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },

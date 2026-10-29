@@ -20,7 +20,7 @@ import {
 import { appPostCheck, postApp } from './postapp.js';
 import { PICKER, react, resolve } from './react.js';
 import { isAdmin } from './review.js';
-import { memberOf } from './shares.js';
+import { mayWork, memberOf, teamless } from './shares.js';
 
 /**
  * The tools of the MCP server (src/mcp.js). Each one runs as the signed-in person, through
@@ -135,11 +135,27 @@ const facetArgs = (args) => Object.fromEntries(FACET_ARGS.map((k) => [k, list(ar
 const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
   .map((k) => checkValues(`${prefix}${k}`, f[k], FACET_VALUES[k])).find(Boolean) || null;
 
-async function listThreads(env, me, args) {
+/**
+ * The inboxes a tool looks at: the team asked for, or all the person's teams; for someone on
+ * no team their personal view (`null`). `{ teams }` or `{ error }`.
+ */
+function inboxesOf(me, args) {
+  if (teamless(me)) {
+    return args.team ? { error: 'You are on no ops team: leave out `team` for the threads of the channels you posted or were mentioned in.' }
+      : { teams: [null] };
+  }
   const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
   const unknown = teams.filter((t) => !inTeamOf(me)(t));
   if (unknown.length) {
     return { error: `Not one of your teams: ${unknown.join(', ')}. Your teams: ${me.teams.map((t) => t.slug).join(', ')}.` };
+  }
+  return { teams };
+}
+
+async function listThreads(env, me, args) {
+  const { teams, error } = inboxesOf(me, args);
+  if (error) {
+    return { error };
   }
   const f = facetArgs(args);
   const x = facetArgs(args.exclude || {});
@@ -149,7 +165,8 @@ async function listThreads(env, me, args) {
   }
   // A channel shared by two of the person's teams is in both inboxes: each thread once.
   const seen = new Set();
-  const all = (await Promise.all(teams.map(async (team) => (await inbox(env, me, team)).threads)))
+  const all = (await Promise.all(teams.map(async (team) => (team ? await inbox(env, me, team)
+    : await inbox(env, me, null, { personal: true })).threads)))
     .flat().filter((t) => !seen.has(t.thread) && seen.add(t.thread))
     .sort((a, b) => latest(b).localeCompare(latest(a)));
   const matches = all.filter((t) => {
@@ -187,16 +204,15 @@ async function searchThreads(env, me, args) {
   if (!q) {
     return { error: 'Give a `query`: words, a phrase, a URL or a ticket.' };
   }
-  const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
-  const unknown = teams.filter((t) => !inTeamOf(me)(t));
-  if (unknown.length) {
-    return { error: `Not one of your teams: ${unknown.join(', ')}. Your teams: ${me.teams.map((t) => t.slug).join(', ')}.` };
+  const { teams, error } = inboxesOf(me, args);
+  if (error) {
+    return { error };
   }
   const limit = Math.max(1, Math.min(MAX_LIST, Math.floor(Number(args.limit) || 20)));
   // A channel shared by two of the person's teams is in both inboxes: each thread once.
   const seen = new Set();
   const found = (await Promise.all(teams.map(async (team) => {
-    const r = await searchInbox(env, me, team, q, { limit });
+    const r = await searchInbox(env, me, team, q, { limit, personal: !team });
     const byKey = new Map(r.threads.map((t) => [t.thread, t]));
     return r.hits.map((h) => ({ hit: h, t: byKey.get(h.thread) })).filter((x) => x.t);
   }))).flat().filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
@@ -267,7 +283,7 @@ function threadHead(key, data) {
 async function getThread(env, me, args) {
   const key = String(args.thread || '');
   const data = key && await loadThread(env, me, key);
-  if (!data || !inTeamOf(me)(data.thread.teams)) {
+  if (!data || !await mayWork(env, me)(data.thread.teams, data.thread)) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
   }
   const limit = Math.max(1, Math.min(MAX_MESSAGES, Math.floor(Number(args.limit) || 20)));
@@ -368,7 +384,7 @@ async function writeTarget(env, me, args) {
     return { error: 'The text is empty. Provide `text`.' };
   }
   const t = key && await loadThread(env, me, key);
-  if (!t || !inTeamOf(me)(t.thread.teams)) {
+  if (!t || !await mayWork(env, me)(t.thread.teams, t.thread)) {
     return NOT_FOUND;
   }
   return { key, text, t };
@@ -385,7 +401,7 @@ async function mentionsOf(env, me, key, text, names) {
   const wanted = [].concat(names || []).map((n) => String(n).trim()).filter(Boolean);
   for (const name of wanted) {
     // eslint-disable-next-line no-await-in-loop
-    const found = await fromResponse(await mentionable(env, key, name, inTeamOf(me)));
+    const found = await fromResponse(await mentionable(env, key, name, mayWork(env, me)));
     const people = (found.data && found.data.people) || [];
     const exact = people.find((p) => p.name.toLowerCase() === name.toLowerCase());
     if (!exact) {
@@ -404,7 +420,7 @@ async function useDraft(env, me, key, version) {
   if (typeof version !== 'string' || !version) {
     return '';
   }
-  const res = await discardDraft(env, me, { thread: key, base: version }, inTeamOf(me));
+  const res = await discardDraft(env, me, { thread: key, base: version }, mayWork(env, me));
   return res.status === 409 ? ' The shared draft changed since, so it was kept.'
     : ' The shared draft is used up.';
 }
@@ -422,7 +438,7 @@ async function postDraft(env, me, args) {
   const request = {
     thread: w.key, text: w.text, mentions: m.mentions, base: args.base || null,
   };
-  const res = await saveDraft(env, me, request, inTeamOf(me));
+  const res = await saveDraft(env, me, request, mayWork(env, me));
   const body = await res.json().catch(() => ({}));
   if (res.status === 409 && body.draft) {
     const d = body.draft;
@@ -458,7 +474,7 @@ async function postAsUser(env, me, args, ctx) {
     return asked;
   }
   const body = { thread: w.key, text: w.text, mentions: m.mentions };
-  const res = await fromResponse(await post(env, me, body, inTeamOf(me)));
+  const res = await fromResponse(await post(env, me, body, mayWork(env, me)));
   if (res.error) {
     return res;
   }
@@ -486,7 +502,7 @@ async function postAsBot(env, me, args, ctx) {
     return asked;
   }
   const request = { thread: w.key, text: w.text };
-  const res = await fromResponse(await postApp(env, me, request, inTeamOf(me)));
+  const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
   if (res.error) {
     return res;
   }
@@ -512,7 +528,7 @@ async function reactTool(env, me, args) {
   }
   const res = await fromResponse(await react(env, me, {
     thread: id.slice(0, at), id: id.slice(at + 1), emoji: args.emoji, remove: Boolean(args.remove),
-  }, inTeamOf(me)));
+  }, mayWork(env, me)));
   return res.error ? res : {
     data: {
       ok: true, message: id, emoji: args.emoji, removed: Boolean(args.remove),
@@ -526,7 +542,7 @@ async function resolveTool(env, me, args) {
   }
   const key = String(args.thread || '');
   const body = { thread: key, undo: Boolean(args.undo) };
-  const res = await fromResponse(await resolve(env, me, body, inTeamOf(me)));
+  const res = await fromResponse(await resolve(env, me, body, mayWork(env, me)));
   return res.error ? res : { data: { ok: true, thread: key, resolved: !args.undo } };
 }
 
@@ -534,7 +550,7 @@ async function seedTool(env, me, args) {
   const body = {
     thread: args.thread, team: args.team, org: args.org, text: args.text,
   };
-  const res = await fromResponse(await seedAgent(env, me, body, inTeamOf(me)));
+  const res = await fromResponse(await seedAgent(env, me, body, mayWork(env, me)));
   return res.error ? res : { data: { ok: true, accepted: Boolean(res.data.accepted) } };
 }
 

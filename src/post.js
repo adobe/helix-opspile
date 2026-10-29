@@ -654,7 +654,7 @@ export async function mentionsByName(env, t, names) {
  */
 export async function mentionable(env, key, q, inTeam, { waitUntil } = {}) {
   const t = key && await target(env, key);
-  if (!t || !inTeam(await teamsOf(env, t))) {
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
     return json({ error: 'not found' }, 404);
   }
   const typed = String(q || '').trim().slice(0, 60);
@@ -726,7 +726,7 @@ export async function post(env, me, request, inTeam, files = []) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
   const t = key && await target(env, key);
-  if (!t || !inTeam(await teamsOf(env, t))) {
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
     return json({ error: 'not found' }, 404);
   }
   if (!isStaffDomain(env, me.email)) {

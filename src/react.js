@@ -187,7 +187,7 @@ export async function react(env, me, request, inTeam) {
     thread: key, id, emoji, remove,
   } = request || {};
   const t = key && await env.DB.prepare(`${THREAD} WHERE t.thread = ?`).bind(key).first();
-  if (!t || !inTeam(await teamsOf(env, t))) {
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
     return json({ error: 'not found' }, 404);
   }
   const msg = await env.DB.prepare('SELECT id FROM messages WHERE thread = ? AND id = ? AND deleted = 0')
@@ -234,7 +234,7 @@ export async function resolve(env, me, request, inTeam) {
     WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC`).bind(key, key).all()
     : { results: [] };
   const members = results || [];
-  if (!members.length || !inTeam(await teamsOf(env, members[0]))) {
+  if (!members.length || !await inTeam(await teamsOf(env, members[0]), members[0])) {
     return json({ error: 'not found' }, 404);
   }
   const { tok, response } = await tokenFor(env, me, members[0]);

@@ -26,12 +26,24 @@ export const connectedTeams = (c) => [...new Set([
 
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
 
+/** The mail domains of a comma-separated var, lower case. */
+export const domainList = (value) => String(value || '').toLowerCase().split(',')
+  .map((d) => d.trim())
+  .filter(Boolean);
+
 /** Whether a mail domain is one of STAFF_DOMAINS. */
 export function isStaffDomain(env, email) {
-  const domains = String(env.STAFF_DOMAINS || '').toLowerCase().split(',').map((d) => d.trim())
-    .filter(Boolean);
   const domain = domainOf(email);
-  return domain !== null && domains.includes(domain);
+  return domain !== null && domainList(env.STAFF_DOMAINS).includes(domain);
+}
+
+/**
+ * Whether a mail domain is one of SIGNIN_DOMAINS: anyone with an email there may sign in to
+ * the inbox without being on an ops team (no-team mode), and has the personal view.
+ */
+export function isSignInDomain(env, email) {
+  const domain = domainOf(email);
+  return domain !== null && domainList(env.SIGNIN_DOMAINS).includes(domain);
 }
 
 /** Cached rows older than this are fetched again. */
