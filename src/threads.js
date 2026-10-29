@@ -17,12 +17,15 @@
  * thread row is recomputed from all of its messages, and a watermark only moves forward.
  */
 
+import { QUOTE_HEAD, quotesAsText } from './markdown.js';
+
 export const TITLE_MAX = 140;
 
-/** First meaningful line of a markdown body, for the thread title. */
+/** First meaningful line of a markdown body, for the thread title; not a quote's author line. */
 export function titleOf(subject, body) {
   const line = String(subject || body || '')
     .split('\n')
+    .filter((l) => !QUOTE_HEAD.test(l))
     .map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
       // `_` only as emphasis at word edges, so `:rotating_light:` keeps its name.
       .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
@@ -40,7 +43,7 @@ export const PREVIEW_MAX = 200;
  * emphasis. Emoji shortcodes (`:rotating_light:`) are kept: the inbox shows them as emoji.
  */
 export function previewOf(body) {
-  const text = String(body || '')
+  const text = quotesAsText(body)
     .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' [image] ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')

@@ -152,6 +152,54 @@ describe('processKey', () => {
     assert.equal(who.title, 'CTO');
   });
 
+  it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const from = 'https://example.slack.com/archives/C1/p1792583000000100?thread_ts=1792582000.000100&cid=C1';
+    const e = env({
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000100',
+        text: 'First step in that direction',
+        attachments: [
+          {
+            is_share: true,
+            is_msg_unfurl: true,
+            author_id: 'U2',
+            author_subname: 'cy',
+            ts: '1792583000.000100',
+            from_url: from,
+            text: '*Pages* for <@U1> &amp; friends',
+          },
+          // A link's preview is not a quote.
+          { from_url: 'https://docs.example/a', title: 'Docs', text: 'About' },
+        ],
+        files: [{ name: 'a.txt', permalink: 'https://files.example/a' }],
+      }),
+    });
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000100/1792584000.000100.md';
+    const { body } = parse(e.CHANNELS.objects.get(path).body);
+    assert.equal(body, [
+      'First step in that direction',
+      '',
+      `> [Cy](${from} "Quoted message, 2026-10-21T11:43:20.000Z")`,
+      '>',
+      '> **Pages** for @Ada Staff & friends',
+      '',
+      'Attachments:',
+      '- [a.txt](https://files.example/a)',
+    ].join('\n'));
+    // Whom the quoted message mentions, this one does not.
+    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM mentions')[0].n, 0);
+    const [row] = e.DB.rows('SELECT title, last_text FROM threads');
+    assert.deepEqual(row, {
+      title: 'First step in that direction',
+      last_text: 'First step in that direction Cy wrote: Pages for @Ada Staff & friends Attachments: a.txt',
+    });
+  });
+
   it('looks up Slack Connect file stubs once, keeps the answer in pile 1, and skips it', async () => {
     const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
     const stub = (id) => ({

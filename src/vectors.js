@@ -11,6 +11,7 @@
  */
 
 import { threadMessages } from './label.js';
+import { withoutQuotes } from './markdown.js';
 import { sha256 } from './raw.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { indexThread } from './fulltext.js';
@@ -49,9 +50,12 @@ const hashOf = async (text) => (await sha256(text)).slice(0, 32);
 export const messageVectorId = async (key) => (await sha256(`message:${key}`)).slice(0, 48);
 export const threadVectorId = async (key) => (await sha256(`thread:${key}`)).slice(0, 48);
 
-/** A message's text for its vector: the markdown body, whitespace collapsed. */
+/**
+ * A message's text for its vector: the markdown body, whitespace collapsed, without the
+ * messages it quotes (someone else's words).
+ */
 export function messageText(body) {
-  return String(body || '').replace(/\s+/g, ' ').trim();
+  return withoutQuotes(body).replace(/\s+/g, ' ').trim();
 }
 
 /** `text` in pieces of at most `max` characters, cut at a space where there is one. */
