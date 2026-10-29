@@ -50,6 +50,7 @@ import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
 import { sweepPreviews } from './previews.js';
+import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
 
 const SCRIPTS = {
@@ -210,8 +211,9 @@ export default {
  * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
- * behind, fill in the latest message's text of threads indexed before it was kept, and delete
- * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js).
+ * behind, fill in the latest message's text of threads indexed before it was kept, delete
+ * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js), and enqueue the
+ * threads whose klickhaus rows are behind.
  */
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(ensureSubscription(env)
@@ -260,6 +262,10 @@ export default {
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
+    // The klickhaus export (CLICKHOUSE_*): the threads that changed since, and the backfill.
+    ctx.waitUntil(sweepExports(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', exports: 'error', error: e.message }))));
   },
 };
 

@@ -14,6 +14,7 @@ import { agentEnabled } from './agent/enabled.js';
 import { AGENT_DELAY_SECONDS, pokeAgent } from './agent/stub.js';
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
+import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
@@ -133,6 +134,8 @@ export async function processReaction(env, key, r) {
   if (row && row.kind === 'channel' && env.AI && env.NORMALIZE) {
     await env.NORMALIZE.send({ label: msg.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
+  // The export carries reaction counts and the ✅ (src/clickhouse.js).
+  await queueExport(env, msg.thread);
   return { key, result: r.removed ? 'reaction-removed' : 'reaction' };
 }
 
@@ -363,6 +366,10 @@ export async function processKey(env, key, cache = {}) {
     kind: cls.kind,
     channelName: channel.name,
     path: path.slice(0, path.lastIndexOf('/') + 1),
+    // For the klickhaus export (src/clickhouse.js), which reads D1 only.
+    authorKind: author.kind,
+    edited: Boolean(message.editedAt),
+    attachments: deleted ? 0 : attachmentsOf(body),
   });
   if (message.reactions) {
     await replaceReactions(
@@ -421,6 +428,10 @@ export async function processKey(env, key, cache = {}) {
       delaySeconds: VECTORIZE_DELAY_SECONDS,
     });
   }
+  // Its row in klickhaus (src/clickhouse.js), after the label job; a burst exports once.
+  if (written) {
+    await queueExport(env, message.thread);
+  }
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
   }) : [];
@@ -438,6 +449,12 @@ export async function processKey(env, key, cache = {}) {
   };
 }
 
+/** An export job's key for the log: its thread, or the first of the sweep's and how many more. */
+const exportKey = (keys) => {
+  const all = [].concat(keys);
+  return `export:${all[0]}${all.length > 1 ? ` +${all.length - 1}` : ''}`;
+};
+
 /** A job's last delivery: the queue retries it five times (`maxRetries`, cloudflare.config.ts). */
 const LAST_ATTEMPT = 6;
 
@@ -452,6 +469,7 @@ export async function consume(batch, env) {
     const key = body.key
       || (body.label && `label:${body.label}`)
       || (body.vectorize && `vectorize:${body.vectorize}`)
+      || (body.export && exportKey(body.export))
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
@@ -465,6 +483,9 @@ export async function consume(batch, env) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
+        // The group it joined (or pulled in) is exported again.
+        // eslint-disable-next-line no-await-in-loop
+        await queueExport(env, body.rethread);
         if (body.poke) {
           // eslint-disable-next-line no-await-in-loop
           await env.NORMALIZE.send({ agent: body.rethread });
@@ -481,6 +502,13 @@ export async function consume(batch, env) {
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };
+        if (r.result === 'labeled' || r.result === 'titled') {
+          // eslint-disable-next-line no-await-in-loop
+          await queueExport(env, body.label, { delaySeconds: 0 });
+        }
+      } else if (body.export) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await exportThreads(env, body.export, { at: body.at || null }) };
       } else if (body.vectorize) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await vectorizeThread(env, body.vectorize) };

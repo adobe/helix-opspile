@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { exportEnabled, SWEEP_JOB } from './clickhouse.js';
 import { snapshotKey } from './filecache.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { loadRules, toChannel } from './lookup.js';
@@ -184,6 +185,27 @@ async function revectorize(env, threads, kind) {
 }
 
 /**
+ * Re-filed threads carry another team, org or kind in klickhaus (src/clickhouse.js): their
+ * export watermark is cleared, so the cron's sweep exports them again if the jobs queued here
+ * fail. A thread re-filed as `ignore` is exported as tombstones.
+ */
+async function reexport(env, threads) {
+  if (!threads.length || !exportEnabled(env) || !env.NORMALIZE.sendBatch) {
+    return;
+  }
+  await env.DB.prepare(`UPDATE threads SET exported_through = NULL
+    WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(threads)).run();
+  const jobs = [];
+  for (let i = 0; i < threads.length; i += SWEEP_JOB) {
+    jobs.push({ body: { export: threads.slice(i, i + SWEEP_JOB) } });
+  }
+  for (let i = 0; i < jobs.length; i += 100) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.sendBatch(jobs.slice(i, i + 100));
+  }
+}
+
+/**
  * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]] } }`: files
  * the channel's threads where the rules say now. Runs again for the threads it did not get
  * to, so a large channel moves in several jobs.
@@ -242,6 +264,7 @@ export async function refile(env, job) {
     }
   }
   await revectorize(env, refiled, cls.kind);
+  await reexport(env, refiled);
   // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
   // inbox loaded before the move keeps the old org (or team) otherwise, until something else
   // reloads it.

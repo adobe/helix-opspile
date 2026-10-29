@@ -540,6 +540,54 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   which is Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the
   toolbar says "Reconnecting…" when a WebSocket has been down for a few seconds.
 
+### 5. Stats (klickhaus)
+
+Not a pile of its own but a copy of pile 4 for statistics: one row per message in ClickHouse,
+for [klickhaus](https://github.com/adobe/klickhaus)' opspile view (`opspile.html`), which has
+the facets, the chart and the long time ranges of klickhaus' other views
+([src/clickhouse.js](../src/clickhouse.js)). Every thread in D1 is exported, of every team and
+kind (channels the rules ignore never get there).
+
+- **No text.** A row is the message's metadata (when, which platform, channel, team and the
+  teams it is shared with, org; its author's kind, relation, name, mail domain and ops teams;
+  whether it was edited, its reactions, mentions and files) and its thread's classification:
+  the title, whether it is resolved, who it waits on, Clef's label (who acts next, kind,
+  urgency and its level, `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
+  thread in the inbox's personal view.
+- **As the inbox shows it.** The label, title, resolution and facts are the inbox entry's: a
+  re-threaded group's latest member's label (with reviews), its first thread's title, the facts
+  of every member, and resolved by a staff ✅ on a member's root (until a customer writes again)
+  or else by Clef (`resolved_p` ≥ 0.5). Who it waits on is the inbox's `waiting_on`: Clef's
+  next actor, except that a thread where Adobe posted last never waits on us, an unlabeled one
+  waits on us when the customer posted last, and a 🙏 after the last message leaves nothing
+  pending. The urgency level is the inbox's bucket (none is low).
+  So exporting a thread exports its group; a group of more than 100 threads exports only the
+  threads that changed and its first.
+- **One table, rows replaced.** `opspile_messages_raw` is a ReplacingMergeTree keyed by
+  `(timestamp, thread, message_id)`; `_version` is the export's time, so the latest export of a
+  message wins, and `_deleted` makes it a tombstone: a deleted message, and every message of a
+  thread re-filed as ignored. klickhaus reads it through a view with `FINAL`. Rows are kept 18
+  months.
+- **Written by the Worker.** An export reads D1 only, and POSTs `INSERT … FORMAT JSONEachRow`
+  with `async_insert=1&wait_for_async_insert=1` to `CLICKHOUSE_URL` as a user that may only
+  insert there (credentials in headers). What D1 did not keep before (the author's kind, edited,
+  the number of files: `messages.author_kind`, `edited`, `attachments`, migration 0041) is read
+  from pile 2 once and kept; the normalizer writes it for every new message.
+- **When.** A message written queues an export of its thread three minutes later, after the
+  label job; the label job queues one when it writes a label, and so do re-threading, a reaction
+  and a re-file. A job queued before the thread's latest export is dropped, so a burst exports
+  once. Each thread remembers what was exported (`threads.exported_through`, the row's
+  `updated_at`, and `exported_at`); the cron enqueues up to 1,500 threads a run, newest first,
+  whose rows are behind: a message written since, a label, a review or re-threading since the
+  export, or a re-file (which clears the watermark). That is the backfill too, and the retry: a
+  failed insert leaves the watermark as it was. Without the `CLICKHOUSE_*` bindings nothing is
+  exported.
+- **Not re-exported by itself:** a renamed org or a changed type, a partner domain, team
+  membership and shared teams. A thread's rows take them on with its next export.
+
+In the inbox, the header has **Stats** for members of the teams in `KLICKHAUS_TEAMS`: it opens
+`KLICKHAUS_URL/opspile.html` in a new tab, filtered to the customer and team on screen.
+
 ## Read state
 
 Read state is a **watermark** per person per thread: "has read up to message timestamp X".
