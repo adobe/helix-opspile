@@ -16,7 +16,7 @@ import {
   channelPath, FORMAT, merge, parse, render,
 } from '../src/channels.js';
 import { htmlToMarkdown } from '../src/markdown.js';
-import { normalize, slackVersion } from '../src/normalize.js';
+import { normalize, slackLinkIn, slackVersion } from '../src/normalize.js';
 
 // Made-up ids only.
 const slack = (event, extra = {}) => ({
@@ -25,6 +25,15 @@ const slack = (event, extra = {}) => ({
 const SKEY = 'slack/E1/C1/2026/10/21/x.json';
 
 describe('normalize (slack)', () => {
+  it('opens a Slack link in a given workspace', () => {
+    const link = 'https://slack.com/archives/C1/p11?thread_ts=1.1&cid=C1';
+    assert.equal(slackLinkIn('acme', link), 'https://acme.slack.com/archives/C1/p11?thread_ts=1.1&cid=C1');
+    assert.equal(slackLinkIn('acme', 'https://other.slack.com/archives/C1/p11'), 'https://acme.slack.com/archives/C1/p11');
+    assert.equal(slackLinkIn('', link), link);
+    assert.equal(slackLinkIn('acme', 'https://example.com/archives/C1'), 'https://example.com/archives/C1');
+    assert.equal(slackLinkIn('acme', undefined), undefined);
+  });
+
   it('turns a root message into an upsert', () => {
     const { op, message } = normalize(SKEY, slack({
       type: 'message', channel: 'C1', user: 'U1', ts: '1792584000.000100', text: 'hi',

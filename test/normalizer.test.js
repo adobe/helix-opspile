@@ -18,6 +18,7 @@ import { parse } from '../src/channels.js';
 import { runBackfill, slackBackfillKey } from '../src/backfill.js';
 import { ruleFacts } from '../src/facts.js';
 import { labelThread, QUESTIONS } from '../src/label.js';
+import { resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
@@ -71,13 +72,22 @@ const event = (e) => ({
 describe('processKey', () => {
   const realFetch = globalThis.fetch;
   let calls;
+  let channelInfo;
   beforeEach(() => {
     calls = [];
+    channelInfo = { id: 'C1', name: 'aem-acme', context_team_id: 'T1' };
+    resetSlackDomains();
     globalThis.fetch = async (url) => {
       const u = new URL(url);
       calls.push(u.pathname);
       if (u.pathname === '/api/conversations.info') {
-        return Response.json({ ok: true, channel: { id: 'C1', name: 'aem-acme', context_team_id: 'T1' } });
+        return Response.json({ ok: true, channel: channelInfo });
+      }
+      if (u.pathname === '/api/team.info') {
+        const domains = { T1: 'acme-support', T2: 'acme-internal' };
+        const domain = domains[u.searchParams.get('team')];
+        return Response.json(domain ? { ok: true, team: { id: u.searchParams.get('team'), domain } }
+          : { ok: false, error: 'team_not_found' });
       }
       if (u.pathname === '/api/conversations.replies') {
         return Response.json({
@@ -241,6 +251,65 @@ describe('processKey', () => {
     assert.deepEqual(e.queued, [{ body: { agent: thread }, options: undefined }]);
   });
 
+  it('links to the message in its channel\'s workspace, not whichever was used last', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1.2-a.json';
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.2', text: 'a', thread_ts: '1.1',
+      }),
+    });
+    await processKey(e, key);
+    const { permalink } = e.DB.sqlite.prepare("SELECT permalink FROM messages WHERE id = '1.2'").get();
+    assert.equal(permalink, 'https://acme-support.slack.com/archives/C1/p12?thread_ts=1.1&cid=C1');
+    const path = 'channels/acme/helix/slack-C1/1.1/1.2.md';
+    assert.equal(parse(e.CHANNELS.objects.get(path).body).meta.permalink, permalink);
+  });
+
+  it('links a channel of the whole org to the workspace most channels live in', async () => {
+    channelInfo = {
+      id: 'C1', name: 'aem-acme', context_team_id: 'E1', shared_team_ids: ['T2', 'T1', 'T8'],
+    };
+    const key = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.1', text: 'a',
+      }),
+    });
+    e.DB.sqlite.exec(`INSERT INTO channels (source, tenant, channel_id, name, group_id, fetched_at)
+      VALUES ('slack', 'E1', 'C7', 'aem-x', 'T1', '2026-10-21T00:00:00Z'),
+        ('slack', 'E1', 'C8', 'aem-y', 'T1', '2026-10-21T00:00:00Z'),
+        ('slack', 'E1', 'C9', 'aem-z', 'T2', '2026-10-21T00:00:00Z')`);
+    await processKey(e, key);
+    const { permalink } = e.DB.sqlite.prepare("SELECT permalink FROM messages WHERE id = '1.1'").get();
+    assert.equal(permalink, 'https://acme-support.slack.com/archives/C1/p11');
+  });
+
+  it('points the links filed before the workspace was known at it, and keeps going without', async () => {
+    const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';
+    const e = env({
+      [k1]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.1', text: 'a',
+      }),
+      [k2]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.2', text: 'b', thread_ts: '1.1',
+      }),
+    });
+    // Looked up while team.info failed: the link stays a bare slack.com one.
+    channelInfo = { ...channelInfo, context_team_id: 'T5' };
+    await quiet(() => processKey(e, k1));
+    const link = () => e.DB.sqlite.prepare("SELECT permalink FROM messages WHERE id = '1.1'").get()
+      .permalink;
+    assert.equal(link(), 'https://slack.com/archives/C1/p11');
+    assert.equal(e.DB.sqlite.prepare("SELECT domain FROM channels WHERE channel_id = 'C1'").get()
+      .domain, '');
+    // A row from before the domain column: looked up again, and its old links follow.
+    e.DB.sqlite.exec("UPDATE channels SET domain = NULL WHERE channel_id = 'C1'");
+    channelInfo = { ...channelInfo, context_team_id: 'T1' };
+    await processKey(e, k2);
+    assert.equal(link(), 'https://acme-support.slack.com/archives/C1/p11');
+  });
+
   it('caches channels and people in D1', async () => {
     const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';
@@ -254,7 +323,7 @@ describe('processKey', () => {
     });
     await processKey(e, k1);
     await processKey(e, k2);
-    assert.deepEqual(calls, ['/api/conversations.info', '/api/users.info']);
+    assert.deepEqual(calls, ['/api/conversations.info', '/api/team.info', '/api/users.info']);
     // The login and the display name, which people type after @ to mention her.
     const { aliases } = e.DB.sqlite.prepare("SELECT aliases FROM identities WHERE user_id = 'U1'").get();
     assert.deepEqual(JSON.parse(aliases), ['alove', 'Countess']);

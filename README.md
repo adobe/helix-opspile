@@ -336,7 +336,8 @@ the inbox, the web redirect URI of Access's callback and a client secret held by
 Slack app needs the user scopes `chat:write`, `reactions:write` and `files:write` (the last
 asked for only when someone first attaches a file to a reply) and the redirect URLs
 `<origin>/api/auth/slack/callback` and Access's callback (Sign in with Slack asks for
-`openid`, `email` and `profile` itself); the bot needs `reactions:read` for the reaction
+`openid`, `email` and `profile` itself); the bot needs `team:read` for the workspace that links to
+Slack open in (`team.info`), `reactions:read` for the reaction
 events, `files:read` for images and for the files shared in Slack Connect channels (their
 events carry only a stub, which opspile looks up with `files.info`), and `files:write` for files
 sent as the opspile app. Its Event Subscriptions request URL is

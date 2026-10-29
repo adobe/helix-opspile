@@ -205,6 +205,11 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
   watermarks stay valid.
+- A Slack `permalink` names the channel's workspace (`https://<workspace>.slack.com/…`, from
+  `team.info`, kept in `channels.domain`): a bare `slack.com` link opens in whichever workspace
+  the browser used last, and people are often in several. A channel of the whole Enterprise org,
+  or one shared between its workspaces, links to the workspace most channels live in. Links
+  filed before a channel's workspace was known are rewritten in D1 when it becomes known.
 
 **Enrichment on write.** When a message is copied into this pile:
 

@@ -48,6 +48,17 @@ export function slackPermalink(channel, ts, rootId) {
   return rootId && rootId !== ts ? `${base}?thread_ts=${rootId}&cid=${channel}` : base;
 }
 
+/**
+ * A Slack link opened in the workspace `domain` (`<domain>.slack.com`). A bare `slack.com`
+ * link opens in whichever workspace the browser used last, which may not be one with the
+ * channel. Without a domain the link stays as it is.
+ */
+export function slackLinkIn(domain, url) {
+  return domain && url
+    ? String(url).replace(/^https:\/\/([a-z0-9-]+\.)?slack\.com\/archives\//, `https://${domain}.slack.com/archives/`)
+    : url;
+}
+
 function slackFiles(files) {
   const ok = (files || []).filter((f) => f && (f.permalink || f.name));
   // A Slack Connect file the app could not look up (files.info): only its kind is known.
