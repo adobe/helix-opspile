@@ -24,9 +24,9 @@ import {
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-// The inbox's markdown renderer, bundled for the browser (src/ui-markdown.bundle.js, not
-// committed): built on every cf deploy and cf dev, so the page matches src/ui-markdown.js and
-// the pinned micromark.
+// The inbox's markdown renderer and the knowledge-base editor, bundled for the browser
+// (src/ui-markdown.bundle.js and src/ui-editor.bundle.js, not committed): built on every cf
+// deploy and cf dev, so the pages match src/ui-*.js and the pinned micromark and CodeMirror.
 execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {

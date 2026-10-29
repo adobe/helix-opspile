@@ -77,13 +77,13 @@
   .bar .title { flex: 1; font-weight: 600; }
   .bar .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
   .note { padding: 8px 12px; color: var(--mute); border-bottom: 1px solid var(--line); font-size: 13px; }
+  /* Nothing to say (a concept that was just opened): no empty strip. */
+  .note:empty { display: none; }
   .note.warn { color: var(--yellow); }
   .note.err { color: var(--red); }
   .note.ok { color: var(--green); }
-  textarea { flex: 1; width: 100%; border: 0; resize: none; padding: 12px 14px; outline: none;
-    background: var(--code); color: var(--ink); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    tab-size: 2; }
-  textarea[readonly] { color: var(--mute); }
+  /* The text field, CodeMirror (src/ui-editor.js), fills what the bar and the note leave. */
+  .text { flex: 1; min-height: 0; display: flex; font-size: 13px; }
   .foot { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
   .foot input { flex: 1; }
   .log { padding: 4px 12px 12px; }
@@ -168,7 +168,7 @@
   #files > .up + h2 { margin-top: 0; }
   /* A text field under 16px makes iOS zoom in on it when it is focused. */
   @media (hover: none) and (pointer: coarse) {
-    input, select, textarea { font-size: 16px; }
+    input, select, textarea, .text { font-size: 16px; }
   }
   @media (max-width: 1099px) {
     main { grid-template-columns: minmax(170px, 22%) minmax(200px, 27%) minmax(0, 1fr); }
@@ -208,6 +208,7 @@
   <section id="files"></section>
   <section id="editor"><div class="empty">Pick a knowledge base.</div></section>
 </main>
+<script src="editor.js"></script>
 <script type="module" src="kb.js"></script>
 <script src="app.js"></script>
 </body>
