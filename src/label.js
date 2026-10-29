@@ -11,7 +11,7 @@
  */
 
 import { platformName } from './platforms.js';
-import { parse } from './channels.js';
+import { fileCache, folderFiles } from './filecache.js';
 import { ruleFacts } from './facts.js';
 import { isStaffDomain } from './lookup.js';
 
@@ -175,12 +175,12 @@ export function stateOf(thread, messages, reactions = new Map()) {
   return `${header}\n\n${body}`;
 }
 
+// The queue and the thread agents read threads through the folder snapshots too, but keep no
+// files in memory: an agent's Durable Object has better uses for it than the inbox's cache.
+const UNCACHED = fileCache(0);
+
 export async function threadMessages(env, thread) {
-  const listed = await env.CHANNELS.list({ prefix: thread.path });
-  const files = await Promise.all(listed.objects.map(async (o) => {
-    const obj = await env.CHANNELS.get(o.key);
-    return obj ? parse(await obj.text()) : null;
-  }));
+  const files = await folderFiles(env.CHANNELS, thread.path, { cache: UNCACHED });
   return files.filter(Boolean).map(({ meta, body }) => ({ ...meta, body }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
 }

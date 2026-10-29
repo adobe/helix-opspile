@@ -393,6 +393,8 @@ describe('admin: rules and re-filing', () => {
     assert.equal(r.body.rule.updated_by, 'ada@staff.example');
     // A message of the moved channel that arrived meanwhile is at the new place already.
     e.CHANNELS.objects.set('channels/acme/edge/slack-C1/1.1/1.1.0.md', { body: 'newer', options: {} });
+    // The snapshot of a moved folder (src/filecache.js) goes with it.
+    e.CHANNELS.objects.set('snapshots/channels/acme/helix/slack-C1/1.1.json', { body: '{}', options: {} });
     await drain(e);
     assert.deepEqual(e.DB.rows("SELECT DISTINCT team, path FROM threads WHERE channel_id = 'C1' ORDER BY path"), [
       { team: 'edge', path: 'channels/acme/edge/slack-C1/1.1/' },
