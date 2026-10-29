@@ -330,7 +330,7 @@ export function channelQuestions(criteria) {
       criteria: {
         channel: 'Conversations with a customer, partner or vendor, or about their project, that somebody at Adobe should follow and answer',
         alert: 'Mostly automated posts: monitoring alerts, build or deploy notifications, bot feeds',
-        ignore: 'Not worth following: a test channel, social chatter, or an empty or abandoned channel',
+        ignore: 'Not worth following: a test channel (one for trying out opspile, this inbox, or its bots and agents too), social chatter, or an empty or abandoned channel',
       },
     },
   };

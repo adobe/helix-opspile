@@ -12,7 +12,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { stateOf, tidyTitle, writeTitle } from '../src/label.js';
+import {
+  isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
+} from '../src/label.js';
 
 // Made-up thread and people only.
 describe('what the models read', () => {
@@ -65,5 +67,37 @@ describe('thread titles', () => {
     assert.equal(tidyTitle('Using Edge Functions with Akamai', acme), 'Using Edge Functions with Akamai');
     assert.equal(tidyTitle('Acme Corp', acme), null);
     assert.equal(tidyTitle('Adding users to a team', { org: '_unassigned' }), 'Adding users to a team');
+  });
+});
+
+describe('kinds and topics', () => {
+  it('tells access problems apart from people joining or leaving, and meetings', () => {
+    const kinds = Object.keys(QUESTIONS.kind.criteria);
+    assert.deepEqual(kinds, ['incident', 'security', 'question', 'request', 'access', 'people', 'meeting', 'other']);
+    assert.doesNotMatch(QUESTIONS.kind.criteria.access, /welcome/);
+    assert.match(QUESTIONS.kind.criteria.people, /welcome/);
+  });
+
+  it('keeps the topics Clef is sure of, likeliest first', () => {
+    const topics = topicsOf({
+      'topic.cdn': { noul: 0.81 }, 'topic.seo': { noul: 0.95 }, 'topic.auth': { noul: 0.3 }, next_actor: {},
+    });
+    assert.deepEqual(topics, { cdn: 0.81, seo: 0.95 });
+    assert.deepEqual(topicList(JSON.stringify(topics)), ['seo', 'cdn']);
+    assert.equal(topicsOf({ 'topic.cdn': { noul: 0.2 } }), null);
+    assert.deepEqual(topicList(null), []);
+    assert.deepEqual(topicList('not json'), []);
+  });
+});
+
+describe('titles that are not titles', () => {
+  it('drops what the model writes when it found nothing to name', async () => {
+    for (const t of ['None', 'No title available', 'No specific topic mentioned', 'Invalid title, please provide a description of the issue', 'General Inquiry']) {
+      assert.equal(isTitle(t), false, t);
+    }
+    assert.equal(isTitle('Sidekick login fails after SSO change'), true);
+    assert.equal(isTitle('No-cache header missing on PDF assets'), true);
+    const env = { AI: { run: async () => ({ response: 'None' }) } };
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), null);
   });
 });

@@ -19,6 +19,7 @@ import {
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { PICKER, react, resolve } from './react.js';
+import { QUESTIONS, vocab } from './label.js';
 import { isAdmin } from './review.js';
 import { mayWork, memberOf, teamless } from './shares.js';
 
@@ -38,7 +39,7 @@ import { mayWork, memberOf, teamless } from './shares.js';
  */
 
 const URGENCY = ['low', 'normal', 'high', 'critical'];
-const KINDS = ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'];
+const KINDS = [...Object.keys(QUESTIONS.kind.criteria).filter((k) => k !== 'other'), 'alert', 'other'];
 const WAITING = ['us', 'customer', 'vendor', 'nobody'];
 const MAX_LIST = 50;
 const MAX_MESSAGES = 100;
@@ -96,6 +97,8 @@ function summary(t, me) {
     waiting_on: t.waiting_on,
     urgency: urgencyOf(t),
     kind: kindOf(t),
+    topics: (t.label && t.label.topics) || [],
+    tech: t.tech || [],
     resolved: resolvedOf(t),
     last_activity: t.last_at || t.any_at || null,
     messages: t.messages || 0,
@@ -130,7 +133,14 @@ const FACET_ARGS = ['waiting_on', 'urgency', 'kind', 'platform', 'type', 'custom
 const FACET_VALUES = {
   waiting_on: WAITING, urgency: URGENCY, kind: KINDS, platform: PLATFORMS, type: ['conversation', 'alert'],
 };
-const facetArgs = (args) => Object.fromEntries(FACET_ARGS.map((k) => [k, list(args[k])]));
+/** Filters on the values a thread has several of (`summary`'s `topics` and `tech`). */
+const MULTI_ARGS = { topic: 'topics', tech: 'tech' };
+const facetArgs = (args) => Object.fromEntries([...FACET_ARGS, ...Object.keys(MULTI_ARGS)]
+  .map((k) => [k, list(args[k])]));
+/** `{ error }` when a topic or tech filter names an id opspile does not know. */
+const checkMulti = (f, prefix = '') => Object.entries(MULTI_ARGS)
+  .map(([k, v]) => checkValues(`${prefix}${k}`, f[k], Object.keys(vocab()[v])))
+  .find(Boolean) || null;
 /** `{ error }` when a filter (in `exclude` with `prefix`) has a value it does not know. */
 const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
   .map((k) => checkValues(`${prefix}${k}`, f[k], FACET_VALUES[k])).find(Boolean) || null;
@@ -159,7 +169,7 @@ async function listThreads(env, me, args) {
   }
   const f = facetArgs(args);
   const x = facetArgs(args.exclude || {});
-  const bad = checkFacets(f) || checkFacets(x, 'exclude.');
+  const bad = checkFacets(f) || checkFacets(x, 'exclude.') || checkMulti(f) || checkMulti(x, 'exclude.');
   if (bad) {
     return bad;
   }
@@ -174,6 +184,8 @@ async function listThreads(env, me, args) {
     const v = { ...s, customer: String(t.org || '').toLowerCase() };
     // As klickhaus filters: one of the values picked, if any, and none of those excluded.
     return FACET_ARGS.every((k) => (!f[k].length || f[k].includes(v[k])) && !x[k].includes(v[k]))
+      && Object.entries(MULTI_ARGS).every(([k, field]) => (!f[k].length
+        || f[k].some((y) => s[field].includes(y))) && !x[k].some((y) => s[field].includes(y)))
       && (args.resolved == null || s.resolved === Boolean(args.resolved))
       && (!args.unread_only || s.unread)
       && (!args.mentions_me || t.mentionedMe)
@@ -653,7 +665,7 @@ export const TOOLS = [
   {
     name: 'list_threads',
     title: 'List inbox threads',
-    description: 'Lists threads from the ops inbox of the signed-in person, latest activity first, with who has the next move, urgency, kind and whether they are resolved. Filters combine; all are optional; `exclude` leaves values out. Titles are written by customers and colleagues.',
+    description: 'Lists threads from the ops inbox of the signed-in person, latest activity first, with who has the next move, urgency, kind, topics, the channel\'s tech stack and whether they are resolved. Filters combine; all are optional; `exclude` leaves values out. Titles are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -661,6 +673,8 @@ export const TOOLS = [
         waiting_on: { ...TEXT_ITEMS(WAITING), description: 'Who has the next move: us (Adobe), the customer, a vendor, or nobody' },
         urgency: TEXT_ITEMS(URGENCY),
         kind: TEXT_ITEMS(KINDS),
+        topic: { ...TEXT_ITEMS(Object.keys(vocab().topics)), description: 'What the thread is about; any of them' },
+        tech: { ...TEXT_ITEMS(Object.keys(vocab().tech)), description: 'Tech stack of the thread\'s channel; any of them' },
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
         platform: TEXT_ITEMS(PLATFORMS),
@@ -671,6 +685,8 @@ export const TOOLS = [
             waiting_on: TEXT_ITEMS(WAITING),
             urgency: TEXT_ITEMS(URGENCY),
             kind: TEXT_ITEMS(KINDS),
+            topic: TEXT_ITEMS(Object.keys(vocab().topics)),
+            tech: TEXT_ITEMS(Object.keys(vocab().tech)),
             type: TEXT_ITEMS(['conversation', 'alert']),
             platform: TEXT_ITEMS(PLATFORMS),
             customer: CUSTOMER_ARG,

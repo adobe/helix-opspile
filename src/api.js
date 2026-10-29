@@ -50,6 +50,7 @@ import { ATTENTION, readState, waitingOn } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
 import { statsFor } from './klickhaus.js';
+import { TECH_MIN, topicList, vocab } from './label.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -403,6 +404,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
+    { results: techRows },
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -426,7 +428,7 @@ export async function inbox(env, me, team, {
           SELECT m.person FROM team_members m WHERE ${scope.in('m.team')}))`)
       .bind(keys, me.id, scope.value).all(),
     env.DB.prepare(`SELECT thread, next_actor, next_actor_p,
-        kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title FROM labels
+        kind AS label_kind, kind_p, urgency, resolved_p, labeled_through, title, topics FROM labels
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
     participants(env, keys),
     env.DB.prepare(`SELECT thread, emoji, COUNT(*) AS n FROM reactions
@@ -454,6 +456,11 @@ export async function inbox(env, me, team, {
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    // The tech stack of each thread's channel (src/label.js recordTech), for the tech facet.
+    env.DB.prepare(`SELECT t.thread, c.tech FROM threads t JOIN channel_tech c
+        ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
+      WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
+      .bind(keys, TECH_MIN).all(),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -466,10 +473,14 @@ export async function inbox(env, me, team, {
     return m;
   };
   const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
+  const techBy = by(techRows, (r) => r.tech);
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
-  const labelBy = new Map((labels || []).map((l) => [
-    l.thread, effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
+  const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
+    l.thread, {
+      ...effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
+      topics: topicList(topics),
+    },
   ]));
   // The viewer's teams.
   // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
@@ -496,6 +507,7 @@ export async function inbox(env, me, team, {
       }])),
     teams: myTeams,
     members: teamMembers,
+    vocab: vocab(),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
     threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
@@ -508,6 +520,7 @@ export async function inbox(env, me, team, {
           ...(people.get(t.thread)
             || { participants: [], staffPosted: false, customerDomain: null }),
           reactions: rxBy.get(t.thread) || [],
+          tech: techBy.get(t.thread) || [],
           posters: postersBy.get(t.thread) || [],
           mentioned: namedBy.get(t.thread) || [],
           resolutionFacts: resolved.get(t.thread),
@@ -710,6 +723,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       label_thread: labelKey,
     },
     tech: tech || [],
+    topics: topicList(model && model.topics),
+    vocab: vocab(),
     members: group.map((m) => ({
       thread: m.thread,
       root_at: m.root_at,

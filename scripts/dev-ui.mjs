@@ -71,6 +71,7 @@ import { rankEmoji, resolveShortcodes } from '../src/shortcodes.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { statsFor } from '../src/klickhaus.js';
+import { vocab } from '../src/label.js';
 import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { readState, waitingOn } from '../src/threads.js';
@@ -402,6 +403,7 @@ function inbox(team, before = null, personal = false, only = null) {
     .map((t) => ({
       ...t,
       label: store.labels.get(t.thread) || null,
+      tech: store.threads.get(t.thread).ch.tech || [],
       ...people(store.threads.get(t.thread)),
       members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
       posters: [...new Set(store.threads.get(t.thread).messages
@@ -431,6 +433,7 @@ function inbox(team, before = null, personal = false, only = null) {
     teams: Object.fromEntries(store.teams.filter((t) => t.members.includes(ME))
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
+    vocab: vocab(),
     threads,
     page,
   };
@@ -575,6 +578,9 @@ function thread(key) {
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
+    tech: (entry.ch.tech || []).map((tech, i) => ({ tech, p: 0.95 - i * 0.05 })),
+    topics: store.labels.get(key)?.topics || [],
+    vocab: vocab(),
     reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),

@@ -49,7 +49,77 @@ export const TECH = {
   target: 'Adobe Target or personalization',
   analytics: 'Adobe Analytics, Web SDK or Experience Platform data collection',
 };
+/** The technologies' names, as the inbox shows them (the tech facet, a thread's tech tags). */
+export const TECH_NAMES = {
+  eds: 'Edge Delivery',
+  da: 'Document Authoring',
+  ue: 'Universal Editor',
+  sharepoint: 'SharePoint',
+  gdrive: 'Google Drive',
+  aemcs: 'AEM Cloud Service',
+  assets: 'Assets',
+  forms: 'Forms',
+  commerce: 'Commerce',
+  cloudflare: 'Cloudflare',
+  akamai: 'Akamai',
+  fastly: 'Fastly',
+  cloudfront: 'CloudFront',
+  github: 'GitHub',
+  bitbucket: 'Bitbucket / Cloud Manager git',
+  target: 'Target',
+  analytics: 'Analytics',
+};
 export const TECH_MIN = 0.8;
+
+/**
+ * What a thread is about, across kinds: an incident and a question can both be about the CDN.
+ * Each is one Clef yes/no question in the labeling call; a thread keeps those at or above
+ * TOPIC_MIN (labels.topics). `name` is what the inbox shows.
+ */
+export const TOPICS = {
+  authoring: {
+    name: 'Authoring',
+    what: 'authoring content: Universal Editor, Document Authoring, blocks, components or templates',
+  },
+  auth: {
+    name: 'Sign-in and permissions',
+    what: 'signing in or permissions: login, SSO, IMS, tokens, or an access-denied or unauthorized error',
+  },
+  commerce: {
+    name: 'Commerce',
+    what: 'commerce: products, catalogs, product or listing pages, carts, checkout, or product feeds',
+  },
+  project: {
+    name: 'Project status',
+    what: 'the status of a project: a proof of concept, a plan, next steps, progress or a review',
+  },
+  golive: {
+    name: 'Go-live and migration',
+    what: 'a go-live, launch, cutover or migration to a new site or platform',
+  },
+  cdn: {
+    name: 'CDN and caching',
+    what: 'the CDN, caching, purging, domains, DNS or certificates',
+  },
+  performance: {
+    name: 'Performance',
+    what: 'page performance: Core Web Vitals, Lighthouse, LCP, CLS, INP or loading speed',
+  },
+  publishing: {
+    name: 'Preview and publishing',
+    what: 'previewing, publishing or unpublishing content, or content that does not sync or update',
+  },
+  seo: {
+    name: 'SEO',
+    what: 'SEO: redirects, sitemaps, robots.txt, indexing, canonical URLs or structured data',
+  },
+  integrations: {
+    name: 'Integrations',
+    what: 'an integration with another system: analytics, tag managers, personalization, consent,'
+      + ' translation, search, or a third-party API',
+  },
+};
+export const TOPIC_MIN = 0.8;
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -76,7 +146,9 @@ export const QUESTIONS = {
       security: 'A vulnerability, CVE, exposure, abuse or excessive traffic, or an access concern',
       question: 'A question about how something works or how to do something',
       request: 'A request for a change, configuration or new work (not access)',
-      access: 'Onboarding or access: adding or removing people, invitations, channel or team setup, welcome messages, or permissions to a tool or repository',
+      access: 'Access: someone cannot sign in or lacks a permission, or asks to be given or removed from access to a tool, site, repository or channel',
+      people: 'People on the project: a welcome or introduction, someone joining or leaving, time off, a handover or a farewell',
+      meeting: 'A meeting, call or training session: scheduling, moving or cancelling it, or sharing its agenda, notes or recording',
       other: 'FYI, shared material, an announcement or social; nothing is asked',
     },
   },
@@ -101,6 +173,41 @@ const TECH_QUESTIONS = Object.fromEntries(Object.entries(TECH).map(([id, what]) 
   type: 'noul',
   instructions: `Does this thread show that the customer uses ${what}?`,
 }]));
+
+const TOPIC_QUESTIONS = Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [`topic.${id}`, {
+  type: 'noul',
+  instructions: `Is this thread about ${t.what}?`,
+}]));
+
+/** The topics Clef is sure enough of, as `{ id: probability }`; null when there are none. */
+export function topicsOf(answers) {
+  const out = {};
+  for (const id of Object.keys(TOPICS)) {
+    const p = answers && answers[`topic.${id}`] ? answers[`topic.${id}`].noul : null;
+    if (typeof p === 'number' && p >= TOPIC_MIN) {
+      out[id] = Math.round(p * 1000) / 1000;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** `labels.topics` (JSON) as a list of topic ids, likeliest first. */
+export function topicList(stored) {
+  let parsed = null;
+  try {
+    parsed = stored ? JSON.parse(stored) : null;
+  } catch {
+    parsed = null;
+  }
+  return parsed && typeof parsed === 'object'
+    ? Object.entries(parsed).sort((x, y) => y[1] - x[1]).map(([id]) => id) : [];
+}
+
+/** The names the inbox shows for tech stack and topic ids. */
+export const vocab = () => ({
+  tech: { ...TECH_NAMES },
+  topics: Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [id, t.name])),
+});
 
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
@@ -267,6 +374,13 @@ export function tidyTitle(title, thread) {
  * A short title by a language model: the specific failure, or the topic, without what the
  * inbox already shows next to it.
  */
+/**
+ * What the model writes when it found nothing to name ("None", "No title available", "Invalid
+ * title, please provide …"): no title, so the inbox shows the thread's first words instead.
+ */
+const NO_TITLE = /^(?:none|null|n\/a|untitled|no title\b.*|no (?:specific )?(?:topic|information|issue|discussion)\b.*|invalid title\b.*|(?:general )?inquiry)$/i;
+export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim());
+
 export async function writeTitle(env, state, alert, thread) {
   const instructions = [
     alert
@@ -282,7 +396,7 @@ export async function writeTitle(env, state, alert, thread) {
   const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
     .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
   const title = tidyTitle(text, thread) || text;
-  return title ? title.slice(0, MAX_TITLE) : null;
+  return isTitle(title) ? title.slice(0, MAX_TITLE) : null;
 }
 
 async function recordTech(env, thread, answers) {
@@ -380,7 +494,9 @@ export async function labelThread(env, key, now = new Date()) {
 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    env.AI.run(CLEF, { model: 'clef', state, questions: { ...QUESTIONS, ...TECH_QUESTIONS } }),
+    env.AI.run(CLEF, {
+      model: 'clef', state, questions: { ...QUESTIONS, ...TECH_QUESTIONS, ...TOPIC_QUESTIONS },
+    }),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -395,12 +511,13 @@ export async function labelThread(env, key, now = new Date()) {
   };
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
+  const topics = topicsOf(a);
   await env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at, title)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      urgency, resolved_p, labeled_through, model, labeled_at, title, topics)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
-      urgency = excluded.urgency, resolved_p = excluded.resolved_p,
+      urgency = excluded.urgency, resolved_p = excluded.resolved_p, topics = excluded.topics,
       labeled_through = excluded.labeled_through, model = excluded.model,
       labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
@@ -415,12 +532,18 @@ export async function labelThread(env, key, now = new Date()) {
       `${clef.model || 'clef'}+${clairic.model || 'clairic'}`,
       now.toISOString(),
       title,
+      topics ? JSON.stringify(topics) : null,
     )
     .run();
   await recordTech(env, thread, a);
   const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
-    result: 'labeled', next_actor: nextActor, kind, facts: loose.length, title: Boolean(title),
+    result: 'labeled',
+    next_actor: nextActor,
+    kind,
+    topics: topics ? Object.keys(topics) : [],
+    facts: loose.length,
+    title: Boolean(title),
   };
 }

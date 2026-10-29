@@ -408,7 +408,7 @@ const URGENCY = ['low', 'normal', 'high', 'critical'];
 // None and low are one bucket.
 const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : 'low');
 const KIND_EMOJI = {
-  incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', alert: '🚨', other: '💬',
+  incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', people: '👋', meeting: '📅', alert: '🚨', other: '💬',
 };
 const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
 // Every filter row has an icon, so the folded filter column (the rail) still tells them apart.
@@ -617,8 +617,13 @@ const URGENCY_COLOR = {
   critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
 };
 const KIND_COLOR = {
-  incident: 'c-orange', security: 'c-gold', question: 'c-red', request: 'c-pink', access: 'c-brown', alert: 'c-crimson', other: 'c-none',
+  incident: 'c-orange', security: 'c-gold', question: 'c-red', request: 'c-pink', access: 'c-brown', people: 'c-green', meeting: 'c-blue', alert: 'c-crimson', other: 'c-none',
 };
+// The names of tech stack and topic ids, as the API sends them (src/label.js vocab).
+const vocabName = (kind, v) => state.data?.vocab?.[kind]?.[v] || v;
+// A thread's channel's tech stack, and what the thread is about (both multi-valued).
+const techOf = (t) => t.tech || [];
+const topicsOf = (t) => t.label?.topics || [];
 const colorOf = (map) => (v) => map[v] || 'c-none';
 
 // The cards in this order. A facet with `into` is shown in that facet's card, below its own
@@ -638,7 +643,11 @@ const FACETS = [
     labelFn: customerName, limit: 12, face: (v) => tile(customerName(v)),
     group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
   { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
-    order: ['incident', 'security', 'question', 'request', 'access', 'alert', 'other'] },
+    order: ['incident', 'security', 'question', 'request', 'access', 'people', 'meeting', 'alert', 'other'] },
+  { id: 'topic', title: 'Topic', value: topicsOf, multi: true, labelFn: (v) => vocabName('topics', v), limit: 12,
+    face: (v) => tile(vocabName('topics', v)) },
+  { id: 'tech', title: 'Tech stack', value: techOf, multi: true, labelFn: (v) => vocabName('tech', v), limit: 12,
+    face: (v) => tile(vocabName('tech', v)) },
   { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], emoji: (v) => WAITING_ICON[v],
     color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
@@ -1846,7 +1855,10 @@ async function openThread(key, { live = false, cached = false } = {}) {
     return `<a class="back" href="https://${esc(host)}/" target="_blank" rel="noopener">${esc(host)}</a>`;
   }).join(' ');
   const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
-  const stack = (data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(TECH_LABEL[x.tech] || x.tech)}</span>`).join('');
+  const stack = [
+    ...(data.topics || []).map((x) => `<span class="tag topic" title="Topic">${esc(data.vocab?.topics?.[x] || x)}</span>`),
+    ...(data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(data.vocab?.tech?.[x.tech] || TECH_LABEL[x.tech] || x.tech)}</span>`),
+  ].join('');
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(thread.title) || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
       <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·
         <span>${esc(thread.channel_name || '')}</span>
@@ -4189,8 +4201,10 @@ const fail = (error) => out({ error });
 
 // Tool argument -> facet id, and argument values -> facet values.
 const FILTER_ARGS = {
-  status: 'status', type: 'type', platform: 'platform', resolved: 'resolved', waiting_on: 'next', urgency: 'urgency', kind: 'kind', customer: 'customer', draft: 'draft',
+  status: 'status', type: 'type', platform: 'platform', resolved: 'resolved', waiting_on: 'next', urgency: 'urgency', kind: 'kind', topic: 'topic', tech: 'tech', customer: 'customer', draft: 'draft',
 };
+// Filters whose values are ids the API names (src/label.js vocab): checked against them.
+const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
   status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord'], resolved: ['open', 'resolved'],
   waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_EMOJI),
@@ -4217,7 +4231,13 @@ function filterArgs(args) {
   for (const arg of Object.keys(FILTER_ARGS)) {
     if (!(arg in args) || args[arg] == null) continue;
     const given = [].concat(args[arg]).map((v) => String(v).trim()).filter(Boolean);
-    if (arg === 'customer') {
+    if (VOCAB_ARGS[arg]) {
+      const known = Object.keys(state.data.vocab?.[VOCAB_ARGS[arg]] || {});
+      const vals = given.map((v) => v.toLowerCase());
+      const bad = vals.filter((v) => !known.includes(v));
+      if (bad.length) return { error: `Invalid ${arg} value(s) ${bad.join(', ')}. Use: ${known.join(', ')}.` };
+      next[arg] = vals;
+    } else if (arg === 'customer') {
       const orgs = [...new Set(state.data.threads.map((t) => t.org).filter(Boolean))];
       const picked = given.map((v) => orgs.find((o) => o.toLowerCase() === v.toLowerCase()));
       const miss = given.filter((v, i) => !picked[i]);
@@ -4237,6 +4257,7 @@ function threadInfo(t) {
   const info = {
     thread: t.thread, title: clip(t.title || '(no text)', 90), customer: t.org, platform: platform(t).toLowerCase(),
     status: statusOf(t), waiting_on: waitingOn(t).toLowerCase(), urgency: urgencyOf(t), kind: kindOf(t),
+    ...(topicsOf(t).length ? { topics: topicsOf(t) } : {}), ...(techOf(t).length ? { tech: techOf(t) } : {}),
     resolved: resolvedOf(t) === 'resolved', last: lastOf(t) || t.any_at || null,
   };
   if (t.unread) info.unread = true;
@@ -4288,6 +4309,8 @@ const FILTER_PROPS = {
   type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
   platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
   draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
+  topic: { type: 'array', items: { type: 'string' }, description: 'What threads are about (cdn, auth, performance, …), as get_inbox_state counts them' },
+  tech: { type: 'array', items: { type: 'string' }, description: 'The tech stack of the threads\' channels (akamai, sharepoint, …), as get_inbox_state counts them' },
   customer: { type: 'array', items: { type: 'string' }, description: 'Customer names as get_inbox_state lists them; case does not matter' },
 };
 
