@@ -71,9 +71,59 @@ async function graphJson(env, path) {
   return res.json();
 }
 
-async function fetchSlackChannel(env, channelId) {
+/** Slack workspace domains by team id (team.info), per isolate; '' when the lookup failed. */
+const slackDomains = new Map();
+
+async function slackDomain(env, team) {
+  if (!slackDomains.has(team)) {
+    try {
+      const { team: t } = await slackApi(env, 'team.info', { team });
+      slackDomains.set(team, (t && t.domain) || '');
+    } catch (e) {
+      console.warn(JSON.stringify({ route: 'normalize', lookup: 'team', error: e.message }));
+      slackDomains.set(team, '');
+    }
+  }
+  return slackDomains.get(team);
+}
+
+/** The workspace most of a tenant's Slack channels live in, per isolate. */
+const homeTeams = new Map();
+
+async function homeTeam(env, tenant) {
+  if (!homeTeams.has(tenant)) {
+    const row = await env.DB.prepare(`SELECT group_id FROM channels
+      WHERE source = 'slack' AND tenant = ? AND group_id LIKE 'T%'
+      GROUP BY group_id ORDER BY count(*) DESC, group_id LIMIT 1`).bind(tenant).first();
+    homeTeams.set(tenant, row ? row.group_id : null);
+  }
+  return homeTeams.get(tenant);
+}
+
+/**
+ * The workspace a Slack channel's links open in. A channel of the whole Enterprise org (its
+ * `context_team_id` is the org's) or one shared between its workspaces is in several; of
+ * those, the one most channels live in, where the people reading the inbox are.
+ */
+async function linkTeam(env, tenant, c) {
+  const teams = [...new Set([c.context_team_id, ...(c.shared_team_ids || [])])]
+    .filter((t) => /^T/.test(t || ''));
+  if (teams.length < 2) {
+    return teams[0] || null;
+  }
+  const home = await homeTeam(env, tenant);
+  return teams.includes(home) ? home : teams[0];
+}
+
+export function resetSlackDomains() {
+  slackDomains.clear();
+  homeTeams.clear();
+}
+
+async function fetchSlackChannel(env, tenant, channelId) {
   const { channel: c } = await slackApi(env, 'conversations.info', { channel: channelId });
   const connected = connectedTeams(c);
+  const team = await linkTeam(env, tenant, c);
   return {
     name: c.name,
     group_id: c.context_team_id || null,
@@ -81,6 +131,7 @@ async function fetchSlackChannel(env, channelId) {
     shared: c.is_ext_shared || c.is_shared ? 1 : 0,
     connected: JSON.stringify(connected),
     topic: (c.purpose && c.purpose.value) || (c.topic && c.topic.value) || null,
+    domain: team ? await slackDomain(env, team) : '',
   };
 }
 
@@ -128,7 +179,22 @@ export function toChannel(row, source, channelId) {
     groupName: row ? row.group_name : null,
     shared: Boolean(row && row.shared),
     connected: row && row.connected ? JSON.parse(row.connected) : [],
+    domain: (row && row.domain) || null,
   };
+}
+
+/**
+ * Points the stored links of a Slack channel's messages at its workspace, once the channel's
+ * domain is first known (or changed), so threads filed before that open in the right place.
+ */
+async function relinkSlackChannel(env, tenant, channelId, domain) {
+  const prefix = `https://${domain}.slack.com/archives/`;
+  await env.DB.prepare(`UPDATE messages
+    SET permalink = ? || substr(permalink, instr(permalink, '/archives/') + length('/archives/'))
+    WHERE source = 'slack' AND tenant = ? AND channel_id = ?
+      AND instr(permalink, '/archives/') > 0 AND substr(permalink, 1, length(?)) != ?`)
+    .bind(prefix, tenant, channelId, prefix, prefix)
+    .run();
 }
 
 /**
@@ -141,25 +207,31 @@ export async function getChannel(env, {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
-  if (fresh(row, now) && row.name) {
+  // Slack channels looked up before links named their workspace are looked up again.
+  if (fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
     return toChannel(row, source, channelId);
   }
   try {
     let f;
     if (source === 'slack') {
-      f = await fetchSlackChannel(env, channelId);
+      f = await fetchSlackChannel(env, tenant, channelId);
     } else if (source === 'discord') {
       f = await fetchDiscordChannel(env, tenant, channelId);
     } else {
       f = await fetchTeamsChannel(env, groupId || (row && row.group_id), channelId);
     }
+    // Before the row, so that a failed update is tried again with the next lookup.
+    if (f.domain && f.domain !== (row && row.domain)) {
+      await relinkSlackChannel(env, tenant, channelId, f.domain);
+    }
     await env.DB.prepare(`INSERT INTO channels
-      (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, domain,
+        fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
         group_id = excluded.group_id, group_name = excluded.group_name,
         shared = excluded.shared, connected = excluded.connected,
-        topic = excluded.topic, fetched_at = excluded.fetched_at`)
+        topic = excluded.topic, domain = excluded.domain, fetched_at = excluded.fetched_at`)
       .bind(
         source,
         tenant,
@@ -170,6 +242,7 @@ export async function getChannel(env, {
         f.shared,
         f.connected,
         f.topic ? String(f.topic).slice(0, 500) : null,
+        f.domain ?? null,
         new Date(now).toISOString(),
       )
       .run();

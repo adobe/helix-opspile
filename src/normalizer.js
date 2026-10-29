@@ -23,7 +23,7 @@ import {
 } from './lookup.js';
 import { discordApi } from './discord.js';
 import { discordToMarkdown, htmlToMarkdown, slackToMarkdown } from './markdown.js';
-import { normalize } from './normalize.js';
+import { normalize, slackLinkIn } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { refile } from './refile.js';
@@ -294,6 +294,10 @@ export async function processKey(env, key, cache = {}) {
     return { key, result: 'skip', reason: 'no channel or id' };
   }
   const channel = await getChannel(env, message);
+  if (message.source === 'slack') {
+    // The link opens in the channel's workspace, not the one the browser used last.
+    message.permalink = slackLinkIn(channel.domain, message.permalink);
+  }
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
   const cls = classify(cache.rules, channel);
