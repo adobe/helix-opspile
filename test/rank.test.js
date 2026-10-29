@@ -22,6 +22,7 @@ import { auc, customerTurns, logistic } from '../scripts/rank-behavior.mjs';
 import {
   asOf, decide, replyGames, shareOut,
 } from '../scripts/rank-combo.mjs';
+import { boost, forest, treeScore } from '../scripts/rank-trees.mjs';
 import { SCRIPTS } from './ui.js';
 
 const NOW = Date.parse('2026-03-02T12:00:00Z');
@@ -320,5 +321,40 @@ describe('the combo model\'s games (scripts/rank-combo.mjs)', () => {
     // No clicks: their share goes to the others, in proportion.
     assert.ok(Math.abs(total('human') - 75) < 1e-9);
     assert.ok(Math.abs(total('clef') - 25) < 1e-9);
+  });
+});
+
+describe('tree models of the order (scripts/rank-trees.mjs)', () => {
+  // The winner is the one with x above 0.5 and y below it: an interaction no line draws.
+  const rnd = random(21);
+  const things = Array.from({ length: 120 }, () => ({ x: rnd(), y: rnd(), z: rnd() }));
+  const good = (t) => (t.x > 0.5 && t.y < 0.5 ? 1 : 0);
+  const games = [];
+  for (let i = 0; i < 1500; i += 1) {
+    const a = things[Math.floor(rnd() * things.length)];
+    const b = things[Math.floor(rnd() * things.length)];
+    if (good(a) !== good(b)) {
+      games.push({
+        a, b, p: good(a), w: 1,
+      });
+    }
+  }
+  const right = (m) => games.filter((g) => (treeScore(m, g.a) > treeScore(m, g.b)) === Boolean(g.p))
+    .length / games.length;
+
+  it('boosted trees learn an interaction', () => {
+    const m = boost(['x', 'y', 'z'], games, { trees: 40, depth: 2, rate: 0.3 });
+    assert.ok(right(m) > 0.95, String(right(m)));
+    // Plain JSON: a tree is a split or a leaf.
+    const t = JSON.parse(JSON.stringify(m.trees[0]));
+    assert.ok(t.f !== undefined || t.v !== undefined);
+  });
+
+  it('a random forest does too, scaled to log-odds', () => {
+    const m = forest(['x', 'y', 'z'], games, { trees: 40, depth: 3 });
+    assert.ok(right(m) > 0.9, String(right(m)));
+    const top = things.find((t) => good(t));
+    const bottom = things.find((t) => !good(t));
+    assert.ok(treeScore(m, top) - treeScore(m, bottom) > 1);
   });
 });

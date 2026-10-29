@@ -484,8 +484,8 @@ it stays on your machine):
    (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
 6. `npm run rank -- train [--l2 30] [--shares click=0.3,…|counts] [--weights …] [--without a,b]
    [--dry-run]` fits the weights on all samples, picks and replies, prints how often the model
-   picks the winner of each source's games on threads (or picks) it was not trained on (five
-   folds), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
+   picks the winner of each source's games about threads it was not trained on (five folds, by
+   thread), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
    often each judge agrees with you, and writes the weights into `ui/rank.js` (between
    `// MODEL:` and `// END MODEL`). A feature seen in fewer than `--min-support` threads is not
    learned, and the policy's signs (`SIGNS` in `scripts/rank-combo.mjs`: resolved lowers a
@@ -493,11 +493,15 @@ it stays on your machine):
    kept: a weight the games would turn the other way is held at 0, and the training says which.
    `--without` leaves features out, to see what they are worth.
    Only feature names and numbers are committed.
-7. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
+7. `npm run rank -- compare [--trees 150] [--depth 3]` puts the linear model next to boosted
+   trees and a random forest (`scripts/rank-trees.mjs`, learned from the same games with the same
+   pairwise loss), on the same folds: held-out accuracy per source, log loss, size and the time
+   to score a thread. The inbox uses the linear model.
+8. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
    browser, the picks, a new sample, the tournament, the Claude judges on part of it, then the
    training; with `--pr`, the new weights go to a pull request against main (from a worktree of
    it, and only when main computes the same features). A bb automation runs it on Mondays.
-8. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
+9. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
    sample, whether someone on its team opened it in the inbox and how many read it, and for
    every time a customer wrote, whether and how soon Adobe answered; by kind, urgency, who has
    the next move, size, age, platform, team, and what the message says (a question, alarm words,

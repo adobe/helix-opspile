@@ -33,6 +33,9 @@
  *   npm run rank -- llm [--judges haiku,sonnet|name=<model id>,…] [--pairs 200]
  *     Claude models judge Clef's games as Clef did, both ways round, with a reason: the pairs you
  *     judged, then `--pairs` more (scripts/rank-llm.mjs). Bedrock: AWS_BEARER_TOKEN_BEDROCK.
+ *   npm run rank -- compare [--trees 150] [--depth 3] [--forest-depth 5]
+ *     The linear model against boosted trees and a random forest on the same games and folds
+ *     (scripts/rank-trees.mjs): held-out accuracy per source, log loss, size, time to score.
  *   npm run rank -- behavior [--refresh]
  *     What the teams do: how likely a thread is to be opened, and a customer's message to be
  *     answered within a day, by what they are like; and how well each score points at the
@@ -56,6 +59,7 @@ import {
 import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
 import { llm } from './rank-llm.mjs';
 import { behavior } from './rank-behavior.mjs';
+import { boost, forest, treeScore } from './rank-trees.mjs';
 import {
   DEFAULT_SHARES, DEFAULT_WEIGHTS, SIGNS, rows, samples, shareOut,
 } from './rank-combo.mjs';
@@ -369,6 +373,8 @@ function fitRows(names, list, l2, held = new Set()) {
 
 const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
 const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000003, 7);
+/** Held out in fold f: a game about any thread of that fold; trained on: the others. */
+const inFold = (f) => (r) => r.keys.some((k) => hash(k) % 5 === f);
 
 /** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
 async function events() {
@@ -410,7 +416,8 @@ async function readEvents() {
  * model whose strength is the linear score of ui/rank.js, fitted by pairwise logistic
  * regression, with five folds held out by thread (or by pick) to say how well it does.
  */
-async function train(opts) {
+/** The games of every source, weighted, as feature vectors (`names`), for train and compare. */
+async function trainingSet(opts) {
   const source = await readFile(RANK_JS, 'utf8');
   const Rank = loadRank(source);
   const without = new Set(String(opts.without || '').split(',').filter(Boolean));
@@ -448,6 +455,15 @@ async function train(opts) {
   if (list.length < 50) {
     throw new Error(`${list.length} games: run \`npm run rank -- duel\` first`);
   }
+  return {
+    source, Rank, names, list, all,
+  };
+}
+
+async function train(opts) {
+  const {
+    source, Rank, names, list, all,
+  } = await trainingSet(opts);
   // The hand-made score, for the judged pairs (the sample's time is when it was pulled).
   const classicOf = new Map(all.map((s) => {
     const c = loadClassic(s.data.pulledAt);
@@ -459,12 +475,11 @@ async function train(opts) {
     .map((k) => [k, list.filter((r) => r.source === k).length]));
   const counts = Object.entries(count).map(([k, n]) => `${k} ${n}`).join(', ');
   console.log(`${list.length} games from ${all.length} samples: ${counts}`);
-  const fold = (r) => hash(r.group) % 5;
   const held = Object.fromEntries(sources.map((k) => [k, { model: [], classic: [] }]));
   for (let f = 0; f < 5; f += 1) {
-    const w = fitRows(names, list.filter((r) => fold(r) !== f), l2);
+    const w = fitRows(names, list.filter((r) => !inFold(f)(r)), l2);
     for (const k of sources) {
-      const test = list.filter((r) => fold(r) === f && r.source === k);
+      const test = list.filter((r) => inFold(f)(r) && r.source === k);
       if (test.length) {
         const ids = new Map(test.map((r, i) => [`${i}`, r]));
         const s = (key) => {
@@ -564,6 +579,76 @@ const run = (cmd, args, extra = {}) => execFileSync(cmd, args, {
 });
 
 /**
+ * The linear model against boosted trees and a random forest (scripts/rank-trees.mjs), on the
+ * same games and folds as train: how often each picks the winner of each source's games it was
+ * not trained on, its log loss, how big it is and how long it takes to score a thread.
+ */
+async function compare(opts) {
+  const { names, list } = await trainingSet(opts);
+  const l2 = num(opts.l2, 30);
+  const trees = num(opts.trees, 150);
+  const sources = [...new Set(list.map((r) => r.source))];
+  const models = {
+    linear: (games) => {
+      const w = fitRows(names, games, l2);
+      return { score: (r, side) => dot(w, names, side === 'a' ? r.xa : r.xb), json: w };
+    },
+    'linear, free signs': (games) => {
+      const w = fitFree(names, games, l2);
+      return { score: (r, side) => dot(w, names, side === 'a' ? r.xa : r.xb), json: w };
+    },
+    'boosted trees': (games) => {
+      const m = boost(names, games, { trees, depth: num(opts.depth, 3) });
+      return { score: (r, side) => treeScore(m, side === 'a' ? r.a : r.b), json: m };
+    },
+    'random forest': (games) => {
+      const m = forest(names, games, { trees, depth: num(opts['forest-depth'], 5) });
+      return { score: (r, side) => treeScore(m, side === 'a' ? r.a : r.b), json: m };
+    },
+  };
+  const results = {};
+  for (const [name, make] of Object.entries(models)) {
+    const per = Object.fromEntries(sources.map((k) => [k, []]));
+    const t0 = Date.now();
+    let last = null;
+    for (let f = 0; f < 5; f += 1) {
+      const m = make(list.filter((r) => !inFold(f)(r)));
+      last = m;
+      for (const k of sources) {
+        const test = list.filter((r) => inFold(f)(r) && r.source === k);
+        if (test.length) {
+          const s = (key) => m.score(test[Number(key.slice(0, -1))], key.slice(-1));
+          per[k].push(agreement(s, test.map((r, i) => ({ a: `${i}a`, b: `${i}b`, p: r.p }))));
+        }
+      }
+    }
+    const fitMs = (Date.now() - t0) / 5;
+    const probe = list.slice(0, 2000);
+    const t1 = process.hrtime.bigint();
+    for (const r of probe) {
+      last.score(r, 'a');
+    }
+    const scoreUs = Number(process.hrtime.bigint() - t1) / 1000 / probe.length;
+    const avg = (xs, k) => {
+      const n = xs.reduce((acc, x) => acc + x.decided, 0);
+      return n ? xs.reduce((acc, x) => acc + x[k] * x.decided, 0) / n : NaN;
+    };
+    results[name] = {
+      ...Object.fromEntries(sources.map((k) => [k, `${Math.round(avg(per[k], 'accuracy') * 1000) / 10}%`])),
+      'log loss': Number((Object.values(per).flat().reduce((acc, x) => acc + x.logloss, 0)
+        / Object.values(per).flat().length).toFixed(3)),
+      size: `${Math.round(JSON.stringify(last.json).length / 100) / 10} KB`,
+      'fit (s)': Number((fitMs / 1000).toFixed(1)),
+      'score (µs)': Number(scoreUs.toFixed(1)),
+    };
+    process.stdout.write(`${name} done\n`);
+  }
+  console.log('How often each picks the winner of each source\'s games, held out (5 folds):');
+  console.table(results);
+  return results;
+}
+
+/**
  * The new weights as a pull request against main, from a worktree of origin/main, so the
  * checkout the job runs in is left as it is. Only when main computes the same features.
  */
@@ -632,10 +717,18 @@ async function weekly(o) {
 
 const opts = options(process.argv.slice(2));
 const step = {
-  pull, duel, train, judge: judgeStep, llm: llmStep, behavior: behaviorStep, events, weekly,
+  pull,
+  duel,
+  train,
+  compare,
+  judge: judgeStep,
+  llm: llmStep,
+  behavior: behaviorStep,
+  events,
+  weekly,
 }[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|duel|llm|judge|events|train|behavior|weekly [options]'
+  console.error('usage: npm run rank -- pull|duel|llm|judge|events|train|compare|behavior|weekly [options]'
     + ' (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {

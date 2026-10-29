@@ -130,11 +130,11 @@ globalThis.Rank = (() => {
       reply: 1171,
     },
     accuracy: {
-      clef: 0.684,
-      sonnet: 0.792,
-      human: 0.554,
-      haiku: 0,
-      reply: 0.562,
+      clef: 0.69,
+      sonnet: 0.8,
+      human: 0.557,
+      haiku: 0.5,
+      reply: 0.633,
     },
     weights: {
       recent6h: -0.0082,

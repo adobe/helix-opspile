@@ -220,8 +220,10 @@ export function replyGames(threads, { minMinutes = 5 } = {}) {
 }
 
 /**
- * Every game as a row `{ a, b, p, w, source, group }`, `a` and `b` the feature objects.
- * `group` keeps games about the same threads (or the same click) in the same fold.
+ * Every game as a row `{ a, b, p, w, source, keys }`, `a` and `b` the feature objects, `keys`
+ * the threads it is about: held-out folds go by thread, so that no thread a test game is about
+ * was trained on (a thread is in many games, on either side; models that can remember one would
+ * otherwise be scored on what they remembered).
  */
 export function rows({
   Rank, samples: list, events = [], weights = DEFAULT_WEIGHTS,
@@ -242,7 +244,14 @@ export function rows({
     for (const g of decide(games, s.human, s.llm)) {
       if (byKey.has(g.a) && byKey.has(g.b)) {
         out.push({
-          a: f(g.a), b: f(g.b), p: g.p, w: weights[g.source], source: g.source, group: `${g.a}`, ids: [g.a, g.b], snap: now,
+          a: f(g.a),
+          b: f(g.b),
+          p: g.p,
+          w: weights[g.source],
+          source: g.source,
+          keys: [g.a, g.b],
+          ids: [g.a, g.b],
+          snap: now,
         });
       }
     }
@@ -255,7 +264,7 @@ export function rows({
           p: 1,
           w: weights.reply,
           source: 'reply',
-          group: g.a.thread,
+          keys: [g.a.thread, g.b.thread],
         });
       }
     }
@@ -270,7 +279,7 @@ export function rows({
           p: 1,
           w: weights.click * (other.pos < clicked.pos ? 1 : weights.below),
           source: 'click',
-          group: `event${e.id}`,
+          keys: [clicked.thread, other.thread],
         });
       }
     }
