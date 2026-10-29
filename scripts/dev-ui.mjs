@@ -689,6 +689,12 @@ async function api(req, res, url) {
   if (url.pathname.startsWith('/api/admin/')) {
     const body = req.method === 'GET' ? null : await readJson(req);
     const r = await adminApi(req, url, body);
+    // Images (an org's favicon): as they are.
+    if (!(r.headers.get('content-type') || 'application/json').includes('json')) {
+      res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'text/plain' })
+        .end(Buffer.from(await r.arrayBuffer()));
+      return true;
+    }
     return json(res, await r.json(), r.status);
   }
   if (url.pathname === '/api/me' && as) {
