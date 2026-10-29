@@ -24,6 +24,8 @@ nav.pages a { display: flex; align-items: center; padding: 0 10px; border-radius
 nav.pages a:hover { color: var(--ink); background: var(--hover); }
 nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default; }
 nav.pages .chev { display: none; }
+/* Another site (Stats, on klickhaus), in a new tab. */
+header .ext, .pagemenu .ext { margin-left: 3px; font-size: 11px; }
 nav.pages .total { display: none; }
 header .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
   margin-left: 6px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650;

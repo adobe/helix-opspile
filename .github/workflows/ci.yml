@@ -71,6 +71,9 @@ jobs:
       CLICKHOUSE_URL: ${{ secrets.CLICKHOUSE_URL }}
       CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
       CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+      # The header's Stats link to klickhaus (optional; off while either is empty; src/klickhaus.js).
+      KLICKHAUS_URL: ${{ secrets.KLICKHAUS_URL }}
+      KLICKHAUS_TEAMS: ${{ secrets.KLICKHAUS_TEAMS }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

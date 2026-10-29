@@ -4115,8 +4115,9 @@ async function start() {
   // own settings, unless they manage it), the admin pages for the admin team and team
   // managers. What is on screen picks what they open on: Agents and Orgs the customer on
   // screen, Teams the team picked (one you may manage); with nothing on screen they open as
-  // they were left, and Agents, not opened yet in this tab, on the team. The open requests are
-  // the admin team's own, not shown while viewing as someone.
+  // they were left, and Agents, not opened yet in this tab, on the team. Stats (klickhaus) opens
+  // on the customer on screen and the team whose inbox it is, either or both, else on all. The
+  // open requests are the admin team's own, not shown while viewing as someone.
   const teamOnScreen = () => (!personal() && state.team
     && (state.me.admin || state.me.manages?.includes(state.team)) ? state.team : null);
   Header.init(state.me, {
@@ -4124,6 +4125,7 @@ async function start() {
       agents: () => (customerOnScreen() ? kbHref() : null),
       teams: () => (teamOnScreen() ? `/inbox/admin?tab=teams&team=${encodeURIComponent(teamOnScreen())}` : null),
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
+      stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
     fallback: { agents: kbHref },
     count: !state.as,
