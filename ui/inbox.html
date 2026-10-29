@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="opspile">
+<link rel="stylesheet" href="header.css">
 <style>
   :root {
     --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
@@ -52,66 +53,12 @@
   #threads { padding-bottom: var(--safe-bottom); }
   button, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
     border-radius: 7px; padding: 3px 9px; cursor: pointer; }
-  /* The toolbar: pages and label review on the left; on the right, whoever is signed in, with a
-     menu for "View as" (admin team), the keyboard shortcuts and logging out. */
-  header { display: flex; gap: 10px; align-items: center; height: var(--head); padding: 0 12px 0 14px; flex: none;
-    background: var(--col); border-bottom: 1px solid var(--line); }
-  header h1 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 0 8px 0 0;
-    letter-spacing: .01em; }
-  header h1 img { width: 22px; height: 22px; border-radius: 6px; }
-  header .spacer { flex: 1; }
-  header .tool { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; color: var(--mute); }
-  header .tool[hidden] { display: none; }
-  header .tool:hover { color: var(--ink); background: var(--hover); }
-  header .tool svg { width: 14px; height: 14px; flex: none; }
-  #review[aria-pressed="true"] { color: var(--ink); background: var(--sel); border-color: var(--accent); }
-  /* Inbox ↔ knowledge bases, for the admin team: the same switch in both pages' header. */
-  nav.pages { display: inline-flex; height: 30px; background: var(--card); border: 1px solid var(--line); border-radius: 7px;
-    overflow: hidden; }
-  nav.pages[hidden] { display: none; }
-  nav.pages .count { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px;
-    border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650; line-height: 1; }
-  nav.pages a { display: flex; align-items: center; color: var(--mute); text-decoration: none; padding: 0 11px; }
-  nav.pages a + a { border-left: 1px solid var(--line); }
-  nav.pages a:hover { color: var(--ink); background: var(--hover); }
-  nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default;
-    box-shadow: inset 0 0 0 1px var(--accent); border-radius: 6px; }
-  nav.pages a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  /* Live updates are only worth a word when they stop. */
-  #offline { color: var(--yellow); font-size: 12.5px; }
-  /* Read-only "View as": loud enough not to be forgotten, and one click to leave. */
-  #viewing { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 11px; font-size: 13px;
-    color: var(--ink); background: color-mix(in srgb, var(--yellow) 18%, var(--card));
-    border-color: color-mix(in srgb, var(--yellow) 55%, var(--line)); border-radius: 15px; }
-  #viewing[hidden] { display: none; }
-  #viewing .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--mute); }
-  #viewing:hover .x { color: var(--ink); background: color-mix(in srgb, var(--yellow) 30%, transparent); }
-  #user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; border-color: transparent;
-    background: none; border-radius: 10px; text-align: left; }
-  #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
-  #user .av, .menu .av { width: 28px; height: 28px; border-radius: 50%; font-size: 11px; }
-  #user .who { display: flex; flex-direction: column; line-height: 1.2; }
-  #user .nm { font-weight: 600; font-size: 13px; white-space: nowrap; }
-  #user .sub { color: var(--mute); font-size: 11.5px; white-space: nowrap; }
-  #user svg { width: 12px; height: 12px; color: var(--mute); }
-  .menu { position: fixed; inset: 46px 12px auto auto; margin: 0; width: 290px; padding: 6px; color: var(--ink);
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
-  .menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
-  .menu .id .av { width: 36px; height: 36px; font-size: 13px; }
-  .menu .id .nm { font-weight: 650; font-size: 14px; }
-  .menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
-  .menu section { border-top: 1px solid var(--line); padding: 6px 0; }
-  .menu section[hidden] { display: none; }
-  .menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--faint); }
-  .menu .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 7px;
-    background: none; color: inherit; text-decoration: none; text-align: left; cursor: pointer; }
-  .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
-  .menu .item .ck { width: 14px; color: var(--accent); flex: none; visibility: hidden; }
+  /* The header (ui/header.css): the pages and the label review on the left; on the right the
+     modes (reviewing labels, viewing as someone) and whoever is signed in, with a menu for
+     "View as" (admin team), notifications, the keyboard shortcuts and logging out. */
   .menu .item[aria-checked="true"] { font-weight: 600; }
+  .menu .item .ck { width: 14px; color: var(--accent); flex: none; visibility: hidden; }
   .menu .item[aria-checked="true"] .ck { visibility: visible; }
-  .menu .item svg { width: 14px; height: 14px; flex: none; }
   .menu select { width: calc(100% - 16px); margin: 2px 8px 4px; padding: 4px 8px; }
   .menu .hint { margin: 0 8px 4px; color: var(--mute); font-size: 11.5px; }
   /* Bells: the views that notify you, each with the ✕ that turns it off. */
@@ -123,9 +70,6 @@
   .menu #bells .bell button { flex: none; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--mute); }
   .menu #bells .bell button:hover { background: var(--hover); color: var(--ink); }
   .menu .item.allow { color: var(--link); }
-  .menu .item[hidden] { display: none; }
-  .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
-  .menu .keys dd { margin: 0; text-align: right; }
   main { flex: 1; display: grid; grid-template-columns: var(--filters-w) minmax(380px, 34%) 1fr; min-height: 0; }
   :root { --filters-w: 270px; --rail: 68px; }
   main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
@@ -819,8 +763,6 @@
    * not display), so the list keeps its scroll position and a thread opens scrolled to where
    * it should.
    */
-  .menu { max-width: calc(100vw - 24px); max-height: calc(100dvh - var(--head) - 8px); overflow-y: auto;
-    overscroll-behavior: contain; }
   .toast { max-width: calc(100vw - 24px); }
   #threads .count .filt, .ph .close { display: none; }
   #threads .count .filt { align-items: center; gap: 5px; height: 22px; padding: 0 8px; margin-right: 10px;
@@ -845,9 +787,6 @@
    * reaction chips) are zoomed whole. Thread rows are tall enough already, and fixed at 64px.
    */
   @media (hover: none) and (pointer: coarse) {
-    header .tool, nav.pages { height: 36px; }
-    nav.pages a { padding: 0 14px; }
-    #user { min-height: 44px; }
     #threads .count { padding-top: 6px; padding-bottom: 6px; }
     #threads .count .filt, #threads .count .unread, #threads .count .bell { height: 27px; }
     #threads .count .unread, #threads .count .bell { width: 32px; }
@@ -891,21 +830,6 @@
     .mentions { left: 16px; max-width: calc(100% - 32px); }
   }
   @media (max-width: 699px) {
-    header { gap: 8px; padding: 0 8px 0 12px; }
-    /* The logo, the label review's icon: both named by their text, which takes no room. */
-    header h1, header .tool { font-size: 0; gap: 0; }
-    header h1 { margin: 0; }
-    header .tool { padding: 0 8px; }
-    nav.pages { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-    nav.pages a { padding: 0 8px; white-space: nowrap; }
-    /* "View as": who, in the yellow pill; "Viewing as" is left to screen readers. */
-    #viewing { flex: none; white-space: nowrap; }
-    #viewing .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-    #viewing b { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
-    #user { padding: 0 4px; gap: 6px; }
-    /* You and the team are in the menu: with the admin pages or "View as" there is no room. */
-    header:has(#pages:not([hidden]), #viewing:not([hidden])) #user .who { display: none; }
-    .menu { right: 8px; }
     /* Clipped, not hidden: nothing may scroll the page sideways to the thread off its edge. */
     main { grid-template-columns: 100%; grid-template-rows: 100%; overflow: hidden; overflow: clip; }
     #threads, #pane { grid-area: 1 / 1; border: 0; transition: transform .25s ease-out, visibility 0s .25s; }
@@ -936,10 +860,6 @@
     .mentions { left: 12px; min-width: 0; width: calc(100% - 24px); }
     .empty { padding: 32px 20px; }
   }
-  @media (max-width: 399px) {
-    header { gap: 6px; }
-    nav.pages a { padding: 0 6px; }
-  }
   @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
     #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
   }
@@ -949,15 +869,17 @@
 </head>
 <body>
 <header>
-  <h1><img src="/apple-touch-icon.png" alt="">opspile</h1>
-  <nav class="pages" id="pages" hidden aria-label="Admin pages"><a id="inbox" href="/inbox" aria-current="page">Inbox</a><a id="kb" href="/inbox/kb" title="Thread agents: their knowledge bases, channels, MCP servers and instructions (admin team and team managers): the open thread's customer, else this team">Agents</a><a id="adminPage" href="/inbox/admin" title="Teams, members, rules, and customers, partners and vendors (admin team)">Admin</a></nav>
-  <button id="review" class="tool" hidden aria-pressed="false" title="Review Clef labels (admin team)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg>Review labels</button>
+  <h1><a data-page="inbox" href="/inbox"><img src="/apple-touch-icon.png" alt="">opspile</a></h1>
+  <nav class="pages" id="pages" hidden aria-label="Pages"></nav>
+  <span class="divider" id="toolsep" hidden></span>
+  <button id="review" class="tool" hidden title="Review Clef labels (admin team)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg>Review labels</button>
   <span class="spacer"></span>
-  <span id="offline" hidden title="Live updates stopped; trying again">Reconnecting…</span>
-  <button id="viewing" hidden title="Read-only. Click to see your own inbox again."></button>
+  <span id="offline" class="note" hidden title="Live updates stopped; trying again">Reconnecting…</span>
+  <button id="reviewing" class="mode review" hidden title="Reviewing Clef labels. Click to stop."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg><span class="lbl">Reviewing labels</span><span class="x" aria-hidden="true">✕</span></button>
+  <button id="viewing" class="mode as" hidden title="Read-only. Click to see your own inbox again."></button>
   <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account, team and shortcuts">
     <span class="av" id="userAv"></span>
-    <span class="who"><span class="nm" id="me"></span><span class="sub" id="teamName"></span></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="userSub"></span></span>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   <div id="menu" class="menu" popover>
@@ -979,6 +901,7 @@
     <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
   </div>
 </header>
+<script src="header.js"></script>
 <main>
   <section id="filters" aria-label="Filters"></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>

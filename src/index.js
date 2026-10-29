@@ -18,6 +18,8 @@ import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
 import kbJs from '../ui/kb.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
+import headerJs from '../ui/header.js' with { type: 'text' };
+import headerCss from '../ui/header.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { keepOAuthAlive } from './agent/mcpoauth.js';
@@ -47,7 +49,12 @@ import { sweepVectors } from './vectors.js';
 import { sweepPreviews } from './previews.js';
 
 const SCRIPTS = {
-  'inbox.js': inboxJs, 'admin.js': adminJs, 'kb.js': kbJs, 'app.js': appJs,
+  'inbox.js': inboxJs,
+  'admin.js': adminJs,
+  'kb.js': kbJs,
+  'app.js': appJs,
+  'header.js': headerJs,
+  'header.css': headerCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);

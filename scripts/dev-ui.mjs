@@ -1223,9 +1223,12 @@ function banner(name) {
     + `${label}${designs}</div>`;
 }
 
-/** The pages' scripts, ui/*.js, read again on every page load (src/index.js imports them). */
+/**
+ * The pages' scripts and shared stylesheets, ui/*.js and ui/*.css, read again on every page
+ * load (src/index.js imports them).
+ */
 async function scripts() {
-  const names = (await readdir(uiDir)).filter((f) => f.endsWith('.js'));
+  const names = (await readdir(uiDir)).filter((f) => /\.(js|css)$/.test(f));
   return Object.fromEntries(await Promise.all(names.map(async (f) => [f, await readFile(join(uiDir, f), 'utf8')])));
 }
 
@@ -1289,7 +1292,7 @@ function reloadStream(req, res) {
 function watchUi() {
   let timer;
   watch(uiDir, (event, file) => {
-    if (file && !/\.(html|js)$/.test(file)) {
+    if (file && !/\.(html|js|css)$/.test(file)) {
       return;
     }
     clearTimeout(timer);

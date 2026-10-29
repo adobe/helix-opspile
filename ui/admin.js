@@ -31,22 +31,6 @@ const state = {
   requests: [], openRequests: 0, names: {},
 };
 const $ = (id) => document.getElementById(id);
-const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
-/** You, at the toolbar's right end (the same colour and initials as in the inbox), and its menu. */
-function renderUser(me) {
-  const name = me.name || me.email || '';
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  for (const id of ['userAv', 'menuAv']) {
-    $(id).textContent = initials;
-    $(id).style.background = COLORS[h % COLORS.length];
-  }
-  $('me').textContent = name;
-  $('menuName').textContent = name;
-  $('menuEmail').textContent = me.email || '';
-  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
-}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(icon)}&sz=64`);
 const ico = (icon) => (icon ? `<img class="ico" src="${esc(favicon(icon))}" alt="" loading="lazy" onerror="this.className='ico none';this.removeAttribute('src')">` : '<span class="ico none"></span>');
@@ -204,10 +188,20 @@ function toUrl() {
   history.replaceState(null, '', `/inbox/admin?${q}`);
   // Phones show the list or what is picked in it (see the styles).
   document.body.classList.toggle('picked', Boolean(state.sel));
-  for (const a of document.querySelectorAll('nav [data-tab]')) {
-    a.toggleAttribute('aria-current', a.dataset.tab === state.tab);
-    if (a.dataset.tab === state.tab) a.setAttribute('aria-current', 'page');
-  }
+}
+
+/**
+ * Teams, Orgs and Requests are pages of the header (ui/header.js), each opening as it was
+ * left: one of them, from its address, without loading the page again. Going to another is a
+ * new history entry (`push`), so Back returns to the one before.
+ */
+function openUrl(url, { push = true } = {}) {
+  const q = new URL(url, location.origin).searchParams;
+  const tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
+  if (push) history.pushState(null, '', url);
+  switchTab(tab);
+  const sel = q.get(PARAM[tab]);
+  if (sel) select(sel);
 }
 
 async function load() {
@@ -1088,7 +1082,7 @@ async function showTeam(slug) {
   $('detail').innerHTML = `
     <div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
-      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}&back=${encodeURIComponent(`${location.pathname}${location.search}`)}">Knowledge base</a>` : ''}
+      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}">Knowledge base</a>` : ''}
       ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><label style="display:flex;gap:8px;align-items:center">
@@ -1187,13 +1181,9 @@ function decisionText(r) {
   return `${statusTag(r)} by ${who(r.decidedBy)}${when}${did ? `: ${did}` : ''}`;
 }
 
-/** The number of open requests on the Requests tab. */
+/** The number of open requests, on Requests in the header. */
 function renderCount() {
-  const el = $('reqCount');
-  el.textContent = String(state.openRequests);
-  el.hidden = !state.me.admin || !state.openRequests;
-  el.closest('a').title = state.openRequests
-    ? `${state.openRequests} channel request${state.openRequests === 1 ? '' : 's'} waiting for a decision` : 'Channels team managers asked for';
+  Header.setCount(state.me.admin ? state.openRequests : 0);
 }
 
 /** A request as it is now, everywhere the page shows it (the lists, the open team page). */
@@ -1461,24 +1451,26 @@ async function showOrg(slug) {
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  renderUser(state.me);
+  Header.user(state.me, Header.role(state.me));
   if (!state.me.admin && !state.me.manages?.length) {
     $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
     $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
     return;
   }
+  Header.init(state.me, {
+    count: false, // renderCount, from the requests loaded here
+    go: (id, url) => (['teams', 'orgs', 'requests'].includes(id) ? openUrl(url) : location.assign(url)),
+  });
   if (!(await load())) return;
-  const q = new URLSearchParams(location.search);
-  state.tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
-  if (!state.me.admin) {
-    document.querySelector('nav [data-tab="orgs"]').hidden = true;
-    document.querySelector('nav [data-tab="requests"]').hidden = true;
-  }
-  for (const a of document.querySelectorAll('nav [data-tab]')) {
-    a.onclick = (e) => { e.preventDefault(); switchTab(a.dataset.tab); };
-  }
-  $('detail').addEventListener('click', (e) => { if (e.target.closest('[data-back]')) unselect(); });
-  switchTab(state.tab);
-  const sel = q.get(PARAM[state.tab]);
-  if (sel) select(sel);
+  $('detail').addEventListener('click', (e) => {
+    if (e.target.closest('[data-back]')) { unselect(); return; }
+    // A link to another team or org here (a request's team) opens it as the header does.
+    const a = e.target.closest('a[href^="/inbox/admin?"]');
+    if (a && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      openUrl(a.getAttribute('href'));
+    }
+  });
+  window.addEventListener('popstate', () => openUrl(location.href, { push: false }));
+  openUrl(location.href, { push: false });
 })();

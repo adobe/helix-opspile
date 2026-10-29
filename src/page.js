@@ -18,17 +18,29 @@ const PLACEHOLDER = '/* SLACK_EMOJI */ { names: {}, skin: [] }';
 /** `<script src="name.js"></script>`, with or without `type="module"`, in a page of ui/. */
 const SCRIPT = /<script( type="module")? src="([a-z-]+\.js)"><\/script>/g;
 
+/** `<link rel="stylesheet" href="name.css">` in a page of ui/. */
+const STYLE = /<link rel="stylesheet" href="([a-z-]+\.css)">/g;
+
 /**
  * A page of ui/ as served: its scripts, ui/*.js and `markdown.js` (the markdown renderer,
- * src/ui-markdown.js, as the global `Markdown`), inlined where the page names them. The
- * scripts live in their own files, which lint checks, but the page stays one request.
+ * src/ui-markdown.js, as the global `Markdown`), and its shared stylesheets, ui/*.css,
+ * inlined where the page names them. The scripts live in their own files, which lint checks,
+ * and what every page shares (the header, ui/header.*) is written once, but the page stays
+ * one request.
  *
  * @param {string} html the page, ui/<name>.html
- * @param {Record<string, string>} scripts ui/*.js by file name
+ * @param {Record<string, string>} scripts ui/*.js and ui/*.css by file name
  */
 export function page(html, scripts) {
   const files = { ...scripts, 'markdown.js': MARKDOWN };
-  return html.replace(SCRIPT, (tag, module, name) => {
+  const styled = html.replace(STYLE, (tag, name) => {
+    if (typeof files[name] !== 'string') {
+      throw new Error(`no stylesheet ${name} for the page`);
+    }
+    // In an inline <style>, `</style` would end it.
+    return `<style>\n${files[name].replace(/<\/(style)/gi, '<\\/$1')}</style>`;
+  });
+  return styled.replace(SCRIPT, (tag, module, name) => {
     if (typeof files[name] !== 'string') {
       throw new Error(`no script ${name} for the page`);
     }

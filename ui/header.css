@@ -1,0 +1,132 @@
+/*
+ * The header of every page (ui/header.js): the logo, the switch between the pages, the page's
+ * own tools, the modes it is in, and you, with your menu. One look on every page: what can be
+ * clicked is 14px, what is said beside it 12px, the counts 11px; controls are 30px tall, 36px
+ * on a touch screen; what is picked is filled, and an outline means keyboard focus only.
+ * A page's own stylesheet comes after this one and adds to it.
+ */
+header { --ctl: 30px; display: flex; gap: 10px; align-items: center; height: var(--head, 50px);
+  padding: 0 12px 0 14px; flex: none; background: var(--col); border-bottom: 1px solid var(--line);
+  font-size: 14px; }
+header h1 { margin: 0 6px 0 0; font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+header h1 a { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none;
+  border-radius: 7px; }
+header h1 img { width: 22px; height: 22px; border-radius: 6px; }
+header .spacer { flex: 1; }
+header a:focus-visible, header button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The pages, by who you are (ui/header.js); each opens where you left it. */
+nav.pages { display: inline-flex; gap: 2px; height: var(--ctl); padding: 2px; flex: none; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; }
+nav.pages[hidden] { display: none; }
+nav.pages a { display: flex; align-items: center; padding: 0 10px; border-radius: 6px; color: var(--mute);
+  text-decoration: none; white-space: nowrap; }
+nav.pages a:hover { color: var(--ink); background: var(--hover); }
+nav.pages a[aria-current="page"] { color: var(--ink); background: var(--sel); cursor: default; }
+nav.pages .chev { display: none; }
+nav.pages .total { display: none; }
+header .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  margin-left: 6px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650;
+  line-height: 1; }
+header .count[hidden] { display: none; }
+/* Phones: the pages are a menu under the one you are on. */
+.pagemenu { position: fixed; inset: calc(var(--head, 50px) - 4px) auto auto 8px; margin: 0; min-width: 180px;
+  padding: 6px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); }
+.pagemenu a { display: flex; align-items: center; height: 36px; padding: 0 10px; border-radius: 7px; color: inherit;
+  text-decoration: none; font-size: 14px; }
+.pagemenu a:hover, .pagemenu a:focus-visible { background: var(--hover); outline: none; }
+.pagemenu a[aria-current="page"] { background: var(--sel); font-weight: 600; }
+.pagemenu .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  margin-left: auto; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 650;
+  line-height: 1; }
+.pagemenu .count[hidden] { display: none; }
+
+/* A page's tools (the inbox's label review), after a divider. */
+header .divider { width: 1px; height: 20px; flex: none; background: var(--line); }
+header .divider[hidden] { display: none; }
+header .tool { display: inline-flex; align-items: center; gap: 6px; height: var(--ctl); padding: 0 10px; flex: none;
+  color: var(--mute); background: none; border: 1px solid transparent; border-radius: 7px; white-space: nowrap; }
+header .tool[hidden] { display: none; }
+header .tool:hover { color: var(--ink); background: var(--hover); }
+header .tool svg, header .mode svg { width: 14px; height: 14px; flex: none; }
+
+/* The modes a page is in (reviewing labels, viewing as someone): a pill each, on the right,
+   with the ✕ that leaves it. */
+header .mode { display: inline-flex; align-items: center; gap: 6px; height: var(--ctl); padding: 0 6px 0 11px;
+  flex: none; min-width: 0; color: var(--ink); border: 1px solid; border-radius: 15px; white-space: nowrap; }
+header .mode[hidden] { display: none; }
+header .mode .x { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; flex: none;
+  color: var(--mute); font-size: 11px; }
+header .mode:hover .x { color: var(--ink); background: color-mix(in srgb, var(--ink) 12%, transparent); }
+header .mode.review { background: color-mix(in srgb, var(--accent) 16%, var(--card));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+header .mode.as { background: color-mix(in srgb, var(--yellow) 18%, var(--card));
+  border-color: color-mix(in srgb, var(--yellow) 55%, var(--line)); }
+header .mode b { overflow: hidden; text-overflow: ellipsis; }
+header .note { color: var(--yellow); font-size: 12px; white-space: nowrap; }
+header .note[hidden] { display: none; }
+
+/* You: your name, and under it the team on screen (the inbox) or what you are (the others). */
+#user { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 8px 0 4px; flex: none;
+  color: inherit; background: none; border: 1px solid transparent; border-radius: 10px; text-align: left; cursor: pointer; }
+#user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+#user .av, .menu .id .av { display: grid; place-items: center; flex: none; width: 28px; height: 28px;
+  border-radius: 50%; color: #fff; font-size: 11px; font-weight: 600; }
+#user .who { display: flex; flex-direction: column; line-height: 1.2; }
+#user .nm { font-weight: 600; font-size: 14px; white-space: nowrap; }
+#user .sub { color: var(--mute); font-size: 12px; white-space: nowrap; }
+#user svg { width: 12px; height: 12px; color: var(--mute); }
+
+/* Your menu: who you are, the page's own sections, logging out. */
+.menu { position: fixed; inset: calc(var(--head, 50px) - 4px) 12px auto auto; margin: 0; width: 290px; padding: 6px;
+  max-width: calc(100vw - 24px); max-height: calc(100dvh - var(--head, 50px) - 8px); overflow-y: auto;
+  overscroll-behavior: contain; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.12); font-size: 13px; }
+.menu .id { display: flex; gap: 10px; align-items: center; padding: 8px 8px 10px; }
+.menu .id .av { width: 36px; height: 36px; font-size: 13px; }
+.menu .id .nm { font-weight: 650; font-size: 14px; }
+.menu .id .sub { color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+.menu section { border-top: 1px solid var(--line); padding: 6px 0; }
+.menu section[hidden] { display: none; }
+.menu h4 { margin: 4px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); }
+.menu .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 7px;
+  background: none; color: inherit; font: inherit; text-decoration: none; text-align: left; cursor: pointer; }
+.menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+.menu .item[hidden] { display: none; }
+.menu .item svg { width: 14px; height: 14px; flex: none; }
+.menu .keys { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; margin: 2px 8px 4px; color: var(--mute); }
+.menu .keys dd { margin: 0; text-align: right; }
+.menu kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+  color: var(--mute); }
+
+/* A touch screen: the same controls, taller, on every page. */
+@media (hover: none) and (pointer: coarse) {
+  header { --ctl: 36px; }
+  nav.pages a { padding: 0 13px; }
+  #user { height: 44px; }
+}
+
+/* Phones: the logo without its name, the tools by their icon, you by your face, the modes by
+   who or what; the pages are the one you are on, with a menu of the others. */
+@media (max-width: 699px) {
+  header { gap: 8px; padding: 0 8px 0 12px; }
+  header h1 { margin: 0; }
+  header h1 a, header .tool { font-size: 0; gap: 0; }
+  header .tool { padding: 0 8px; }
+  header .divider { display: none; }
+  nav.pages a:not([aria-current]) { display: none; }
+  nav.pages a[aria-current="page"] { cursor: pointer; gap: 6px; }
+  nav.pages a[aria-current="page"] .count:not(.total) { display: none; }
+  nav.pages .chev { display: block; width: 12px; height: 12px; color: var(--mute); }
+  /* Open requests: a dot here, their number in the menu. */
+  nav.pages .total:not([hidden]) { display: block; min-width: 0; width: 8px; height: 8px; padding: 0; margin: 0;
+    font-size: 0; }
+  header .mode .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  header .mode { min-width: 0; flex: 0 1 auto; padding: 0 4px 0 9px; }
+  header .mode b { max-width: 30vw; }
+  #user { padding: 0 4px; gap: 6px; }
+  #user .who { display: none; }
+  .menu { right: 8px; }
+}

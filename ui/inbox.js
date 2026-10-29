@@ -2985,18 +2985,22 @@ async function loadWho() {
  * above the thread list.
  */
 function renderUser() {
-  const name = state.me.name || state.me.email;
-  $('me').textContent = name;
-  $('teamName').textContent = personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '';
-  for (const id of ['userAv', 'menuAv']) {
-    $(id).textContent = initials(name);
-    $(id).style.background = hue(name);
-  }
-  $('menuName').textContent = name;
-  $('menuEmail').textContent = state.me.email || '';
+  Header.user(state.me, personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '');
   const as = state.data?.me?.readonly ? state.data.me.name : null;
   $('viewing').hidden = !as;
   $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
+}
+
+/**
+ * Label review (admin team): a tool beside the pages while it is off, a mode on the right
+ * ("Reviewing labels ✕") while it is on, as "View as" is.
+ */
+function showReview(on) {
+  state.review = on;
+  const can = Boolean(state.me?.admin);
+  $('review').hidden = !can || on;
+  $('toolsep').hidden = !can || on || $('pages').hidden;
+  $('reviewing').hidden = !can || !on;
 }
 
 // The inbox comes in pages, newest activity first: the first page shows at once, older ones
@@ -3025,7 +3029,6 @@ async function loadInbox(early = null) {
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
-  syncPages();
   backfill();
 }
 
@@ -3480,7 +3483,6 @@ function toUrl(push = true, entry = null) {
   if (design) q.set('design', design);
   const url = `${location.pathname}?${q}`;
   if (url !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](entry, '', url);
-  syncPages();
 }
 /**
  * The switch to the knowledge-base editor (admin team) opens the knowledge base that fits what
@@ -3496,12 +3498,7 @@ function kbHref() {
   const org = open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
   if (org) q.set('org', org);
   if (state.team && !personal()) q.set('team', state.team);
-  q.set('back', `${location.pathname}${location.search}`);
-  return `/inbox/kb?${q}`;
-}
-function syncPages() {
-  $('inbox').href = `${location.pathname}${location.search}`;
-  $('kb').href = kbHref();
+  return `/inbox/kb${q.size ? `?${q}` : ''}`;
 }
 /**
  * Whether an address asks for the personal view: it is the default, so any address without a
@@ -3703,7 +3700,6 @@ async function start() {
   syncReading();
   await loadWho();
   toUrl(false);
-  $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expanded', String(e.newState === 'open')));
   $('filters').onclick = (e) => {
     const el = e.target.closest('.card');
     if (!el) return;
@@ -3821,16 +3817,19 @@ async function start() {
     renderUser();
     if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
     if (query !== state.search.q || !state.search.data) runSearch(query);
-    state.review = review;
-    $('review').setAttribute('aria-pressed', String(review));
+    showReview(review);
     render();
     if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
-    syncPages();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
     main.classList.remove('instant');
   });
+  // The pages (ui/header.js): the editor and the admin pages for the admin team and team
+  // managers. Agents, not opened yet in this tab, opens on the open thread's customer (else the
+  // filtered one, else the team on screen); the open requests are the admin team's own, not
+  // shown while viewing as someone.
+  Header.init(state.me, { fallback: { agents: kbHref }, count: !state.as });
   if (state.me.admin) {
     const sel = $('as');
     $('asBox').hidden = false;
@@ -3854,37 +3853,21 @@ async function start() {
     };
     sel.onchange = () => { $('menu').hidePopover(); viewAs(Number(sel.value) || null); };
     $('viewing').onclick = () => viewAs(null);
-    $('review').hidden = false;
     get('/api/review/queue').then((r) => { state.answers = r.answers; });
-    $('review').onclick = () => {
-      state.review = !state.review;
-      $('review').setAttribute('aria-pressed', String(state.review));
+    const toggle = () => {
+      showReview(!state.review);
       toUrl();
       if (state.open) openThread(state.open, { live: true });
     };
-  }
-  // The switch to the editor and the admin pages: the admin team, and team managers (who see
-  // their teams' members and knowledge bases there).
-  if (state.me.admin || state.me.manages?.length) {
-    $('pages').hidden = false;
-    $('inbox').onclick = (e) => e.preventDefault();
-    // Channels team managers asked for, waiting for the admin team: their number on Admin.
-    if (state.me.admin && !state.as) {
-      get('/api/admin/requests?count=1').then(({ open }) => {
-        if (!open) return;
-        $('adminPage').insertAdjacentHTML('beforeend', `<span class="count">${Number(open)}</span>`);
-        $('adminPage').title = `${open} channel request${open === 1 ? '' : 's'} from team managers to confirm or decline`;
-        $('adminPage').href = '/inbox/admin?tab=requests';
-      }).catch(() => {});
-    }
-    // Fresh at the moment it is used (the open thread's customer may have loaded since).
-    for (const ev of ['pointerenter', 'focus']) $('kb').addEventListener(ev, syncPages);
+    $('review').onclick = toggle;
+    $('reviewing').onclick = toggle;
+    showReview(state.review);
   }
   wireNotify();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
-  if (initial.review && state.me.admin) { state.review = true; $('review').setAttribute('aria-pressed', 'true'); }
+  if (initial.review && state.me.admin) showReview(true);
   if (initial.open) openThread(initial.open);
   connect();
   registerTools();

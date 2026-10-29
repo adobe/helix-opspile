@@ -32,7 +32,8 @@ describe('page scripts', () => {
         used.add(named[2]);
       }
     }
-    assert.deepEqual(Object.keys(SCRIPTS).filter((f) => !used.has(f)), [], 'scripts no page uses');
+    const scripts = Object.keys(SCRIPTS).filter((f) => f.endsWith('.js'));
+    assert.deepEqual(scripts.filter((f) => !used.has(f)), [], 'scripts no page uses');
   });
 
   it('are inlined where the pages are served', () => {
@@ -44,6 +45,18 @@ describe('page scripts', () => {
       }
     }
     assert.ok(served('admin.html').includes(`>\n${SCRIPTS['admin.js']}</script>`));
+  });
+
+  it('share their stylesheets, ui/*.css, inlined where the pages name them', () => {
+    for (const name of Object.keys(PAGES)) {
+      assert.match(PAGES[name], /<link rel="stylesheet" href="header.css">/, name);
+      const html = served(name);
+      assert.doesNotMatch(html, /<link rel="stylesheet"/, name);
+      assert.ok(html.includes(`<style>\n${SCRIPTS['header.css']}</style>`), name);
+    }
+    const html = page('<link rel="stylesheet" href="a.css">', { 'a.css': 'b::after { content: "</style>"; }\n' });
+    assert.equal(html, '<style>\nb::after { content: "<\\/style>"; }\n</style>');
+    assert.throws(() => page('<link rel="stylesheet" href="nope.css">', SCRIPTS), /nope\.css/);
   });
 
   it('cannot end the script early, and must exist', () => {
