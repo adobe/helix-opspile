@@ -107,6 +107,18 @@ URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an
 one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
 the agents show the name and the type.
 
+The org list in the admin pages shows each org with the icon the inbox resolves for it (its
+own, else the favicon of its usual mail domain: the most common one among the people outside
+Adobe who post in its threads, free mail and tenant domains left out), and an empty square
+where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons
+come through `/api/admin/favicon`, which answers 404 where Google's favicon service has only
+its globe. An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
+mail domains, slug and name suggest (`<slug>.com`, `www.<slug>.com`, `<name>.com`, …) and the
+icons those sites name (`<link rel="icon">`, `apple-touch-icon`), each image with what Clef
+thinks of it: whether the site is the org's own (not a namesake's, an agency's or a parked
+domain's; Clef is told each site's title where it can be read) and whether the image is a logo
+rather than a stock icon. Picking one makes it the org's icon.
+
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
