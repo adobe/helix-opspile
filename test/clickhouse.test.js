@@ -497,6 +497,13 @@ describe('klickhaus export', () => {
     const first = await sweepExports(env, now);
     assert.deepEqual(first, { queued: keys.length, jobs: 2 });
     assert.deepEqual(env.queued.flatMap((q) => q.body.export), [...keys].reverse());
+    env.queued.forEach((q) => assert.equal(q.body.at, NOW));
+
+    // A run that overlaps the jobs of the one before: the threads they exported meanwhile stay.
+    await exportThreads(env, keys.slice(0, 2), { now: NOW + 1000 });
+    const r = await exportThreads(env, keys.slice(0, 3), { at: NOW, now: NOW + 2000 });
+    assert.deepEqual(r, { result: 'exported', threads: 1, rows: 1 });
+    env.DB.sqlite.prepare('UPDATE threads SET exported_through = NULL, exported_at = NULL').run();
 
     // All exported: nothing to do, until something changes.
     await exportThreads(env, keys, { now: NOW });

@@ -421,7 +421,9 @@ export async function sweepExports(env, now = new Date()) {
   const keys = (results || []).map((r) => r.thread);
   const jobs = [];
   for (let i = 0; i < keys.length; i += SWEEP_JOB) {
-    jobs.push({ body: { export: keys.slice(i, i + SWEEP_JOB) } });
+    // When the sweep ran: a thread exported since (by the online job, or by the jobs of a run
+    // that overlaps the next one, as the backfill's may) is not exported again.
+    jobs.push({ body: { export: keys.slice(i, i + SWEEP_JOB), at: now.getTime() } });
   }
   for (let i = 0; i < jobs.length; i += 100) {
     // eslint-disable-next-line no-await-in-loop
