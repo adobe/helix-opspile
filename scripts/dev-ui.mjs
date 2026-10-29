@@ -19,6 +19,7 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
+ *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: Agents read-only
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
@@ -85,6 +86,8 @@ const SIMULATE = !process.argv.includes('--no-sim');
 const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
+// Dana is a member of her teams, managing none: Agents read-only, but for her own settings.
+const MEMBER = process.argv.includes('--member');
 // Dana on no team, signed in from one of SIGNIN_DOMAINS (no-team mode): the personal view only,
 // of every team's channels she posted or was mentioned in.
 const NO_TEAM = process.argv.includes('--no-team');
@@ -109,7 +112,7 @@ if (NO_TEAM) {
   store.me = { ...store.me, teams: [] };
 }
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store, { manager: MANAGER, bases: kb.list() });
+const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 // Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
@@ -634,8 +637,13 @@ async function proxyApi(req, res, url, b) {
 
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
-  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js.
-  const allowed = (repo) => !MANAGER || repo === 'kb-team-edge';
+  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js, and a member
+  // reads their teams'.
+  const mine = new Set(store.me.teams.map((t) => `kb-team-${t.slug}`));
+  const allowed = (repo) => (MEMBER ? mine.has(repo) : !MANAGER || repo === 'kb-team-edge');
+  if (MEMBER && req.method !== 'GET') {
+    return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
+  }
   const body = req.method === 'GET' ? {} : await readJson(req);
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools: src/kbadmin.js itself.
@@ -776,13 +784,14 @@ async function api(req, res, url) {
     } = store.me;
     // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
     // be tried.
-    const admin = !MANAGER && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
+    const admin = !MANAGER && !MEMBER
+      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
-      teams: MANAGER ? teams.map((t) => ({ ...t, role: t.slug === 'edge' ? 'manager' : 'member' })) : teams,
+      teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
       // The person's teams and the teams of the personal view's channels (src/shares.js).

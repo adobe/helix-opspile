@@ -11,9 +11,12 @@
  */
 
 /*
- * The knowledge-base editor, for the admin team: every knowledge base (pile 3), its files,
- * and an editor that saves as you type: a pause in typing commits the file as the signed-in
- * person. No native dialogs (alert, confirm): a debugger attached over CDP dismisses them on
+ * The knowledge-base editor, the Agents page: every knowledge base (pile 3) you may see, its
+ * files, and an editor that saves as you type: a pause in typing commits the file as the
+ * signed-in person. The admin team edits every knowledge base, team managers their teams';
+ * the other members of a team see its knowledge base, its agents and their tools read-only,
+ * and change only their own settings here: whether the agent's thinking shows in their inbox,
+ * everywhere or in one channel (`traces`, `channelTraces` of /api/settings). No native dialogs (alert, confirm): a debugger attached over CDP dismisses them on
  * its own, so the questions that remain are asked in the page. The one exception is
  * beforeunload, and only for edits that could not be saved: nothing else can ask then.
  * `systemprompt.md` holds the
@@ -29,6 +32,10 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const base = () => state.bases.find((b) => b.repo === state.repo);
+/** Whether you change the open knowledge base, its agents and their tools; else you only look. */
+const mayEdit = () => Boolean(base()?.may);
+/** Who changes the open knowledge base, for the read-only. */
+const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team');
 
 async function call(path, options = {}) {
   const res = await fetch(path, {
@@ -236,11 +243,12 @@ function renderFiles() {
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
-    <div class="tools"><button id="new">New file</button><button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>`;
+    <div class="tools">${mayEdit() ? '<button id="new">New file</button>' : ''}<button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>
+    ${mayEdit() ? '' : `<div class="empty ro" style="padding:8px">Read-only: ${esc(whoEdits())} change it.</div>`}`;
   for (const el of $('files').querySelectorAll('[data-path]')) {
     el.onclick = () => openFile(el.dataset.path);
   }
-  $('new').onclick = newFile;
+  if ($('new')) $('new').onclick = newFile;
   $('history').onclick = () => showHistory();
   $('agents').onclick = () => showAgents();
   $('mcp').onclick = () => showMcp();
@@ -324,13 +332,90 @@ function teamDefaultRow() {
     </div>`;
 }
 
+// ---- the agent's thinking, for you -----------------------------------------------------
+//
+// Your own settings (/api/settings, src/settings.js), not the knowledge base's: whether the
+// inbox shows the agent's thinking under a thread (what it is doing while it works, its note
+// once done), everywhere (`traces`) and in one channel (`channelTraces`, which wins). Anyone
+// who sees the agents changes them; the inbox's user menu has them too.
+
+/** `{ on, own }`: whether the agent's thinking shows for you in a channel, and whether it is set there. */
+function tracesIn(channel) {
+  const s = state.settings || {};
+  const own = s.channelTraces?.[channel];
+  return { on: typeof own === 'boolean' ? own : s.traces !== false, own: typeof own === 'boolean' };
+}
+
+/** The switch above the channels: the agent's thinking, for you, in every channel. */
+function tracesRow() {
+  if (!state.settings) return '';
+  const on = state.settings.traces !== false;
+  const set = Object.keys(state.settings.channelTraces || {}).length;
+  return `<div class="ch default mine">
+      <div class="who">
+        <div class="nm">The agent's thinking, for you</div>
+        <div class="sub">${on ? 'Your inbox shows it under the threads of every channel with an agent: what it is doing while it works, and its note once done.'
+    : 'Hidden in your inbox: no agent\'s work or notes under the threads.'}${set ? ` ${set} channel${set === 1 ? ' is' : 's are'} set on ${set === 1 ? 'its' : 'their'} own, below or in the inbox, and win${set === 1 ? 's' : ''}.` : ' A channel set on its own below wins.'}</div>
+        <div class="sub by">Only for you, in every browser; nobody else's inbox changes.</div>
+      </div>
+      <span class="state${on ? ' on' : ''}">${on ? 'Shown' : 'Hidden'}</span>
+      <button class="switch" role="switch" aria-checked="${on}" aria-label="Show the agent's thinking in your inbox" id="tracesAll"
+        title="${on ? 'Hide the agent\'s thinking in your inbox' : 'Show the agent\'s thinking in your inbox'}"></button>
+    </div>`;
+}
+
+/** A channel's own choice, in its row: as everywhere, shown, or hidden (where it has an agent, or a choice). */
+function tracesSelect(c) {
+  if (!state.settings || c.kind !== 'channel') return '';
+  const { own, on } = tracesIn(c.channelId);
+  if (!c.agent.enabled && !own) return '';
+  const all = state.settings.traces !== false ? 'shown' : 'hidden';
+  const value = own ? (on ? 'on' : 'off') : '';
+  return `<label class="sub mine">The agent's thinking, for you
+      <select data-traces="${esc(c.channelId)}" aria-label="The agent's thinking in ${esc(channelName(c))}, for you">
+        <option value=""${value === '' ? ' selected' : ''}>As everywhere (${all})</option>
+        <option value="on"${value === 'on' ? ' selected' : ''}>Shown</option>
+        <option value="off"${value === 'off' ? ' selected' : ''}>Hidden</option>
+      </select></label>`;
+}
+
+/** Saves your settings; says how it went in the note. */
+async function saveTraces(patch, done) {
+  const repo = state.repo;
+  const { ok, body } = await call('/api/settings', { method: 'PUT', body: JSON.stringify(patch) });
+  if (state.repo !== repo || state.view !== 'agents') return;
+  if (!ok) { renderAgents({ kind: 'err', text: body.error || 'Saving your setting failed.' }); return; }
+  state.settings = body;
+  renderAgents({ kind: 'ok', text: done });
+}
+
+function bindTraces() {
+  if ($('tracesAll')) {
+    $('tracesAll').onclick = () => {
+      const on = state.settings.traces === false;
+      saveTraces({ traces: on }, on ? 'Your inbox shows the agent\'s thinking again, except in channels set to hide it.'
+        : 'Your inbox hides the agent\'s thinking, except in channels set to show it.');
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-traces]')) {
+    el.onchange = () => {
+      const c = state.channels.find((x) => x.channelId === el.dataset.traces);
+      const on = el.value === '' ? null : el.value === 'on';
+      saveTraces({ channelTraces: { [c.channelId]: on } }, on === null
+        ? `The agent's thinking in ${channelName(c)} is as everywhere again, for you.`
+        : `Your inbox ${on ? 'shows' : 'hides'} the agent's thinking in ${channelName(c)}.`);
+    };
+  }
+}
+
 function renderAgents(note) {
   const b = base();
   const list = state.channels;
   const whose = b.kind === 'team' ? `the channels of ${b.name}` : `the channels of ${b.name}, in every ops team`;
   const explain = `A thread agent follows every thread of a channel where it is on: it reads each new message, keeps a draft
     reply for the team (it never posts) and files what it learns in the team's and the customer's knowledge bases.
-    The admin team and the managers of the team that owns a channel turn it on or off.`;
+    The admin team and the managers of the team that owns a channel turn it on or off.${mayEdit() ? ''
+    : ' Here you see them; what you change is only whether your inbox shows the agent\'s thinking.'}`;
   const rows = (list || []).map((c) => {
     const a = c.agent;
     const alert = c.kind !== 'channel';
@@ -340,11 +425,12 @@ function renderAgents(note) {
     else if (a.enabled) by = 'On by default (AGENT_CHANNELS)';
     const why = alert ? 'Alert channels have no thread agents.'
       : c.may ? `Turn the agent ${a.enabled ? 'off' : 'on'}` : `Only the admin team and the managers of ${c.teamName} turn it on or off.`;
-    return `<div class="ch">
+    return `<div class="ch" data-row="${esc(c.channelId)}">
       <div class="who">
         <div class="nm">${esc(channelName(c))}<span class="src">${esc(SOURCES[c.source] || c.source)}</span>${alert ? '<span class="src">alerts</span>' : ''}</div>
         <div class="sub">${esc([b.kind === 'org' ? c.teamName : c.org, `${c.threads} thread${c.threads === 1 ? '' : 's'}`, c.latest && `last ${ago(c.latest)}`].filter(Boolean).join(' · '))}</div>
         ${by ? `<div class="sub by">${by}</div>` : ''}
+        ${tracesSelect(c)}
       </div>
       <span class="state${a.enabled ? ' on' : ''}">${a.enabled ? 'On' : 'Off'}</span>
       <button class="switch" role="switch" aria-checked="${a.enabled}" aria-label="Thread agent in ${esc(channelName(c))}" title="${esc(why)}"
@@ -354,11 +440,20 @@ function renderAgents(note) {
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Thread agents in ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
-    <div class="channels">${list ? teamDefaultRow() + (rows || '<div class="empty">No channels yet.</div>') : '<div class="empty">Could not list the channels.</div>'}</div>`;
+    <div class="channels">${list ? tracesRow() + teamDefaultRow() + (rows || '<div class="empty">No channels yet.</div>') : '<div class="empty">Could not list the channels.</div>'}</div>`;
   for (const el of $('editor').querySelectorAll('[data-channel]')) {
     el.onclick = () => switchAgent(state.channels.find((c) => c.channelId === el.dataset.channel), el);
   }
   if ($('teamDefault')) $('teamDefault').onclick = () => switchTeamDefault($('teamDefault'));
+  bindTraces();
+  // Opened from a thread's agent in the inbox: its channel, marked for a moment.
+  const focus = state.focusChannel && $('editor').querySelector(`[data-row="${CSS.escape(state.focusChannel)}"]`);
+  state.focusChannel = null;
+  if (focus) {
+    focus.scrollIntoView({ block: 'center' });
+    focus.classList.add('found');
+    setTimeout(() => focus.classList.remove('found'), 2400);
+  }
 }
 
 /** A channel's switch: takes effect right away, no question (it is one channel, and switches back). */
@@ -487,9 +582,9 @@ function mcpRow(s) {
       ${tools ? `<div class="tags">${tools}</div>` : ''}
       <div class="sub by">${esc([creds, s.checkedAt && `checked ${ago(s.checkedAt)}`, s.updatedBy && `changed by ${s.updatedBy}`].filter(Boolean).join(' · '))}</div>
     </div>
-    <span class="acts">${signIn}${checkable ? `<button data-check="${s.id}">Check</button>` : ''}<button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>
+    ${mayEdit() ? `<span class="acts">${signIn}${checkable ? `<button data-check="${s.id}">Check</button>` : ''}<button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>` : ''}
     <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
-    <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents'}" data-server="${s.id}"></button>
+    <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${mayEdit() ? (s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents') : `Only ${esc(whoEdits())} change it.`}" data-server="${s.id}"${mayEdit() ? '' : ' disabled'}></button>
   </div>`;
 }
 
@@ -576,7 +671,7 @@ function toolRow(t) {
   const platforms = t.platforms ? `<span class="src">${esc(t.platforms.map((p) => SOURCES[p] || p).join(', '))} only</span>` : '';
   const sw = t.team ? `<span class="state${on ? ' on' : ''}">${on ? 'On' : 'Off'}</span>
     <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(t.title)} for ${esc(b.name)}"
-      title="${on ? `Agents of ${esc(b.name)} have it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`}" data-tteam="${esc(t.tool)}"></button>` : '';
+      title="${mayEdit() ? (on ? `Agents of ${esc(b.name)} have it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-tteam="${esc(t.tool)}"${mayEdit() ? '' : ' disabled'}></button>` : '';
   return `<div class="ch global">
     <div class="who">
       <div class="nm">${esc(t.title)}<span class="src mono">${esc(t.names.join(', '))}</span>${platforms}${t.problem ? '<span class="src err">not set up</span>' : ''}</div>
@@ -718,7 +813,7 @@ function globalRow(g) {
   const by = g.team && g.team.by ? `Turned ${on ? 'on' : 'off'} for ${esc(b.name)} by ${esc(g.team.by)}, ${esc(ago(g.team.at))}` : '';
   const sw = g.team ? `<span class="state${on ? ' on' : ''}">${on ? 'On' : 'Off'}</span>
     <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(g.title)} for ${esc(b.name)}"
-      title="${on ? `Agents of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`}" data-gteam="${esc(g.server)}"></button>` : '';
+      title="${mayEdit() ? (on ? `Agents of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-gteam="${esc(g.server)}"${mayEdit() ? '' : ' disabled'}></button>` : '';
   return `<div class="ch global">
     <div class="who">
       <div class="nm">${esc(g.title)}<span class="src mono">${esc(names)}</span>${status}</div>
@@ -727,7 +822,7 @@ function globalRow(g) {
       ${tools.length ? `<div class="tags">${toolTags(tools)}</div>` : ''}
       <div class="sub by">${[by, first && first.checkedAt && `checked ${esc(ago(first.checkedAt))}`].filter(Boolean).join(' · ')}</div>
     </div>
-    <span class="acts">${g.available ? `<button data-gcheck="${esc(g.server)}">Check</button>` : ''}</span>
+    <span class="acts">${g.available && mayEdit() ? `<button data-gcheck="${esc(g.server)}">Check</button>` : ''}</span>
     ${sw}
     ${githubSetup(g)}
     ${perChannel(g)}
@@ -778,7 +873,7 @@ function renderMcp(shownNote) {
   const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
   const explain = `What the thread agents of these threads can do beyond reading and drafting: opspile's own tools, which
     they call directly, and MCP servers, whose tools they call from code mode scripts, as tools.mcp__<name>__<tool> (only what
-    a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them.`;
+    a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
   const globalNote = b.kind === 'team' ? `opspile's own, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
@@ -790,11 +885,11 @@ function renderMcp(shownNote) {
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}
-    ${list ? mcpForm(editing || {}) : ''}</div>`;
+    ${list && mayEdit() ? mcpForm(editing || {}) : ''}</div>`;
   bindTools();
   bindGlobals();
   bindFinds();
-  if (!list) return;
+  if (!list || !mayEdit()) return;
   const find = (id) => list.find((x) => String(x.id) === String(id));
   const put = (server) => {
     state.mcp = state.mcp.some((x) => x.id === server.id) ? state.mcp.map((x) => (x.id === server.id ? server : x))
@@ -1044,6 +1139,15 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
   state.view = 'file';
   const b = base();
   const exists = state.files.some((f) => f.path === path);
+  if (!exists && !mayEdit()) {
+    // Nothing to read: only those who edit it start one.
+    state.file = null;
+    renderFiles();
+    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="path">${esc(path)}</span></div>
+      <div class="empty">${path === SYSTEM_PROMPT ? `No agent instructions yet: ${esc(whoEdits())} write them.` : 'No such file.'}</div>`;
+    toUrl(nav);
+    return true;
+  }
   if (!exists) {
     // Only the system prompt is offered before it exists.
     const draft = path === SYSTEM_PROMPT ? systemPromptTemplate(b) : conceptTemplate(path);
@@ -1055,7 +1159,10 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
       $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
       return true;
     }
-    state.file = { path, hash: body.hash, baseline: body.text, readonly: GENERATED.has(path.split('/').pop()) };
+    const generated = GENERATED.has(path.split('/').pop());
+    state.file = {
+      path, hash: body.hash, baseline: body.text, readonly: generated || !mayEdit(), generated,
+    };
   }
   renderFiles();
   renderEditor();
@@ -1084,11 +1191,14 @@ const AUTOSAVE_MS = 1200;
 function renderEditor(note) {
   const f = state.file;
   const isPrompt = f.path === SYSTEM_PROMPT;
-  const explain = f.readonly
-    ? 'Written by code from the concepts; changes to the concepts update it.'
-    : isPrompt
+  let explain = f.readonly ? 'Written by code from the concepts; changes to the concepts update it.' : '';
+  if (f.readonly && !f.generated) explain = `Read-only: ${esc(whoEdits())} change it.`;
+  if (f.readonly && !f.generated && isPrompt) explain = `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}. ${explain}`;
+  if (!f.readonly) {
+    explain = isPrompt
       ? `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}, on its next request. Agents cannot change it. Saved as you type.${f.isNew ? ' It does not exist yet: start typing to create it.' : ''}`
       : f.choosePath ? 'Give it a path first.' : '';
+  }
   $('editor').innerHTML = `
     <div class="bar">${up('files', 'Files')}
       ${f.choosePath
@@ -1355,10 +1465,13 @@ window.addEventListener('popstate', async () => {
   const me = await call('/api/me');
   if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  Header.user(state.me, Header.role(state.me));
-  // Team managers see their teams' knowledge bases only (the API lists no others).
-  if (!state.me.admin && !state.me.manages?.length) {
-    $('bases').innerHTML = '<div class="empty">The knowledge-base editor is for the admin team and team managers.</div>';
+  // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
+  state.settings = state.me.readonly ? null : state.me.settings || null;
+  Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
+  // Team managers see their teams' knowledge bases only, and the other members of a team see
+  // its knowledge base read-only (the API lists no others, and says which they change).
+  if (!state.me.admin && !state.me.teams?.length) {
+    $('bases').innerHTML = '<div class="empty">The agents are for the members of an ops team.</div>';
     $('editor').innerHTML = `<div class="empty"><a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
@@ -1386,14 +1499,19 @@ window.addEventListener('popstate', async () => {
   const pick = exact
     || state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org'))
     || state.bases.find((b) => b.kind === 'team' && b.slug === q.get('team'));
+  // `team` with `view` (the inbox's agent: its team's thread agents, at `channel`) names a
+  // view of the team's knowledge base too.
+  const named = exact || (pick && pick.kind === 'team' && !q.get('org'));
+  const view = named && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined;
+  state.focusChannel = view === 'agents' ? q.get('channel') : null;
   if (pick) {
     await openRepo(pick.repo, {
       path: exact ? q.get('path') || undefined : undefined,
-      view: exact && ['history', 'agents', 'mcp'].includes(q.get('view')) ? q.get('view') : undefined,
+      view,
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if (exact && (q.get('path') || ['history', 'agents'].includes(q.get('view')) || q.get('mcp_connected') || q.get('mcp_error'))) showPane('editor');
+    if ((exact && q.get('path')) || ['history', 'agents'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');

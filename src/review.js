@@ -39,6 +39,10 @@ export const managesTeam = (me, team) => isAdmin(me) || managedTeams(me).include
 /** Whether `me` may use the admin pages at all: the admin team, or any team's manager. */
 export const isManager = (me) => isAdmin(me) || managedTeams(me).length > 0;
 
+/** Whether `me` is in `team`, as a member or a manager (the admin team: in every team). */
+export const inTeam = (me, team) => isAdmin(me)
+  || Boolean(me && me.teams.some((t) => t.slug === team));
+
 /** The model's answer to one question, as a reviewable value and its probability. */
 export function modelAnswer(label, question) {
   if (!label) {

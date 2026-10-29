@@ -1011,8 +1011,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
-    if (!isManager(me)) {
-      return json({ error: 'the knowledge-base editor is for the admin team and team managers' }, 403);
+    // The members of a team look at its knowledge base and agents; changing them is for the
+    // admin team and team managers (and src/kbadmin.js checks whose).
+    if (request.method !== 'GET' && !isManager(me)) {
+      return json({ error: 'changing the agents is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
   }

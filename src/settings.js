@@ -19,10 +19,16 @@ import { json } from './http.js';
  * - `bells`: views whose threads notify them when they get a new message. A view is a team's
  *   inbox (its slug) or the personal view (`~personal`), with the filters set on it, picked
  *   (`sel`) and excluded (`not`), by facet: `{ view, sel: { kind: ['incident'] }, not: {} }`.
+ * - `traces`: whether the thread agent's thinking shows under a thread (what it is doing while
+ *   it works, its note once done); on unless they turn it off.
+ * - `channelTraces`: the same, by channel id, where it differs: a channel's wins over `traces`.
  *
- * The browser shows the notifications (ui/inbox.js): the server keeps the settings only.
+ * The browser shows the notifications and the agent's thinking (ui/inbox.js): the server keeps
+ * the settings only.
  */
-export const DEFAULTS = Object.freeze({ mentions: true, bells: Object.freeze([]) });
+export const DEFAULTS = Object.freeze({
+  mentions: true, bells: Object.freeze([]), traces: true, channelTraces: Object.freeze({}),
+});
 
 export const PERSONAL = '~personal';
 const MAX_BELLS = 20;
@@ -30,6 +36,9 @@ const MAX_FACETS = 20;
 const MAX_VALUES = 50;
 const MAX_VALUE = 200;
 const FACET = /^[a-z][a-z0-9_-]{0,31}$/i;
+const MAX_CHANNELS = 500;
+// A channel id on any platform: Slack's C…, Teams' 19:…@thread.tacv2, Discord's digits.
+const CHANNEL = /^[^\s]{1,200}$/;
 
 /** Facet id -> sorted, distinct string values; null when it is not a filter set. */
 function cleanFilters(f) {
@@ -90,7 +99,19 @@ export function withDefaults(me, stored) {
       bells.push(c);
     }
   }
-  return { mentions: typeof s.mentions === 'boolean' ? s.mentions : DEFAULTS.mentions, bells };
+  const channelTraces = {};
+  const byChannel = s.channelTraces && typeof s.channelTraces === 'object' ? s.channelTraces : {};
+  for (const [id, on] of Object.entries(byChannel).slice(0, MAX_CHANNELS)) {
+    if (CHANNEL.test(id) && typeof on === 'boolean') {
+      channelTraces[id] = on;
+    }
+  }
+  return {
+    mentions: typeof s.mentions === 'boolean' ? s.mentions : DEFAULTS.mentions,
+    bells,
+    traces: typeof s.traces === 'boolean' ? s.traces : DEFAULTS.traces,
+    channelTraces,
+  };
 }
 
 /** The person's settings, with defaults. */
@@ -107,8 +128,9 @@ export async function readSettings(env, me) {
 }
 
 /**
- * The settings `now` with what `body` changes (`mentions`, `bells`, both; `bells` replaces the
- * list): `{ settings }`, or `{ error }` when the body is not settings.
+ * The settings `now` with what `body` changes (`mentions`, `bells`, `traces`, `channelTraces`;
+ * `bells` replaces the list, `channelTraces` changes the channels it names, and `null` lets a
+ * channel follow `traces` again): `{ settings }`, or `{ error }` when the body is not settings.
  */
 export function mergeSettings(me, now, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -130,6 +152,32 @@ export function mergeSettings(me, now, body) {
       return { error: 'a bell is { view, sel, not }: one of your teams or ~personal, and filters by facet' };
     }
     next.bells = bells;
+  }
+  if ('traces' in body) {
+    if (typeof body.traces !== 'boolean') {
+      return { error: '`traces` is true or false' };
+    }
+    next.traces = body.traces;
+  }
+  if ('channelTraces' in body) {
+    const changes = body.channelTraces;
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)
+      || !Object.entries(changes).every(([id, on]) => CHANNEL.test(id)
+        && (on === null || typeof on === 'boolean'))) {
+      return { error: '`channelTraces` is { <channel id>: true, false or null }' };
+    }
+    const merged = { ...now.channelTraces };
+    for (const [id, on] of Object.entries(changes)) {
+      if (on === null) {
+        delete merged[id];
+      } else {
+        merged[id] = on;
+      }
+    }
+    if (Object.keys(merged).length > MAX_CHANNELS) {
+      return { error: `\`channelTraces\` has at most ${MAX_CHANNELS} channels` };
+    }
+    next.channelTraces = merged;
   }
   return { settings: withDefaults(me, next) };
 }
