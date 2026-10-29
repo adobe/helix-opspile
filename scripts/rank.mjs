@@ -30,6 +30,13 @@
  *     Fits the linear model of ui/rank.js to the games, reports how often it, the old score and
  *     recency alone agree with Clef (5-fold cross-validation) and with you, and writes it into
  *     ui/rank.js. `--human <weight>` trains on your answers too, each worth that many of Clef's.
+ *   npm run rank -- llm [--judges haiku,sonnet|name=<model id>,…] [--pairs 200]
+ *     Claude models judge Clef's games as Clef did, both ways round, with a reason: the pairs you
+ *     judged, then `--pairs` more (scripts/rank-llm.mjs). Bedrock: AWS_BEARER_TOKEN_BEDROCK.
+ *   npm run rank -- behavior [--refresh]
+ *     What the teams do: how likely a thread is to be opened, and a customer's message to be
+ *     answered within a day, by what they are like; and how well each score points at the
+ *     threads that were opened (scripts/rank-behavior.mjs). Writes `.rank/behavior.md`.
  *   npm run rank -- judge [--port 8796]
  *     Two threads of Clef's games side by side in the browser: you pick, then see what Clef, the
  *     model and the old score said, and how often each agrees with you (scripts/rank-judge.mjs).
@@ -47,6 +54,8 @@ import {
   pairKey, pairState, random, shuffle, spearman, swiss, withModel,
 } from './rank-lib.mjs';
 import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
+import { llm, readJudged } from './rank-llm.mjs';
+import { behavior } from './rank-behavior.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, '.rank');
@@ -54,6 +63,7 @@ const THREADS = join(DIR, 'threads.json');
 const GAMES = join(DIR, 'games.jsonl');
 const RATINGS = join(DIR, 'ratings.json');
 const HUMAN = join(DIR, 'human.jsonl');
+const LLM = join(DIR, 'llm.jsonl');
 const RANK_JS = join(ROOT, 'ui', 'rank.js');
 const CLEF = '@cf/cloudflare/clef';
 
@@ -122,7 +132,7 @@ async function archive() {
   const { pulledAt } = JSON.parse(await readFile(THREADS, 'utf8'));
   const to = join(DIR, new Date(pulledAt).toISOString().replace(/[:.]/g, '-'));
   await mkdir(to, { recursive: true, mode: 0o700 });
-  for (const f of [THREADS, GAMES, RATINGS, HUMAN]) {
+  for (const f of [THREADS, GAMES, RATINGS, HUMAN, LLM]) {
     if (existsSync(f)) {
       // eslint-disable-next-line no-await-in-loop
       await rename(f, join(to, basename(f)));
@@ -390,9 +400,26 @@ async function train(opts) {
     const held = decided.filter((h) => heldOut.get(h)).length
       ? decided.filter((h) => (heldOut.get(h) > 0) === (h.p > 0.5)).length / decided.length : 0;
     const share = (b) => (b.n ? `${Math.round((100 * b.agree) / b.n)}%` : '–');
+    const judged = await readJudged(LLM, data.pulledAt);
+    const them = agreementWithYou(human, games, { model: () => 0, classic: () => 0 }, judged);
+    for (const [name, b] of Object.entries(them.judges)) {
+      console.log(`You and ${name}: agrees ${share(b)} of ${b.n}`);
+    }
     console.log(`You (${you.decided} decided, ${you.ties} same): Clef agrees ${share(you.clef)},`
       + ` the model on threads it was not trained on ${Math.round(held * 100)}%,`
       + ` the old score ${share(you.classic)}`);
+  }
+  const judgedAll = await readJudged(LLM, data.pulledAt);
+  if (judgedAll.length) {
+    const byPair = new Map(games.map((g) => [`${g.a}|${g.b}`, g]));
+    const names2 = [...new Set(judgedAll.map((x) => x.judge))];
+    for (const name of names2) {
+      const mine = judgedAll.filter((x) => x.judge === name && byPair.has(`${x.a}|${x.b}`));
+      const same = mine.filter((x) => (x.p > 0.5) === (byPair.get(`${x.a}|${x.b}`).p > 0.5)).length;
+      const flips = mine.filter((x) => (x.ab > 0.5) !== (x.ba < 0.5)).length;
+      console.log(`${name}: agrees with Clef on ${Math.round((100 * same) / (mine.length || 1))}% of ${mine.length} pairs;`
+        + ` swapping A and B changes its pick ${Math.round((100 * flips) / (mine.length || 1))}% of the time`);
+    }
   }
   console.log('weights (log-odds per unit):');
   for (const [k, w] of Object.entries(weights).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
@@ -417,15 +444,28 @@ async function train(opts) {
 const opts = options(process.argv.slice(2));
 async function judgeStep(o) {
   await judge({
-    port: num(o.port, 8796), threadsFile: THREADS, humanFile: HUMAN, readGames,
+    port: num(o.port, 8796), threadsFile: THREADS, humanFile: HUMAN, llmFile: LLM, readGames,
   });
 }
 
+async function llmStep(o) {
+  await llm(o, {
+    threadsFile: THREADS, humanFile: HUMAN, llmFile: LLM, readGames, readHuman,
+  });
+}
+
+async function behaviorStep(o) {
+  const report = await behavior(o, {
+    threadsFile: THREADS, outFile: join(DIR, 'behavior.md'), ratingsFile: RATINGS, get: await session(),
+  });
+  console.log(report);
+}
+
 const step = {
-  pull, duel, train, judge: judgeStep,
+  pull, duel, train, judge: judgeStep, llm: llmStep, behavior: behaviorStep,
 }[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|duel|train|judge [options] (see scripts/rank.mjs)');
+  console.error('usage: npm run rank -- pull|duel|llm|judge|train|behavior [options] (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {
   step(opts).catch((e) => {

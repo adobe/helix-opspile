@@ -17,6 +17,8 @@ import {
   spearman, swiss, withModel,
 } from '../scripts/rank-lib.mjs';
 import { agreementWithYou } from '../scripts/rank-judge.mjs';
+import { parseAnswer } from '../scripts/rank-llm.mjs';
+import { auc, customerTurns, logistic } from '../scripts/rank-behavior.mjs';
 import { SCRIPTS } from './ui.js';
 
 const NOW = Date.parse('2026-03-02T12:00:00Z');
@@ -206,5 +208,52 @@ describe('learning the order from Clef (scripts/rank-lib.mjs)', () => {
     assert.deepEqual(s.model, { n: 2, agree: 1 });
     assert.deepEqual(s.classic, { n: 2, agree: 1 });
     assert.equal(s.tieClefConfidence, 0.7);
+  });
+
+  it('reads a Claude judge\'s answer, also around other text', () => {
+    assert.deepEqual(parseAnswer('{"reason": "B waits on us", "first": "B", "confidence": 0.8}'), {
+      p: 0.19999999999999996, reason: 'B waits on us',
+    });
+    assert.equal(parseAnswer('Sure: {"first": "a", "confidence": 3}').p, 1);
+    assert.equal(parseAnswer('no json'), null);
+    assert.equal(parseAnswer('{"first": "C"}'), null);
+  });
+});
+
+describe('what the teams do (scripts/rank-behavior.mjs)', () => {
+  const at = (h) => new Date(NOW - h * 3600000).toISOString();
+  const msg = (h, staff, body = 'x', kind = 'person') => ({ at: at(h), author: { kind, staff }, body });
+
+  it('finds when a customer wrote and whether Adobe answered within a day', () => {
+    const turns = customerTurns([
+      msg(100, false, 'help?'), msg(99, false, 'please'), msg(98, true),
+      msg(50, false), msg(49, false, 'bot', 'bot'), msg(20, true),
+      msg(2, false),
+    ], NOW);
+    assert.deepEqual(turns.map((t) => t.messages), [2, 1, 1]);
+    assert.equal(turns[0].first, true);
+    assert.equal(turns[0].text, 'help?\nplease');
+    assert.equal(turns[0].replyH, 1);
+    assert.equal(turns[0].day, 1);
+    // Answered after 30 hours (a bot's post is no answer): not within a day.
+    assert.equal(turns[1].replyH, 30);
+    assert.equal(turns[1].day, 0);
+    // No answer yet, and a day has not gone by: not known.
+    assert.equal(turns[2].day, null);
+  });
+
+  it('measures how well a score ranks, and fits odds', () => {
+    assert.equal(auc([3, 2, 1, 0], [1, 1, 0, 0]), 1);
+    assert.equal(auc([1, 1], [1, 0]), 0.5);
+    const X = [];
+    const y = [];
+    // With x, three answers in four; without, one in four: odds × 9.
+    for (let i = 0; i < 400; i += 1) {
+      const x = i < 200 ? 1 : 0;
+      X.push([x]);
+      y.push((i % 4 < 3) === Boolean(x) ? 1 : 0);
+    }
+    const w = logistic(X, y, { l2: 0 });
+    assert.ok(Math.abs(Math.exp(w[1]) - 9) < 0.5, String(Math.exp(w[1])));
   });
 });

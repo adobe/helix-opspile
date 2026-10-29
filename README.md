@@ -446,7 +446,11 @@ wrote into `.rank/` (gitignored; it holds production threads, so it stays on you
    rounds add to the games played; changing what Clef is shown (`PROMPT_VERSION`) asks again.
    It calls Workers AI with `CLOUDFLARE_ACCOUNT_ID` (the Worker's account) and
    `CLOUDFLARE_API_TOKEN`, or the token of `wrangler login`.
-3. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
+3. `npm run rank -- llm [--judges haiku,sonnet] [--pairs 200]` has Claude models (on Bedrock,
+   with a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, in `AWS_REGION`) judge the same games
+   as Clef, shown the same, asked both ways round, with a sentence of why: the pairs you judged
+   (step 4), then `--pairs` more. `--judges name=<model id>` adds others.
+4. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
    browser, and you pick the one the team should turn to first (← →, ↓ for "same", `s` to skip,
    `u` to undo). Then it shows what Clef, the model and the old score said, and how often each
    agrees with you so far (Clef's also by how sure it was, and where asking it the other way
@@ -454,13 +458,20 @@ wrote into `.rank/` (gitignored; it holds production threads, so it stays on you
    the ones Clef was unsure of, or where the model and Clef, or the model and the old score,
    disagree; "Blind" hides the answers. Your answers go
    to `.rank/human.jsonl`.
-4. `npm run rank -- train [--l2 3] [--human 0] [--without a,b] [--dry-run]` fits the weights
+5. `npm run rank -- train [--l2 3] [--human 0] [--without a,b] [--dry-run]` fits the weights
    (pairwise logistic regression), prints how often the model, the hand-made score it replaces
    (`classicScore` in `ui/inbox.js`) and recency alone agree with Clef, and with you, on threads
    held out (five folds), and writes the weights into `ui/rank.js` (between `// MODEL:` and
    `// END MODEL`). `--human 3` trains on your answers too, each worth three of Clef's;
    `--without` leaves features out, to see what they are worth. Only feature names and numbers
-   are committed.
+   are committed. It also says how often each Claude judge agrees with Clef and with you.
+6. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
+   sample, whether someone on its team opened it in the inbox and how many read it, and for
+   every time a customer wrote, whether and how soon Adobe answered; by kind, urgency, who has
+   the next move, size, age, platform, team, and what the message says (a question, alarm words,
+   thanks, its length, the time and day), with the odds of an answer within a day from a
+   logistic regression, and how well the model, Clef's ratings and the old score pick the threads
+   that were opened. It writes `.rank/behavior.md`.
 
 A feature is added in `features()` of `ui/rank.js`, which the browser and the training both
 run; train again after changing one. `Rank.explain(entry)` in the console lists what makes up a

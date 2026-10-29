@@ -23,6 +23,7 @@ import { existsSync } from 'node:fs';
 import { SLACK_EMOJI } from '../src/emoji.js';
 import MARKDOWN from '../src/ui-markdown.bundle.js';
 import { platformName } from '../src/platforms.js';
+import { readJudged } from './rank-llm.mjs';
 import {
   loadClassic, loadRank, random, summary,
 } from './rank-lib.mjs';
@@ -59,7 +60,15 @@ function role(author) {
   return author?.staff ? 'staff' : 'customer';
 }
 
-export function agreementWithYou(human, games, score) {
+export function agreementWithYou(human, games, score, judged = []) {
+  // Other judges' answers (scripts/rank-llm.mjs), by judge and pair.
+  const others = new Map();
+  for (const x of judged) {
+    if (!others.has(x.judge)) {
+      others.set(x.judge, new Map());
+    }
+    others.get(x.judge).set(`${x.a}|${x.b}`, x);
+  }
   const byPair = new Map(games.map((g) => [`${g.a}|${g.b}`, g]));
   const out = {
     judged: human.length,
@@ -74,6 +83,7 @@ export function agreementWithYou(human, games, score) {
     },
     clefFlipped: { n: 0, agree: 0 },
     tieClefConfidence: 0,
+    judges: Object.fromEntries([...others.keys()].map((k) => [k, { n: 0, agree: 0, clef: 0 }])),
   };
   let tieConf = 0;
   for (const h of human) {
@@ -94,6 +104,13 @@ export function agreementWithYou(human, games, score) {
       count(out.byConfidence[confidenceBucket(conf)], g.p > 0.5);
       if ((g.ab > 0.5) !== (g.ba < 0.5)) {
         count(out.clefFlipped, g.p > 0.5);
+      }
+      for (const [name, by] of others) {
+        const x = by.get(`${h.a}|${h.b}`);
+        if (x) {
+          count(out.judges[name], x.p > 0.5);
+          out.judges[name].clef += (x.p > 0.5) === (g.p > 0.5) ? 1 : 0;
+        }
       }
       const m = score.model(h.a) - score.model(h.b);
       if (m) {
@@ -152,7 +169,7 @@ const MODES = {
 };
 
 export async function judge({
-  port, threadsFile, humanFile, readGames,
+  port, threadsFile, humanFile, llmFile, readGames,
 }) {
   const data = JSON.parse(await readFile(threadsFile, 'utf8'));
   const snap = data.pulledAt;
@@ -190,10 +207,12 @@ export async function judge({
   const rnd = random(Date.now() % 100000);
   const page = await readFile(PAGE, 'utf8');
   const emoji = JSON.stringify(SLACK_EMOJI);
+  const judgedBy = async () => (llmFile ? readJudged(llmFile, snap) : []);
   const stats = async () => agreementWithYou(
     await readHuman(humanFile, snap),
     games,
     await scores(),
+    await judgedBy(),
   );
 
   const send = (res, status, body, type = 'application/json') => {
@@ -261,7 +280,15 @@ export async function judge({
         const s = await scores();
         // Everything as "left comes first".
         const left = (pa) => (leftIsA ? pa : 1 - pa);
+        const judges = (await judgedBy()).filter((x) => x.a === g.a && x.b === g.b)
+          .map((x) => ({
+            judge: x.judge,
+            p: left(x.p),
+            // Its reasons, the one where the left thread was shown as A first.
+            why: leftIsA ? x.why : [...x.why].reverse(),
+          }));
         return send(res, 200, {
+          judges,
           clef: left(g.p),
           clefAsked: leftIsA ? [g.ab, 1 - g.ba] : [g.ba, 1 - g.ab],
           model: left(sigmoid(s.model(g.a) - s.model(g.b))),

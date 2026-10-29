@@ -58,6 +58,8 @@
   .reveal .v { padding: 3px 9px; border-radius: 6px; background: var(--pane); border: 1px solid var(--line); }
   .reveal .v.ok { border-color: var(--good); }
   .reveal .v.no { border-color: var(--bad); }
+  .reveal .v[title]:not([title=""]) { cursor: help; text-decoration: underline dotted; }
+  .why { width: 100%; font-size: 12.5px; color: var(--mute); }
   .picks { display: flex; gap: 10px; }
   .picks.off { display: none; }
   .empty { margin: auto; color: var(--mute); }
@@ -101,6 +103,9 @@
   const emoji = (name) => EMOJI[name];
   const md = (s) => { try { return Markdown.render(s, { emoji }); } catch { return `<p>${esc(s)}</p>`; } };
   const pct = (x) => `${Math.round(x * 100)}%`;
+  // The judges' reasons name the threads A and B: here A is the left one.
+  const sides = (t) => String(t).replace(/\bThread A\b/g, 'the left thread').replace(/\bThread B\b/g, 'the right thread')
+    .replace(/\bA\b(?=['’]s| is| has| was| comes| needs| should)/g, 'Left').replace(/\bB\b(?=['’]s| is| has| was| comes| needs| should)/g, 'Right');
   // Every call to the server: a failure (the server stopped, the share's sign-in expired) says
   // so under the buttons, with a way on, instead of leaving the page as it was.
   async function call(path, init) {
@@ -158,6 +163,7 @@
     const conf = Object.entries(s.byConfidence).map(([k, b]) => `${k}: ${b.n ? pct(b.agree / b.n) : '–'} (${b.n})`).join(' · ');
     $('stats').innerHTML = `<span class="stat"><small>judged</small> <b>${s.judged}</b> <small>(${s.ties} same, ${s.skipped} skipped)</small></span>
       <span class="stat" title="When Clef was sure… ${esc(conf)}; when asking it the other way round changed its mind: ${s.clefFlipped.n ? pct(s.clefFlipped.agree / s.clefFlipped.n) : '–'} (${s.clefFlipped.n})"><small>Clef agrees</small> ${rate(s.clef)}</span>
+      ${Object.entries(s.judges || {}).map(([k, b]) => `<span class="stat" title="Agrees with Clef on ${b.n ? pct(b.clef / b.n) : '–'} of these"><small>${esc(k)}</small> ${rate(b)}</span>`).join('')}
       <span class="stat"><small>model</small> ${rate(s.model)}</span>
       <span class="stat"><small>old score</small> ${rate(s.classic)}</span>`;
   }
@@ -209,9 +215,11 @@
     $('picks').classList.add('off');
     $('reveal').innerHTML = `<span>You: <b>${p === 'tie' ? 'Same' : say(p === 'left' ? 1 : 0)}</b></span>
       <span class="v ${mark(res.clef)}" title="Asked with this one as A: ${pct(res.clefAsked[0])} left; the other way round: ${pct(res.clefAsked[1])} left">Clef: <b>${say(res.clef)}</b> ${conf(res.clef)}</span>
+      ${(res.judges || []).map((j) => `<span class="v ${mark(j.p)}" title="${esc(j.why.filter(Boolean).join(' — '))}">${esc(j.judge)}: <b>${say(j.p)}</b> ${conf(j.p)}</span>`).join('')}
       <span class="v ${mark(res.model)}">Model: <b>${say(res.model)}</b> ${conf(res.model)}</span>
       <span class="v ${mark(res.classic)}">Old score: <b>${say(res.classic)}</b></span>
-      <button id="next">Next <kbd>space</kbd></button>`;
+      <button id="next">Next <kbd>space</kbd></button>
+      ${(res.judges || []).map((j) => (j.why[0] ? `<div class="why"><b>${esc(j.judge)}:</b> ${esc(sides(j.why[0]))}</div>` : '')).join('')}`;
     $('reveal').classList.add('on');
     $('next').onclick = next;
     $('next').focus();
