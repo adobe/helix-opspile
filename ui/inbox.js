@@ -2297,7 +2297,7 @@ function startEdit(id) {
   const pending = state.edits.get(id);
   state.editing = {
     // The text only: the files listed at its end are not part of it, and stay as they are.
-    id, key, text: pending ? pending.body : withoutAttachments(m.body).trim(), as: m.editable, focus: true,
+    id, key, text: pending ? pending.body : ownText(m.body), as: m.editable, focus: true,
   };
   repaint(key);
 }
@@ -2319,7 +2319,7 @@ async function saveEdit() {
   const body = ed.text.trim();
   if (!body) { toast('Write something, or press Esc to keep the message as it is.'); return; }
   closeMentions();
-  if (!m || body === withoutAttachments(m.body).trim()) { cancelEdit(); return; }
+  if (!m || body === ownText(m.body)) { cancelEdit(); return; }
   const at = ed.id.indexOf('|');
   const mentions = mentionsIn(ed.key, body);
   state.editing = null;
@@ -2506,6 +2506,8 @@ function withoutAttachments(body) {
   const list = text.slice(at).replace(/^\n?[ \t]*Attachments:[ \t]*/, '').split('\n').map((l) => l.trim()).filter(Boolean);
   return list.length && list.every((l) => FILE_LINE.test(l)) ? text.slice(0, at) : text;
 }
+/** What the author of a message wrote: no files, nor the messages it quotes (they stay as they are). */
+const ownText = (body) => Markdown.withoutQuotes(withoutAttachments(body)).trim();
 
 /** The 📎 button, paste in the reply box. Dropping is wired once, on the pane (wireDrop). */
 function wireAttach(key, thread) {

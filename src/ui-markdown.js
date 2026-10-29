@@ -34,7 +34,10 @@ import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
+import { QUOTE_TITLE } from './markdown.js';
+
 export { emojiLookup, matchEmoji } from './emojinames.js';
+export { withoutQuotes } from './markdown.js';
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
@@ -174,6 +177,25 @@ const galleries = (html) => html.replace(IMAGE_RUN, (run) => {
 });
 
 /**
+ * A quoted message (src/markdown.js quoteMarkdown) is a card: its author's line, linked to the
+ * message, with when it was posted, above its text. A quote typed by hand stays a quote.
+ */
+const QUOTE_CARD = new RegExp(`<blockquote>\\s*<p><a href="([^"]*)" title="${QUOTE_TITLE}(?:, ([^"]*))?">([\\s\\S]*?)</a>(?:<br />)?\\s*</p>`, 'g');
+let quoteTime = null;
+function quotedAt(iso) {
+  const d = new Date(String(iso).replace(/&amp;/g, '&'));
+  if (Number.isNaN(d.getTime())) {
+    return '';
+  }
+  quoteTime = quoteTime || new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  return ` <time datetime="${encode(d.toISOString())}">${encode(quoteTime.format(d))}</time>`;
+}
+const cards = (html) => html.replace(QUOTE_CARD, (_, href, at, name) => '<blockquote class="quote">'
+  + `<p class="quote-by"><a href="${href}" title="Open the quoted message"><b>${name}</b></a>${at ? quotedAt(at) : ''}</p>`);
+
+/**
  * Markdown to HTML, safe to put in the page.
  *
  * @param {string} src
@@ -193,9 +215,9 @@ export function render(src, {
       ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
       : `${before}<span class="mention">${at}</span>`;
   };
-  const html = micromark(repair(String(src || '').replaceAll(BREAK, '')), OPTIONS)
+  const html = cards(micromark(repair(String(src || '').replaceAll(BREAK, '')), OPTIONS)
     .replace(BLOCK_END, '$1\n')
-    .replaceAll(BREAK, '<br />\n');
+    .replaceAll(BREAK, '<br />\n'));
   let code = 0;
   return galleries(html.split(/(<[^>]*>)/).map((part, i) => {
     if (i % 2) {
