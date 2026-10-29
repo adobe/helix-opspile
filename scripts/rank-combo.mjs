@@ -43,7 +43,7 @@ export const DEFAULT_WEIGHTS = {
  * share to the others.
  */
 export const DEFAULT_SHARES = {
-  human: 0.35, sonnet: 0.2, haiku: 0.05, click: 0.2, reply: 0.1, clef: 0.1,
+  human: 0.15, sonnet: 0.2, haiku: 0.05, click: 0.3, reply: 0.2, clef: 0.1,
 };
 
 /**

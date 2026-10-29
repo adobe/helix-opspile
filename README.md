@@ -450,9 +450,10 @@ Bradley–Terry model whose strength is that score, learned from games of three 
   answered sooner wins over the one answered later, each thread as it was when its customer
   wrote.
 
-Each source is a share of the training (`DEFAULT_SHARES` in `scripts/rank-combo.mjs`: you 35%,
-Sonnet 20%, picks 20%, replies 10%, Clef 10%, Haiku 5%; a source without games gives its share
-to the others), so Clef's thousands of games do not drown out your hundred. The steps, each
+Each source is a share of the training (`DEFAULT_SHARES` in `scripts/rank-combo.mjs`: picks
+30%, replies 20%, Sonnet 20%, you 15%, Clef 10%, Haiku 5%; a source without games gives its share
+to the others), so Clef's thousands of games do not drown out the rest, and what the teams do
+weighs more than what anyone says. The steps, each
 reading what the ones before wrote into `.rank/` (gitignored; it holds production threads, so
 it stays on your machine):
 
@@ -481,7 +482,7 @@ it stays on your machine):
    go to `.rank/human.jsonl`. It follows a new sample by itself.
 5. `npm run rank -- events` fetches the picks recorded since the last time
    (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
-6. `npm run rank -- train [--l2 30] [--shares human=0.35,…|counts] [--weights …] [--without a,b]
+6. `npm run rank -- train [--l2 30] [--shares click=0.3,…|counts] [--weights …] [--without a,b]
    [--dry-run]` fits the weights on all samples, picks and replies, prints how often the model
    picks the winner of each source's games on threads (or picks) it was not trained on (five
    folds), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how

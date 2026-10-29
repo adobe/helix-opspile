@@ -425,7 +425,7 @@ async function train(opts) {
     throw new Error('no sample: run `npm run rank -- pull` first');
   }
   // `--shares counts` weighs every game the same (per source by `--weights`); else each source
-  // is its share of the training (`--shares human=0.35,…`, DEFAULT_SHARES).
+  // is its share of the training (`--shares click=0.3,…`, DEFAULT_SHARES).
   const shares = { ...DEFAULT_SHARES };
   const asked = opts.shares === 'counts' ? '' : opts.shares || '';
   for (const kv of String(asked).split(',').filter(Boolean)) {
