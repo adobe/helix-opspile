@@ -489,6 +489,15 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you have not read has its label in bold, and a red badge counts the messages that mention
   you and that you have not read yet (Slack's and Teams' mention count); a thread's
   "N replies" is bold and blue while it has replies you have not read.
+- **The list stays put** while it is the same list (the same view, filters and unread only):
+  reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
+  read or not (unread only is "unread when the list was opened"); the rows in view, and those
+  scrolled past, keep their order, and the rows below them are sorted as the view sorts.
+  Threads that come in since (new ones, or with unread only, read ones with a new message)
+  are added at the end of a team's list, except critical and hot ones, which come in right
+  below the rows you have seen; in the personal view, threads with activity since that you
+  have not seen in it come to the top. Another filter or view, unread only, or a click on the
+  view already shown sorts it afresh; the thread open then stays, if it passes the filters.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
   in the inbox already open, or in a new one. There are two kinds, settings of the person in
