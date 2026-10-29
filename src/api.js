@@ -25,6 +25,7 @@ import {
   startAuth,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
+import { rankEmoji } from './shortcodes.js';
 import { isStaffDomain } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { react, resolve } from './react.js';
@@ -877,6 +878,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), (t) => inTeam(me, t), {
       waitUntil,
     });
+  }
+  if (url.pathname === '/api/emoji') {
+    return json({ emoji: await rankEmoji(env, url.searchParams.get('q')) });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
     return json(await inbox(env, me, null, {
