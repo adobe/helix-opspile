@@ -23,6 +23,15 @@
 globalThis.Rank = (() => {
   const H = 3600000;
   const KINDS = ['incident', 'security', 'question', 'request', 'access'];
+  const REACTIONS = {
+    rxDone: ['white_check_mark', 'heavy_check_mark', 'done', '✅', '✔️'],
+    rxThumbs: ['+1', 'thumbsup', 'like', '👍'],
+    rxEyes: ['eyes', '👀'],
+    rxPlea: ['pray', '🙏'],
+    rxAlarm: ['exclamation', 'fire', 'rotating_light', 'warning', 'bangbang', '❗', '🔥', '🚨'],
+    rxSocial: ['joy', 'laughing', 'rolling_on_the_floor_laughing', 'smile', 'grin', 'heart', 'tada',
+      'raised_hands', 'clap', 'laugh', '😂', '❤️', '🎉', '🙌', '👏'],
+  };
   const THANKS = /\b(thanks|thank you|thx|ty|cheers|merci|danke|gracias|appreciate)\b/i;
   const ALARM = /\b(urgent|asap|down|outage|broken|blocked|blocker|critical|escalat\w*|not working|fails?|failing|error|5\d\d|prod(uction)? (issue|is))\b/i;
 
@@ -87,6 +96,22 @@ globalThis.Rank = (() => {
     f.lastThanks = THANKS.test(text) ? 1 : 0;
     f.lastAlarm = ALARM.test(text) ? 1 : 0;
     f.lastLength = Math.log1p(text.length) / 6;
+    // Reactions, as the list shows them: a ✅ settles, 👀 says someone is on it, 🙏 pleads, ❗🔥
+    // alarm, 😂🎉❤️ are social. Weak on their own, but what people click on may weigh them.
+    const rx = new Map();
+    for (const r of t.reactions || []) {
+      const name = String(r.emoji || '').replace(/::skin-tone-\d/, '');
+      rx.set(name, (rx.get(name) || 0) + (r.count || 0));
+    }
+    for (const [k, names] of Object.entries(REACTIONS)) {
+      f[k] = names.some((n) => rx.get(n)) ? 1 : 0;
+    }
+    // A customer's first message that waits on us and nobody at Adobe has answered yet, and how
+    // long it waits. (Without "waits on us", half of them are welcomes and FYIs.)
+    const staffPosted = t.staffPosted ?? people.some((p) => p.staff);
+    const first = us && Boolean(t.last_at) && !staffPosted && !checked ? 1 : 0;
+    f.firstWaiting = first;
+    f.firstWaitingLong = (first * Math.log1p(ageH)) / 5;
     // How sure Clef was of who moves next and of the kind.
     f.nextActorP = lab.next_actor_p ?? 0;
     f.kindP = lab.kind_p ?? 0;
@@ -97,47 +122,65 @@ globalThis.Rank = (() => {
   // MODEL: written by `npm run rank -- train`, do not edit by hand.
   const MODEL = {
     trained: '2026-10-29',
-    threads: 410,
-    games: 4915,
-    accuracy: 0.797,
-    classicAccuracy: 0.675,
+    games: {
+      clef: 6038,
+      sonnet: 371,
+      human: 102,
+      haiku: 1,
+      reply: 1171,
+    },
+    accuracy: {
+      clef: 0.633,
+      sonnet: 0.77,
+      human: 0.594,
+      haiku: 0,
+      reply: 0.57,
+    },
     weights: {
-      recent6h: 0.638,
-      recent2d: 0.2758,
-      recent2w: 0.9447,
-      threadAge: 0.0576,
-      lastStaff: 0.1404,
-      unseenByAdobe: 0.4848,
-      waitsOnUs: 0.9659,
-      waitsOnThem: -0.3723,
-      waitsOnUsLong: 0.4048,
-      urgency: 2.4323,
-      unlabeled: 0.3033,
-      resolved: -1.141,
-      checked: -0.5987,
-      resolvedRecent: -0.0989,
-      openUrgency: 1.7151,
-      unseenUrgency: -1.4732,
-      alert: 1.0214,
-      seenByStaff: 0.3122,
+      recent6h: -0.3517,
+      recent2d: 0.9503,
+      recent2w: -2.4794,
+      threadAge: -0.044,
+      lastStaff: 0.0441,
+      unseenByAdobe: -0.1473,
+      waitsOnUs: 1.6418,
+      waitsOnThem: 0.0585,
+      waitsOnUsLong: -0.3433,
+      urgency: -0.5341,
+      unlabeled: -0.6574,
+      resolved: -1.0685,
+      checked: 0.7721,
+      resolvedRecent: 1.1241,
+      openUrgency: 2.9961,
+      unseenUrgency: -1.4454,
+      alert: -0.0978,
+      seenByStaff: 0.5049,
       help: 0,
-      draft: 0.288,
-      messages: 0.7796,
-      customers: -0.1247,
-      staff: 0.001,
-      partner: -0.2185,
-      vendor: -0.4466,
-      kind_incident: 0.3397,
-      kind_security: 0.6684,
-      kind_question: 0.229,
-      kind_request: 0.2971,
-      kind_access: 0.2655,
-      lastAsks: 0.1285,
-      lastThanks: -0.0267,
-      lastAlarm: -0.0897,
-      lastLength: 0.4215,
-      nextActorP: 0.1072,
-      kindP: 0.384,
+      draft: 1.1769,
+      messages: 1.1576,
+      customers: 0.4867,
+      staff: -0.6156,
+      partner: 0.0677,
+      vendor: 0.2036,
+      kind_incident: 0.4584,
+      kind_security: 2.2851,
+      kind_question: 0.3103,
+      kind_request: 0.4851,
+      kind_access: -0.1309,
+      lastAsks: -0.1019,
+      lastThanks: -0.1602,
+      lastAlarm: 0.1351,
+      lastLength: 0.8832,
+      rxDone: -0.1662,
+      rxThumbs: -0.1445,
+      rxEyes: -0.3686,
+      rxPlea: -0.7172,
+      rxAlarm: -3.327,
+      rxSocial: -0.333,
+      firstWaiting: -0.7464,
+      firstWaitingLong: -0.92,
+      nextActorP: -0.1997,
+      kindP: -0.002,
     },
   };
   // END MODEL

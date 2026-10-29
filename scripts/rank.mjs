@@ -51,11 +51,14 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PROMPT_VERSION, QUESTION, agreement, bradleyTerry, elo, firstP, fit, loadClassic, loadRank,
-  pairKey, pairState, random, shuffle, spearman, swiss, withModel,
+  pairKey, pairState, random, shuffle, swiss, withModel,
 } from './rank-lib.mjs';
 import { agreementWithYou, judge, readHuman } from './rank-judge.mjs';
-import { llm, readJudged } from './rank-llm.mjs';
+import { llm } from './rank-llm.mjs';
 import { behavior } from './rank-behavior.mjs';
+import {
+  DEFAULT_SHARES, DEFAULT_WEIGHTS, rows, samples, shareOut,
+} from './rank-combo.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, '.rank');
@@ -64,6 +67,8 @@ const GAMES = join(DIR, 'games.jsonl');
 const RATINGS = join(DIR, 'ratings.json');
 const HUMAN = join(DIR, 'human.jsonl');
 const LLM = join(DIR, 'llm.jsonl');
+// Picks in the list (production's rank_events), kept across samples.
+const EVENTS = join(DIR, 'events.jsonl');
 const RANK_JS = join(ROOT, 'ui', 'rank.js');
 const CLEF = '@cf/cloudflare/clef';
 
@@ -325,126 +330,186 @@ async function duel(opts) {
 
 // ---------------------------------------------------------------- train
 
-async function train(opts) {
-  const data = JSON.parse(await readFile(THREADS, 'utf8'));
-  const byKey = new Map(data.threads.map((t) => [t.key, t]));
-  const games = (await readGames()).filter((g) => byKey.has(g.a) && byKey.has(g.b));
-  if (games.length < 50) {
-    throw new Error(`${games.length} games: run \`npm run rank -- duel\` first`);
+/** Rows as the trainer takes them: feature vectors in `names` order. */
+const vectors = (names, list) => list.map((r) => ({
+  ...r, xa: names.map((n) => r.a[n] || 0), xb: names.map((n) => r.b[n] || 0),
+}));
+
+function fitRows(names, list, l2) {
+  const vec = new Map();
+  const games = list.map((r, i) => {
+    vec.set(`${i}a`, r.xa);
+    vec.set(`${i}b`, r.xb);
+    return {
+      a: `${i}a`, b: `${i}b`, p: r.p, weight: r.w,
+    };
+  });
+  return fit(names, (k) => vec.get(k), games, { l2 });
+}
+
+const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
+const hash = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 1000003, 7);
+
+/** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
+async function events() {
+  const get = await session();
+  const have = await (async () => {
+    if (!existsSync(EVENTS)) {
+      return [];
+    }
+    return (await readFile(EVENTS, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  })();
+  let since = have.length ? have[have.length - 1].id : 0;
+  let added = 0;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const page = await get(`/api/rank/events?since=${since}`);
+    if (page.events.length) {
+      // eslint-disable-next-line no-await-in-loop
+      await appendFile(EVENTS, page.events.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+      added += page.events.length;
+      since = page.events[page.events.length - 1].id;
+    }
+    if (!page.next) {
+      break;
+    }
   }
+  console.log(`${added} new picks, ${have.length + added} in all → ${EVENTS}`);
+}
+
+async function readEvents() {
+  if (!existsSync(EVENTS)) {
+    return [];
+  }
+  return (await readFile(EVENTS, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/**
+ * The combo model (scripts/rank-combo.mjs): your judgements, Sonnet's, Haiku's and Clef's,
+ * one per pair in that order; picks in the list; replies, faster over slower. A Bradley–Terry
+ * model whose strength is the linear score of ui/rank.js, fitted by pairwise logistic
+ * regression, with five folds held out by thread (or by pick) to say how well it does.
+ */
+async function train(opts) {
   const source = await readFile(RANK_JS, 'utf8');
   const Rank = loadRank(source);
-  // `--without a,b`: leave features out, to see what they are worth.
   const without = new Set(String(opts.without || '').split(',').filter(Boolean));
   const names = Rank.names.filter((n) => !without.has(n));
-  const vectors = new Map([...byKey].map(([k, t]) => {
-    const f = Rank.features(t.entry, data.pulledAt);
-    return [k, names.map((n) => f[n])];
+  const weights = { ...DEFAULT_WEIGHTS };
+  for (const kv of String(opts.weights || '').split(',').filter(Boolean)) {
+    const [k, v] = kv.split('=');
+    weights[k] = Number(v);
+  }
+  const all = await samples(DIR);
+  if (!all.length) {
+    throw new Error('no sample: run `npm run rank -- pull` first');
+  }
+  // `--shares counts` weighs every game the same (per source by `--weights`); else each source
+  // is its share of the training (`--shares human=0.35,…`, DEFAULT_SHARES).
+  const shares = { ...DEFAULT_SHARES };
+  const asked = opts.shares === 'counts' ? '' : opts.shares || '';
+  for (const kv of String(asked).split(',').filter(Boolean)) {
+    const [k, v] = kv.split('=');
+    shares[k] = Number(v);
+  }
+  const raw = rows({
+    Rank, samples: all, events: await readEvents(), weights,
+  }).filter((r) => r.w > 0);
+  const list = vectors(names, opts.shares === 'counts' ? raw : shareOut(raw, shares));
+  if (list.length < 50) {
+    throw new Error(`${list.length} games: run \`npm run rank -- duel\` first`);
+  }
+  // The hand-made score, for the judged pairs (the sample's time is when it was pulled).
+  const classicOf = new Map(all.map((s) => {
+    const c = loadClassic(s.data.pulledAt);
+    return [s.data.pulledAt, new Map(s.data.threads.map((t) => [t.key, c(t.entry)]))];
   }));
-  const vec = (k) => vectors.get(k);
   const l2 = num(opts.l2, 3);
-  const classic = loadClassic(data.pulledAt);
-  const baseline = {
-    classic: (k) => classic(byKey.get(k).entry),
-    recency: (k) => Rank.features(byKey.get(k).entry, data.pulledAt).recent2d,
-  };
-  // Cross-validation by threads: trained on the games among four fifths of them, tested on
-  // every game of the other fifth, so the scores are for threads the model has not seen.
-  // Your answers: what you decided, and ties as even; trained on with `--human <weight>`.
-  const human = (await readHuman(HUMAN, data.pulledAt))
-    .filter((h) => h.pick !== 'skip' && byKey.has(h.a) && byKey.has(h.b));
-  const humanWeight = num(opts.human, 0);
-  const yours = human.map((h) => ({
-    a: h.a, b: h.b, p: h.p, weight: humanWeight,
-  }));
-  const rnd = random(7);
-  const fold = new Map(shuffle([...byKey.keys()], rnd).map((k, i) => [k, i % 5]));
-  const inFold = (f) => (g) => fold.get(g.a) === f || fold.get(g.b) === f;
-  const scores = { model: [], classic: [], recency: [] };
-  const heldOut = new Map();
+  const sources = [...new Set(list.map((r) => r.source))];
+  const count = Object.fromEntries(sources
+    .map((k) => [k, list.filter((r) => r.source === k).length]));
+  const counts = Object.entries(count).map(([k, n]) => `${k} ${n}`).join(', ');
+  console.log(`${list.length} games from ${all.length} samples: ${counts}`);
+  const fold = (r) => hash(r.group) % 5;
+  const held = Object.fromEntries(sources.map((k) => [k, { model: [], classic: [] }]));
   for (let f = 0; f < 5; f += 1) {
-    const trainSet = games.filter((g) => !inFold(f)(g))
-      .concat(humanWeight ? yours.filter((g) => !inFold(f)(g)) : []);
-    const test = games.filter(inFold(f));
-    const w = fit(names, vec, trainSet, { l2 });
-    const s = (k) => vec(k).reduce((acc, x, i) => acc + x * w[names[i]], 0);
-    scores.model.push(agreement(s, test));
-    for (const h of yours.filter(inFold(f))) {
-      if (!heldOut.has(h)) {
-        heldOut.set(h, s(h.a) - s(h.b));
+    const w = fitRows(names, list.filter((r) => fold(r) !== f), l2);
+    for (const k of sources) {
+      const test = list.filter((r) => fold(r) === f && r.source === k);
+      if (test.length) {
+        const ids = new Map(test.map((r, i) => [`${i}`, r]));
+        const s = (key) => {
+          const [i, side] = [key.slice(0, -1), key.slice(-1)];
+          const r = ids.get(i);
+          return dot(w, names, side === 'a' ? r.xa : r.xb);
+        };
+        held[k].model.push({
+          ...agreement(s, test.map((r, i) => ({ a: `${i}a`, b: `${i}b`, p: r.p }))),
+          n: test.length,
+        });
+        const judged = test.filter((r) => r.ids);
+        if (judged.length) {
+          const c = (r, side) => classicOf.get(r.snap).get(r.ids[side === 'a' ? 0 : 1]);
+          held[k].classic.push({
+            ...agreement(
+              (key) => {
+                const r = judged[Number(key.slice(0, -1))];
+                return c(r, key.slice(-1));
+              },
+              judged.map((r, i) => ({ a: `${i}a`, b: `${i}b`, p: r.p })),
+            ),
+            n: judged.length,
+          });
+        }
       }
     }
-    // The baselines have no scale of their own: fitted on the train folds, a weight each.
-    for (const b of ['classic', 'recency']) {
-      const wb = fit(['x'], (k) => [baseline[b](k)], trainSet, { l2: 0.01 });
-      scores[b].push(agreement((k) => wb.x * baseline[b](k), test));
-    }
   }
-  const mean = (list, k) => list.reduce((s, x) => s + x[k], 0) / list.length;
-  const weights = fit(names, vec, humanWeight ? games.concat(yours) : games, { l2 });
-  const ids = [...byKey.keys()];
-  const bt = bradleyTerry(ids, games);
-  const modelScore = (k) => vec(k).reduce((acc, x, i) => acc + x * weights[names[i]], 0);
-  const rho = (s) => spearman(ids.map(s), ids.map((k) => bt.get(k)));
-  const report = Object.fromEntries(Object.entries(scores).map(([k, list]) => [k, {
-    accuracy: Number(mean(list, 'accuracy').toFixed(3)),
-    logloss: Number(mean(list, 'logloss').toFixed(3)),
+  const mean = (xs, k) => {
+    const n = xs.reduce((acc, x) => acc + (x.decided ?? x.n), 0);
+    return n ? xs.reduce((acc, x) => acc + x[k] * (x.decided ?? x.n), 0) / n : NaN;
+  };
+  const report = Object.fromEntries(sources.map((k) => [k, {
+    games: count[k],
+    model: Number(mean(held[k].model, 'accuracy').toFixed(3)),
+    'old score': held[k].classic.length ? Number(mean(held[k].classic, 'accuracy').toFixed(3)) : null,
   }]));
+  console.log('How often each picks the winner, on threads (or picks) it was not trained on:');
   console.table(report);
-  console.log(`Spearman vs Clef's ratings: model ${rho(modelScore).toFixed(3)}, classic ${rho(baseline.classic).toFixed(3)}, recency ${rho(baseline.recency).toFixed(3)}`);
-  if (human.length) {
-    const you = agreementWithYou(human, games, {
-      model: () => 0, classic: baseline.classic,
-    });
-    const decided = yours.filter((h) => h.p !== 0.5);
-    const held = decided.filter((h) => heldOut.get(h)).length
-      ? decided.filter((h) => (heldOut.get(h) > 0) === (h.p > 0.5)).length / decided.length : 0;
-    const share = (b) => (b.n ? `${Math.round((100 * b.agree) / b.n)}%` : '–');
-    const judged = await readJudged(LLM, data.pulledAt);
-    const them = agreementWithYou(human, games, { model: () => 0, classic: () => 0 }, judged);
-    for (const [name, b] of Object.entries(them.judges)) {
-      console.log(`You and ${name}: agrees ${share(b)} of ${b.n}`);
-    }
-    console.log(`You (${you.decided} decided, ${you.ties} same): Clef agrees ${share(you.clef)},`
-      + ` the model on threads it was not trained on ${Math.round(held * 100)}%,`
-      + ` the old score ${share(you.classic)}`);
+  // The judges against you, sample by sample.
+  for (const smp of all.filter((x) => x.human.length)) {
+    const none = { model: () => 0, classic: () => 0 };
+    const you = agreementWithYou(smp.human, smp.games, none, smp.llm);
+    const share = (b) => (b.n ? `${Math.round((100 * b.agree) / b.n)}% of ${b.n}` : '–');
+    console.log(`You, ${new Date(smp.data.pulledAt).toISOString().slice(0, 10)}: Clef ${share(you.clef)}, `
+      + `${Object.entries(you.judges).map(([k, b]) => `${k} ${share(b)}`).join(', ')}`);
   }
-  const judgedAll = await readJudged(LLM, data.pulledAt);
-  if (judgedAll.length) {
-    const byPair = new Map(games.map((g) => [`${g.a}|${g.b}`, g]));
-    const names2 = [...new Set(judgedAll.map((x) => x.judge))];
-    for (const name of names2) {
-      const mine = judgedAll.filter((x) => x.judge === name && byPair.has(`${x.a}|${x.b}`));
-      const same = mine.filter((x) => (x.p > 0.5) === (byPair.get(`${x.a}|${x.b}`).p > 0.5)).length;
-      const flips = mine.filter((x) => (x.ab > 0.5) !== (x.ba < 0.5)).length;
-      console.log(`${name}: agrees with Clef on ${Math.round((100 * same) / (mine.length || 1))}% of ${mine.length} pairs;`
-        + ` swapping A and B changes its pick ${Math.round((100 * flips) / (mine.length || 1))}% of the time`);
-    }
-  }
+  const w = fitRows(names, list, l2);
   console.log('weights (log-odds per unit):');
-  for (const [k, w] of Object.entries(weights).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
-    console.log(`  ${k.padEnd(16)} ${w >= 0 ? ' ' : ''}${w.toFixed(3)}`);
+  for (const [k, v] of Object.entries(w).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))) {
+    console.log(`  ${k.padEnd(18)} ${v >= 0 ? ' ' : ''}${v.toFixed(3)}`);
   }
   const model = {
     trained: new Date().toISOString().slice(0, 10),
-    threads: ids.length,
-    games: games.length,
-    accuracy: report.model.accuracy,
-    classicAccuracy: report.classic.accuracy,
-    ...(humanWeight ? { human: yours.length, humanWeight } : {}),
-    weights: Object.fromEntries(Object.entries(weights).map(([k, w]) => [k, Number(w.toFixed(4))])),
+    games: Object.fromEntries(Object.entries(count)),
+    accuracy: Object.fromEntries(Object.entries(report).map(([k, r]) => [k, r.model])),
+    weights: Object.fromEntries(Object.entries(w).map(([k, v]) => [k, Number(v.toFixed(4))])),
   };
   if (opts['dry-run']) {
-    return;
+    return model;
   }
   await writeFile(RANK_JS, withModel(source, model));
   console.log(`→ ${RANK_JS}`);
+  return model;
 }
 
-const opts = options(process.argv.slice(2));
 async function judgeStep(o) {
   await judge({
-    port: num(o.port, 8796), threadsFile: THREADS, humanFile: HUMAN, llmFile: LLM, readGames,
+    port: num(o.port, 8796),
+    threadsFile: THREADS,
+    gamesFile: GAMES,
+    humanFile: HUMAN,
+    llmFile: LLM,
+    readGames,
   });
 }
 
@@ -461,11 +526,84 @@ async function behaviorStep(o) {
   console.log(report);
 }
 
+const run = (cmd, args, extra = {}) => execFileSync(cmd, args, {
+  cwd: ROOT, stdio: 'inherit', ...extra,
+});
+
+/**
+ * The new weights as a pull request against main, from a worktree of origin/main, so the
+ * checkout the job runs in is left as it is. Only when main computes the same features.
+ */
+async function propose(model, trained) {
+  const day = model.trained;
+  const branch = `rank/weekly-${day}`;
+  const tree = join(DIR, `pr-${day}`);
+  const git = (...args) => run('git', args);
+  git('fetch', '-q', 'origin', 'main');
+  git('worktree', 'add', '-q', '-B', branch, tree, 'origin/main');
+  try {
+    const file = join(tree, 'ui', 'rank.js');
+    const main = await readFile(file, 'utf8');
+    const code = (src) => withModel(src, null);
+    if (code(main) !== code(trained)) {
+      throw new Error('main computes other features than this checkout: update it, then train again');
+    }
+    await writeFile(file, trained);
+    const games = Object.entries(model.games).map(([k, n]) => `${k} ${n}`).join(', ');
+    const acc = Object.entries(model.accuracy)
+      .map(([k, a]) => `${k} ${Math.round(a * 100)}%`).join(', ');
+    const title = `chore(rank): the team order, trained ${day}`;
+    const at = (...args) => run('git', ['-C', tree, ...args]);
+    at('add', 'ui/rank.js');
+    at('commit', '-q', '-m', `${title}\n\nGames: ${games}.\nHeld out, it picks the winner: ${acc}.`);
+    at('push', '-q', '-f', '-u', 'origin', branch);
+    run('gh', ['pr', 'create', '--base', 'main', '--head', branch, '--title', title, '--body',
+      'The weekly retraining of the team order (`npm run rank -- weekly`).\n\n'
+      + `- Games: ${games}\n- On threads (or picks) it was not trained on, it picks the winner: ${acc}\n\n`
+      + 'Only the weights in `ui/rank.js` change. Merge and deploy to use them.'], { cwd: tree });
+  } finally {
+    git('worktree', 'remove', '--force', tree);
+  }
+}
+
+/**
+ * Once a week (a bb automation runs it): a fresh session from the signed-in browser, the
+ * picks since last time, a new sample (the last one, with everything judged on it, is kept in
+ * `.rank/<when>/` and trained on still), Clef's tournament on it, the Claude judges on a part
+ * of it (with AWS_BEARER_TOKEN_BEDROCK), then the combo model trained on all of it. With
+ * `--pr`, the new weights go to a pull request against main, for a person to look at and merge.
+ */
+async function weekly(o) {
+  const sess = JSON.parse(await readFile(join(ROOT, '.dev-ui-session.json'), 'utf8').catch(() => '{}'));
+  const origin = o.origin || sess.origin;
+  if (!origin) {
+    throw new Error('no inbox origin: run `npm run ui:session -- <origin>` once, or pass --origin');
+  }
+  run(process.execPath, ['scripts/dev-ui-session.mjs', origin]);
+  // Production may not record picks yet (before the deploy of migration 0037).
+  await events().catch((e) => console.log(`no picks this week: ${e.message}`));
+  await pull({ ...o, n: o.n });
+  await duel({ ...o, rounds: o.rounds || 12 });
+  if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
+    await llmStep({ ...o, pairs: o.pairs || 150 });
+  } else {
+    console.log('no AWS_BEARER_TOKEN_BEDROCK: no Claude judges this week');
+  }
+  const before = await readFile(RANK_JS, 'utf8');
+  const model = await train(o);
+  const after = await readFile(RANK_JS, 'utf8');
+  if (o.pr && after !== before) {
+    await propose(model, after);
+  }
+}
+
+const opts = options(process.argv.slice(2));
 const step = {
-  pull, duel, train, judge: judgeStep, llm: llmStep, behavior: behaviorStep,
+  pull, duel, train, judge: judgeStep, llm: llmStep, behavior: behaviorStep, events, weekly,
 }[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|duel|llm|judge|train|behavior [options] (see scripts/rank.mjs)');
+  console.error('usage: npm run rank -- pull|duel|llm|judge|events|train|behavior|weekly [options]'
+    + ' (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {
   step(opts).catch((e) => {

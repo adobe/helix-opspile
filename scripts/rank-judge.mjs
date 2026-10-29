@@ -19,7 +19,7 @@
 
 import { createServer } from 'node:http';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { SLACK_EMOJI } from '../src/emoji.js';
 import MARKDOWN from '../src/ui-markdown.bundle.js';
 import { platformName } from '../src/platforms.js';
@@ -169,19 +169,34 @@ const MODES = {
 };
 
 export async function judge({
-  port, threadsFile, humanFile, llmFile, readGames,
+  port, threadsFile, gamesFile, humanFile, llmFile, readGames,
 }) {
-  const data = JSON.parse(await readFile(threadsFile, 'utf8'));
-  const snap = data.pulledAt;
-  const byKey = new Map(data.threads.map((t) => [t.key, t]));
-  const staffByName = new Map(Object.entries(data.staff || {}));
-  const games = (await readGames()).filter((g) => byKey.has(g.a) && byKey.has(g.b));
+  // The sample and Clef's games, read again when they change: a new weekly sample, more rounds.
+  let snap;
+  let byKey;
+  let staffByName;
+  let games;
+  let seen = '';
+  let rankSource = null;
+  const refresh = async () => {
+    const mark = [threadsFile, gamesFile].map((f) => (existsSync(f) ? `${statSync(f).mtimeMs}` : '-')).join('|');
+    if (mark === seen) {
+      return;
+    }
+    seen = mark;
+    const data = JSON.parse(await readFile(threadsFile, 'utf8'));
+    snap = data.pulledAt;
+    byKey = new Map(data.threads.map((t) => [t.key, t]));
+    staffByName = new Map(Object.entries(data.staff || {}));
+    games = (await readGames()).filter((g) => byKey.has(g.a) && byKey.has(g.b));
+    rankSource = null;
+  };
+  await refresh();
   if (!games.length) {
     throw new Error('no games of Clef\'s to compare with: run `npm run rank -- duel` first');
   }
   // Scores are read again from ui/rank.js when it changes (a train run while judging).
   let rank = null;
-  let rankSource = null;
   const scores = async () => {
     const src = await readFile(new URL('../ui/rank.js', import.meta.url), 'utf8');
     if (src !== rankSource) {
@@ -229,6 +244,7 @@ export async function judge({
 
   const server = createServer(async (req, res) => {
     try {
+      await refresh();
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/') {
         return send(res, 200, page, 'text/html; charset=utf-8');

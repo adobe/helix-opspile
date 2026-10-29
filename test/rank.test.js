@@ -19,6 +19,9 @@ import {
 import { agreementWithYou } from '../scripts/rank-judge.mjs';
 import { parseAnswer } from '../scripts/rank-llm.mjs';
 import { auc, customerTurns, logistic } from '../scripts/rank-behavior.mjs';
+import {
+  asOf, decide, replyGames, shareOut,
+} from '../scripts/rank-combo.mjs';
 import { SCRIPTS } from './ui.js';
 
 const NOW = Date.parse('2026-03-02T12:00:00Z');
@@ -255,5 +258,67 @@ describe('what the teams do (scripts/rank-behavior.mjs)', () => {
     }
     const w = logistic(X, y, { l2: 0 });
     assert.ok(Math.abs(Math.exp(w[1]) - 9) < 0.5, String(Math.exp(w[1])));
+  });
+});
+
+describe('the combo model\'s games (scripts/rank-combo.mjs)', () => {
+  it('lets you overrule Sonnet, Sonnet Haiku, and Haiku Clef', () => {
+    const games = [{ a: 'x', b: 'y', p: 0.9 }, { a: 'y', b: 'z', p: 0.8 }, { a: 'x', b: 'z', p: 0.7 }];
+    const llm = [
+      {
+        judge: 'haiku', a: 'y', b: 'z', p: 0.3,
+      },
+      {
+        judge: 'sonnet', a: 'x', b: 'y', p: 0.2,
+      },
+      {
+        judge: 'haiku', a: 'x', b: 'y', p: 0.6,
+      },
+    ];
+    const human = [{
+      a: 'x', b: 'z', p: 0, pick: 'right',
+    }, {
+      a: 'y', b: 'z', p: 1, pick: 'skip',
+    }];
+    const by = Object.fromEntries(decide(games, human, llm).map((g) => [`${g.a}${g.b}`, g]));
+    assert.deepEqual([by.xy.source, by.xy.p], ['sonnet', 0.2]);
+    assert.deepEqual([by.yz.source, by.yz.p], ['haiku', 0.3]);
+    assert.deepEqual([by.xz.source, by.xz.p], ['human', 0]);
+  });
+
+  it('turns one person\'s answers on a day into games, sooner over later', () => {
+    const m = (h, staff, name) => ({
+      at: ago(h), author: { kind: 'person', staff, name }, body: staff ? 'answer' : 'asks?',
+    });
+    const thread = (key, msgs) => ({
+      key, entry: { source: 'slack', kind: 'channel', label: { resolved_p: 0.9 } }, messages: msgs,
+    });
+    // Ada answers t1 after 10 minutes and t2 after 2 hours, the same day; Bo answers t3.
+    const day = 30;
+    const games = replyGames([
+      thread('t1', [m(day + 0.2, false, 'C'), m(day, true, 'Ada')]),
+      thread('t2', [m(day + 2, false, 'D'), m(day, true, 'Ada')]),
+      thread('t3', [m(day + 1, false, 'E'), m(day, true, 'Bo')]),
+    ]);
+    assert.equal(games.length, 1);
+    assert.deepEqual([games[0].a.thread, games[0].b.thread], ['t1', 't2']);
+    // Each thread as it was when its customer wrote: waiting on us, not resolved yet.
+    const then = asOf(games[0].b.entry, games[0].b.messages, games[0].b.turn);
+    assert.equal(then.waiting_on, 'us');
+    assert.equal(then.messages, 1);
+    assert.equal(then.staffPosted, false);
+    assert.equal(then.label.resolved_p, 0.3);
+  });
+
+  it('gives each source its share of the training, whatever its number of games', () => {
+    const list = [
+      ...Array.from({ length: 90 }, () => ({ source: 'clef', w: 1 })),
+      ...Array.from({ length: 10 }, () => ({ source: 'human', w: 1 })),
+    ];
+    const out = shareOut(list, { human: 0.75, clef: 0.25, click: 0.5 });
+    const total = (k) => out.filter((r) => r.source === k).reduce((s, r) => s + r.w, 0);
+    // No clicks: their share goes to the others, in proportion.
+    assert.ok(Math.abs(total('human') - 75) < 1e-9);
+    assert.ok(Math.abs(total('clef') - 25) < 1e-9);
   });
 });

@@ -26,6 +26,7 @@ import {
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { rankEmoji } from './shortcodes.js';
+import { rankEvents, recordPick } from './rankevents.js';
 import { isSignInDomain, isStaffDomain } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { react, resolve } from './react.js';
@@ -76,9 +77,11 @@ async function participants(env, keys) {
   const by = new Map();
   for (const r of results || []) {
     if (!by.has(r.thread)) {
-      by.set(r.thread, { people: [], domains: new Map() });
+      by.set(r.thread, { people: [], domains: new Map(), staff: false });
     }
     const t = by.get(r.thread);
+    // Whether anyone at Adobe has posted at all, beyond the few faces shown.
+    t.staff = t.staff || Boolean(r.staff);
     if (t.people.length < MAX_PARTICIPANTS) {
       t.people.push({
         name: r.author,
@@ -94,6 +97,7 @@ async function participants(env, keys) {
   }
   return new Map([...by].map(([key, t]) => [key, {
     participants: t.people,
+    staffPosted: t.staff,
     customerDomain: [...t.domains].sort((a, b) => b[1] - a[1])[0]?.[0] || null,
   }]));
 }
@@ -288,6 +292,7 @@ export function fold(threads) {
       last_text: latest.last_text,
       messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
       participants: people,
+      staffPosted: ms.some((m) => m.staffPosted),
       label: latest.label || anchor.label || null,
       attention: [...ms].sort((a, b) => rank(a.attention) - rank(b.attention))[0].attention,
       unread: ms.some((m) => m.unread),
@@ -496,7 +501,8 @@ export async function inbox(env, me, team, {
           ...orgFields(orgs, t.org),
           title: (label && label.title) || t.title,
           label,
-          ...(people.get(t.thread) || { participants: [], customerDomain: null }),
+          ...(people.get(t.thread)
+            || { participants: [], staffPosted: false, customerDomain: null }),
           reactions: rxBy.get(t.thread) || [],
           posters: postersBy.get(t.thread) || [],
           mentioned: namedBy.get(t.thread) || [],
@@ -1003,6 +1009,16 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json(result, result.error ? 400 : 200);
     }
     return json({ error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/rank/pick' && request.method === 'POST') {
+    const res = await recordPick(env, me, await request.json().catch(() => null));
+    return res.error ? json(res, 400) : new Response(null, { status: 204 });
+  }
+  if (url.pathname === '/api/rank/events') {
+    if (!isAdmin(me)) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    return json(await rankEvents(env, url.searchParams.get('since'), url.searchParams.get('limit')));
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at, team: from } = await request.json().catch(() => ({}));

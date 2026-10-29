@@ -1134,6 +1134,37 @@ function classicScore(t) {
   return alert * open * (2 * recency + urgency * waiting * unseen * closeness(t));
 }
 
+/**
+ * The team order learns from what people open (`npm run rank`, src/rankevents.js): a thread
+ * clicked in the list wins over the others on screen then. Sent with each of them: its place
+ * in the list and what ui/rank.js makes of it now, so the training sees what the list showed.
+ * Not while viewing as someone else, searching, or clicking the thread already open.
+ */
+function recordPick(key) {
+  if (state.as || searching() || !state.data || key === state.open) return;
+  const list = $('threads').getBoundingClientRect();
+  const top = Math.max(0, list.top);
+  const bottom = Math.min(innerHeight, list.bottom);
+  const byKey = new Map(state.data.threads.map((t) => [t.thread, t]));
+  const shown = [];
+  for (const node of $('threads').querySelectorAll('.t[data-thread]')) {
+    const r = node.getBoundingClientRect();
+    const t = byKey.get(node.dataset.thread);
+    if (t && r.height && r.bottom > top && r.top < bottom && shown.length < 40) {
+      const f = Rank.features(t);
+      for (const k of Object.keys(f)) f[k] = Math.round(f[k] * 1000) / 1000;
+      shown.push({ thread: t.thread, pos: state.order.indexOf(t.thread), features: f });
+    }
+  }
+  if (shown.length < 2 || !shown.some((x) => x.thread === key)) return;
+  fetch('/api/rank/pick', {
+    method: 'POST',
+    credentials: 'same-origin',
+    keepalive: true,
+    body: JSON.stringify({ view: personal() ? 'personal' : state.team, clicked: key, shown, model: Rank.model?.trained || 'classic' }),
+  }).catch(() => {});
+}
+
 const tpl = document.createElement('template');
 const toNode = (html) => { tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
 
@@ -3821,7 +3852,7 @@ async function start() {
     if (e.target.closest('a, .find')) return;
     const el = e.target.closest('.t');
     if (el && el.dataset.hit) openHit(el.dataset.thread);
-    else if (el) openThread(el.dataset.thread);
+    else if (el) { recordPick(el.dataset.thread); openThread(el.dataset.thread); }
   };
   // A tap on the dimmed page beside the filter drawer closes it.
   document.querySelector('main').addEventListener('click', (e) => {
