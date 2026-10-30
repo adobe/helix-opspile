@@ -173,6 +173,17 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
+const EXPERTS = [
+  {
+    id: 'lena', name: 'Lena Berg', member: true, reasons: ['knows about this topic', 'typically responds in about 40 minutes', 'is active in this channel'],
+  },
+  {
+    id: 'priya', name: 'Priya Nair', member: true, reasons: ['typically responds in about 4 hours', 'is active in this channel'],
+  },
+  {
+    id: 'tom', name: 'Tom Okafor', member: false, reasons: ['knows about this topic', 'not in this channel'],
+  },
+];
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
 
 // ---- reactions, as D1's `reactions` would hold them ---------------------------------------
@@ -1009,6 +1020,32 @@ async function api(req, res, url) {
       ...p, aliases: undefined, affinity: undefined, ...(p.affinity > 0 ? { expert: true } : {}),
     }));
     return json(res, { platform: entry.row.source, people: found });
+  }
+  if (url.pathname === '/api/experts') {
+    // Stands in for src/experts.js: the colleagues not in the thread yet, in the fake data's
+    // order, with reasons that show each form the finder has.
+    const entry = store.threads.get(url.searchParams.get('thread'));
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const { messages } = thread(entry.row.thread);
+    const inThread = (name) => messages.some((m) => m.author?.name === name
+      || JSON.stringify(m).includes(`@${name}`));
+    const me = store.people.get(ME)?.name;
+    // The thread about the old blog paths has the form of an agent's suggestion.
+    const agent = /blog/i.test(messages[0]?.body || '') ? [{
+      id: 'lena',
+      name: 'Lena Berg',
+      member: true,
+      suggested: { at: new Date().toISOString() },
+      reasons: ['Wrote the redirects for the last blog migration'],
+    }] : [];
+    const experts = [...agent, ...EXPERTS.filter((e) => !agent.some((a) => a.id === e.id))]
+      .filter((e) => !inThread(e.name) && e.name !== me)
+      .map((e) => ({
+        ...e, avatar: null, staff: true, kind: 'person', response: null,
+      }));
+    return json(res, { platform: entry.row.source, experts });
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.

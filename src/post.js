@@ -540,8 +540,8 @@ export function teamsMessage(body, mentions = []) {
   return { body: { contentType: 'html', content }, ...(entries.length ? { mentions: entries } : {}) };
 }
 
-const NAME = 'COALESCE(p.name, i.name)';
-const ACCOUNTS = `FROM identities i LEFT JOIN people p ON p.id = i.person
+export const NAME = 'COALESCE(p.name, i.name)';
+export const ACCOUNTS = `FROM identities i LEFT JOIN people p ON p.id = i.person
   WHERE i.source = ? AND i.tenant = ? AND i.kind = 'person' AND ${NAME} IS NOT NULL`;
 // Teams bots seen in the thread's Teams team, by the name people mention them by.
 const BOT_NAME = 'COALESCE(i.handle, i.name)';
@@ -593,7 +593,7 @@ const MEMBER_LOOKUPS_AT_ONCE = 4;
 const MAX_ACCOUNTS = 5000;
 
 /** The channels whose members count as the thread's: on Teams, every channel of its team. */
-async function channelsOf(env, t) {
+export async function channelsOf(env, t) {
   if (t.source !== 'teams' || !t.group_id) {
     return [t.channel_id];
   }

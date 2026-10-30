@@ -21,6 +21,7 @@ import { COMPUTER_CWD } from './computer.js';
 import {
   config, deleteRule, deleteTech, GLOBAL_TEAM, saveRule, saveTech, testRule,
 } from '../extract.js';
+import { findExperts, MAX_SUGGESTED, suggestExpert } from '../experts.js';
 import { threadMessages } from '../label.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
@@ -35,10 +36,10 @@ import {
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
  * reads its thread and the other threads of its channel (src/agent/history.js), both knowledge
- * bases and the listed GitHub repositories, writes the two knowledge bases, and updates its
- * thread's shared draft. It cannot post, react or resolve:
- * a person reads the draft and sends it. Unless the team turned them on (agentToolsExtension,
- * src/agent/agenttools.js): then it may post itself, or has a shell.
+ * bases and the listed GitHub repositories, writes the two knowledge bases, updates its
+ * thread's shared draft and suggests colleagues to pull in (src/experts.js). It cannot post,
+ * react or resolve: a person reads the draft and sends it. Unless the team turned them on
+ * (agentToolsExtension, src/agent/agenttools.js): then it may post itself, or has a shell.
  */
 
 const MAX_INDEX = 8000;
@@ -63,7 +64,8 @@ const PREAMBLE = `You are the opspile agent for one support thread. opspile is t
 
 What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
-- Keep the shared draft reply of your thread useful (update_draft). It is the only thing outside the knowledge bases you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks.
+- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks.
+- When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Leave it when Adobe staff are handling the thread, and suggest only someone you can give a reason for.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
 - Look things up: the knowledge bases first, then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
@@ -368,6 +370,38 @@ export function opspileExtension(ctx) {
             more = args.query ? '\n[… more matches; narrow the query]' : `\n[… more: before=${last}]`;
           }
           return text(`${lines.join('\n')}${more}`);
+        },
+      }),
+      defineTool({
+        name: 'list_experts',
+        description: 'Adobe colleagues who are not in your thread yet and could help, best first: their id (for suggest_expert), name, and why (they know about the topic, how fast they usually answer a mention, whether they work this channel or customer, whether they are in the channel at all). Your own suggestions come first.',
+        parameters: Type.Object({}),
+        replay: 'safe',
+        async execute() {
+          const t = await ctx.target();
+          const found = await findExperts(env, t.key);
+          if (!found || !found.experts.length) {
+            return text('Nobody stands out for this thread.');
+          }
+          return text(found.experts.map((e) => `- ${e.id} | ${e.name} | ${e.suggested ? 'you suggested them: ' : ''}${e.reasons.join('; ')}`).join('\n'));
+        },
+      }),
+      defineTool({
+        name: 'suggest_expert',
+        description: `Suggest a colleague to pull into your thread: the inbox shows them, with your reason, at the top of the thread's expert finder, and a person decides whether to mention them. Nobody is told or mentioned. A thread keeps ${MAX_SUGGESTED} suggestions at most; they go away once the person is in the thread. With \`withdraw\`, takes your suggestion back.`,
+        parameters: Type.Object({
+          id: Type.String({ description: 'Their id from list_experts' }),
+          reason: Type.Optional(Type.String({ description: 'Why them, in one short line for the team (up to 200 characters)' })),
+          withdraw: Type.Optional(Type.Boolean({ description: 'Take the suggestion back instead' })),
+        }),
+        executionMode: 'sequential',
+        async execute(args) {
+          const t = await ctx.target();
+          const res = await suggestExpert(env, t.key, { ...args, by: by() });
+          if (res.error) {
+            return fail(res.error);
+          }
+          return text(args.withdraw ? 'withdrawn' : `suggested ${res.name}`);
         },
       }),
       defineTool({

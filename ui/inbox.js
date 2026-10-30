@@ -20,7 +20,7 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
-  cache: new Map(), staged: {}, profiles: new Map(), composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -1621,6 +1621,99 @@ async function loadAgent(key, { latest = null } = {}) {
   }
 }
 
+// ---------------------------------------------------------------- expert finder
+// Bottom right of the thread's header: the colleague most worth pulling in and why (GET
+// /api/experts, src/experts.js), with more in a dropdown. Picking one mentions them in the reply
+// box, as picking them after @ does; what is sent stays the person's to write.
+const expertLine = (e) => (e.suggested ? `Agent suggests ${e.name}` : `${e.name} ${e.reasons[0] || ''}`);
+
+function expertsHtml(key) {
+  const list = state.experts.get(key);
+  if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
+  const open = state.expertsOpen === key;
+  const top = list[0];
+  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues to pull in" title="More colleagues">▾</button>` : '';
+  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(expertLine(top))}</span></button>${more}${rows}</div>`;
+}
+
+/** Puts the list on screen without touching the rest of the header. */
+function placeExperts(key) {
+  if (state.open !== key) return;
+  $('experts')?.replaceWith(toNode(expertsHtml(key)));
+  wireExperts(key);
+}
+
+async function loadExperts(key) {
+  wireExperts(key);
+  if (state.experts.has(key) && state.expertsAt?.get(key) === threadRow(key)?.last_at) return;
+  let res;
+  try {
+    res = await get(`/api/experts?thread=${encodeURIComponent(key)}`);
+  } catch {
+    return; // the header works without it
+  }
+  const same = JSON.stringify(state.experts.get(key)) === JSON.stringify(res.experts);
+  state.experts.set(key, res.experts);
+  state.expertsAt.set(key, threadRow(key)?.last_at);
+  if (!same) placeExperts(key);
+}
+
+/** Writes @Name into the reply box, where the caret is, and remembers the account. */
+function pullExpert(key, e) {
+  const box = $('reply');
+  if (!box) {
+    toast('There is no reply box here to mention them in.');
+    return;
+  }
+  const at = document.activeElement === box ? box.selectionStart : box.value.length;
+  const before = box.value.slice(0, at);
+  const insert = `${before && !/\s$/.test(before) ? ' ' : ''}@${e.name} `;
+  if (!mentionsIn(key, box.value).some((m) => m.id === e.id)) {
+    box.value = before + insert + box.value.slice(at);
+    box.setSelectionRange(at + insert.length, at + insert.length);
+    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+    mention.picked.get(key).set(e.name, e);
+    mention.names.add(e.name);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  box.focus();
+}
+
+function closeExperts(key, focus = false) {
+  if (state.expertsOpen !== key) return;
+  state.expertsOpen = null;
+  placeExperts(key);
+  if (focus) document.querySelector('#experts .more')?.focus();
+}
+
+function wireExperts(key) {
+  const el = $('experts');
+  if (!el) return;
+  el.onclick = (e) => {
+    const pick = e.target.closest('[data-expert]');
+    if (e.target.closest('[data-experts-more]')) {
+      state.expertsOpen = state.expertsOpen === key ? null : key;
+      placeExperts(key);
+      document.querySelector('#experts [data-expert="1"]')?.focus();
+    } else if (pick) {
+      const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
+      state.expertsOpen = null;
+      placeExperts(key);
+      if (expert) pullExpert(key, expert);
+    }
+  };
+  el.onkeydown = (e) => {
+    if (state.expertsOpen !== key) return;
+    if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const rows = [...el.querySelectorAll('.expertlist button')];
+    const i = rows.indexOf(document.activeElement);
+    rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
+  };
+}
+
 /**
  * The line of the thread's shared draft (filled by renderDraftBar), under the reply box: the
  * box grows upwards as it shows the draft, so the line stays under the pointer.
@@ -1863,7 +1956,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
         <span>${esc(thread.channel_name || '')}</span>
         ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
         ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>
-      ${stack ? `<div class="sub stack">${stack}</div>` : ''}</div>`;
+      ${stack ? `<div class="sub stack">${stack}</div>` : ''}${expertsHtml(key)}</div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = composer(thread, resolveButton(thread, resolution));
   renderPane(pane, key, {
@@ -1873,6 +1966,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
+  loadExperts(key);
   const scroller = pane.querySelector('.scroller');
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
@@ -3404,6 +3498,7 @@ function listen(team, live) {
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
 
@@ -4105,6 +4200,7 @@ async function start() {
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
+  document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();

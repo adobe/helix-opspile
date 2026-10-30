@@ -843,6 +843,39 @@ channel of the team). Opening the suggestions lists a channel's members when tha
 old, and looks up the members opspile has never seen (`users.info`), so a colleague who is in
 the channel but never posted anywhere opspile reads can be mentioned too.
 
+**Expert finder.** The bottom right of a thread's header names the colleague most worth pulling
+in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in about 4 hours"
+(`GET /api/experts`, `src/experts.js`). Clicking it mentions them in the reply box, as picking
+them after `@` does, and ▾ lists up to eight, each with all of its reasons. Nothing is sent: the
+reply stays the person's to write.
+
+Four signals add up, each scaled to its best person: the threads someone worked in this channel
+and for this customer in the last 180 days (D1; the customer's counts half, as it mostly repeats
+the channel's), the staff messages closest to the thread by meaning (`CONTENT`, as for the
+mention suggestions) and by words (`SEARCH`, the title with BM25, any word). On 60 production
+threads where a customer asked and staff answered, looking only at what was there before the
+question, the first to answer was in the top 3 of 36 of them and in the top 5 of 38; the vectors
+alone had 22 and 27, channel history alone 33 and 33. Labels' topics changed nothing and are not
+used. The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
+in the thread itself does not count either), anyone who has not posted for 90 days, and anyone
+without an account on the thread's platform, who could not be mentioned.
+
+A response time is the median between a mention and the person's next post in that thread (a
+re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
+included. It is only said with at least three answered mentions, most of those made. "Not in this
+channel" is only said where the channel's members were listed: most channels' never were, and
+then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
+/api/experts` lists the members in the background when that is a week old, as the mention
+suggestions do. The answer has names and numbers only, never message text: the signals read
+channels of every team, which neither the viewer nor a thread agent may read. It is kept for ten
+minutes per version of the thread, per isolate.
+
+A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
+puts a colleague at the top of it, as "Agent suggests …", with its reason (`expert_suggestions`,
+migration 0044; user state, like drafts). Nobody is told or mentioned; a person decides. It takes
+only staff with an account on the thread's platform, three per thread at most, tells the open
+inboxes (a room event `experts`), and a suggestion goes away once the person is in the thread.
+
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
 the platform accepts it, exactly as the platform's event will, so it shows at once; the event
@@ -973,7 +1006,8 @@ labelled as written by people outside its control.
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
-| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `list_experts`, `suggest_expert` | colleagues not in the thread yet who could help, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |

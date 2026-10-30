@@ -19,6 +19,7 @@ import {
 } from './drafts.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
+import { experts } from './experts.js';
 import { cachedGraph } from './graph.js';
 import {
   attachable, connections, disconnect, editable, finishAuth, mentionable, post, reactable,
@@ -956,6 +957,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), working, {
       waitUntil, me,
     });
+  }
+  if (url.pathname === '/api/experts') {
+    return experts(env, url.searchParams.get('thread'), seeing, { me, waitUntil });
   }
   if (url.pathname === '/api/emoji') {
     return json({ emoji: await rankEmoji(env, url.searchParams.get('q')) });

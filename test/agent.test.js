@@ -147,6 +147,10 @@ const clef = {
   },
 };
 
+/** A new staff person, for tests that need a colleague outside the thread. */
+const staffId = (sqlite) => Number(sqlite.prepare(`INSERT INTO people (email, name, staff)
+  VALUES ('exa@staff.example', 'Exa', 1) RETURNING id`).get().id);
+
 describe('thread agents', () => {
   const realFetch = globalThis.fetch;
   beforeEach(() => {
@@ -694,6 +698,20 @@ describe('the earlier conversations of the channel', () => {
     const listed = await run('list_channel_threads', {});
     assert.match(listed.text, /^- slack:E1:C1:1792510000\.000100 \| Purges are slow again \| started [^|]+\| last [^|]+\| 1 message \| https:\/\/slack\.com\/archives\/C1\/p1792510000000100\n- slack:E1:C1:1792500000\.000100 \| What should we call the inbox\? \|[^\n]*\| 2 messages \|/);
     assert.equal((await run('list_channel_threads', { query: 'nothing like it' })).text, 'no thread of your channel matches');
+  });
+
+  it('lists colleagues to pull in, and suggests one for the team to see', async () => {
+    const { e, run } = await setup();
+    assert.equal((await run('list_experts', {})).text, 'Nobody stands out for this thread.');
+    const { sqlite } = e.DB;
+    const at = new Date().toISOString();
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
+      VALUES ('slack', 'E1', 'UEXP', 'person', 'Exa', ?, ?)`).run(staffId(sqlite), at);
+    const added = await run('suggest_expert', { id: 'UEXP', reason: 'Wrote the purge docs' });
+    assert.deepEqual(added, { text: 'suggested Exa', error: false });
+    assert.match((await run('list_experts', {})).text, /^- UEXP \| Exa \| you suggested them: Wrote the purge docs/);
+    assert.equal((await run('suggest_expert', { id: 'UEXP', withdraw: true })).text, 'withdrawn');
+    assert.equal((await run('suggest_expert', { id: 'U-nobody', reason: 'x' })).error, true);
   });
 
   it('reads an earlier thread of the channel by key, link or message id, and no other channel\'s', async () => {
