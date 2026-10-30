@@ -205,10 +205,10 @@ It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each
 request's `_meta`, header checks (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`), caching
 hints, and plain JSON responses (no SSE, no `subscriptions/listen`). Clients of the 2025
-revisions get `initialize` and the same tools, without a session. `post_as_user` and `post_as_bot` ask the user to
-confirm before posting (a multi round-trip `elicitation/create`) when the client supports
-elicitation; otherwise the client's own tool approval is the check. `get_thread` does not mark
-anything read.
+revisions get `initialize` and the same tools, without a session. `post_as_user` and
+`post_as_bot` post at once: the server never asks (no elicitation, which a client can claim and
+then decline on its own), so the client's tool approval is the check. `get_thread` does not
+mark anything read.
 
 Sign-in is OAuth 2.1, served by the Worker itself (`src/oauth.js`): discovery
 (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`), open
@@ -561,8 +561,8 @@ a click, as that person. A read-only "view as" refuses writes.
 | `open_thread` | Open a thread (marks it read) and return its latest messages |
 | `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |
 | `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces; `sources`: what it rests on, which only the team sees) |
-| `post_as_user` | Post a reply as the person, after a confirmation dialog |
-| `post_as_bot` | Post a reply as the opspile app, after a confirmation dialog, where the channel lets the app post |
+| `post_as_user` | Post a reply as the person |
+| `post_as_bot` | Post a reply as the opspile app, where the channel lets the app post |
 | `react_to_message` | Add or take off a reaction |
 | `resolve_thread` | ✅ on the first message, or take it off again |
 
