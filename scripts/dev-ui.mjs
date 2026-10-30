@@ -67,7 +67,9 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
-import { rankEmoji, resolveShortcodes } from '../src/shortcodes.js';
+import {
+  askClef, candidates, rankEmoji, resolveShortcodes,
+} from '../src/shortcodes.js';
 import { mentionCandidates, partnerOf, relationOf } from '../src/profiles.js';
 import { resolution } from '../src/resolve.js';
 import { statsFor } from '../src/klickhaus.js';
@@ -216,6 +218,10 @@ const DEV_CLEF = {
     const choice = code && e0.includes(code) ? 'e0' : 'none';
     return { answers: { emoji: { choice, probabilities: { [choice]: 0.9 } } } };
   },
+};
+// The workspace's own emoji: one image, as `emoji.list` gives it (GET /api/emoji/custom).
+const DEV_EMOJI = {
+  approved: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#2eb67d"/><path d="M9 17l5 5 10-12" fill="none" stroke="#fff" stroke-width="4"/></svg>')}`,
 };
 const personNamed = (name) => [...store.people.values()].find((p) => p.name === name);
 {
@@ -979,6 +985,16 @@ async function api(req, res, url) {
   if (url.pathname === '/api/emoji') {
     // As src/shortcodes.js ranks them, with a Clef that keeps the candidates' order.
     return json(res, { emoji: await rankEmoji({ AI: DEV_CLEF }, url.searchParams.get('q')) });
+  }
+  if (url.pathname === '/api/emoji/custom') {
+    return json(res, { images: DEV_EMOJI, aliases: { ok_check: 'white_check_mark' }, complete: true });
+  }
+  if (url.pathname === '/api/emoji/closest') {
+    const names = (url.searchParams.get('names') || '').split(',');
+    const found = await Promise.all(names.map((n) => askClef({ AI: DEV_CLEF }, n, candidates(n))));
+    return json(res, {
+      emoji: Object.fromEntries(names.map((n, i) => [n, found[i]]).filter(([, e]) => e)),
+    });
   }
   if (url.pathname === '/api/mentionable') {
     // As D1 would answer (src/post.js): the accounts of the platform, ranked as the Worker

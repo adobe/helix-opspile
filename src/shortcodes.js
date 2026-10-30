@@ -28,6 +28,9 @@ import { CLEF } from './label.js';
  *   custom emoji are known: until then the name could be one of them.
  *
  * Slack gets `:name:`, Teams and Discord the character. Code and addresses are left alone.
+ *
+ * The inbox shows what `emoji.list` says too (`workspaceEmoji`): a custom emoji as its image,
+ * and for a name without one the emoji Clef picks, marked as close only (`closestEmoji`).
  */
 
 // Clef is asked about at most this many names per reply, each once per isolate.
@@ -236,12 +239,15 @@ const answers = new Map();
 const rankings = new Map();
 // Custom emoji by workspace (`<source>:<tenant>`): `{ names, at }`.
 const customs = new Map();
+// Slack's `emoji.list`: `{ list, at }`, `list` null while Slack does not say.
+let slackList = null;
 
 /** Forgets what Clef said and which custom emoji there are (for tests). */
 export function forget() {
   answers.clear();
   rankings.clear();
   customs.clear();
+  slackList = null;
 }
 
 function remember(code, name, cache = answers) {
@@ -357,14 +363,47 @@ export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS) {
 }
 
 /**
+ * What `emoji.list` answers (name → image address, or `alias:<name>`): `names`, all of them;
+ * `images`, the address of each, aliases followed; `aliases`, those of a standard emoji, as
+ * its Slack name.
+ */
+function readList(emoji) {
+  const images = {};
+  const aliases = {};
+  const has = (n) => Object.hasOwn(emoji, n);
+  for (const name of Object.keys(emoji)) {
+    let to = name;
+    const seen = new Set();
+    while (has(to) && String(emoji[to]).startsWith('alias:') && !seen.has(to)) {
+      seen.add(to);
+      to = String(emoji[to]).slice('alias:'.length);
+    }
+    if (!has(to)) {
+      const standard = lookup(to);
+      if (standard) {
+        aliases[name] = standard;
+      }
+    } else if (String(emoji[to]).startsWith('https://')) {
+      images[name] = emoji[to];
+    }
+  }
+  return { names: Object.keys(emoji), images, aliases };
+}
+
+/**
  * The custom emoji of the Slack workspace of the bot token (`emoji.list`, bot scope
- * `emoji:read`; their names, aliases too), or null when Slack does not say. Every Slack
- * thread opspile has is in that workspace (or org).
+ * `emoji:read`; `readList`), or null when Slack does not say; remembered, a failure for less
+ * long. Every Slack thread opspile has is in that workspace (or org), but a Slack Connect
+ * channel's other side has emoji of its own that this does not list.
  */
 async function slackEmoji(env) {
   if (!env.SLACK_BOT_TOKEN) {
     return null;
   }
+  if (slackList && Date.now() - slackList.at < (slackList.list ? CUSTOM_TTL_MS : LIST_RETRY_MS)) {
+    return slackList.list;
+  }
+  let list = null;
   try {
     const data = await inTime(async () => {
       const res = await fetch('https://slack.com/api/emoji.list', {
@@ -375,11 +414,41 @@ async function slackEmoji(env) {
     if (!data || !data.ok || !data.emoji || typeof data.emoji !== 'object') {
       throw new Error(`slack emoji.list: ${data ? data.error : 'timeout'}`);
     }
-    return Object.keys(data.emoji);
+    list = readList(data.emoji);
   } catch (e) {
     console.log(JSON.stringify({ route: 'shortcodes', error: String(e && e.message) }));
-    return null;
   }
+  slackList = { list, at: Date.now() };
+  return list;
+}
+
+/**
+ * For the inbox, Slack's custom emoji: `images` (name → address), `aliases` (name → the Slack
+ * name of the standard emoji it stands for), and `complete`, whether Slack said.
+ */
+export async function workspaceEmoji(env) {
+  const list = await slackEmoji(env);
+  return {
+    images: list ? list.images : {}, aliases: list ? list.aliases : {}, complete: Boolean(list),
+  };
+}
+
+/**
+ * For the inbox, emoji for `names` that have neither a character nor an image: name → the
+ * Slack name Clef picks, without those it does not. At most MAX_ASK names; only once Slack's
+ * list is known, since a name may be on it.
+ */
+export async function closestEmoji(env, names) {
+  const list = await slackEmoji(env);
+  if (!env.AI || !list) {
+    return {};
+  }
+  const own = new Set(list.names);
+  const ask = [...new Set(names)]
+    .filter((c) => /^[a-z0-9_+-]{2,60}$/.test(c) && /[a-z]/.test(c) && !own.has(c) && !lookup(c))
+    .slice(0, MAX_ASK);
+  const found = await Promise.all(ask.map((code) => askClef(env, code, candidates(code))));
+  return Object.fromEntries(ask.map((code, i) => [code, found[i]]).filter(([, name]) => name));
 }
 
 /**
@@ -408,7 +477,7 @@ async function customEmoji(env, source, tenant) {
       }
     })(),
   ]);
-  for (const name of listed || []) {
+  for (const name of listed ? listed.names : []) {
     names.add(name);
   }
   const own = { names, all: Boolean(listed), at: Date.now() };

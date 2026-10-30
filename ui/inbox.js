@@ -270,7 +270,8 @@ function wireCards() {
 // Emoji names to characters: Slack's standard names, filled in from src/emoji.js where the page
 // is served (src/page.js), then Teams reaction types and names workspaces give their own
 // emoji. Other platforms' names and spellings of them (`facepalm`, `thumbs-up`) are found too
-// (src/emojinames.js). Anything else is shown by name.
+// (src/emojinames.js). A workspace's own emoji are images (see `ownEmoji`); anything else is
+// shown by name.
 const SLACK_EMOJI = /* SLACK_EMOJI */ { names: {}, skin: [] };
 const EMOJI = Object.assign(Object.create(null), {
   like: '👍', heart: '❤️', laugh: '😆', surprised: '😮', sad: '😢', angry: '😠', facepalm: '🤦', rofl: '🤣',
@@ -290,9 +291,100 @@ function emojiByName(name) {
   if (rest[0] === '\uFE0F') rest.shift();
   return [first, String.fromCodePoint(0x1f3fb + Number(tone) - 2), ...rest].join('');
 }
-const emoji = (name) => emojiByName(name) || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
+// A name, without the colons a Discord custom reaction is stored with.
+const emojiBare = (name) => String(name).replace(/^:|:$/g, '');
+const emoji = (name) => {
+  const bare = emojiBare(name);
+  return emojiByName(bare) || (/^\p{Extended_Pictographic}/u.test(bare) ? bare : `:${bare}:`);
+};
 // `:name:` in text, with an optional `::skin-tone-N`.
 const EMOJI_CODE = /:([a-z0-9_+-]+(?:::skin-tone-[2-6])?):/g;
+// Slack's custom emoji (GET /api/emoji/custom, src/shortcodes.js): `images` by name, `aliases`
+// of a standard emoji, `complete` once Slack said. `closest`: names with neither, the emoji
+// Clef picks (GET /api/emoji/closest). `names` and `alike`: the composer's tables, with them.
+// `version` changes with any of this, so what shows them is rendered again.
+const ownEmoji = {
+  images: new Map(),
+  aliases: new Map(),
+  complete: false,
+  closest: new Map(),
+  names: SLACK_EMOJI.names,
+  alike: SLACK_EMOJI.aliases || {},
+  version: 0,
+};
+// Names asked about in a page's life, and how many a request takes (MAX_ASK, src/shortcodes.js).
+const CLOSEST_MAX = 40;
+const CLOSEST_BATCH = 3;
+const closestAsked = new Set();
+const closestWaiting = [];
+let closestBusy = false;
+
+/** Shows the workspace's emoji where they are named: the thread list and the open thread. */
+function showOwnEmoji() {
+  ownEmoji.version += 1;
+  render();
+  if (state.open) openThread(state.open, { live: true, cached: true });
+}
+
+async function askClosest() {
+  if (closestBusy) return;
+  closestBusy = true;
+  while (closestWaiting.length) {
+    const names = closestWaiting.splice(0, CLOSEST_BATCH);
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const found = Object.entries((await get(`/api/emoji/closest?names=${encodeURIComponent(names.join(','))}`)).emoji || {});
+      for (const [name, near] of found) ownEmoji.closest.set(name, near);
+      if (found.length) showOwnEmoji();
+    } catch { /* they stay names */ }
+  }
+  closestBusy = false;
+}
+
+/** A name with neither a character nor an image: Clef may know a close one. */
+function wantClosest(name) {
+  if (!ownEmoji.complete || name.length < 2 || !/[a-z]/.test(name)) return;
+  if (closestAsked.has(name) || closestAsked.size >= CLOSEST_MAX) return;
+  closestAsked.add(name);
+  closestWaiting.push(name);
+  setTimeout(askClosest, 300);
+}
+
+async function loadOwnEmoji() {
+  try {
+    const { images = {}, aliases = {}, complete } = await get('/api/emoji/custom');
+    Object.assign(ownEmoji, {
+      images: new Map(Object.entries(images)),
+      aliases: new Map(Object.entries(aliases)),
+      complete: Boolean(complete),
+      names: { ...SLACK_EMOJI.names, ...images },
+      alike: { ...SLACK_EMOJI.aliases, ...aliases },
+    });
+    showOwnEmoji();
+  } catch { /* they stay names */ }
+}
+
+/**
+ * An emoji name as HTML: its image, its character, or the emoji Clef finds closest, marked as
+ * such; undefined for a name there is none of, which only asks Clef if it is `alone`, not part
+ * of a word or address (`Markdown.emojiAlone`). `slack: false` for a reaction of another
+ * platform: Teams stores `like`, which a Slack workspace may have an emoji of its own for.
+ */
+function emojiHtml(name, { slack = true, alone = true } = {}) {
+  const bare = emojiBare(name);
+  const [base] = bare.split('::skin-tone-');
+  const src = slack && ownEmoji.images.get(base);
+  if (src) return `<img class="emoji" src="${esc(src)}" alt=":${esc(base)}:" title=":${esc(base)}:" loading="lazy">`;
+  const c = emojiByName((slack && ownEmoji.aliases.get(base)) || bare);
+  if (c) return esc(c);
+  if (/^\p{Extended_Pictographic}/u.test(bare)) return esc(bare);
+  const near = ownEmoji.closest.get(base);
+  if (near) return `<span class="emoji-near" title=":${esc(base)}: has no image here. Closest emoji, picked by Clef">${esc(emojiByName(near))}</span>`;
+  if (alone) wantClosest(base);
+  return undefined;
+}
+/** A reaction, or a suggestion, as HTML: as `emojiHtml`, or its name. */
+const emojiChip = (name, source = 'slack') => emojiHtml(name, { slack: source === 'slack' }) || esc(emoji(name));
 // Reactions by Slack name (the server turns them into Teams emoji). The quick ones show on
 // hovering a message, like in Slack; some of them steer the inbox (see SIGNAL_HINT).
 const QUICK = ['white_check_mark', 'eyes', 'pray', '+1', 'grinning', 'rocket', 'ring_buoy'];
@@ -384,14 +476,14 @@ const rendered = new Map();
 const RENDERED_MAX = 4000;
 // `thread`: the message's own, for its images.
 function md(src, thread = '') {
-  const k = `${mentionSet}\u0000${channelSet}\u0000${thread}\u0000${src}`;
+  const k = `${ownEmoji.version}\u0000${mentionSet}\u0000${channelSet}\u0000${thread}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
     // A message's video and audio files play in the page, through the Worker (src/fileview.js).
     const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: emojiByName, proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
+      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -833,8 +925,8 @@ function filterCards() {
 }
 
 // ---------------------------------------------------------------- thread list
-// `:name:` to the character, for titles (the body renderer does the same).
-const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n) => emojiByName(n) || m);
+// `:name:` to the emoji, for titles (the body renderer does the same).
+const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n, at, s) => emojiHtml(n, { alone: Markdown.emojiAlone(s, at, m.length) }) || m);
 /** Text without what platforms rewrite: emoji (characters or :codes:), markup, spacing. */
 // eslint-disable-next-line no-misleading-character-class -- the joiner on its own, too
 const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu, '')
@@ -851,9 +943,9 @@ function moods(t) {
   if (URGENCY_EMOJI[u]) out.push(`<span class="em" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>`);
   const k = kindOf(t);
   if (k) out.push(`<span class="em" title="${esc(k)}">${KIND_EMOJI[k] || '💬'}</span>`);
-  const rx = [...(t.reactions || [])].filter((r) => !/^:.*:$/.test(emoji(r.emoji)))
-    .sort((a, b) => b.count - a.count).slice(0, 5);
-  for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${esc(emoji(r.emoji))}</span>`);
+  const rx = (t.reactions || []).map((r) => ({ ...r, html: emojiHtml(r.emoji, { slack: t.source === 'slack' }) }))
+    .filter((r) => r.html).sort((a, b) => b.count - a.count).slice(0, 5);
+  for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
@@ -1494,7 +1586,7 @@ function message(m, prev, fresh, followed = false) {
   const can = canReact(m);
   const rx = (m.reactions || []).map((r) => {
     const tip = esc(`${r.names.join(', ') || r.emoji}${can ? (r.mine ? ' · click to take yours off' : ' · click to add yours') : ''}`);
-    const chip = `${esc(emoji(r.emoji))} ${r.count}`;
+    const chip = `${emojiChip(r.emoji, m.source)} ${r.count}`;
     return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
       : `<span title="${tip}">${chip}</span>`;
   }).join('');
@@ -3144,7 +3236,8 @@ function suggest(key) {
 
 // Typing : and two more characters of a name suggests emoji, by Slack's names (which replies
 // to every platform take, src/shortcodes.js): first those whose name (or another platform's
-// name for them) has what was typed (src/emojinames.js `matchEmoji`), at once; then, until
+// name for them) has what was typed (src/emojinames.js `matchEmoji`), at once, in a Slack
+// thread the workspace's own emoji too; then, until
 // the list is full, those Clef thinks were meant (GET /api/emoji: its candidates by Clef's
 // probability, no threshold), so `:celebr` finds 🥳 too. Picking one writes `:name: `; the
 // reply goes out as the platform knows it.
@@ -3171,7 +3264,8 @@ function clefRanking(q) {
 }
 
 function suggestEmoji(key, hit) {
-  const found = Markdown.matchEmoji(SLACK_EMOJI.names, SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
+  const slack = /^slack:/.test(key);
+  const found = Markdown.matchEmoji(slack ? ownEmoji.names : SLACK_EMOJI.names, slack ? ownEmoji.alike : SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
     .map((name) => ({ emoji: name }));
   if (!found.length) closeMentions();
   const seq = ++mention.seq;
@@ -3211,7 +3305,7 @@ function renderMentions(key) {
 }
 
 /** An emoji suggestion: the emoji, its name, and whether Clef suggested it. */
-const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${esc(emoji(p.emoji))}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint" title="Suggested by Clef">Clef</span>' : ''}`;
+const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${emojiChip(p.emoji)}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint" title="Suggested by Clef">Clef</span>' : ''}`;
 
 function closeMentions() {
   mention.list = [];
@@ -4422,6 +4516,7 @@ async function start() {
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
+  loadOwnEmoji();
   if (initial.review && state.me.admin) showReview(true);
   if (initial.open) openThread(initial.open);
   connect();
@@ -5212,6 +5307,10 @@ function wireFiles() {
   document.addEventListener('play', (e) => {
     if (!e.target.matches?.('.file-player')) return;
     for (const m of document.querySelectorAll('.file-player')) if (m !== e.target && !m.paused) m.pause();
+  }, true);
+  // A custom emoji Slack no longer has (or has replaced): its name, as before it loaded.
+  document.addEventListener('error', (e) => {
+    if (e.target.matches?.('img.emoji')) e.target.replaceWith(e.target.alt);
   }, true);
   document.addEventListener('error', (e) => {
     const m = e.target;

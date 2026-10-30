@@ -691,6 +691,11 @@
     border-radius: 50%; background: var(--red); color: #fff; font-weight: 700; font-size: 11px; vertical-align: 1px; }
   .msg .unsent button { border: 0; background: none; padding: 0; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
   .msg .unsent button:hover { text-decoration: underline; }
+  /* A workspace's own emoji, in a line of text; one Clef picked for a name without an image. */
+  img.emoji { display: inline-block; width: auto; height: 1.3em; vertical-align: -.3em; }
+  .emoji-near { border-bottom: 1px dotted currentColor; cursor: help; }
+  .moods .em img.emoji { height: 14px; vertical-align: 0; }
+  .mentions .glyph img.emoji { height: 20px; vertical-align: -4px; }
   .rx { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 6px 0; }
   .rx span, .rx button { font-size: 13px; padding: 1px 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
   .rx button.mine { background: var(--sel); border-color: var(--accent); }

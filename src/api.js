@@ -26,7 +26,7 @@ import {
   startAuth,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
-import { rankEmoji } from './shortcodes.js';
+import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
 import { isSignInDomain, isStaffDomain } from './lookup.js';
 import { appRule, readPost } from './attach.js';
@@ -968,6 +968,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/emoji') {
     return json({ emoji: await rankEmoji(env, url.searchParams.get('q')) });
+  }
+  if (url.pathname === '/api/emoji/custom') {
+    const own = await workspaceEmoji(env);
+    const res = json(own);
+    if (own.complete) {
+      res.headers.set('cache-control', 'private, max-age=600');
+    }
+    return res;
+  }
+  if (url.pathname === '/api/emoji/closest') {
+    const names = (url.searchParams.get('names') || '').split(',');
+    return json({ emoji: await closestEmoji(env, names) });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
     return json(await inbox(env, me, null, {

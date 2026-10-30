@@ -18,7 +18,8 @@ import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from '../src/emoji.js';
 import { emojiLookup, matchEmoji, squash } from '../src/emojinames.js';
 import { CLEF } from '../src/label.js';
 import {
-  candidates, COMMON, emojiChar, forget, MAX_ASK, rankEmoji, resolveShortcodes,
+  candidates, closestEmoji, COMMON, emojiChar, forget, MAX_ASK, rankEmoji, resolveShortcodes,
+  workspaceEmoji,
 } from '../src/shortcodes.js';
 import { d1 } from './d1.js';
 
@@ -289,6 +290,67 @@ describe('shortcodes in a reply', () => {
     assert.equal(AI.calls.length, 0);
     // Elsewhere Clef still picks one.
     assert.equal((await resolveShortcodes({ AI }, ':foo:', { source: 'teams' })).text, '🦊');
+  });
+});
+
+describe('the workspace\'s emoji in the inbox', () => {
+  beforeEach(() => forget());
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+  const env = { SLACK_BOT_TOKEN: 'xoxb-made-up' };
+
+  it('gives each custom emoji its image, following aliases', async () => {
+    const calls = slackEmoji(() => ({
+      ok: true,
+      emoji: {
+        ...LIST.emoji,
+        bar: 'alias:foo',
+        ok_check: 'alias:white_check_mark',
+        gone: 'alias:nothing_like_it',
+        loop: 'alias:loop',
+        odd: 'http://emoji.example/odd.png',
+      },
+    }));
+    assert.deepEqual(await workspaceEmoji(env), {
+      images: {
+        'party-parrot': 'https://emoji.example/p.png',
+        foo: 'https://emoji.example/p.png',
+        bar: 'https://emoji.example/p.png',
+      },
+      aliases: { ok_check: 'white_check_mark' },
+      complete: true,
+    });
+    await workspaceEmoji(env);
+    assert.equal(calls.length, 1, 'remembered');
+  });
+
+  it('says so when Slack does not say', async () => {
+    assert.deepEqual(await workspaceEmoji({}), { images: {}, aliases: {}, complete: false });
+    const calls = slackEmoji(() => ({ ok: false, error: 'missing_scope' }));
+    assert.equal((await workspaceEmoji(env)).complete, false);
+    await workspaceEmoji(env);
+    assert.equal(calls.length, 1, 'a failure is remembered for a while');
+  });
+
+  it('asks Clef only about names with neither a character nor an image', async () => {
+    slackEmoji(() => LIST);
+    const AI = ai((code, criteria) => choose(code === 'completed' ? 'white_check_mark' : 'nope', 0.9)(criteria));
+    const found = await closestEmoji({ ...env, AI }, ['completed', 'foo', 'eyes', '1234', 'a', 'Bad Name', 'completed', 'wtf-is-this']);
+    assert.deepEqual(found, { completed: 'white_check_mark' });
+    assert.deepEqual(AI.calls.map((c) => c.state.match(/:([^:]+):/)[1]), ['completed', 'wtf-is-this']);
+  });
+
+  it('asks about a few names at a time, and not before Slack\'s list is known', async () => {
+    slackEmoji(() => LIST);
+    const AI = ai((code, criteria) => choose('tada', 0.9)(criteria));
+    await closestEmoji({ ...env, AI }, ['aaa', 'bbb', 'ccc', 'ddd', 'eee']);
+    assert.equal(AI.calls.length, MAX_ASK);
+    forget();
+    const none = ai((code, criteria) => choose('tada', 0.9)(criteria));
+    slackEmoji(() => ({ ok: false, error: 'missing_scope' }));
+    assert.deepEqual(await closestEmoji({ ...env, AI: none }, ['aaa']), {});
+    assert.equal(none.calls.length, 0);
   });
 });
 

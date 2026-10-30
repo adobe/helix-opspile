@@ -52,6 +52,96 @@ describe('inbox page', () => {
     assert.equal(ago(null), '');
   });
 
+  describe('a workspace\'s own emoji', () => {
+    const load = (answers = {}) => {
+      const asked = [];
+      const shown = [];
+      const timers = [];
+      const parts = piece('// Slack\'s custom emoji (GET', '// Reactions by Slack name', 'ownEmoji, emojiHtml, emojiChip, loadOwnEmoji, askClosest', {
+        SLACK_EMOJI: { names: { eyes: '👀' }, aliases: { glasses: 'eyes' } },
+        esc: (x) => String(x).replace(/"/g, '&quot;'),
+        emojiBare: (n) => String(n).replace(/^:|:$/g, ''),
+        emojiByName: (n) => ({ eyes: '👀', white_check_mark: '✅' }[n]),
+        emoji: (n) => `:${n}:`,
+        state: { open: 'slack:E1:C1:1' },
+        render: () => shown.push('list'),
+        openThread: (key, how) => shown.push([key, how]),
+        setTimeout: (f) => timers.push(f),
+        get: async (path) => {
+          asked.push(path);
+          return answers[path.split('?')[0]] || {};
+        },
+      });
+      return {
+        ...parts, asked, shown, timers,
+      };
+    };
+    const CUSTOM = {
+      images: { approved: 'https://emoji.example/a.png' },
+      aliases: { ok_check: 'white_check_mark' },
+      complete: true,
+    };
+
+    it('shows an image, an alias\'s emoji, a character, or nothing', async () => {
+      const { emojiHtml, emojiChip, loadOwnEmoji } = load({ '/api/emoji/custom': CUSTOM });
+      await loadOwnEmoji();
+      assert.match(emojiHtml('approved'), /^<img class="emoji" src="https:\/\/emoji\.example\/a\.png" alt=":approved:"/);
+      assert.equal(emojiHtml('ok_check'), '✅');
+      assert.equal(emojiHtml('eyes'), '👀');
+      assert.equal(emojiHtml('✅'), '✅');
+      assert.equal(emojiHtml('nothing'), undefined);
+      // A Discord custom reaction keeps its colons; a tone falls away on an image.
+      assert.match(emojiHtml(':approved:'), /^<img /);
+      assert.match(emojiHtml('approved::skin-tone-3'), /^<img /);
+      // Teams stores reaction types: never a Slack workspace's emoji.
+      assert.equal(emojiHtml('approved', { slack: false }), undefined);
+      assert.equal(emojiChip('approved', 'teams'), ':approved:');
+      assert.match(emojiChip('approved', 'slack'), /^<img /);
+    });
+
+    it('renders what names them again, and fills the composer\'s tables', async () => {
+      const { ownEmoji, loadOwnEmoji, shown } = load({ '/api/emoji/custom': CUSTOM });
+      await loadOwnEmoji();
+      assert.equal(ownEmoji.version, 1);
+      assert.deepEqual(shown, ['list', ['slack:E1:C1:1', { live: true, cached: true }]]);
+      assert.equal(ownEmoji.names.approved, CUSTOM.images.approved);
+      assert.equal(ownEmoji.names.eyes, '👀');
+      assert.equal(ownEmoji.alike.ok_check, 'white_check_mark');
+      assert.equal(ownEmoji.alike.glasses, 'eyes');
+    });
+
+    it('asks Clef only for names on their own, once, after Slack\'s list', async () => {
+      const {
+        emojiHtml, loadOwnEmoji, askClosest, asked, timers,
+      } = load({
+        '/api/emoji/custom': CUSTOM,
+        '/api/emoji/closest': { emoji: { completed: 'white_check_mark' } },
+      });
+      emojiHtml('completed');
+      assert.equal(timers.length, 0, 'it may be on the list');
+      await loadOwnEmoji();
+      emojiHtml('aem', { alone: false });
+      emojiHtml('1234');
+      emojiHtml('completed');
+      emojiHtml('completed');
+      assert.equal(timers.length, 1);
+      await askClosest();
+      assert.deepEqual(asked, ['/api/emoji/custom', '/api/emoji/closest?names=completed']);
+      const near = emojiHtml('completed');
+      assert.match(near, /^<span class="emoji-near" title=":completed: has no image here/);
+      assert.match(near, />✅<\/span>$/);
+    });
+
+    it('stays by name when the inbox cannot get them', async () => {
+      const failing = load();
+      assert.equal(failing.emojiHtml('approved'), undefined);
+      await failing.loadOwnEmoji();
+      assert.equal(failing.ownEmoji.complete, false);
+      failing.emojiHtml('completed');
+      assert.equal(failing.timers.length, 0);
+    });
+  });
+
   it('renders each message text once per set of names', () => {
     const calls = [];
     const Markdown = {
@@ -62,7 +152,7 @@ describe('inbox page', () => {
       },
     };
     const { md, setMentionNames } = piece('let mentionNames = null;', '// ----', 'md, setMentionNames', {
-      Markdown, emojiByName: () => undefined, location: {},
+      Markdown, emojiByName: () => undefined, location: {}, ownEmoji: { version: 0 },
     });
     setMentionNames(['Ada']);
     assert.equal(md('hi @Ada'), '<p>hi @Ada [Ada]</p>');
