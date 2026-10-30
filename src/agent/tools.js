@@ -105,13 +105,15 @@ Then the body in structured Markdown, with footnotes [^t1] tying claims to sourc
 
 /**
  * The extension for one agent. `ctx` is the agent:
- * `{ env, target(): Promise<Target>, verdicts(messages): Promise<Map> }`, where a target is
- * `{ key, team, org, channelName, source, permalink }` (`key` is null for an agent that only
- * files seeded knowledge).
+ * `{ env, target(): Promise<Target>, verdicts(messages): Promise<Map>, pinned(conversation) }`,
+ * where a target is `{ key, team, org, channelName, source, permalink }` (`key` is null for an
+ * agent that only files seeded knowledge, `org` too when that is for no customer), and
+ * `pinned` says which knowledge base a conversation alone may write, if any (src/agent/seed.js).
  */
 export function opspileExtension(ctx) {
   const { env } = ctx;
   const by = () => `opspile-agent/${env.AGENT_MODEL || 'unknown'}`;
+  const pinnedTo = async (conversation) => (ctx.pinned ? ctx.pinned(conversation) : null);
 
   async function repo(id) {
     const t = await ctx.target();
@@ -130,10 +132,10 @@ export function opspileExtension(ctx) {
     section('preamble', () => PREAMBLE, { tag: false }),
     section('assignment', async () => {
       const t = await ctx.target();
-      const lines = [
-        `Ops team: ${t.team || 'unknown'}`,
-        `${ORG_TYPE[t.orgType] || 'Customer'}: ${t.orgName ? `${t.orgName} (${t.org})` : (t.org || 'unknown')}`,
-      ];
+      const lines = [`Ops team: ${t.team || 'unknown'}`];
+      if (t.key || t.org) {
+        lines.push(`${ORG_TYPE[t.orgType] || 'Customer'}: ${t.orgName ? `${t.orgName} (${t.org})` : (t.org || 'unknown')}`);
+      }
       if (t.key) {
         lines.push(
           `Thread: ${t.key}`,
@@ -158,9 +160,11 @@ export function opspileExtension(ctx) {
       }
       return parts.join('\n\n');
     }),
-    section('repositories', async () => {
+    section('repositories', async ({ conversationId }) => {
       const all = await accessibleRepos(env, await ctx.target());
-      return all.map((r) => `- ${r.id}: ${r.what}${r.writable ? ' (you can write it)' : ' (read only)'}`).join('\n');
+      const pin = await pinnedTo(conversationId);
+      const writable = (r) => r.writable && (!pin || r.id === `kb-${pin}`);
+      return all.map((r) => `- ${r.id}: ${r.what}${writable(r) ? ' (you can write it)' : ' (read only)'}`).join('\n');
     }),
   ];
 
@@ -256,7 +260,11 @@ export function opspileExtension(ctx) {
         }), { minItems: 1, maxItems: 20 }),
       }),
       executionMode: 'sequential',
-      async execute(args) {
+      async execute(args, api) {
+        const pin = await pinnedTo(api.conversationId);
+        if (pin && args.kb !== pin) {
+          return fail(`This note goes to kb-${pin} only: kb-${args.kb} cannot be written here. Nothing was written.`);
+        }
         const r = await repo(args.kb === 'team' ? 'kb-team' : 'kb-org');
         const t = await ctx.target();
         let from = 'knowledge shared by staff';

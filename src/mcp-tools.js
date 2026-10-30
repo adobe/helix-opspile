@@ -577,7 +577,7 @@ async function resolveTool(env, me, args) {
 
 async function seedTool(env, me, args) {
   const body = {
-    thread: args.thread, team: args.team, org: args.org, text: args.text,
+    thread: args.thread, team: args.team, org: args.org, kb: args.kb, text: args.text,
   };
   const res = await fromResponse(await seedAgent(env, me, body, mayWork(env, me)));
   return res.error ? res : { data: { ok: true, accepted: Boolean(res.data.accepted) } };
@@ -966,13 +966,18 @@ export const TOOLS = [
   {
     name: 'seed_agent',
     title: 'Teach an agent',
-    description: 'Shares knowledge with a thread agent, which files it in the knowledge bases of the customer and the ops team. Give a `thread` (in a channel that has an agent), or a `team` and a customer `org` slug to fill their knowledge bases directly. The agent treats it as trusted staff knowledge.',
+    description: 'Shares knowledge with an agent, which files what is worth keeping in one knowledge base: the customer\'s or the ops team\'s. Give a `thread` (in a channel that has an agent), or a `team` and a customer `org` slug to reach a knowledge-base agent directly. Give `kb` to choose: the agent can then write only that knowledge base, on either form, and `team` with `kb: "team"` needs no `org`. Without `kb` the agent decides. The agent treats it as trusted staff knowledge.',
     inputSchema: {
       type: 'object',
       properties: {
         thread: THREAD_ARG,
         team: { type: 'string', description: 'Ops team slug from whoami (instead of thread)' },
-        org: { type: 'string', description: 'Customer slug (instead of thread)' },
+        org: { type: 'string', description: 'Customer slug (instead of thread; optional with kb "team")' },
+        kb: {
+          type: 'string',
+          enum: ['team', 'org'],
+          description: 'The only knowledge base the agent may write: team for what holds for every customer, such as runbooks; org for this customer. Left out, the agent decides.',
+        },
         text: { type: 'string', description: 'The facts, in Markdown (up to 8000 characters)' },
       },
       required: ['text'],
