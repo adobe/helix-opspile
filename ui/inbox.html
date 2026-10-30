@@ -285,8 +285,6 @@
     border-left: 0; border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
     transition: transform .18s ease-out; }
   #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
-  #filters .card:hover { transform: translateX(calc(var(--r) * 2 / 3)); }
-  #filters .card.active:hover { transform: translateX(var(--r)); }
   @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
   /* Room for the filter cards' overhang, so they never cover a status dot. */
   .t { padding-left: 18px; }
@@ -327,9 +325,6 @@
   @media (hover: none) {
     :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
   }
-  /* Folded, the card under the pointer does not nudge out on its own: they all slide out. */
-  main.rail #filters .card:hover { transform: none; }
-  main.rail #filters .card.active, main.rail #filters .card.active:hover { transform: translateX(calc(var(--r) / 3)); }
   @media (prefers-reduced-motion: reduce) {
     main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
   }
