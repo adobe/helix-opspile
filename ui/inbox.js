@@ -1722,6 +1722,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   // A draft shown in the reply box on hover gives the box back first: what it held is what counts.
+  if (switching) hideSource();
   endDraftPreview();
   const typed = $('reply')?.value;
   const focused = document.activeElement === $('reply');
@@ -2024,7 +2025,8 @@ const tookDraft = (c, d) => Boolean(c && d && c.base === d.updated_at && c.text.
 
 function growReply(box) {
   box.style.height = 'auto';
-  box.style.height = `${Math.min(180, box.scrollHeight)}px`;
+  // The stylesheet's limit: a draft being looked at (.previewing, .checking) may take more room.
+  box.style.height = `${Math.min(parseFloat(getComputedStyle(box).maxHeight) || 180, box.scrollHeight)}px`;
 }
 
 // The draft shown in the reply box while the pointer rests on its line (`over`) or the
@@ -2048,7 +2050,8 @@ function startDraftPreview(key) {
   box.readOnly = true;
   box.classList.add('previewing');
   growReply(box);
-  box.scrollTop = box.scrollHeight;
+  // The draft alone reads from its start; after your text, the box shows where it begins.
+  box.scrollTop = shown === d.body ? 0 : box.scrollHeight;
 }
 
 /** Gives the reply box back as it was before the draft was shown in it. */
@@ -2067,8 +2070,135 @@ function endDraftPreview() {
 }
 
 function syncDraftPreview(key) {
-  if (draftPreview.over || draftPreview.focus) startDraftPreview(key);
+  if (draftPreview.over || draftPreview.focus || sourcePop.url) startDraftPreview(key);
   else endDraftPreview();
+}
+
+// The sources of a draft: what an agent says the draft rests on, as links on the draft's line.
+// Only the inbox has them; a reply never does. Resting the pointer on one, or moving the
+// keyboard focus to it, shows the page beside the draft, to check one against the other: in a
+// frame where the site allows that, else as Markdown (GET /api/draft/source says which). It
+// stays while the pointer is on it. Clicking a source opens it in a new tab, also on touch.
+// The popover hangs off the page, not the line, so a live update leaves its frame alone.
+const SOURCE_DELAY = 180;
+const SOURCE_GRACE = 300;
+const SOURCE_SIDE_BY_SIDE = 860; // the pane's width from which a source fits beside the draft
+const sourcePop = {
+  el: null, key: null, url: null, timer: 0,
+};
+const sourceViews = new Map(); // `thread\0url` -> the promise of how to show it
+
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+const sourceLink = (u, label, cls = '', attrs = '') => `<a${cls ? ` class="${cls}"` : ''} href="${esc(u)}" target="_blank" rel="noopener noreferrer"${attrs}>${label}</a>`;
+
+/** The line of a draft's sources, or nothing. */
+function sourcesLine(d) {
+  if (!d.sources?.length) return '';
+  const links = d.sources.map((s, i) => sourceLink(s.url, esc(s.title || hostOf(s.url)), 'src', ` data-source="${i}" title="${esc(s.url)}"`));
+  return `<span class="srcs"><span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+}
+
+function sourceView(key, url) {
+  const k = `${key}\u0000${url}`;
+  if (!sourceViews.has(k)) {
+    sourceViews.set(k, get(`/api/draft/source?thread=${encodeURIComponent(key)}&url=${encodeURIComponent(url)}`)
+      .catch(() => ({ view: 'none', url, reason: 'The page could not be looked at.' })));
+  }
+  return sourceViews.get(k);
+}
+
+function sourceBody(v) {
+  if (v.view === 'frame') {
+    // No top navigation, no forms, no cookies of the viewer's: an agent picked this page, and
+    // what agents read is written by strangers. The header above it says whose page it is.
+    return `<iframe src="${esc(v.url)}" title="The source" sandbox="allow-scripts allow-same-origin allow-popups" credentialless referrerpolicy="no-referrer"></iframe>`;
+  }
+  if (v.view === 'markdown') return `<div class="bubble">${md(v.text)}</div>`;
+  return `<p class="none">${esc(v.reason || 'This page cannot be shown here.')} ${sourceLink(v.url, 'Open it in a new tab')}.</p>`;
+}
+
+/** The popover, under the page's body; made when first used. */
+function sourcePopEl() {
+  if (sourcePop.el) return sourcePop.el;
+  const el = document.createElement('section');
+  el.className = 'srcpop';
+  el.hidden = true;
+  el.setAttribute('aria-label', 'Source of the draft');
+  el.addEventListener('pointerenter', () => clearTimeout(sourcePop.timer));
+  el.addEventListener('pointerleave', leaveSource);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideSource();
+  });
+  addEventListener('resize', hideSource);
+  document.body.append(el);
+  sourcePop.el = el;
+  return el;
+}
+
+/** Over the pane: its right half above the draft's line, in a narrow one above the reply box. */
+function placeSource(el, under, wide) {
+  const pane = $('pane').getBoundingClientRect();
+  el.style.left = `${wide ? pane.left + pane.width / 2 : pane.left + 8}px`;
+  el.style.right = `${innerWidth - pane.right + 12}px`;
+  el.style.top = `${pane.top + 8}px`;
+  el.style.bottom = `${innerHeight - under.getBoundingClientRect().top + 6}px`;
+}
+
+async function showSource(key, i) {
+  clearTimeout(sourcePop.timer);
+  const s = state.cache.get(key)?.data?.draft?.sources?.[i];
+  const line = $('draftbar');
+  if (!s || !line || state.open !== key || sourcePop.url === s.url) return;
+  const el = sourcePopEl();
+  Object.assign(sourcePop, { key, url: s.url });
+  el.innerHTML = `<div class="head"><b>${esc(s.title || hostOf(s.url))}</b><span class="host">${esc(hostOf(s.url))}</span>
+    <span class="only">Only your team sees this</span>${sourceLink(s.url, 'Open ↗')}</div>
+    ${s.quote ? `<blockquote class="bubble">${md(s.quote)}</blockquote>` : ''}<div class="view"><p class="none">Loading…</p></div>`;
+  el.hidden = false;
+  const composerEl = line.closest('.composer');
+  const wide = $('pane').getBoundingClientRect().width >= SOURCE_SIDE_BY_SIDE;
+  composerEl.classList.toggle('checking', wide);
+  const box = $('reply');
+  if (box) growReply(box);
+  syncDraftPreview(key);
+  placeSource(el, wide ? line : composerEl, wide);
+  const v = await sourceView(key, s.url);
+  if (sourcePop.url === s.url) el.querySelector('.view').innerHTML = sourceBody(v);
+}
+
+function hideSource() {
+  clearTimeout(sourcePop.timer);
+  if (!sourcePop.url) return;
+  const { key } = sourcePop;
+  Object.assign(sourcePop, { key: null, url: null });
+  sourcePop.el.hidden = true;
+  sourcePop.el.innerHTML = '';
+  const box = $('reply');
+  $('draftbar')?.closest('.composer')?.classList.remove('checking');
+  if (box) growReply(box);
+  syncDraftPreview(key);
+}
+
+function leaveSource() {
+  clearTimeout(sourcePop.timer);
+  if (sourcePop.url) sourcePop.timer = setTimeout(hideSource, SOURCE_GRACE);
+}
+
+function wireSources(el) {
+  el.addEventListener('pointerover', (e) => {
+    if (e.pointerType === 'touch') return;
+    const a = e.target.closest('[data-source]');
+    if (!a) { leaveSource(); return; }
+    clearTimeout(sourcePop.timer);
+    sourcePop.timer = setTimeout(() => showSource(el.__key, Number(a.dataset.source)), SOURCE_DELAY);
+  });
+  el.addEventListener('pointerleave', leaveSource);
+  el.addEventListener('focusin', (e) => {
+    if (e.target.matches('[data-source]:focus-visible')) showSource(el.__key, Number(e.target.dataset.source));
+  });
+  el.addEventListener('focusout', (e) => {
+    if (!sourcePop.el?.contains(e.relatedTarget)) leaveSource();
+  });
 }
 
 /** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
@@ -2102,7 +2232,7 @@ function renderDraftBar(key, force = false) {
     html = `<span class="pen">✎ Draft</span>
       <${tag} class="pv"${editable ? ` data-draft="edit" title="${own ? 'Hover to see it after your text; click to add it to your reply' : 'Hover to see it in the reply box; click to edit it'}"` : ''}><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span><span class="tx">${esc(d.body)}</span></${tag}>
       ${long ? `<button class="more" data-draft="more" aria-expanded="${open}" title="${open ? 'Show how it starts' : 'Show all of it'}" aria-label="${open ? 'Show less of the draft' : 'Show all of the draft'}">${open ? '▴' : '▾'}</button>` : ''}
-      ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}`;
+      ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}${sourcesLine(d)}`;
   }
   if (force || el.__html !== html) {
     // A new line under a resting pointer (the reply box was rebuilt) is hovered too.
@@ -2115,6 +2245,7 @@ function renderDraftBar(key, force = false) {
     // The draft changed while shown in the box: show the new one.
     endDraftPreview();
   }
+  if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   if (d) syncDraftPreview(key); else endDraftPreview();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
@@ -2123,6 +2254,7 @@ function renderDraftBar(key, force = false) {
 /** What the draft line answers: clicks, the pointer resting on it, focus moving through it. */
 function wireDraftBar(el) {
   el.__wired = true;
+  wireSources(el);
   const sync = () => syncDraftPreview(el.__key);
   el.addEventListener('click', (e) => {
     const key = el.__key;
@@ -2161,12 +2293,21 @@ function wireDraftBar(el) {
     sync();
   });
   el.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !draftPreview.key) return;
+    if (e.key !== 'Escape' || !(draftPreview.key || sourcePop.url)) return;
     e.preventDefault();
     Object.assign(draftPreview, { over: false, focus: false });
+    hideSource();
     endDraftPreview();
     $('reply')?.focus();
   });
+  // The pointer has to stay on the line for the box to show the draft, so the wheel reads it from
+  // there (an opened line scrolls its own text).
+  el.addEventListener('wheel', (e) => {
+    const box = $('reply');
+    if (!draftPreview.key || !box || (el.classList.contains('open') && e.target.closest('.pv'))) return;
+    e.preventDefault();
+    box.scrollTop += e.deltaY;
+  }, { passive: false });
 }
 
 /** Takes the draft into the reply box, to edit: after what you typed, if anything. */
@@ -2216,17 +2357,18 @@ function setCachedDraft(key, d) {
 /**
  * Saves `text` as the thread's draft; `base` is the version it replaces (by default, the one the
  * reply box took in). Saved from the reply box (`fromBox`), the box holds the draft it saved.
+ * `sources` replaces the draft's; left out, they stay.
  */
-async function saveDraft(key, text, base, { fromBox = false } = {}) {
+async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
   const res = await request('PUT', '/api/draft', {
-    thread: key, text, mentions: mentionsIn(key, text), base: base === undefined ? c.base : base,
+    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base,
   });
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
     setCachedDraft(key, res.data.draft);
-    toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at, { fromBox }) });
+    toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at, { fromBox, sources }) });
     return { error: res.data.error, conflict: res.data.draft };
   }
   if (!res.ok) {
@@ -2279,7 +2421,7 @@ async function discardDraft(key) {
       // A reply box that held it (and was not written in since) gets it back too.
       const refill = held && !state.composers.get(key)?.text.trim();
       if (refill) state.composers.delete(key);
-      saveDraft(key, d.body, null, { fromBox: refill });
+      saveDraft(key, d.body, null, { fromBox: refill, sources: d.sources });
     },
   });
 }
@@ -4475,7 +4617,7 @@ const WEBMCP_TOOLS = [
         thread, title: clip(t.title || '(no text)', 120), customer: t.org, channel: t.channel_name, platform: platform(t).toLowerCase(),
         resolution: data.resolution?.state || resolvedOf(teamThread(thread)) || 'open', earlier_messages: Math.max(0, data.messages.length - n),
         can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, can_post_as_bot: Boolean(data.can_post_as_bot), messages: msgs,
-        ...(data.draft ? { shared_draft: { by: draftBy(data.draft), saved: data.draft.updated_at, text: data.draft.body } } : {}),
+        ...(data.draft ? { shared_draft: { by: draftBy(data.draft), saved: data.draft.updated_at, text: data.draft.body, sources: data.draft.sources } } : {}),
       });
     },
   },
@@ -4499,17 +4641,32 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'post_draft',
-    description: 'Saves a reply as the shared draft of a thread, without posting anything: everyone in the team sees it in the inbox and can change, send or discard it. A thread has at most one; to replace the one open_thread shows, pass its `saved` as `base`.',
+    description: 'Saves a reply as the shared draft of a thread, without posting anything: everyone in the team sees it in the inbox and can change, send or discard it. A thread has at most one; to replace the one open_thread shows, pass its `saved` as `base`. `sources` replaces the draft\'s sources: what it rests on, for the person who reviews it; only the team sees them, they are never sent.',
     inputSchema: {
       type: 'object',
       properties: {
         thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
         text: { type: 'string', description: 'The whole reply, in Markdown (up to 8000 characters)' },
         base: { type: 'string', description: 'The `saved` of the shared draft this replaces, from open_thread' },
+        sources: {
+          type: 'array',
+          description: 'What the draft rests on, for the person reviewing it before it is sent',
+          items: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'The http(s) address of the page' },
+              title: { type: 'string', description: 'What it is, in a few words' },
+              quote: { type: 'string', description: 'The passage that backs the draft, word for word, in Markdown' },
+            },
+            required: ['url'],
+          },
+        },
       },
       required: ['text'],
     },
-    execute: async ({ thread, text, base } = {}) => {
+    execute: async ({
+      thread, text, base, sources,
+    } = {}) => {
       if (state.data?.me?.readonly) return fail(READONLY);
       const body = String(text || '').trim();
       if (!body) return fail('The draft is empty. Provide the reply text.');
@@ -4518,7 +4675,7 @@ const WEBMCP_TOOLS = [
       if (!teamThread(key)) return fail(UNKNOWN_THREAD);
       const data = await showThread(key);
       if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
-      const res = await saveDraft(key, body, base || null);
+      const res = await saveDraft(key, body, base || null, { sources: sources || [] });
       if (res.conflict) {
         const d = res.conflict;
         return fail(`${base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (saved ${d.updated_at} by ${draftBy(d)}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text: ${clip(d.body, 1200)}`);

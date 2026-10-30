@@ -470,8 +470,18 @@ describe('mcp tools', () => {
     const blind = await callTool(e, 'post_draft', { thread: SLACK, text: 'Other text' });
     assert.equal(blind.body.result.isError, true);
     assert.match(blind.body.result.content[0].text, new RegExp(`already has a shared draft.*base "${version}".*We are on it`, 's'));
-    const replaced = await callTool(e, 'post_draft', { thread: SLACK, text: 'Other text', base: version });
+    const sources = [{ url: 'https://docs.example.org/purge', title: 'Purging' }];
+    const replaced = await callTool(e, 'post_draft', {
+      thread: SLACK, text: 'Other text', base: version, sources,
+    });
     assert.equal(structured(replaced).draft.text, 'Other text');
+    assert.deepEqual(structured(replaced).draft.sources, sources);
+    assert.deepEqual(structured(await callTool(e, 'get_thread', { thread: SLACK })).draft.sources, sources);
+    const bad = await callTool(e, 'post_draft', {
+      thread: SLACK, text: 'x', base: structured(replaced).draft.version, sources: [{ url: 'ftp://docs.example.org/' }],
+    });
+    assert.equal(bad.body.result.isError, true);
+    assert.match(bad.body.result.content[0].text, /http\(s\) address/);
   });
 
   it('post_as_user with `draft` uses the shared draft up', async () => {

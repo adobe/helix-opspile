@@ -54,6 +54,7 @@ still answer.
 | `POST /api/react` | Add (or with `remove`, take off) a reaction on one message **as the signed-in person**: `{ thread, id, emoji }`, where `thread` is the message's platform thread and `emoji` a picker name (`thumbsup`, `white_check_mark`, …) or a reaction as the thread shows it. Slack `reactions.add`/`remove`, Teams `setReaction`/`unsetReaction`; recorded in D1 at once, then again by the platform's own event. `409` with `reconnect: 'slack'` for Slack tokens from before `reactions:write`. Only staff, only in their teams. |
 | `POST /api/resolve` | `{ thread, undo? }`: ✅ on the root message of the entry's latest platform thread, as the signed-in person (`white_check_mark` on Slack, `✅` on Teams), or with `undo` take their ✅ off every root of the entry. A staff ✅ on the root marks the thread resolved (see ARCHITECTURE, "Resolved"). |
 | `GET`, `PUT`, `DELETE /api/draft` | The thread's shared draft (at most one per inbox entry), seen by everyone in the teams that follow the channel (the team it is filed under, and those it is shared with). `PUT { thread, text, mentions?, base }` saves it as the signed-in person, `DELETE { thread, base? }` discards it (a draft the thread's agent saved: the agent hears who discarded it); `base` is the `updated_at` of the draft the text was written from, and a draft that changed since answers `409` with the current one. `POST /api/post` or `/api/post/app` with `draft: <base>` uses the draft up. Inbox entries carry `draft` (who, when, a preview), the thread its full `draft`. Only in their teams (admins can see any thread's draft). |
+| `GET /api/draft/source?thread=&url=` | How the inbox can show one of the sources of the thread's draft: `{ view: 'frame' }`, `{ view: 'markdown', text }` or `{ view: 'none', reason }` (src/sources.js) |
 | `GET /api/mentionable?thread=&q=` | Who can be mentioned in a reply: accounts in D1 for the thread's platform and workspace where `q` starts any word of the name, login, display name or mail, in any case; customers in the thread first, then the Adobe people whose messages are closest to the thread (`CONTENT` vectors, `expert`), then the rest of the thread, the channel's members, the best match, staff. An empty `q` lists the channel's members in the background when that is a week old. |
 | `GET /api/emoji?q=` | The composer's emoji suggestions for `:q` being typed: the candidates of `src/shortcodes.js` (the emoji most alike by name and CLDR keywords, then common ones), as Slack names, most likely first by Clef's probabilities, all of them. The inbox shows them after the names that have `q` in them, until its list is full. Empty when Clef fails or takes over 4 seconds; rankings are remembered per isolate. |
 | `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). `start?files=1` also asks for file uploads (Slack `files:write`; Microsoft `Files.ReadWrite.All`, for files other than inline images on Teams), which the inbox offers when someone first attaches a file. The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
@@ -184,7 +185,8 @@ tech stack of a team (`list_extraction_rules`, `test_extraction_rule`, `save_ext
 `delete_extraction_rule`, `save_tech`, `delete_tech`; the changes for the admin team and the
 team's managers), so an agent can be asked to update the rules. A thread
 is answered three ways, as in the inbox: `post_draft` saves its shared draft (`PUT /api/draft`;
-`base` names the version it replaces), which the team sees and sends; `post_as_user` posts as
+`base` names the version it replaces), which the team sees and sends, with the `sources` it
+rests on, which only the team sees; `post_as_user` posts as
 the person (`POST /api/post`); `post_as_bot` posts as the opspile app (`POST /api/post/app`),
 where the channel lets the app post. Both post tools take the shared draft's version as
 `draft`, which uses it up; `get_thread` shows the draft and `can_post_as_bot`.
@@ -552,7 +554,7 @@ a click, as that person. A read-only "view as" refuses writes.
 | `search_threads` | Search on screen, as the search box does; the results, best match first, with the message that matched |
 | `open_thread` | Open a thread (marks it read) and return its latest messages |
 | `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |
-| `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces) |
+| `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces; `sources`: what it rests on, which only the team sees) |
 | `post_as_user` | Post a reply as the person, after a confirmation dialog |
 | `post_as_bot` | Post a reply as the opspile app, after a confirmation dialog, where the channel lets the app post |
 | `react_to_message` | Add or take off a reaction |
