@@ -31,6 +31,7 @@ import {
 import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
+import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
   agentStatus, pokeAgent, seedAgent, tellDiscarded,
@@ -42,6 +43,7 @@ import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeBucket, fakeRepo, quiet } from './fakes.js';
+import { gitServer, hasGit } from './git-server.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -717,6 +719,352 @@ describe('the earlier conversations of the channel', () => {
     assert.match(own.text, /CDN purge takes forever/);
     const refused = await run('read_thread', { thread: 'slack:E1:C2:1792500000.000100' });
     assert.equal(refused.error, true);
+  });
+});
+
+describe('seeds with a chosen knowledge base', () => {
+  const me = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+  const inTeam = (t) => [].concat(t).includes('helix');
+  const made = (e) => e.DB.rows('SELECT repo FROM knowledge_bases ORDER BY repo').map((r) => r.repo);
+
+  /** An env with a thread of the team helix and the customer acme, and agents that record. */
+  function seeding(extra = {}) {
+    const seeds = [];
+    const e = env({
+      ARTIFACTS: kbArtifacts(),
+      AGENTS: {
+        idFromName: (name) => ({ name }),
+        get: (id) => ({
+          __unsafe_ensureInitialized: async () => null,
+          async seed(note) {
+            seeds.push([id.name, note]);
+            return { ok: true, accepted: true };
+          },
+        }),
+      },
+      ...extra,
+    });
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+        team, kind, path, root_at, last_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'C1', '1792584000.000100', 'acme', 'helix', 'channel',
+        'channels/acme/', '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z', 1,
+        '2026-10-20T00:00:00Z')`).run(THREAD);
+    return { e, seeds };
+  }
+
+  it('need no customer for the team knowledge base, and leave the customers\' alone', async () => {
+    const { e, seeds } = seeding();
+    const res = await seedAgent(e, me, { team: 'helix', kb: 'team', text: 'Purge by tag.' }, inTeam);
+    assert.equal(res.status, 202);
+    assert.deepEqual(made(e), ['kb-team-helix']);
+    assert.deepEqual(seeds, [['kb:helix:', { by: 'Ada Staff', text: 'Purge by tag.', kb: 'team' }]]);
+  });
+
+  it('are honoured on the team and customer form, creating only the chosen one', async () => {
+    const { e, seeds } = seeding();
+    const body = { team: 'helix', org: 'acme', text: 'x' };
+    assert.equal((await seedAgent(e, me, { ...body, kb: 'team' }, inTeam)).status, 202);
+    assert.deepEqual(made(e), ['kb-team-helix']);
+    assert.equal((await seedAgent(e, me, { ...body, org: 'newco', kb: 'org' }, inTeam)).status, 202);
+    assert.deepEqual(made(e), ['kb-org-newco', 'kb-team-helix']);
+    assert.deepEqual(seeds, [
+      ['kb:helix:acme', { by: 'Ada Staff', text: 'x', kb: 'team' }],
+      ['kb:helix:newco', { by: 'Ada Staff', text: 'x', kb: 'org' }],
+    ]);
+  });
+
+  it('are honoured on the thread form, for that thread\'s own team and customer only', async () => {
+    const { e, seeds } = seeding();
+    const body = { thread: THREAD, text: 'x' };
+    assert.equal((await seedAgent(e, me, { ...body, kb: 'org' }, inTeam)).status, 202);
+    assert.deepEqual(made(e), ['kb-org-acme']);
+    assert.equal((await seedAgent(e, me, {
+      ...body, kb: 'team', team: 'helix', org: 'acme',
+    }, inTeam)).status, 202);
+    assert.deepEqual(seeds, [
+      [THREAD, { by: 'Ada Staff', text: 'x', kb: 'org' }],
+      [THREAD, { by: 'Ada Staff', text: 'x', kb: 'team' }],
+    ]);
+    // Naming another team or customer gets nothing written anywhere.
+    for (const other of [{ team: 'edge' }, { org: 'other' }]) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await seedAgent(e, me, { ...body, kb: 'org', ...other }, () => true);
+      assert.equal(res.status, 400);
+    }
+    assert.equal(seeds.length, 2);
+    assert.deepEqual(made(e), ['kb-org-acme', 'kb-team-helix']);
+    // A thread that has no customer has no knowledge base to choose.
+    e.DB.sqlite.exec("UPDATE threads SET org = '_unassigned'");
+    assert.equal((await seedAgent(e, me, { ...body, kb: 'org' }, inTeam)).status, 400);
+    assert.equal((await seedAgent(e, me, { ...body, kb: 'team' }, inTeam)).status, 202);
+  });
+
+  it('change nothing without a kb', async () => {
+    const { e, seeds } = seeding();
+    const none = { team: 'helix', org: 'acme', text: 'x' };
+    assert.equal((await seedAgent(e, me, { ...none, kb: null }, inTeam)).status, 202);
+    assert.deepEqual(made(e), ['kb-org-acme', 'kb-team-helix']);
+    // An explicit null is no kb: the note has none either.
+    assert.deepEqual(seeds, [['kb:helix:acme', { by: 'Ada Staff', text: 'x' }]]);
+    // On the thread form, a stray team or customer is ignored, as it always was.
+    const res = await seedAgent(e, me, { thread: THREAD, org: 'other', text: 'x' }, inTeam);
+    assert.equal(res.status, 202);
+    assert.deepEqual(seeds[1], [THREAD, { by: 'Ada Staff', text: 'x' }]);
+  });
+
+  it('answer 400 to what cannot be filed, and create nothing', async () => {
+    const { e, seeds } = seeding();
+    const errorOf = async (body) => {
+      const res = await seedAgent(e, me, { text: 'x', ...body }, inTeam);
+      assert.equal(res.status, 400, JSON.stringify(body));
+      return (await res.json()).error;
+    };
+    assert.match(await errorOf({ team: 'helix', org: 'acme', kb: 'both' }), /kb is "team" or "org"/);
+    assert.match(await errorOf({ thread: THREAD, kb: 'kb-team' }), /kb is "team" or "org"/);
+    assert.match(await errorOf({ team: 'helix', kb: '' }), /kb is "team" or "org"/);
+    assert.match(await errorOf({ team: 'helix', kb: ['team'] }), /kb is "team" or "org"/);
+    assert.match(await errorOf({ team: 'helix', kb: 'org' }), /needs a customer slug/);
+    assert.match(await errorOf({ team: 'helix' }), /customer slug/);
+    // No team, a slug with no knowledge base.
+    await errorOf({ kb: 'team' });
+    await errorOf({ org: 'acme', kb: 'org' });
+    await errorOf({ team: 'helix', org: '_unassigned', kb: 'team' });
+    assert.deepEqual(made(e), []);
+    assert.deepEqual(seeds, []);
+  });
+
+  it('keep the permission checks and the limit', async () => {
+    const { e, seeds } = seeding();
+    const seedBy = async (who, body, may = inTeam) => (await seedAgent(e, who, body, may)).status;
+    const team = { team: 'helix', kb: 'team', text: 'x' };
+    assert.equal(await seedBy({ ...me, readonly: true }, team), 403);
+    assert.equal(await seedBy(me, { ...team, team: 'edge' }), 400);
+    assert.equal(await seedBy(me, { thread: THREAD, kb: 'team', text: 'x' }, () => false), 404);
+    assert.equal(await seedBy(me, { ...team, text: 'x'.repeat(8001) }), 400);
+    assert.equal(await seedBy(me, { ...team, text: 'x'.repeat(8000) }), 202);
+    assert.equal(seeds.length, 1);
+    assert.equal(await seedBy(me, { thread: THREAD, kb: 'team', text: 'x' }), 202);
+    const off = seeding({ AGENT_CHANNELS: '' });
+    assert.equal((await seedAgent(off.e, me, { thread: THREAD, kb: 'team', text: 'x' }, inTeam)).status, 409);
+    assert.deepEqual(made(off.e), []);
+  });
+
+  it('tell the agent where to file, and leave the note without one as it was', () => {
+    assert.equal(seedNote('Ada', 'Hi'), 'Ada (Adobe staff) shares this knowledge. It is trusted. File what is worth keeping in the right knowledge base (kb-org for this customer, kb-team for everyone), extending existing concepts where they fit, with Ada as the source (author: human:Ada). Do not change the draft because of it unless it changes what the customer should be told.\n\n<staff-note>\nHi\n</staff-note>');
+    assert.match(seedNote('Ada', 'Hi', 'team'), /keeping in kb-team \(for everyone\), the only knowledge base you can write here, extending/);
+    assert.match(seedNote('Ada', 'Hi', 'org'), /keeping in kb-org \(for this customer\), the only knowledge base you can write here, extending/);
+  });
+
+  it('count as new per target, in one pinned session each, and without a kb as before', async () => {
+    const submitted = [];
+    const stored = new Map();
+    let sessions = 1;
+    const agent = {
+      env: {
+        AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'm', BEDROCK_API_KEY: 'k',
+      },
+      ctx: {
+        storage: {
+          get: async (key) => stored.get(key),
+          put: async (key, value) => stored.set(key, value),
+        },
+      },
+      syncTools: async () => null,
+      syncMcp: async () => null,
+      harness: {
+        sessions: {
+          async create() {
+            sessions += 1;
+            return { id: String(sessions) };
+          },
+        },
+        async submit(input, options) {
+          submitted.push(options);
+          return { accepted: true };
+        },
+      },
+    };
+    const note = { by: 'Ada', text: 'Same text' };
+    assert.deepEqual(await seed(agent, note), { ok: true, accepted: true });
+    await seed(agent, { ...note, kb: 'team' });
+    await seed(agent, { ...note, kb: 'org' });
+    await seed(agent, { ...note, kb: 'team' });
+    // The hash of who and what, unchanged: a repeat after this deploy is still a repeat.
+    const hash = (await crypto.subtle.digest('SHA-256', new TextEncoder().encode('Ada\nSame text')));
+    const before = [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+    assert.deepEqual(submitted, [
+      { operationId: `seed:${before}`, whenBusy: 'followUp' },
+      { operationId: `seed:team:${before}`, whenBusy: 'followUp', session: '2' },
+      { operationId: `seed:org:${before}`, whenBusy: 'followUp', session: '3' },
+      { operationId: `seed:team:${before}`, whenBusy: 'followUp', session: '2' },
+    ]);
+    assert.equal(await seedPin(agent, '1'), null);
+    assert.equal(await seedPin(agent, '2'), 'team');
+    assert.equal(await seedPin(agent, '3'), 'org');
+
+    // Two at once: whichever session the second seed lands in, it is pinned too.
+    stored.clear();
+    await Promise.all([seed(agent, { ...note, kb: 'team' }), seed(agent, { ...note, text: 'Other', kb: 'team' })]);
+    const used = submitted.slice(-2).map((o) => o.session);
+    assert.deepEqual(await Promise.all(used.map((s) => seedPin(agent, s))), ['team', 'team']);
+
+    assert.deepEqual(await seed({ ...agent, env: {} }, note), { error: 'missing AI_GATEWAY_ACCOUNT, AGENT_GATEWAY, AGENT_MODEL, BEDROCK_API_KEY' });
+  });
+
+  const concept = (title) => `---\ntype: Playbook\ntitle: ${title}\ndescription: A made-up playbook.\n---\nDo it.\n`;
+  const write = (kb, path) => ({ kb, message: 'x', changes: [{ path, content: concept(path) }] });
+
+  /**
+   * A real Harness with the agent's tools and code mode; `agent` is what seed() takes, its
+   * sessions real conversations. `run(respond…)` plays out what was submitted last.
+   */
+  async function pinnedHarness(e, target) {
+    const faux = fauxProvider({ provider: 'faux', models: [{ id: 'faux-model' }] });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const context = BACKGROUND_CONTEXT;
+    const model = { provider: 'faux', modelId: 'faux-model' };
+    const stored = new Map();
+    const conversations = new Map();
+    let harness;
+    let last;
+    const agent = {
+      env: {
+        ...e, AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', BEDROCK_API_KEY: 'k',
+      },
+      ctx: {
+        storage: {
+          get: async (key) => stored.get(key),
+          put: async (key, value) => stored.set(key, value),
+        },
+      },
+      syncTools: async () => null,
+      syncMcp: async () => null,
+      harness: {
+        sessions: {
+          async create() {
+            const c = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { model } }, context);
+            conversations.set(String(c.id), c);
+            return { id: String(c.id) };
+          },
+        },
+        async submit(input, { session, operationId, whenBusy }) {
+          const root = await harness.root(context);
+          const c = session ? conversations.get(session) : root;
+          last = await c.submit({
+            type: 'input', content: input, requestId: operationId, whenBusy,
+          }, context);
+          return { accepted: true };
+        },
+      },
+    };
+    const registry = createRegistry();
+    const sandbox = new CodemodeSandbox();
+    registry.install(opspileExtension({
+      env: e,
+      hasThread: Boolean(target.key),
+      target: async () => target,
+      verdicts: async () => new Map(),
+      pinned: (session) => seedPin(agent, session),
+    }));
+    registry.install(codemodeExtension({ fingerprint: '', at: 0, servers: [] }, sandbox));
+    harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+    await harness.root(context, { agent: { model } });
+    const results = [];
+    const system = [];
+    const call = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
+    return {
+      agent,
+      results,
+      system,
+      call,
+      async run(...responses) {
+        const seen = (next) => (ctx) => {
+          // A write changes the knowledge section, so a system message can follow the result.
+          const end = ctx.messages.findLast((m) => m.role === 'toolResult' || m.role === 'user');
+          if (end.role === 'toolResult') {
+            results.push(end.content.map((c) => c.text).join(''));
+          }
+          system.push(ctx.messages.filter((m) => m.role === 'system')
+            .map((m) => Object.values(m.sections || {}).join('\n\n') || m.content).join('\n'));
+          return next;
+        };
+        faux.setResponses([...responses, fauxAssistantMessage('done')].map(seen));
+        assert.equal((await last.wait(context)).status, 'done');
+      },
+      async close() {
+        await harness.close(context);
+        await sandbox.close();
+      },
+    };
+  }
+
+  it('cannot write the other knowledge base, by tool or by script', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', threads: [],
+    });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      const script = `try {
+        await tools.kb_write(${JSON.stringify(write('org', 'playbooks/script.md'))});
+        text('written');
+      } catch (e) {
+        text(String(e.message || e));
+      }`;
+      await seed(h.agent, { by: 'Ada', text: 'Purge by tag.', kb: 'team' });
+      await h.run(
+        h.call('kb_write', write('org', 'playbooks/purge.md')),
+        h.call('codemode', { code: script }),
+        h.call('kb_write', write('team', 'playbooks/purge.md')),
+      );
+      const [refused, scripted, written] = h.results;
+      assert.match(refused, /kb-team only: kb-org cannot be written here\. Nothing was written\./);
+      assert.match(scripted, /kb-team only: kb-org cannot be written here/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-team: playbooks\/purge\.md/);
+      assert.ok(srv.files('kb-team-helix').includes('playbooks/purge.md'));
+      assert.equal(srv.head('kb-org-acme'), null);
+      // The agent is told so before it tries.
+      assert.match(h.system[0], /- kb-team: [^\n]*\(you can write it\)\n- kb-org: [^\n]*\(read only\)/);
+
+      // The pin is the session's: the agent's own conversation goes on as before.
+      await seed(h.agent, { by: 'Ada', text: 'Their CDN is Fastly.' });
+      await h.run(h.call('kb_write', write('org', 'sites/www.md')));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: sites\/www\.md/);
+      assert.match(h.system.at(-1), /- kb-org: [^\n]*\(you can write it\)/);
+
+      // Pinned to the customer, the other way round; the next seed finds its own session.
+      await seed(h.agent, { by: 'Ada', text: 'Go-live is in March.', kb: 'org' });
+      await h.run(h.call('kb_write', write('team', 'sites/nope.md')));
+      assert.match(h.results.at(-1), /kb-org only: kb-team cannot be written here/);
+      assert.ok(!srv.files('kb-team-helix').includes('sites/nope.md'));
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('with no customer have no kb-org to reach at all', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: null, threads: [],
+    });
+    try {
+      srv.create('kb-team-helix');
+      await seed(h.agent, { by: 'Ada', text: 'Purge by tag.', kb: 'team' });
+      await h.run(
+        h.call('git_ls', { repo: 'kb-org' }),
+        h.call('kb_write', write('team', 'playbooks/purge.md')),
+      );
+      assert.match(h.results[0], /unknown repository kb-org; use one of: kb-team/);
+      assert.match(h.results[1], /^committed /);
+      assert.doesNotMatch(h.system[0], /Customer:/);
+      assert.doesNotMatch(h.system[0], /kb-org: knowledge base/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
   });
 });
 

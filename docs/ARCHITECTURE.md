@@ -1075,6 +1075,19 @@ with a thread hands the note to that thread's agent, and with a team and a custo
 knowledge-base agent (`kb:<team>:<org>`) that has the same tools minus the thread and the
 draft. Staff notes are trusted and not checked by Clef.
 
+Left at that, the agent picks the knowledge base. `kb` (`team` or `org`, on either form) chooses
+it, and code holds the agent to it: the note goes into a session of the same Durable Object
+pinned to that knowledge base (`seed-pin:<session>` in its storage, src/agent/seed.js), and
+`kb_write` checks the calling session, so a code-mode script is refused like the model. A session
+and not a flag, because the agent's conversation goes on meanwhile: a turn already running may
+write anywhere, and a new customer message steers into whatever is running. The session starts
+without the transcript, reads the thread with `read_thread` when it needs to, and its turns show
+in neither the thread's latest turn nor the trace; the thread's agent meets the note in the
+knowledge base. A thread's `kb` is only ever that thread's own team or customer. `kb` leaves
+agent names alone: `{ team, kb: "team" }` needs no customer and reaches `kb:<team>:` (the org
+left empty), which has no kb-org at all, and only the chosen knowledge base is created when it
+is missing.
+
 **Discarded drafts.** When a person discards a draft the agent saved (`DELETE /api/draft`, the
 inbox's **Discard**), the agent is told who did and what the draft said, as feedback: it looks
 for why it was not wanted, does not save it again, and files a lesson in kb-team when there is

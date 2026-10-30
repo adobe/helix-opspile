@@ -13,7 +13,7 @@
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createRegistry, Harness } from '@earendil-works/pi-durable';
 import { Agent } from 'agents';
-import { PiHarness } from 'agents/harness/pi';
+import { PiHarness, ROOT_SESSION } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
 import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
@@ -28,6 +28,7 @@ import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
+import { seed, seedPin } from './seed.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
@@ -37,11 +38,13 @@ import { latestTurn } from './turn.js';
  * in a Durable Object named by that key, running Pi (pi-durable) through the Agents SDK's
  * PiHarness: its transcript, tool calls and retries live in this object's SQLite and survive
  * evictions and deploys. An agent named `kb:<team>:<org>` has no thread; it only files
- * knowledge that staff share with it.
+ * knowledge that staff share with it. `kb:<team>:` is the same with no customer: it has no
+ * kb-org at all.
  *
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
- * without any (`idle`, a schedule), about knowledge staff share (`seed`), and about a draft of
- * its that a person discarded (`discarded`).
+ * without any (`idle`, a schedule), about knowledge staff share (`seed`, in a session of its own
+ * when staff chose the knowledge base: src/agent/seed.js), and about a draft of its that a person
+ * discarded (`discarded`).
  *
  * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
  * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
@@ -69,11 +72,6 @@ const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at wh
   + ' team owes the customer an answer or a follow-up, make sure the draft has it; otherwise'
   + ' change nothing.';
 
-async function sha256(value) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 export class ThreadAgent extends Agent {
   constructor(ctx, env) {
     super(ctx, env);
@@ -91,6 +89,7 @@ export class ThreadAgent extends Agent {
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),
           posted: (id) => this.posted(id),
+          pinned: (session) => seedPin(this, session),
         };
         this.agentContext = agent;
         // In this order, which is the system prompt's: opspile, the tools the team turned on,
@@ -363,23 +362,8 @@ export class ThreadAgent extends Agent {
   }
 
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
-  async seed({ by, text }) {
-    const problem = modelProblem(this.env);
-    if (problem) {
-      return { error: problem };
-    }
-    const note = `${by} (Adobe staff) shares this knowledge. It is trusted. File what is worth`
-      + ' keeping in the right knowledge base (kb-org for this customer, kb-team for everyone),'
-      + ` extending existing concepts where they fit, with ${by} as the source`
-      + ` (author: human:${by}). Do not change the draft because of it unless it changes what`
-      + ` the customer should be told.\n\n<staff-note>\n${text}\n</staff-note>`;
-    await this.syncTools();
-    await this.syncMcp();
-    const receipt = await this.harness.submit(note, {
-      operationId: `seed:${(await sha256(`${by}\n${text}`)).slice(0, 32)}`,
-      whenBusy: 'followUp',
-    });
-    return { ok: true, accepted: receipt.accepted };
+  async seed(note) {
+    return seed(this, note);
   }
 
   /** A person discarded the agent's draft (src/agent/discard.js). */
@@ -406,7 +390,8 @@ export class ThreadAgent extends Agent {
   async status() {
     const catalog = await this.servers.current();
     const pending = await this.harness.pending();
-    const busy = pending.some((p) => p.status !== 'parked');
+    // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
+    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
     const turn = latestTurn(await this.harness.messages().catch(() => []), { busy });
     return {
       name: this.name,

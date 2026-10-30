@@ -22,6 +22,7 @@ import { agentEnabled } from './enabled.js';
 
 export const AGENT_DELAY_SECONDS = 15;
 const MAX_SEED = 8000;
+const KBS = ['team', 'org'];
 
 /** The started agent named `name` (an inbox entry key, or `kb:<team>:<org>`). */
 export async function agentStub(env, name) {
@@ -50,10 +51,13 @@ async function threadTarget(env, key) {
   if (!entry) {
     return null;
   }
-  const row = await env.DB.prepare('SELECT channel_id, team, kind FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT channel_id, team, org, kind FROM threads WHERE thread = ?')
     .bind(entry.key).first();
   return {
     entry,
+    // Whose knowledge bases its agent has: as ThreadAgent.target reads them.
+    team: row ? row.team : null,
+    org: row ? row.org : null,
     enabled: Boolean(row && row.kind === 'channel' && await agentEnabled(env, row.channel_id, row.team)),
   };
 }
@@ -62,11 +66,19 @@ async function threadTarget(env, key) {
  * POST /api/agent/seed `{ thread, text }` or `{ team, org, text }`: shares knowledge with the
  * thread's agent, or with the knowledge-base agent of a team and customer, which files it in
  * the knowledge bases. Only members of the team.
+ *
+ * `kb` (`team` or `org`, on either form) chooses the knowledge base, and the agent cannot write
+ * the other one (src/agent/seed.js). `{ team, kb: 'team', text }` needs no customer. Only the
+ * chosen knowledge base is created when it is missing.
  */
 export async function seedAgent(env, me, body, inTeam) {
   const text = String((body && body.text) || '').trim();
   if (!text || text.length > MAX_SEED) {
     return json({ error: `write what the agent should know (up to ${MAX_SEED} characters)` }, 400);
+  }
+  const kb = body.kb ?? null;
+  if (kb !== null && !KBS.includes(kb)) {
+    return json({ error: 'kb is "team" or "org"' }, 400);
   }
   if (me.readonly) {
     return json({ error: 'read-only while viewing as someone else' }, 403);
@@ -83,20 +95,39 @@ export async function seedAgent(env, me, body, inTeam) {
     if (!t.enabled) {
       return json({ error: 'this thread has no agent' }, 409);
     }
+    if (kb) {
+      // Only ever the thread's own: naming another team or customer is a mistake, not a target.
+      if ((body.team && body.team !== t.team) || (body.org && body.org !== t.org)) {
+        return json({ error: 'kb goes to the thread\'s own team and customer' }, 400);
+      }
+      if (!repoName(kb, t[kb])) {
+        return json({ error: `this thread has no ${kb === 'org' ? 'customer' : 'team'} knowledge base` }, 400);
+      }
+      await ensureKnowledgeBase(env, kb, t[kb]);
+    }
     name = t.entry.key;
   } else {
     const team = String(body.team || '');
     const org = String(body.org || '');
-    if (!repoName('team', team) || !repoName('org', org) || !await inTeam(team)) {
-      return json({ error: 'give a thread, or one of your teams and a customer slug' }, 400);
+    if (kb === 'org' && !org) {
+      return json({ error: 'kb "org" needs a customer slug' }, 400);
+    }
+    const orgFits = org ? repoName('org', org) : kb === 'team';
+    if (!repoName('team', team) || !orgFits || !await inTeam(team)) {
+      return json({ error: 'give a thread, or one of your teams and a customer slug (only kb "team" goes without one)' }, 400);
     }
     name = `kb:${team}:${org}`;
     // A customer that has no channel yet has no knowledge base yet either.
-    await ensureKnowledgeBase(env, 'team', team);
-    await ensureKnowledgeBase(env, 'org', org);
+    if (kb) {
+      await ensureKnowledgeBase(env, kb, kb === 'team' ? team : org);
+    } else {
+      await ensureKnowledgeBase(env, 'team', team);
+      await ensureKnowledgeBase(env, 'org', org);
+    }
   }
   const agent = await agentStub(env, name);
-  const res = await agent.seed({ by: me.name || me.email || 'staff', text });
+  const by = me.name || me.email || 'staff';
+  const res = await agent.seed(kb ? { by, text, kb } : { by, text });
   return json(res, res.error ? 503 : 202);
 }
 
