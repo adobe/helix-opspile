@@ -349,6 +349,13 @@ describe('inbox page', () => {
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
   });
 
+  it('outlines neighboring picked values as one, with no edge between them', () => {
+    const css = PAGES['inbox.html'];
+    assert.match(css, /\.fr\.on:has\(\+ \.fr\.on\)::after \{ border-bottom: 0; \}/);
+    assert.match(css, /\.fr\.on \+ \.fr\.on::after \{ border-top: 0; \}/);
+    assert.doesNotMatch(css, /\.fr\.on \{[^}]*box-shadow/);
+  });
+
   it('shows every exclusion button of the slid-out rail on a touch screen', () => {
     const css = PAGES['inbox.html'];
     const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n {2}\}/g)].map((m) => m[1]).join('\n');
