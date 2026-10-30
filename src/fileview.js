@@ -211,7 +211,7 @@ export async function streamFile(env, key, wanted, request, { load = cachedMessa
     const meta = obj ? { ...obj.httpMetadata, ...obj.customMetadata } : {};
     const type = obj && mediaType(meta.contentType, meta.name || f.name);
     if (!obj || !type) {
-      return json({ error: obj ? 'not a video or audio file' : 'opspile has no copy of this Teams file' }, obj ? 415 : 404);
+      return json({ error: obj ? 'not a video or audio file' : 'the inbox has no copy of this Teams file' }, obj ? 415 : 404);
     }
     return r2Part(obj, type);
   }
@@ -221,7 +221,7 @@ export async function streamFile(env, key, wanted, request, { load = cachedMessa
   if (f.source === 'slack') {
     const info = await slackInfo(env, f.id);
     if (!info) {
-      return json({ error: 'Slack does not let opspile read this file' }, 502);
+      return json({ error: 'Slack does not let the inbox read this file' }, 502);
     }
     type = mediaType(info.mimetype, info.name);
     // Slack's MP4 copy where it made one: QuickTime and other recordings play everywhere then.
@@ -238,7 +238,7 @@ export async function streamFile(env, key, wanted, request, { load = cachedMessa
     return json({ error: 'not a video or audio file' }, 415);
   }
   if (!url) {
-    return json({ error: 'Slack does not let opspile read this file' }, 502);
+    return json({ error: 'Slack does not let the inbox read this file' }, 502);
   }
   if (range) {
     headers.range = range;

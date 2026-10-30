@@ -695,7 +695,7 @@ function toolRow(t) {
 
 const TOOL_CONFIRM = {
   post_message: {
-    on: (where) => `From their next message, the agents of ${where} can post replies in their threads themselves, as the opspile app, without a person reading them first. They still keep drafts for anything a person should review.`,
+    on: (where) => `From their next message, the agents of ${where} can post replies in their threads themselves, as the bot, without a person reading them first. They still keep drafts for anything a person should review.`,
     off: (where) => `Agents of ${where} only keep drafts again, from their next message.`,
   },
   extraction_rules: {
@@ -712,8 +712,8 @@ const TOOL_CONFIRM = {
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `opspile's own tools: off until they are turned on for every channel of ${b.name}, or for one of its channels (a channel's own switch wins).`
-    : `opspile's own tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+  const note = b.kind === 'team' ? `Built-in tools: off until they are turned on for every channel of ${b.name}, or for one of its channels (a channel's own switch wins).`
+    : `Built-in tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }
 
@@ -1091,8 +1091,8 @@ function mcpForm(s = {}) {
       <option value="oauth"${auth === 'oauth' ? ' selected' : ''}>OAuth: someone signs in at the server</option></select>
     <label for="mHdrName" data-auth="headers"${hide('headers')}>Header</label><span class="pair" data-auth="headers"${hide('headers')}><input id="mHdrName" class="mono" placeholder="Authorization"><input id="mHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
     <span class="hint" data-auth="headers"${hide('headers')}>${set ? `${esc(s.headerNames.join(', '))} set; fill in a header to replace ${s.headerNames.length === 1 ? 'it' : 'them'}.` : 'An API key or a bearer token. Stored encrypted, never shown again.'}</span>
-    <span class="hint wide" data-auth="oauth"${hide('oauth')}>Once it is saved, Connect sends you to the server's sign-in, and the agents then call it as you, with what you may do there. Most servers let opspile register itself; for one that does not, register a client there with the redirect URI <span class="mono">${esc(location.origin)}/api/kb/mcp/oauth/callback</span> and give its id.</span>
-    <label for="mClientId" data-auth="oauth"${hide('oauth')}>Client id</label><input id="mClientId" data-auth="oauth" class="mono" placeholder="optional: opspile registers itself" value="${esc(o.clientId || '')}"${hide('oauth')}>
+    <span class="hint wide" data-auth="oauth"${hide('oauth')}>Once it is saved, Connect sends you to the server's sign-in, and the agents then call it as you, with what you may do there. Most servers take care of this themselves; for one that does not, register a client there with the redirect URI <span class="mono">${esc(location.origin)}/api/kb/mcp/oauth/callback</span> and give its id.</span>
+    <label for="mClientId" data-auth="oauth"${hide('oauth')}>Client id</label><input id="mClientId" data-auth="oauth" class="mono" placeholder="optional: most servers need none" value="${esc(o.clientId || '')}"${hide('oauth')}>
     <label for="mClientSecret" data-auth="oauth"${hide('oauth')}>Client secret</label><input id="mClientSecret" data-auth="oauth" class="mono" type="password" placeholder="${o.clientSecret ? 'set; fill in to replace it' : 'optional, with a client id'}"${hide('oauth')}>
     <label for="mScope" data-auth="oauth"${hide('oauth')}>Scope</label><input id="mScope" data-auth="oauth" class="mono" placeholder="optional: what the server asks for" value="${esc(o.scope || '')}"${hide('oauth')}>
     <label for="mAllow">Only these tools</label><input id="mAllow" class="mono" placeholder="all tools; or comma-separated names" value="${esc(s.allow || '')}">
@@ -1118,13 +1118,13 @@ function renderMcp(shownNote) {
   const b = base();
   const list = state.mcp;
   const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
-  const explain = `What the thread agents of these threads can do beyond reading and drafting: opspile's own tools, which
+  const explain = `What the thread agents of these threads can do beyond reading and drafting: the built-in tools, which
     they call directly, and MCP servers, whose tools they call from code mode scripts, as tools.mcp__<name>__<tool> (only what
     a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
-  const globalNote = b.kind === 'team' ? `opspile's own, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
-    : `opspile's own, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
+    : `Built-in, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>

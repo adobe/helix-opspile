@@ -784,7 +784,7 @@ export async function media(env, target, threadKey = null) {
   }
   let res;
   if (isSharePointUrl(u.href)) {
-    return json({ error: 'opspile has no copy of this file' }, 404);
+    return json({ error: 'the inbox has no copy of this file' }, 404);
   }
   if (u.protocol === 'https:' && u.hostname === 'files.slack.com') {
     res = await fetch(u, { headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } });

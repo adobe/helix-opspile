@@ -82,7 +82,7 @@ async function platformReact(t, groupId, tok, messageId, emoji, removed) {
       return { ok: true };
     }
     if (data.error === 'missing_scope') {
-      return { error: 'connect Slack again to react (opspile now asks for reactions:write)', status: 409, reconnect: 'slack' };
+      return { error: 'connect Slack again to react (the inbox now asks for reactions:write)', status: 409, reconnect: 'slack' };
     }
     return {
       error: `Slack: ${data.error}`,
@@ -123,7 +123,7 @@ async function tokenFor(env, me, t) {
   }
   if (t.source === 'discord') {
     // Discord lets only bots react through its API, and opspile acts as the person or not at all.
-    return { response: json({ error: 'react in Discord: opspile cannot react there as you' }, 409) };
+    return { response: json({ error: 'react in Discord: the inbox cannot react there as you' }, 409) };
   }
   const tok = await personalToken(env, me.id, t.source);
   if (!tok) {
@@ -133,7 +133,7 @@ async function tokenFor(env, me, t) {
   if (t.source === 'slack' && !tok.scope.split(/[\s,]+/).includes('reactions:write')) {
     return {
       response: json({
-        error: 'connect Slack again to react (opspile now asks for reactions:write)', reconnect: 'slack',
+        error: 'connect Slack again to react (the inbox now asks for reactions:write)', reconnect: 'slack',
       }, 409),
     };
   }

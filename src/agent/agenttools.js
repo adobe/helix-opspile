@@ -35,9 +35,9 @@ export const AGENT_TOOLS = [
     tool: 'post_message',
     title: 'Post messages',
     names: ['post_message'],
-    description: 'The agent posts its reply in the thread right away, as the opspile app,'
+    description: 'The agent posts its reply in the thread right away, as the bot,'
       + ' instead of only keeping the draft a person sends',
-    note: 'As the opspile bot of each platform: the Slack app (bot scope chat:write), the Teams'
+    note: 'As the bot of each platform: the Slack app (bot scope chat:write), the Teams'
       + ' bot (installed in a team on its first post there), the Discord bot (Send Messages,'
       + ' Send Messages in Threads).',
     platforms: ['slack', 'teams', 'discord'],
@@ -50,7 +50,7 @@ export const AGENT_TOOLS = [
       + ' Worker, over a working directory of its own per thread that keeps its files. cat, grep,'
       + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python',
     note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
-      + ' leave opspile through it.',
+      + ' leave the inbox through it.',
     platforms: null,
   },
   {

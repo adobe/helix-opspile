@@ -157,7 +157,7 @@ describe('inbox page', () => {
     };
     assert.doesNotMatch(message(m, null, false), /data-edit=/);
     assert.match(message({ ...m, editable: 'user' }, null, false), /data-edit="1"[^>]*title="Edit your message"/);
-    assert.match(message({ ...m, editable: 'app' }, null, false), /title="Edit, as the opspile app"/);
+    assert.match(message({ ...m, editable: 'app' }, null, false), /title="Edit, as the bot"/);
     // Edited on the platform, or here: "(edited)" under it.
     assert.match(message({ ...m, editedAt: '2026-10-21T10:05:00Z' }, null, false), /class="meta"[^>]*>\(edited\)</);
     state.editing = { id: 't|1' };

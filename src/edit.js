@@ -72,7 +72,7 @@ async function mentionsFor(env, t, id, ids) {
 /** The edit as the person, with their token. `{ ok }` or `{ error, status, connect? }`. */
 async function editAsUser(env, me, t, msg, body, ids) {
   if (t.source === 'discord') {
-    return { error: 'edit it in Discord: opspile cannot edit there as you', status: 409 };
+    return { error: 'edit it in Discord: the inbox cannot edit there as you', status: 409 };
   }
   const tok = await personalToken(env, me.id, t.source);
   const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
@@ -103,7 +103,7 @@ async function editAsUser(env, me, t, msg, body, ids) {
   if (!tok.scope.split(/[\s,]+/).some((s) => s.endsWith(TEAMS_EDIT_SCOPE))) {
     return env.TEAMS_EDITS
       ? {
-        error: 'connect Microsoft again to edit (opspile now asks for ChannelMessage.ReadWrite)',
+        error: 'connect Microsoft again to edit (the inbox now asks for ChannelMessage.ReadWrite)',
         status: 409,
         reconnect: 'teams',
       }

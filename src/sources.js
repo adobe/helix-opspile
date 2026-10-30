@@ -168,7 +168,7 @@ async function follow(address, own, fetchImpl) {
   let u = new URL(address);
   for (let hop = 0; hop <= MAX_HOPS; hop += 1) {
     if (!fetchable(u, own)) {
-      return { reason: 'This address is not one opspile fetches.' };
+      return { reason: 'This address is not one the inbox fetches.' };
     }
     // eslint-disable-next-line no-await-in-loop
     const res = await fetchImpl(u.href, {

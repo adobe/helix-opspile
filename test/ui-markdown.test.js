@@ -52,7 +52,7 @@ describe('ui markdown', () => {
     assert.match(html, /data-kind="text" data-home="Discord">.*data-preview="text"/);
     // A file of another workspace: a card without a link.
     const unseen = render('Attachments:\n- CSV file (shared from another workspace; opspile cannot see it)');
-    assert.match(unseen, /<span class="file-name">CSV file<\/span><span class="file-sub">Shared from another workspace; opspile cannot see it<\/span>/);
+    assert.match(unseen, /<span class="file-name">CSV file<\/span><span class="file-sub">Shared from another workspace; the inbox cannot see it<\/span>/);
     assert.match(unseen, />CSV<\/span>/);
     assert.doesNotMatch(unseen, /data-preview|file-go/);
   });
