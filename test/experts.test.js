@@ -43,10 +43,10 @@ function env({ matches = [], chunks = [], search = true } = {}) {
       VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', 'p/', 'Purge is slow', 'h', ?, ?, ?)`)
       .run(thread, channel, thread.split(':')[3], org, logical, ago(0), ago(0));
   };
-  const addMessage = (thread, id, person, minutes, { channel = 'C1' } = {}) => {
+  const addMessage = (thread, id, person, minutes, { channel = 'C1', staff = 1 } = {}) => {
     sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person, staff,
-      counted, author_key) VALUES ('slack', 'E1', ?, ?, ?, ?, ?, 1, 1, ?)`)
-      .run(channel, id, thread, ago(minutes), person, `slack:E1:U${person}`);
+      counted, author_key) VALUES ('slack', 'E1', ?, ?, ?, ?, ?, ?, 1, ?)`)
+      .run(channel, id, thread, ago(minutes), person, staff, `slack:E1:U${person}`);
   };
   const mention = (thread, message, person, minutes) => {
     sqlite.prepare(`INSERT INTO mentions (thread, message, person, at, via)
@@ -95,27 +95,49 @@ describe('expert finder', () => {
     assert.equal(roughly(50 * 60), 'about 2 days');
   });
 
-  it('measures response times from mentions, a group as one thread, and needs enough of them', async () => {
+  it('counts answered mentions, a group as one thread', async () => {
     const e = env();
     e.addThread('slack:E1:C1:1.1');
     e.addThread('slack:E1:C1:2.1', { logical: 'slack:E1:C1:1.1' });
     // Bo: mentioned in the group's first thread, answers in its second.
     e.mention('slack:E1:C1:1.1', 'm1', 2, 3 * DAYS);
     e.addMessage('slack:E1:C1:2.1', 'a1', 2, 3 * DAYS - 30);
+    // Not answered.
     e.mention('slack:E1:C1:1.1', 'm2', 2, 2 * DAYS);
-    e.addMessage('slack:E1:C1:1.1', 'a2', 2, 2 * DAYS - 60);
-    e.mention('slack:E1:C1:1.1', 'm3', 2, DAYS);
-    e.addMessage('slack:E1:C1:1.1', 'a3', 2, DAYS - 240);
     // Long before the window: it does not count.
     e.mention('slack:E1:C1:1.1', 'm0', 2, 300 * DAYS);
-    const times = await responseTimes(e, [2], { now: NOW });
-    assert.deepEqual(times.get(2), { minutes: 60, answered: 3, mentions: 3 });
+    const times = await responseTimes(e, [2], { channel: 'slack:E1:C1', now: NOW });
+    assert.equal(times.get(2).mentions, 2);
+    assert.equal(times.get(2).answered, 1);
+  });
+
+  it('times new people in a thread from the customer message before them', async () => {
+    const e = env();
+    ['1.1', '2.1', '3.1'].forEach((root, i) => {
+      const thread = `slack:E1:C1:${root}`;
+      e.addThread(thread);
+      e.addMessage(thread, `c${i}`, null, (i + 1) * DAYS, { staff: 0 });
+      e.addMessage(thread, `a${i}`, 2, (i + 1) * DAYS - 60);
+      // Already active: this post says nothing.
+      e.addMessage(thread, `b${i}`, 2, (i + 1) * DAYS - 600);
+    });
+    const times = await responseTimes(e, [2, 3], { channel: 'slack:E1:C1', now: NOW });
+    assert.equal(times.get(2).joins, 3);
+    assert.equal(times.get(2).minutes, 60);
+    assert.equal(times.get(3).joins, 0);
+  });
+
+  it('says a response time only with enough answers, and most mentions answered', () => {
     const said = (response) => reasonsOf({ response, member: true });
-    assert.deepEqual(said({ minutes: 60, answered: 3, mentions: 3 }), ['typically responds in about 1 hour']);
-    assert.deepEqual(said({ minutes: 2, answered: 3, mentions: 3 }), ['typically responds within minutes']);
-    // Too few, or most mentions unanswered: nothing to claim.
-    assert.deepEqual(said({ minutes: 60, answered: 2, mentions: 2 }), []);
-    assert.deepEqual(said({ minutes: 60, answered: 3, mentions: 7 }), []);
+    const answers = { joins: 3, answered: 3, mentions: 3 };
+    assert.deepEqual(said({ ...answers, minutes: 60 }), ['typically responds in about 1 hour']);
+    assert.deepEqual(said({ ...answers, minutes: 2 }), ['typically responds within minutes']);
+    // Nobody mentioned them: the answers still say something.
+    assert.deepEqual(said({
+      minutes: 60, joins: 3, answered: 0, mentions: 0,
+    }), ['typically responds in about 1 hour']);
+    assert.deepEqual(said({ ...answers, minutes: 60, joins: 2 }), []);
+    assert.deepEqual(said({ ...answers, minutes: 60, mentions: 7 }), []);
   });
 
   it('adds up channel, customer, meaning and words, and says why', async () => {
