@@ -149,6 +149,7 @@ const repair = (src) => src.replace(
 /** Markdown to HTML, before anything of the page's: `br` for each line break. */
 const toHtml = (src, br) => micromark(repair(src), OPTIONS)
   .replace(BLOCK_END, '$1\n')
+  .replaceAll(`<br />${BREAK}`, BREAK)
   .replaceAll(BREAK, br);
 
 /** A message on its own, one paragraph (or none), needs no tag around it. */
@@ -158,8 +159,8 @@ const ONE_PARAGRAPH = /^<p>((?:(?!<\/?p>)[\s\S])*)<\/p>$/;
  * Markdown to the HTML of a message on a platform that takes HTML (a person's Teams post): no
  * raw HTML, as in render, and nothing of the page's. Paragraphs are a blank line, and no line
  * ending stays between the tags: htmlToMarkdown, which reads the message when it arrives back,
- * would keep it. Strike-through is `<s>`, as Teams writes it, and a bare mail address stays
- * text (`@bot add x@example.com` is a command).
+ * would keep it. Strike-through is `<s>`, as Teams writes it, a bare mail address stays text
+ * (`@bot add x@example.com` is a command), and so does a task's box, which is no message's.
  *
  * @param {string} src
  */
@@ -169,8 +170,8 @@ export function messageHtml(src) {
     .map((part, i) => (i % 2 ? part : part.replace(/\n/g, '').replace(/<\/p><p>/g, '<br><br>')))
     .join('')
     .trim()
-    .replace(/<br \/>/g, '<br>')
     .replace(/<(\/?)del>/g, '<$1s>')
+    .replace(/<input type="checkbox" disabled=""( checked="")? \/>/g, (_, on) => (on ? '[x]' : '[ ]'))
     .replace(/<a href="mailto:([^"]*)">\1<\/a>/g, '$1')
     .replace(ONE_PARAGRAPH, '$1');
 }

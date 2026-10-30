@@ -125,8 +125,18 @@ describe('mentions', () => {
   });
 
   it('reads back what it writes to Teams', () => {
-    const md = '**One** and *two*\nline\n\n- a\n- b\n\n> c\n> d\n\n```\ne\n  f\n```\n\n[g](https://example.com/)';
-    assert.equal(htmlToMarkdown(teamsMessage(md).body.content), md);
+    for (const md of [
+      '**One** and *two*\nline\n\n- a\n- b\n\n> c\n> d\n\n```\ne\n  f\n```\n\n[g](https://example.com/)',
+      '| Service | Status |\n| --- | --- |\n| API | Down |\n| Web | Up |',
+      '| a | b | c |\n| :--- | ---: | :---: |\n| **d** | e \\| f | `g` |',
+      '- [ ] open\n- [x] done',
+      'above\n\n---\n\nbelow',
+      '- a\n  - b\n    - c\n- d\n\n1. e\n   - f\n2. g',
+    ]) {
+      assert.equal(htmlToMarkdown(teamsMessage(md).body.content), md);
+    }
+    // A hard break is one break.
+    assert.equal(teamsMessage('a  \nb').body.content, 'a<br>b');
   });
 
   it('writes a Teams bot mention as an application, so the bot receives it', () => {
