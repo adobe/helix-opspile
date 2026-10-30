@@ -185,6 +185,64 @@ describe('shared drafts', () => {
     assert.equal(told.length, 2);
   });
 
+  describe('sources', () => {
+    const PAGE = 'https://docs.example.org/purge';
+    const SOURCES = [{ url: PAGE, title: 'Purging', quote: 'Purged at once' }];
+    const save = async (e, who, body) => (await call(e, who, 'PUT', '/api/draft', { thread: ROOT, ...body })).json();
+    const look = (e, who, url = PAGE) => call(e, who, 'GET', `/api/draft/source?thread=${encodeURIComponent(ROOT)}&url=${encodeURIComponent(url)}`);
+
+    it('go with the draft, stay when a person edits it, and are replaced when given', async () => {
+      const e = env();
+      const first = (await save(e, ADA, { text: 'one', base: null, sources: SOURCES })).draft;
+      assert.deepEqual(first.sources, SOURCES);
+      const edited = (await save(e, BO, { text: 'two', base: first.updated_at })).draft;
+      assert.deepEqual(edited.sources, SOURCES);
+      const none = (await save(e, BO, { text: 'three', base: edited.updated_at, sources: [] })).draft;
+      assert.deepEqual(none.sources, []);
+    });
+
+    it('move with a draft into its group', async () => {
+      const e = env();
+      await save(e, ADA, { text: 'one', base: null, sources: SOURCES });
+      const { updated_at: base } = await draftOf(e, ADA);
+      e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(FOLLOW, ROOT);
+      assert.deepEqual((await save(e, BO, { text: 'two', base })).draft.sources, SOURCES);
+    });
+
+    it('refuse an address a browser should not open, and save nothing', async () => {
+      const e = env();
+      const res = await call(e, ADA, 'PUT', '/api/draft', {
+        thread: ROOT, text: 'one', base: null, sources: [{ url: 'ftp://docs.example.org/' }],
+      });
+      assert.equal(res.status, 400);
+      assert.equal(await draftOf(e, ADA), null);
+    });
+
+    it('are not in the inbox list', async () => {
+      const e = env();
+      await save(e, ADA, { text: 'one', base: null, sources: SOURCES });
+      const { threads } = await inbox(e, BO, 'helix');
+      const { draft } = threads.find((t) => t.thread === ROOT);
+      assert.equal(draft.preview, 'one');
+      assert.equal(draft.sources, undefined);
+    });
+
+    it('are looked at for the people who see the draft, and nothing else is fetched', async (t) => {
+      const e = env();
+      const fetched = [];
+      t.mock.method(globalThis, 'fetch', async (url) => {
+        fetched.push(url);
+        return new Response('<h1>x</h1>', { headers: { 'content-type': 'text/html' } });
+      });
+      await save(e, ADA, { text: 'one', base: null, sources: SOURCES });
+      assert.equal((await look(e, EVE)).status, 404);
+      assert.equal((await look(e, BO, 'https://elsewhere.example.org/')).status, 404);
+      assert.deepEqual(fetched, []);
+      assert.deepEqual(await (await look(e, BO)).json(), { view: 'frame', url: PAGE });
+      assert.deepEqual(fetched, [PAGE]);
+    });
+  });
+
   it('is only for the team that owns the channel', async () => {
     const e = env();
     await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null });

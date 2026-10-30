@@ -872,7 +872,7 @@ minutes per version of the thread, per isolate.
 
 A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
 puts a colleague at the top of it, as "Agent suggests …", with its reason (`expert_suggestions`,
-migration 0044; user state, like drafts). Nobody is told or mentioned; a person decides. It takes
+migration 0045; user state, like drafts). Nobody is told or mentioned; a person decides. It takes
 only staff with an account on the thread's platform, three per thread at most, tells the open
 inboxes (a room event `experts`), and a suggestion goes away once the person is in the thread.
 
@@ -923,8 +923,9 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   you, or the thread agent), when, and how it starts, opened to all of it with ▾. The reply box
   is yours, and a draft never replaces what you typed. Resting the pointer on the line, or
   moving the keyboard focus into it, shows the draft in the box, in place (dashed), and gives
-  the box back as it was when the pointer or focus leaves; the box grows upwards, so the line
-  stays under the pointer. Clicking the line or **Edit** (tapping it, on touch) takes the draft
+  the box back as it was when the pointer or focus leaves; the box grows upwards, up to most of
+  the pane, so the line stays under the pointer and a long draft can be read (the wheel scrolls
+  what does not fit, from the line). Clicking the line or **Edit** (tapping it, on touch) takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
 - The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
@@ -937,6 +938,23 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   the draft changed since). What you type and do not save stays with its thread in the tab.
 - In the inbox, an entry with a draft shows **✎ Draft**, and the **Draft** card filters by
   drafts saved last by you, by a colleague, or none. A draft does not change the status pile.
+- A draft can carry **sources** (`drafts.sources`, src/sources.js): what an agent says it rests
+  on, as `{ url, title?, quote? }`, at most 10, http(s) only. They are for the person reviewing
+  the draft: they stay in the inbox and the tools, and no reply ever carries them. Whoever may
+  see a draft sees its sources; sign-in (Cloudflare Access) keeps that to staff. The tools
+  (`update_draft`, `post_draft`) replace a draft's sources with each save, so they describe its
+  text; a person's edit in the inbox keeps them, and Undo of a discard brings them back.
+- The sources sit on a row of the draft's line. Resting the pointer on one (or moving the
+  keyboard focus to it) shows it beside the draft, with the agent's quote above it; clicking it
+  opens it in a new tab. `GET /api/draft/source` tells the inbox how: a browser cannot tell why
+  a frame stayed empty, so the Worker fetches the page, without the viewer's credentials, and
+  reads its `X-Frame-Options` and `frame-ancestors`. A page that may be framed shows in a
+  sandboxed, credentialless frame (no top navigation, no forms, no referrer). Markdown and text
+  are rendered, and so is what a page that refuses frames says in its HTML (`pageMarkdown`,
+  which sees what the server sent, not what scripts build). Anything else, such as a page behind
+  a sign-in, is a reason and a link. The route fetches only the sources of the thread's current
+  draft, follows at most 4 redirects, each checked (public names, never an address or the
+  inbox's own host), and reads at most 512 KB.
 
 ### Steering reactions
 
@@ -1006,7 +1024,7 @@ labelled as written by people outside its control.
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
-| `get_draft`, `update_draft` | the entry's shared draft, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `get_draft`, `update_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `list_experts`, `suggest_expert` | colleagues not in the thread yet who could help, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |

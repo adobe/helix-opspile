@@ -15,7 +15,7 @@ import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { agentStatus, seedAgent, tellDiscarded } from './agent/stub.js';
 import {
-  discardDraft, draftOf, draftsFor, draftSummary, getDraft, saveDraft,
+  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
@@ -910,6 +910,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine);
     }
     return res;
+  }
+  if (url.pathname === '/api/draft/source' && request.method === 'GET') {
+    return draftSource(env, url.searchParams.get('thread'), url.searchParams.get('url'), seeing, {
+      own: url.hostname,
+    });
   }
   if (url.pathname === '/api/draft') {
     if (request.method === 'GET') {

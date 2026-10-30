@@ -32,6 +32,7 @@ import { MAX_POST, postAsApp } from './posting.js';
 import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
 } from './repos.js';
+import { MAX_SOURCES } from '../sources.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -49,6 +50,11 @@ const MAX_OTHER = 100;
 const ORG_TYPE = {
   customer: 'Customer', partner: 'Partner', vendor: 'Vendor', internal: 'Internal',
 };
+const SOURCE = Type.Object({
+  url: Type.String({ description: 'The http(s) address of the page' }),
+  title: Type.Optional(Type.String({ description: 'What it is, in a few words' })),
+  quote: Type.Optional(Type.String({ description: 'The passage that backs the draft, word for word, in Markdown (up to 1000 characters)' })),
+});
 const text = (t) => ({ output: [{ type: 'text', text: t }] });
 const fail = (t) => ({ output: [{ type: 'text', text: t }], isError: true });
 
@@ -65,6 +71,7 @@ const PREAMBLE = `You are the opspile agent for one support thread. opspile is t
 What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
 - Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks.
+- Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Leave it when Adobe staff are handling the thread, and suggest only someone you can give a reason for.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
@@ -406,7 +413,7 @@ export function opspileExtension(ctx) {
       }),
       defineTool({
         name: 'get_draft',
-        description: 'The shared draft reply of your thread, if any: its text, who saved it last, and its version (for update_draft).',
+        description: 'The shared draft reply of your thread, if any: its text, its sources, who saved it last, and its version (for update_draft).',
         parameters: Type.Object({}),
         replay: 'safe',
         async execute() {
@@ -416,20 +423,27 @@ export function opspileExtension(ctx) {
           if (!draft) {
             return text('There is no draft. update_draft without `base` creates one.');
           }
-          return text(`version: ${draft.updated_at}\nsaved by: ${draft.by.name || 'someone'}\n\n${draft.body}`);
+          const cited = draft.sources.map((s) => `- ${JSON.stringify(s)}`).join('\n');
+          return text(`version: ${draft.updated_at}\nsaved by: ${draft.by.name || 'someone'}${cited ? `\nsources:\n${cited}` : ''}\n\n${draft.body}`);
         },
       }),
       defineTool({
         name: 'update_draft',
-        description: 'Save the shared draft reply of your thread. A person on the team sends it; you cannot send anything. Give `base`, the version from get_draft, when a draft exists; if a colleague changed it since, nothing is saved and you get their version back.',
+        description: 'Save the shared draft reply of your thread. A person on the team sends it; you cannot send anything. Give `base`, the version from get_draft, when a draft exists; if a colleague changed it since, nothing is saved and you get their version back. `sources` replaces the sources of the draft, so give all of them each time.',
         parameters: Type.Object({
           text: Type.String({ description: 'The whole reply, in Markdown (up to 8000 characters)' }),
           base: Type.Optional(Type.String({ description: 'Version of the draft you are replacing' })),
+          sources: Type.Optional(Type.Array(SOURCE, {
+            maxItems: MAX_SOURCES,
+            description: 'What the draft rests on. Only the team sees these, never the customer.',
+          })),
         }),
         async execute(args) {
           const t = await ctx.target();
           const me = { id: await agentPerson(env) };
-          const request = { thread: t.key, text: args.text, base: args.base || null };
+          const request = {
+            thread: t.key, text: args.text, base: args.base || null, sources: args.sources || [],
+          };
           const res = await saveDraft(env, me, request, () => true);
           const body = await res.json();
           if (res.status === 409) {

@@ -585,7 +585,10 @@ describe('thread agents', () => {
       },
       capture(call('git_grep', { repo: 'adobe/helix-opspile', pattern: 'threadagent' })),
       capture(call('git_read', { repo: 'kb-org', path: 'sites/www.md' })),
-      capture(call('update_draft', { text: 'Hi Cy, we are looking at the purge times.' })),
+      capture(call('update_draft', {
+        text: 'Hi Cy, we are looking at the purge times.',
+        sources: [{ url: 'https://docs.example.org/purge', title: 'Purging' }],
+      })),
       capture(call('update_draft', { text: 'Second try without base' })),
       capture(call('get_draft', {})),
       capture(call('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'index.md', content: '# no' }] })),
@@ -616,7 +619,7 @@ describe('thread agents', () => {
     assert.match(read, /^path: sites\/www\.md\nhash: [0-9a-f]{40}\n\n---\ntype: Site/);
     assert.match(saved, /^saved \(version /);
     assert.match(conflict, /The draft changed[\s\S]*Hi Cy, we are looking/);
-    assert.match(draft, /saved by: opspile agent\n\nHi Cy, we are looking at the purge times\./);
+    assert.match(draft, /saved by: opspile agent\nsources:\n- \{"url":"https:\/\/docs\.example\.org\/purge","title":"Purging"\}\n\nHi Cy, we are looking at the purge times\./);
     assert.match(refused, /maintained automatically/);
     const [row] = e.DB.rows('SELECT d.body, p.email FROM drafts d JOIN people p ON p.id = d.person');
     assert.deepEqual(row, { body: 'Hi Cy, we are looking at the purge times.', email: 'agent@opspile.invalid' });

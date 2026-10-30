@@ -13,6 +13,7 @@
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
+import { cleanSources, lookAt, sourcesOf } from './sources.js';
 
 /**
  * Shared drafts: an inbox entry carries at most one unsent reply, which everyone in the teams
@@ -66,6 +67,7 @@ const shape = (r) => ({
   thread: r.thread,
   body: r.body,
   mentions: mentionsOf(r.mentions),
+  sources: sourcesOf(r.sources),
   by: { id: r.person, name: r.name || null },
   created_at: r.created_at,
   updated_at: r.updated_at,
@@ -129,18 +131,23 @@ export async function getDraft(env, key, canSee) {
 }
 
 /**
- * PUT /api/draft `{ thread, text, mentions?, base }`: saves the entry's draft as the
+ * PUT /api/draft `{ thread, text, mentions?, sources?, base }`: saves the entry's draft as the
  * signed-in person. `base` is the `updated_at` of the draft the text was written from (null
  * if there was none); if the draft is no longer that version, nothing is saved and the
- * answer is 409 with the current draft.
+ * answer is 409 with the current draft. `sources` (src/sources.js) replaces the draft's; left
+ * out, they stay, as when a person edits the text.
  */
 export async function saveDraft(env, me, request, inTeam) {
   const {
-    thread: key, text, mentions, base = null,
+    thread: key, text, mentions, sources, base = null,
   } = request || {};
   const body = String(text || '');
   if (!body.trim() || body.length > MAX_TEXT) {
     return json({ error: 'write something to save (up to 8000 characters)' }, 400);
+  }
+  const given = sources === undefined ? null : cleanSources(sources);
+  if (given?.error) {
+    return json({ error: given.error }, 400);
   }
   const e = await entryOf(env, key);
   if (!e || !await inTeam(e.teams, e)) {
@@ -152,11 +159,12 @@ export async function saveDraft(env, me, request, inTeam) {
   }
   const version = nextVersion(current && current.updated_at);
   const picked = JSON.stringify(cleanMentions(mentions));
+  const cited = JSON.stringify(given ? given.sources : (current?.sources || []));
   let changes;
   if (current && current.thread === e.key) {
     ({ meta: { changes } } = await env.DB.prepare(`UPDATE drafts SET body = ?, mentions = ?,
-        person = ?, updated_at = ? WHERE thread = ? AND updated_at = ?`)
-      .bind(body, picked, me.id, version, e.key, current.updated_at).run());
+        sources = ?, person = ?, updated_at = ? WHERE thread = ? AND updated_at = ?`)
+      .bind(body, picked, cited, me.id, version, e.key, current.updated_at).run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
     // group's key.
@@ -165,8 +173,10 @@ export async function saveDraft(env, me, request, inTeam) {
         .bind(current.thread, current.updated_at).run();
     }
     ({ meta: { changes } } = await env.DB.prepare(`INSERT INTO drafts (thread, body, mentions,
-        person, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (thread) DO NOTHING`)
-      .bind(e.key, body, picked, me.id, (current && current.created_at) || version, version).run());
+        sources, person, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (thread) DO NOTHING`)
+      .bind(e.key, body, picked, cited, me.id, (current && current.created_at) || version, version)
+      .run());
   }
   if (!changes) {
     // Somebody else saved in between.
@@ -204,4 +214,20 @@ export async function discardDraft(env, me, request, inTeam) {
     await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   }
   return json({ ok: true, discarded: Boolean(changes), draft: current });
+}
+
+/**
+ * GET /api/draft/source?thread=&url=: how the inbox can show one of the sources of the entry's
+ * draft (src/sources.js). Any other address is not fetched.
+ */
+export async function draftSource(env, key, address, canSee, { own, fetchImpl } = {}) {
+  const e = await entryOf(env, key);
+  if (!e || !await canSee(e.teams, e)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const draft = draftOf(await draftsFor(env, e.keys), e.keys);
+  if (!draft?.sources.some((s) => s.url === address)) {
+    return json({ error: 'not a source of this draft' }, 404);
+  }
+  return json(await lookAt(address, { own, fetchImpl }));
 }

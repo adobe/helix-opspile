@@ -738,6 +738,32 @@
   /* The draft shown in the reply box while the pointer rests on (or focus is in) its line. */
   .composer textarea.previewing { border-style: dashed; border-color: var(--accent); color: var(--mute);
     background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
+  /* Long drafts are read here, so the box may take most of the pane while it shows one. */
+  .composer textarea.previewing, .composer.checking textarea { max-height: min(62vh, calc(100dvh - 240px)); }
+  /* The draft's sources: on their own row of its line, only ever in the inbox. */
+  .draftbar:has(.srcs) { flex-wrap: wrap; }
+  .draftbar:has(.srcs):not(.open) .pv { flex-basis: 0; }
+  .draftbar .srcs { order: 2; flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+  .draftbar .srcs .lb { color: var(--faint); cursor: help; }
+  .draftbar .src { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--link);
+    padding: 0 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); text-decoration: none; }
+  .draftbar .src:hover, .draftbar .src:focus-visible { border-color: var(--accent); }
+  /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
+  .composer.checking textarea { flex: 0 0 calc(50% - 72px); margin-right: auto; }
+  .srcpop { position: fixed; z-index: 7; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+  .srcpop[hidden] { display: none; }
+  .srcpop .head { flex: none; display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; padding: 8px 12px; font-size: 12.5px; border-bottom: 1px solid var(--line); }
+  .srcpop .head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .srcpop .host, .srcpop .only { color: var(--faint); font-size: 11.5px; }
+  .srcpop .head a { margin-left: auto; color: var(--link); }
+  .srcpop blockquote { flex: none; max-height: 30%; overflow: auto; margin: 8px 12px 0; padding: 6px 10px; max-width: none; font-size: 13px;
+    border-radius: 0; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card)); color: var(--ink); }
+  .srcpop .view { flex: 1; min-height: 0; overflow: auto; margin-top: 8px; }
+  .srcpop .view .bubble { max-width: none; background: none; color: var(--ink); padding: 0 14px 12px; border-radius: 0; font-size: 13px; }
+  .srcpop .view .none { margin: 12px 14px; color: var(--mute); font-size: 13px; }
+  .srcpop .view .none a { color: var(--link); }
+  .srcpop iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
   .t .drafted { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
   /* Quick reactions on hovering a message, like Slack. */
   .msg .quick { position: absolute; top: -14px; right: 8px; z-index: 3; display: none; gap: 1px; padding: 2px;

@@ -1047,10 +1047,15 @@ async function api(req, res, url) {
       }));
     return json(res, { platform: entry.row.source, experts });
   }
+  if (url.pathname === '/api/draft/source') {
+    // As src/sources.js would answer about each fixture's source.
+    const u = url.searchParams.get('url');
+    return json(res, store.sourceViews.get(u) || { view: 'none', url: u, reason: 'The site answered 403: it may need a sign-in.' });
+  }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
     const {
-      thread: key, text: body, mentions = [], base = null,
+      thread: key, text: body, mentions = [], sources, base = null,
     } = await readJson(req);
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
@@ -1080,6 +1085,7 @@ async function api(req, res, url) {
       thread: key,
       body,
       mentions,
+      sources: sources ?? current?.sources ?? [],
       by: { id: ME, name: me.name },
       created_at: current ? current.created_at : at,
       updated_at: at,
@@ -1564,6 +1570,10 @@ const server = createServer(async (req, res) => {
   vocabNames = await vocab(adminApi.env);
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (url.pathname === '/__dev/source-page') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end(store.sourcePage);
+      return;
+    }
     if (url.pathname === '/__dev/signout' && req.method === 'POST') {
       signedOut = true;
       res.writeHead(204).end();
