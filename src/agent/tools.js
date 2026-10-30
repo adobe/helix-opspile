@@ -26,6 +26,7 @@ import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
 import { channelThreads, MAX_LIST, resolveThread } from './history.js';
 import { writeKnowledge } from './kbwrite.js';
+import { findMember } from './members.js';
 import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
 import { MAX_POST, postAsApp } from './posting.js';
 import {
@@ -74,6 +75,7 @@ What you do:
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
 - Look things up: the knowledge bases first, then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
+- Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
 - When a lookup takes many calls or a lot of filtering, write a codemode script: it calls your tools as \`await tools.<name>(args)\`, and only what it outputs reaches you. MCP servers, if your team or customer has any, are listed under mcp-servers and are reachable only from scripts.
 
@@ -375,6 +377,29 @@ export function opspileExtension(ctx) {
             more = args.query ? '\n[… more matches; narrow the query]' : `\n[… more: before=${last}]`;
           }
           return text(`${lines.join('\n')}${more}`);
+        },
+      }),
+      defineTool({
+        name: 'find_member',
+        description: 'Whether someone is a member of your channel (on Microsoft Teams: of its Teams team), by name or mail address, from the platform\'s list of members, at most an hour old. Says so when there is no list to go by.',
+        parameters: Type.Object({
+          query: Type.String({ description: 'A name, part of one, or a mail address' }),
+        }),
+        replay: 'safe',
+        async execute(args) {
+          const t = await ctx.target();
+          const res = await findMember(env, {
+            source: t.source, tenant: t.tenant, channelId: t.channelId,
+          }, args.query);
+          if (!res.members) {
+            return text(`Cannot tell who is a member: ${res.why}. Do not say whether anyone is.`);
+          }
+          const listed = `${res.members.length} members, listed ${res.at}`;
+          if (!res.matches.length) {
+            return text(`No member of this ${res.place} matches "${args.query}" (${listed}). A different spelling or a second account would not match.`);
+          }
+          const lines = res.matches.map((m) => `- ${m.name}${m.email ? ` <${m.email}>` : ''}`);
+          return text(`Members of this ${res.place} that match (${listed}):\n${lines.join('\n')}`);
         },
       }),
       defineTool({
