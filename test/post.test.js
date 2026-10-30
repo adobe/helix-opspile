@@ -18,6 +18,7 @@ import {
   checkState, connections, finishAuth, learnMembers, makeState, mentionable, post, seal, slackText,
   splitMentions, teamsMessage, unseal,
 } from '../src/post.js';
+import { htmlToMarkdown } from '../src/markdown.js';
 import { d1 } from './d1.js';
 
 // Made-up keys, ids and people only.
@@ -106,6 +107,26 @@ describe('mentions', () => {
       })),
     });
     assert.deepEqual(teamsMessage('no one', [ada]), { body: { contentType: 'html', content: 'no one' } });
+  });
+
+  it('writes Teams messages as HTML from their Markdown', () => {
+    const html = (md, mentions) => teamsMessage(md, mentions).body.content;
+    assert.equal(
+      html('**Rename** `a<b`, see the [docs](https://example.com/a?b=1&c=2) ~~now~~'),
+      '<strong>Rename</strong> <code>a&lt;b</code>, see the <a href="https://example.com/a?b=1&amp;c=2">docs</a> <s>now</s>',
+    );
+    assert.equal(html('one\ntwo\n\nthree'), 'one<br>two<br><br>three');
+    assert.equal(html('Steps:\n\n- one\n- two\n\nDone'), '<p>Steps:</p><ul><li>one</li><li>two</li></ul><p>Done</p>');
+    assert.equal(html('```\na\n  b\n```'), '<pre><code>a\n  b\n</code></pre>');
+    assert.equal(html('> quoted\n> twice'), '<blockquote><p>quoted<br>twice</p></blockquote>');
+    assert.equal(html('<b>typed</b> &amp;'), '&lt;b&gt;typed&lt;/b&gt; &amp;');
+    assert.equal(html('**@Ada** and `x`', [ada]), '<strong><at id="0">Ada</at></strong> and <code>x</code>');
+    assert.equal(html(''), '');
+  });
+
+  it('reads back what it writes to Teams', () => {
+    const md = '**One** and *two*\nline\n\n- a\n- b\n\n> c\n> d\n\n```\ne\n  f\n```\n\n[g](https://example.com/)';
+    assert.equal(htmlToMarkdown(teamsMessage(md).body.content), md);
   });
 
   it('writes a Teams bot mention as an application, so the bot receives it', () => {

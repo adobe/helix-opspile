@@ -206,7 +206,9 @@ export function htmlToMarkdown(html) {
     .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')
     .replace(/<(s|strike|del)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '~~$3~~')
     .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<[^>]+>/g, '').trim().split('\n').map((l) => `> ${l}`)
+    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
+      .split('\n')
+      .map((l) => `> ${l}`)
       .join('\n')}\n\n`)
     .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, items) => {
       let n = 0;
