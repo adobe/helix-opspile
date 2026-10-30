@@ -17,7 +17,9 @@ import { EMBEDDING_MODEL } from '../rethread.js';
  * The channel's earlier conversations, for a thread agent (list_channel_threads, and
  * read_thread with a `thread`): only the threads of its own channel, the one its inbox entry
  * is in, so that an agent never reads another customer's or team's channel. A re-threaded
- * group is one conversation, under its first thread's key.
+ * group is one conversation, under its first thread's key. The exception is an agent with the
+ * `any_thread` tool (src/agent/agenttools.js), which resolves a thread anywhere
+ * (`resolveAnyThread`).
  */
 
 export const MAX_LIST = 50;
@@ -120,7 +122,7 @@ export async function channelThreads(env, key, { query = '', before = null, limi
 /**
  * What a message link names: the message ids, most specific first (the thread's root, then
  * the message), and the channel when the link says (Slack, Teams; a Discord link names a
- * Discord thread's own channel id).
+ * Discord thread's own channel id, so `guild` stands in for it).
  */
 function parseLink(ref) {
   let url;
@@ -132,12 +134,13 @@ function parseLink(ref) {
   const param = (name) => url.searchParams.get(name);
   const ids = [param('thread_ts'), param('parentMessageId')];
   let channel = null;
+  let guild = null;
   // Slack: /archives/<channel>/p<ts without the dot>?thread_ts=<root>
   const slack = /\/archives\/([^/]+)\/p(\d{10})(\d{6})/.exec(url.pathname);
   // Teams: /l/message/<channel>/<message>?parentMessageId=<root>
   const teams = /\/l\/message\/([^/]+)\/(\d+)/.exec(url.pathname);
   // Discord: /channels/<guild>/<channel or thread>/<message>
-  const discord = /\/channels\/[^/]+\/(\d+)(?:\/(\d+))?/.exec(url.pathname);
+  const discord = /\/channels\/([^/]+)\/(\d+)(?:\/(\d+))?/.exec(url.pathname);
   if (slack) {
     [, channel] = slack;
     ids.push(`${slack[2]}.${slack[3]}`);
@@ -145,9 +148,10 @@ function parseLink(ref) {
     channel = decodeURIComponent(teams[1]);
     ids.push(teams[2]);
   } else if (discord) {
-    ids.push(discord[2], discord[1]);
+    [, guild] = discord;
+    ids.push(discord[3], discord[2]);
   }
-  return { ids: [...new Set(ids.filter(Boolean))], channel };
+  return { ids: [...new Set(ids.filter(Boolean))], channel, guild };
 }
 
 /**
@@ -192,4 +196,45 @@ export async function resolveThread(env, key, ref) {
   }
   const entry = await entryOf(env, thread);
   return entry ? { key: entry.key } : { error: 'the thread is not known' };
+}
+
+/** The thread of the first of a link's message ids that opspile has, or null. */
+async function linkedThread(env, link) {
+  let scope;
+  if (link.guild) {
+    scope = { sql: 'source = \'discord\' AND tenant = ?', bind: [link.guild] };
+  } else {
+    const place = link.channel && await env.DB.prepare(`SELECT source, tenant FROM threads
+      WHERE channel_id = ? LIMIT 1`).bind(link.channel).first();
+    if (!place) {
+      return null;
+    }
+    scope = {
+      sql: 'source = ? AND tenant = ? AND channel_id = ?',
+      bind: [place.source, place.tenant, link.channel],
+    };
+  }
+  for (const id of link.ids) {
+    // eslint-disable-next-line no-await-in-loop
+    const m = await env.DB.prepare(`SELECT thread FROM messages WHERE ${scope.sql} AND id = ?`)
+      .bind(...scope.bind, id).first();
+    if (m) {
+      return m.thread;
+    }
+  }
+  return null;
+}
+
+/**
+ * The inbox entry key that `ref` names, in any channel: a thread key, or a link to one of its
+ * messages. `{ key }`, or `{ error }`. A channel the rules ignore has no threads to read.
+ */
+export async function resolveAnyThread(env, ref) {
+  const s = String(ref || '').trim();
+  const known = s && await env.DB.prepare('SELECT 1 FROM threads WHERE thread = ?').bind(s).first();
+  const thread = known ? s : await linkedThread(env, parseLink(s));
+  const row = thread && await env.DB.prepare('SELECT kind FROM threads WHERE thread = ?')
+    .bind(thread).first();
+  const entry = row && row.kind !== 'ignore' && await entryOf(env, thread);
+  return entry ? { key: entry.key } : { error: 'no thread has that key or link' };
 }

@@ -477,7 +477,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('initech', 'Initech', 'vendor', NULL, '2026-10-20T09:00:00Z'),
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
-    ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+    ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
+    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z')`);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined.
   const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
@@ -550,7 +551,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   // per-channel lists put the channels switched on their own first.
   DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
     ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
-    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z');
+    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z'),
+    ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one

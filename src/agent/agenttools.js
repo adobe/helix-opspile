@@ -28,6 +28,11 @@ import { teamsBotEnabled } from '../teamsbot.js';
  * - `extraction_rules`: the agent reads, tests and changes its team's extraction rules and
  *   tech stack (src/extract.js), which apply to every channel of the team from the next
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
+ * - `any_thread`: the agent reads any thread of the inbox, whatever its channel, team or
+ *   customer (src/agent/history.js).
+ *
+ * A tool marked `internal` has no team switch, only the admin team switches it, and it works
+ * only in an internal channel (`internalChannel`), however it got switched on.
  */
 
 export const AGENT_TOOLS = [
@@ -65,6 +70,19 @@ export const AGENT_TOOLS = [
       + ' a thread, and shows on this page, attributed to the agent. It cannot change the admin'
       + ' team\'s rules.',
     platforms: null,
+  },
+  {
+    tool: 'any_thread',
+    title: 'Read any thread',
+    names: ['read_any_thread'],
+    description: 'The agent reads any thread of the inbox, of any channel, team or customer, by'
+      + ' its key or a link to one of its messages',
+    note: 'One channel at a time, by the admin team, in internal channels only: not a customer\'s,'
+      + ' partner\'s or vendor\'s, and none shared outside Adobe. What the agent read can reach'
+      + ' its drafts, notes, knowledge bases and the other tools it has here. Every thread it'
+      + ' reads is recorded (agent_thread_reads).',
+    platforms: null,
+    internal: true,
   },
 ];
 
@@ -121,6 +139,23 @@ export async function toolSwitches(env, { team, channelId }) {
 export const switchedOn = ({ team, channel }) => Boolean((channel || team || {}).enabled);
 
 /**
+ * Whether a channel is internal: filed under an org of type `internal`, and not shared with
+ * anyone (Slack Connect, a Teams shared channel). Not knowing is no. The org alone would not
+ * do: an internal org can have shared channels. Neither proves that nobody outside is in the
+ * channel (a guest, say), which is why someone has to turn such a tool on as well.
+ */
+export async function internalChannel(env, channelId) {
+  const row = await env.DB.prepare(`SELECT o.type, c.shared, c.connected FROM threads t
+      LEFT JOIN orgs o ON o.slug = t.org
+      LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant
+        AND c.channel_id = t.channel_id
+    WHERE t.channel_id = ? ORDER BY COALESCE(t.last_at, t.any_at) DESC LIMIT 1`)
+    .bind(channelId || '').first();
+  return Boolean(row) && row.type === 'internal' && row.shared === 0
+    && JSON.parse(row.connected || '[]').length === 0;
+}
+
+/**
  * The switchable tools an agent's target (its team, channel and platform) has, as a sorted
  * list of their keys: on, working in this deployment and on the thread's platform.
  */
@@ -129,9 +164,13 @@ export async function toolsFor(env, target) {
     return [];
   }
   const switches = await toolSwitches(env, target);
-  return AGENT_TOOLS.filter((t) => switchedOn(switches.get(t.tool))
-    && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source))
-    .map((t) => t.tool).sort();
+  const on = AGENT_TOOLS.filter((t) => {
+    const { team, channel } = switches.get(t.tool);
+    return switchedOn(t.internal ? { channel } : { team, channel })
+      && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source);
+  });
+  const internal = on.some((t) => t.internal) && await internalChannel(env, target.channelId);
+  return on.filter((t) => !t.internal || internal).map((t) => t.tool).sort();
 }
 
 /**
