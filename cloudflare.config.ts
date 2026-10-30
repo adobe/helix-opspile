@@ -211,7 +211,8 @@ export default defineConfig(({ mode }) => {
         AGENTS: bindings.durableObject({ worker: name, exportName: 'ThreadAgent' }),
         // The Discord poller: one object reads the servers' new messages every minute.
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
-        // Dynamic Workers: the shells of the agents' computers (the `computer` tool).
+        // Dynamic Workers: the shells of the agents' computers (the `computer` tool), and extraction
+        // rules (src/extract.js).
         LOADER: bindings.workerLoader(),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },

@@ -12,6 +12,25 @@
 
 import { createHash } from 'node:crypto';
 
+/**
+ * A Worker Loader that runs the Dynamic Worker of regex rules (src/extract.js) in this process.
+ * `hook` sees each run's `{ rules, text }` first: it may throw, or not return, as a run can.
+ */
+export function regexLoader(hook = () => {}) {
+  return {
+    get: (id, make) => ({
+      getEntrypoint: () => ({
+        async fetch(url, init) {
+          await hook(JSON.parse(init.body));
+          const code = Buffer.from(make().modules['runner.js']).toString('base64');
+          const runner = await import(`data:text/javascript;base64,${code}`);
+          return runner.default.fetch(new Request(url, init));
+        },
+      }),
+    }),
+  };
+}
+
 /** In-memory stand-ins for the RAW bucket and the NORMALIZE queue. */
 export function fakeEnv(vars = {}, { failPut = false } = {}) {
   const objects = new Map();

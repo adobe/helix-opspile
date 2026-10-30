@@ -673,12 +673,19 @@ and an unchanged thread is never labeled twice):
   Delivery or Document Authoring link, an AEM Cloud Service, Assets or App Builder host, an
   Akamai error reference, a Cloudflare ray id, a Fastly or CloudFront header, another git host.
   A rule is a pattern with a value template (`$2/$1`), a case and an `exclude` pattern, that
-  writes a fact of its `field` or detects technology `field`. A regular expression cannot be
-  stopped once it runs (and a Worker's clock stands still while it does), so a pattern that
+  writes a fact of its `field` or detects technology `field`. Regular expressions run in a
+  Dynamic Worker (`LOADER`), one per set of rules, without network access, because the label
+  job cannot stop one that runs in its own isolate (and a Worker's clock stands still while it
+  does). It waits a second for a set, then halves the set until the rule that does not finish
+  is alone; that rule is skipped and logged (`regex rules skipped`), and stays on: the next
+  thread may be fine. Testing a rule reports it. The wait is what bounds a run, for the label
+  job: production let Dynamic Workers go on past their `cpuMs` limit (October 2026), so what
+  such a run costs in the Dynamic Worker itself is up to Cloudflare's own limits. A pattern that
   repeats a group that itself repeats without bound, as `(a+)+`, is refused when it is saved
-  and when it runs: that shape backtracks without end on text that almost matches. A script is an ES module whose
-  default export gets the thread and returns `[{ field, value }, { tech }]`; it runs in a
-  Dynamic Worker of its own (`LOADER`), without network access, within two seconds. Rules are
+  and when it runs: that shape backtracks without end on text that almost matches. A script is
+  an ES module whose default export gets the thread and returns `[{ field, value }, { tech }]`;
+  it runs in a Dynamic Worker of its own (`LOADER`), without network access, within two
+  seconds. Rules are
   edited on the Agents page (**Extraction rules** of a team's knowledge base), with the MCP
   server's tools (`list_extraction_rules`, `save_extraction_rule`, …), and by thread agents
   where the team turned on their `extraction_rules` tool (see "Agent tools").

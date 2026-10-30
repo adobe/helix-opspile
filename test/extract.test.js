@@ -15,13 +15,13 @@ import { describe, it } from 'node:test';
 import { AGENT_TOOLS } from '../src/agent/agenttools.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
 import {
-  checkRule, extract, GLOBAL_TEAM, nestedRepeat, rulesFor, runScript, saveRule, saveTech, techFor,
-  techNames, testRule,
+  checkRule, extract, GLOBAL_TEAM, nestedRepeat, REGEX_MS, rulesFor, runScript, saveRule, saveTech,
+  techFor, techNames, testRule,
 } from '../src/extract.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { ADMIN_TEAM } from '../src/review.js';
 import { d1 } from './d1.js';
-import { quiet } from './fakes.js';
+import { quiet, regexLoader } from './fakes.js';
 
 // Made-up people, teams, hosts and ids only.
 const ADA = { id: 1, email: 'ada@staff.example', name: 'Ada' };
@@ -40,7 +40,7 @@ function env(extra = {}) {
     ('kb-team-helix', 'team', 'helix', 'x', '2026-10-20T09:00:00Z'),
     ('kb-team-admin', 'team', 'admin', 'x', '2026-10-20T09:00:00Z'),
     ('kb-org-acme', 'org', 'acme', 'x', '2026-10-20T09:00:00Z')`);
-  return { DB, ...extra };
+  return { DB, LOADER: regexLoader(), ...extra };
 }
 const msgs = (...bodies) => bodies.map((body) => ({ body, author: { kind: 'person' } }));
 const by = (facts, field) => facts.filter((f) => f.field === field).map((f) => f.value);
@@ -197,6 +197,112 @@ describe('a team\'s rules and tech stack', () => {
     // Tested before it is saved: the same as a run.
     const tested = await testRule({ LOADER }, rule, { text: 'hello' });
     assert.deepEqual(tested.facts, [{ field: 'said', value: 'hello' }]);
+  });
+});
+
+describe('regex rules', () => {
+  const rule = (id, pattern) => ({
+    id, name: `Rule ${id}`, kind: 'regex', target: 'fact', field: `f${id}`, pattern,
+  });
+  const facts = async (e, rules, text = 'alpha beta gamma delta') => {
+    const logged = [];
+    const { log } = console;
+    console.log = (line) => logged.push(JSON.parse(line));
+    try {
+      const out = await extract(e, rules, { thread: 'T1' }, msgs(text));
+      return { ...out, logged };
+    } finally {
+      console.log = log;
+    }
+  };
+  const rules = ['alpha', 'beta', 'gamma', 'delta'].map((p, i) => rule(i + 1, p));
+
+  it('run in one Dynamic Worker per set of rules, without network access', async () => {
+    const seen = [];
+    const LOADER = regexLoader();
+    const { get } = LOADER;
+    LOADER.get = (id, make) => {
+      seen.push({ id, code: make() });
+      return get(id, make);
+    };
+    const { facts: found, skipped } = await facts({ LOADER }, rules);
+    assert.deepEqual(found.map((f) => f.value), ['alpha', 'beta', 'gamma', 'delta']);
+    assert.deepEqual(skipped, []);
+    await facts({ LOADER }, rules, 'other text');
+    await facts({ LOADER }, rules.slice(1));
+    assert.equal(seen[0].code.globalOutbound, null);
+    assert.equal(seen[0].code.limits.cpuMs > 0, true);
+    assert.equal(seen[1].id, seen[0].id);
+    assert.notEqual(seen[2].id, seen[0].id);
+  });
+
+  it('keep their value template, case, exclude pattern and flags in the Dynamic Worker', async () => {
+    const r = {
+      ...rule(1, '(h)ost-(\\d+)'), flags: 'i', value: '$2/$1$$', transform: 'upper', exclude: '^9',
+    };
+    const out = await facts({ LOADER: regexLoader() }, [r], 'HOST-1 host-1 Host-2 host-9');
+    assert.deepEqual(out.facts.map((f) => f.value), ['1/H$', '2/H$']);
+  });
+
+  it('lose only the rule that does not finish, which is logged', async () => {
+    const runs = [];
+    const LOADER = regexLoader(({ rules: list }) => {
+      runs.push(list.length);
+      if (list.some((r) => r.pattern === 'gamma')) {
+        throw new Error('Worker exceeded CPU time limit');
+      }
+    });
+    const out = await facts({ LOADER }, rules);
+    assert.deepEqual(out.facts.map((f) => f.value), ['alpha', 'beta', 'delta']);
+    assert.deepEqual(out.skipped.map((r) => r.id), [3]);
+    assert.deepEqual(out.logged, [{
+      route: 'extract', action: 'regex rules skipped', thread: 'T1', rules: [3],
+    }]);
+    assert.deepEqual(runs, [4, 2, 2, 1, 1]);
+  });
+
+  it('stop waiting for a Dynamic Worker that does not answer', async () => {
+    const LOADER = regexLoader(({ rules: list }) => (list.some((r) => r.pattern === 'beta')
+      ? new Promise(() => {}) : undefined));
+    const started = Date.now();
+    const out = await facts({ LOADER }, rules.slice(0, 2));
+    assert.deepEqual(out.facts.map((f) => f.value), ['alpha']);
+    assert.deepEqual(out.skipped.map((r) => r.id), [2]);
+    assert.ok(Date.now() - started >= REGEX_MS);
+  });
+
+  it('cost a thread a limited number of runs, however many fail', async () => {
+    let runs = 0;
+    const LOADER = regexLoader(() => {
+      runs += 1;
+      throw new Error('down');
+    });
+    const many = Array.from({ length: 200 }, (_, i) => rule(i + 1, `word${i}`));
+    const out = await facts({ LOADER }, many);
+    assert.equal(out.skipped.length, 200);
+    assert.ok(runs <= 32, `${runs} runs`);
+  });
+
+  it('leave out rules refused since they were saved, and do not run without LOADER', async () => {
+    const LOADER = regexLoader(({ rules: list }) => {
+      assert.deepEqual(list.map((r) => r.pattern), ['alpha']);
+    });
+    const out = await facts({ LOADER }, [rule(1, 'alpha'), rule(2, '(a+)+$')]);
+    assert.deepEqual(out.facts.map((f) => f.value), ['alpha']);
+    assert.deepEqual(out.skipped, []);
+    assert.deepEqual((await facts({}, rules)).facts, []);
+  });
+
+  it('say so when tested on text they do not finish on', async () => {
+    const r = { name: 'Slow', field: 'slow', pattern: 'alpha' };
+    const LOADER = regexLoader(() => {
+      throw new Error('Worker exceeded CPU time limit');
+    });
+    assert.match((await quiet(() => testRule({ LOADER }, r, { text: 'alpha' }))).error, /did not finish/);
+    assert.match((await testRule({}, r, { text: 'alpha' })).error, /LOADER/);
+    assert.deepEqual(await testRule({ LOADER: regexLoader() }, r, { text: 'alpha' }), {
+      facts: [{ field: 'slow', value: 'alpha' }], tech: [],
+    });
   });
 });
 

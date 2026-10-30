@@ -127,7 +127,7 @@ Nothing below is committed; set it on the Worker.
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `KLICKHAUS_URL` | var | Optional: klickhaus' origin (or a path under it). With `KLICKHAUS_TEAMS`, the header has **Stats**, its `opspile.html` (the statistics of all threads) in a new tab, on the customer and team on screen |
 | `KLICKHAUS_TEAMS` | var | Optional, comma-separated ops team slugs whose members have klickhaus users: only they see Stats (admins too only as members of one), and `/api/me` gives them `stats: { url }` |
-| `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool, Cloudflare Computer's just-bash), and extraction rules that are scripts (without network access; without `LOADER` they do not run) |
+| `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool, Cloudflare Computer's just-bash), and extraction rules, regular expressions and scripts (without network access; without `LOADER` they do not run) |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |

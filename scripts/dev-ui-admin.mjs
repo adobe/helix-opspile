@@ -511,16 +511,21 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
     // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader,
-    // which runs extraction scripts (src/extract.js) in this process, with network access: the
-    // preview's scripts are your own.
+    // which runs extraction rules (src/extract.js) in this process, with network access: the
+    // preview's rules are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
     LOADER: {
       get: (id, make) => ({
         getEntrypoint: () => ({
           fetch: async (url, init) => {
-            const code = make().modules['rule.js'];
+            const { modules } = make();
+            const load = (code) => import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+            if (!modules['rule.js']) {
+              const runner = await load(modules['runner.js']);
+              return runner.default.fetch(new Request(url, init));
+            }
             try {
-              const mod = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+              const mod = await load(modules['rule.js']);
               const out = await mod.default(JSON.parse(init.body));
               return Response.json({ results: Array.isArray(out) ? out : [] });
             } catch (e) {

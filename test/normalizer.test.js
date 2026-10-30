@@ -20,7 +20,9 @@ import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
 import { d1 } from './d1.js';
-import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
+import {
+  fakeArtifacts, fakeBucket, quiet, regexLoader,
+} from './fakes.js';
 
 // Made-up ids, names and domains only.
 const RULES = [
@@ -732,7 +734,7 @@ describe('backfill, mentions and labels', () => {
       [root]: event({
         type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'site down on https://main--web--acme.aem.live, see CVE-2026-1234',
       }),
-    }, { AI });
+    }, { AI, LOADER: regexLoader() });
     await processKey(e, root);
     const labelJobs = e.queued.filter((q) => q.body.label).map((q) => q.options);
     assert.deepEqual(labelJobs, [{ delaySeconds: 120 }]);

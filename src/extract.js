@@ -32,6 +32,12 @@ import { sha256 } from './raw.js';
  * and an `exclude` pattern: values it matches are dropped. It writes a fact (`target` fact, its
  * `field`) or detects a technology (`target` tech, `field` its id).
  *
+ * Regular expressions run in a Dynamic Worker too (the LOADER binding; without it, they do not
+ * run), one per set of rules, so that a pattern that backtracks without end costs the label job
+ * a wait, not its CPU, and stalls no other team. A set that is not done within REGEX_MS is halved
+ * until the rule that does not finish is alone, which is skipped and logged. That wait is what
+ * bounds it: Cloudflare's `cpuMs` is set, but production let runs go on well past it (2026-10).
+ *
  * A script rule is an ES module whose default export gets the thread and returns what it found:
  *
  *   export default function (thread) {
@@ -58,9 +64,12 @@ const MAX_DESCRIPTION = 300;
 const MAX_MATCHES = 500;
 /** How long a script may take, and how much of the thread it gets. */
 export const SCRIPT_MS = 2000;
-const SCRIPT_CPU_MS = 200;
+const CPU_MS = 200;
 const SCRIPT_TEXT = 100000;
 const MAX_RESULTS = 100;
+/** How long a set of regex rules may take, and how many runs one thread may cost. */
+export const REGEX_MS = 1000;
+const REGEX_RUNS = 32;
 const COMPATIBILITY_DATE = '2026-10-01';
 
 export const ID = /^[a-z][a-z0-9_]{0,31}$/;
@@ -73,10 +82,10 @@ const clean = (v, max) => String(v ?? '').trim().slice(0, max);
 
 /**
  * Whether `pattern` repeats a group that itself repeats without bound, as `(a+)+`, `(\w*)*`
- * or `(?:x|y+){2,}`: the shape that backtracks exponentially on text that almost matches. A
- * regular expression cannot be stopped once it runs, and the Worker's clock stands still while
- * it does, so this is checked before a rule runs, not timed while it does. `(?:\.x+)*` is
- * refused too, though harmless: write it with one repetition, as `[x.]*x`.
+ * or `(?:x|y+){2,}`: the shape that backtracks exponentially on text that almost matches. It
+ * is refused before it runs, because a run that does not end is only abandoned (see the top),
+ * not stopped. `(?:\.x+)*` is refused too, though harmless: write it with one repetition, as
+ * `[x.]*x`.
  */
 export function nestedRepeat(pattern) {
   const src = String(pattern || '');
@@ -166,39 +175,6 @@ export function compile(rule) {
   return { re, exclude };
 }
 
-/** `template` with `$0`… filled from `match`; `$$` is a dollar sign. */
-export function fill(template, match) {
-  return String(template || '$0')
-    .replace(/\$(\$|\d)/g, (_, d) => (d === '$' ? '$' : (match[Number(d)] ?? '')));
-}
-
-/** What a regex rule finds in `text`: its values (facts or tech ids), in order, unique. */
-export function matches(rule, text, compiled = compile(rule)) {
-  if (compiled.error) {
-    return [];
-  }
-  const { re, exclude } = compiled;
-  re.lastIndex = 0;
-  const out = [];
-  let n = 0;
-  for (const m of String(text || '').matchAll(re)) {
-    n += 1;
-    if (n > MAX_MATCHES) {
-      break;
-    }
-    let v = fill(rule.value, m).trim().slice(0, MAX_VALUE);
-    if (rule.transform === 'lower') {
-      v = v.toLowerCase();
-    } else if (rule.transform === 'upper') {
-      v = v.toUpperCase();
-    }
-    if (v && !(exclude && exclude.test(v)) && !out.includes(v)) {
-      out.push(v);
-    }
-  }
-  return out;
-}
-
 /** Results of a script (or of a rule), as `{ facts, tech }`; anything else is left out. */
 function results(list) {
   const facts = [];
@@ -229,6 +205,123 @@ export default {
 };
 `;
 
+// The Dynamic Worker around regex rules: for each rule, its values in order, unique.
+const REGEX_RUNNER = String.raw`const MAX_MATCHES = ${MAX_MATCHES};
+const MAX_VALUE = ${MAX_VALUE};
+
+// The template with $0… filled from the match; $$ is a dollar sign.
+const fill = (template, match) => String(template || '$0')
+  .replace(/\$(\$|\d)/g, (_, d) => (d === '$' ? '$' : (match[Number(d)] ?? '')));
+
+function matches(rule, text) {
+  const exclude = rule.exclude ? new RegExp(rule.exclude, rule.excludeFlags) : null;
+  const out = [];
+  let n = 0;
+  for (const m of text.matchAll(new RegExp(rule.pattern, rule.flags))) {
+    n += 1;
+    if (n > MAX_MATCHES) {
+      break;
+    }
+    let v = fill(rule.value, m).trim().slice(0, MAX_VALUE);
+    if (rule.transform === 'lower') {
+      v = v.toLowerCase();
+    } else if (rule.transform === 'upper') {
+      v = v.toUpperCase();
+    }
+    if (v && !(exclude && exclude.test(v)) && !out.includes(v)) {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+export default {
+  async fetch(request) {
+    const { rules, text } = await request.json();
+    return Response.json({ results: rules.map((rule) => matches(rule, text)) });
+  },
+};
+`;
+
+/**
+ * Sends `input` to the Dynamic Worker `id`, without network access: its answer, or null when
+ * there is none within `ms`. It fails when the Dynamic Worker does.
+ */
+async function sandboxed(env, id, modules, input, ms) {
+  let timer;
+  try {
+    const worker = env.LOADER.get(id, () => ({
+      compatibilityDate: COMPATIBILITY_DATE,
+      mainModule: 'runner.js',
+      modules,
+      globalOutbound: null,
+      limits: { cpuMs: CPU_MS },
+    }));
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), ms);
+    });
+    return await Promise.race([worker.getEntrypoint().fetch('http://rule/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((res) => res.json()), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A rule as REGEX_RUNNER takes it, or null when it may not run. */
+function regexInput(rule) {
+  const { re, exclude, error } = compile(rule);
+  return error ? null : {
+    pattern: re.source,
+    flags: re.flags,
+    exclude: exclude ? exclude.source : '',
+    excludeFlags: exclude ? exclude.flags : '',
+    value: rule.value,
+    transform: rule.transform,
+  };
+}
+
+/**
+ * Runs regex `rules` on `text`, see the comment at the top: `{ found, skipped }`, the values by
+ * rule and the rules that did not finish.
+ */
+async function runRegexes(env, rules, text) {
+  const found = new Map();
+  const skipped = [];
+  let runs = REGEX_RUNS;
+  const run = async (part) => {
+    let values = null;
+    if (runs > 0) {
+      runs -= 1;
+      const input = part.map(({ input: rule }) => rule);
+      try {
+        const id = `extract-regex-${(await sha256(REGEX_RUNNER + JSON.stringify(input))).slice(0, 32)}`;
+        const body = await sandboxed(env, id, { 'runner.js': REGEX_RUNNER }, {
+          rules: input, text,
+        }, REGEX_MS);
+        values = body && body.results;
+      } catch {
+        // Over the CPU limit, or the Dynamic Worker failed: as if it had not finished.
+      }
+    }
+    if (Array.isArray(values)) {
+      part.forEach(({ rule }, i) => found.set(rule, values[i]));
+    } else if (part.length > 1 && runs > 0) {
+      const half = Math.ceil(part.length / 2);
+      await Promise.all([run(part.slice(0, half)), run(part.slice(half))]);
+    } else {
+      skipped.push(...part.map(({ rule }) => rule));
+    }
+  };
+  const part = rules.map((rule) => ({ rule, input: regexInput(rule) })).filter((r) => r.input);
+  if (part.length) {
+    await run(part);
+  }
+  return { found, skipped };
+}
+
 /**
  * Runs a script rule on `thread` (see the comment at the top) in a Dynamic Worker without
  * network access: `{ facts, tech }`, or `{ error }`.
@@ -241,33 +334,16 @@ export async function runScript(env, rule, thread) {
   if (!/export\s+default/.test(code)) {
     return { error: 'a script default-exports a function: export default function (thread) { … }' };
   }
-  let timer;
   try {
     const id = `extract-${(await sha256(code)).slice(0, 32)}`;
-    const worker = env.LOADER.get(id, () => ({
-      compatibilityDate: COMPATIBILITY_DATE,
-      mainModule: 'runner.js',
-      modules: { 'runner.js': RUNNER, 'rule.js': code },
-      globalOutbound: null,
-      limits: { cpuMs: SCRIPT_CPU_MS },
-    }));
-    const timeout = new Promise((resolve) => {
-      timer = setTimeout(() => resolve(null), SCRIPT_MS);
-    });
-    const res = await Promise.race([worker.getEntrypoint().fetch('http://rule/', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(thread),
-    }), timeout]);
-    if (!res) {
+    const modules = { 'runner.js': RUNNER, 'rule.js': code };
+    const body = await sandboxed(env, id, modules, thread, SCRIPT_MS);
+    if (!body) {
       return { error: `the script took longer than ${SCRIPT_MS / 1000} seconds` };
     }
-    const body = await res.json();
     return body.error ? { error: String(body.error).slice(0, 300) } : results(body.results);
   } catch (e) {
     return { error: String((e && e.message) || e).slice(0, 300) };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -299,8 +375,8 @@ export function scriptInput(thread, messages) {
 
 /**
  * Applies `rules` to a thread's messages: the facts (`{ field, value }`, unique, at most
- * MAX_PER_FIELD per field, in rule order) and the technologies detected (ids, unique). Script
- * rules need `env`; a failing one is skipped.
+ * MAX_PER_FIELD per field, in rule order), the technologies detected (ids, unique) and the
+ * regex rules `skipped`. All rules need `env` (LOADER); a failing one is skipped.
  */
 export async function extract(env, rules, thread, messages) {
   const bodies = (messages || []).filter((m) => !m.deletedAt).map((m) => String(m.body || ''));
@@ -318,6 +394,17 @@ export async function extract(env, rules, thread, messages) {
   const ran = scripts.length && env && env.LOADER
     ? await Promise.all(scripts.map((r) => runScript(env, r, scriptInput(thread, messages))))
     : [];
+  const regexes = rules.filter((r) => r.kind !== 'script');
+  const { found, skipped } = regexes.length && env && env.LOADER
+    ? await runRegexes(env, regexes, text) : { found: new Map(), skipped: [] };
+  if (skipped.length) {
+    console.log(JSON.stringify({
+      route: 'extract',
+      action: 'regex rules skipped',
+      thread: (thread && thread.thread) || null,
+      rules: skipped.map((r) => r.id ?? null),
+    }));
+  }
   for (const r of rules) {
     if (r.kind === 'script') {
       const out = ran[scripts.indexOf(r)];
@@ -326,18 +413,18 @@ export async function extract(env, rules, thread, messages) {
         out.tech.forEach((t) => tech.add(t));
       }
     } else if (r.target === 'tech') {
-      if (matches(r, text).length) {
+      if ((found.get(r) || []).length) {
         tech.add(r.field);
       }
     } else {
-      matches(r, text).forEach((v) => add(r.field, v));
+      (found.get(r) || []).forEach((v) => add(r.field, v));
     }
   }
   const facts = [];
   for (const [field, values] of byField) {
     values.forEach((value) => facts.push({ field, value }));
   }
-  return { facts, tech: [...tech] };
+  return { facts, tech: [...tech], skipped };
 }
 
 // ---- configuration --------------------------------------------------------------------------
@@ -649,8 +736,13 @@ export async function testRule(env, input, { text, thread = null, messages = nul
     const out = await runScript(env, rule, scriptInput(thread, list));
     return out;
   }
-  const found = (await extract(env, [rule], thread, list));
-  return found;
+  if (!env.LOADER) {
+    return { error: 'rules need the Worker Loader binding (LOADER), which this deployment does not have' };
+  }
+  const { facts, tech, skipped } = await extract(env, [rule], thread, list);
+  return skipped.length
+    ? { error: `the rule did not finish on this text within ${REGEX_MS / 1000} second` }
+    : { facts, tech };
 }
 
 /** The configuration a team's page shows: its own rules and technologies, and the admin team's. */

@@ -19,6 +19,7 @@ import { headerValue, mcp, PROTOCOL } from '../src/mcp.js';
 import { checkConfirmState, confirmState, TOOLS } from '../src/mcp-tools.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
+import { regexLoader } from './fakes.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -332,7 +333,7 @@ describe('mcp tools', () => {
   });
 
   it('lists, tests and changes a team\'s extraction rules and tech stack, for its managers', async () => {
-    const e = env();
+    const e = { ...env(), LOADER: regexLoader() };
     const list = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
     assert.deepEqual(list.rules, []);
     assert.ok(list.inherited.rules.some((r) => r.field === 'site'));
@@ -363,7 +364,7 @@ describe('mcp tools', () => {
     assert.match(notYours.body.result.content[0].text, /managers of helix/);
     const noTeam = await callTool(e, 'test_extraction_rule', { rule: script, text: 'x' });
     assert.match(noTeam.body.result.content[0].text, /Give the `team`/);
-    const ran = await send(e, req('tools/call', { name: 'test_extraction_rule', arguments: { rule: script, team: 'helix', text: 'x' } }), boss);
+    const ran = await send({ ...e, LOADER: undefined }, req('tools/call', { name: 'test_extraction_rule', arguments: { rule: script, team: 'helix', text: 'x' } }), boss);
     assert.match(ran.body.result.content[0].text, /LOADER/);
     const after = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
     assert.deepEqual([after.rules.length, after.tech.map((t) => t.tech)], [1, ['sitecore']]);
