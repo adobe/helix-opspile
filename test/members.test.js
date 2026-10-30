@@ -160,6 +160,15 @@ describe('who is in a channel, for the agent', () => {
     assert.deepEqual([none.matches, none.members.length, none.place], [[], 3, 'Teams team']);
   });
 
+  it('counts the members it cannot match by name', async () => {
+    // Slack lists ids: a member opspile has not seen has no name or mail address yet.
+    const e = env({ members: [ADA, { userId: 'U-NEW' }], source: 'slack' });
+    const where = { ...ENTRY, source: 'slack' };
+    const found = await findMember(e, where, 'nobody', { now: NOW });
+    assert.deepEqual([found.matches, found.unnamed], [[], 1]);
+    assert.equal((await findMember(e, where, 'new@customer.example', { now: NOW })).unnamed, 1);
+  });
+
   it('calls a Slack channel a channel', async () => {
     const e = env({ members: [{ userId: 'U-ADA' }], source: 'slack' });
     const res = await findMember(e, { ...ENTRY, source: 'slack' }, 'ada', { now: NOW });

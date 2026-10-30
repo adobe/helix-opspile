@@ -715,7 +715,12 @@ describe('the earlier conversations of the channel', () => {
     e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
       VALUES ('slack', 'E1', 'C1', 'U1', 'ada@staff.example', 'Ada')`).run();
     assert.equal((await run('find_member', { query: 'ada' })).text, `Members of this channel that match (1 members, listed ${at}):\n- Ada <ada@staff.example>`);
-    assert.match((await run('find_member', { query: 'cy@customer.example' })).text, /^No member of this channel matches "cy@customer\.example" \(1 members, /);
+    const none = (await run('find_member', { query: 'cy@customer.example' })).text;
+    assert.match(none, /^No member of this channel matches "cy@customer\.example" \(1 members, /);
+    assert.doesNotMatch(none, /no name opspile knows/);
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U9')`).run();
+    assert.match((await run('find_member', { query: 'cy' })).text, /1 of them have no name opspile knows, so they may be the one you are looking for: do not say this person is not a member\.$/);
   });
 
   it('lists the other threads of the channel, latest first, without join messages', async () => {

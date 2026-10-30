@@ -396,7 +396,10 @@ export function opspileExtension(ctx) {
           }
           const listed = `${res.members.length} members, listed ${res.at}`;
           if (!res.matches.length) {
-            return text(`No member of this ${res.place} matches "${args.query}" (${listed}). A different spelling or a second account would not match.`);
+            const unknown = res.unnamed
+              ? ` ${res.unnamed} of them have no name opspile knows, so they may be the one you are looking for: do not say this person is not a member.`
+              : '';
+            return text(`No member of this ${res.place} matches "${args.query}" (${listed}). A different spelling or a second account would not match.${unknown}`);
           }
           const lines = res.matches.map((m) => `- ${m.name}${m.email ? ` <${m.email}>` : ''}`);
           return text(`Members of this ${res.place} that match (${listed}):\n${lines.join('\n')}`);

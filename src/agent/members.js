@@ -67,25 +67,28 @@ async function roster(env, where, { now = Date.now(), fresh = false, ...deps } =
 
 /**
  * The members of the channel that match `query`, a name as in the mention suggestions (best
- * first) or a whole mail address, as `{ matches, members, at, place }`, or `{ why }`.
+ * first) or a whole mail address, as `{ matches, members, unnamed, at, place }`, or `{ why }`.
+ * `unnamed` members cannot match: Slack lists ids, and opspile has not seen these yet.
  */
 export async function findMember(env, where, query, opts = {}) {
   const listed = await roster(env, where, { ...opts, fresh: true });
   if (!listed.members) {
     return listed;
   }
+  const unnamed = listed.members.filter((m) => !m.name && !m.email).length;
   const q = String(query || '').trim();
   if (q.includes('@')) {
     const mail = q.toLowerCase();
     return {
       ...listed,
+      unnamed,
       matches: listed.members.filter((m) => m.email && m.email.toLowerCase() === mail),
     };
   }
   const accounts = listed.members.map((m) => ({
     ...m, name: m.name || m.email || '', aliases: [m.email].filter(Boolean),
   }));
-  return { ...listed, matches: rankMentions(accounts, q, MAX_MATCHES) };
+  return { ...listed, unnamed, matches: rankMentions(accounts, q, MAX_MATCHES) };
 }
 
 const isMember = (person, members) => members.some((m) => person.accounts.includes(m.user_id)
