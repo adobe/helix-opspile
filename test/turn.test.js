@@ -37,7 +37,7 @@ async function transcript(inputs, responses) {
       return { output: [{ type: 'text', text: 'ok' }] };
     },
   });
-  registry.install(defineExtension({ name: 'x', tools: ['update_draft', 'codemode', 'kb_write'].map(tool) }));
+  registry.install(defineExtension({ name: 'x', tools: ['update_draft', 'discard_draft', 'codemode', 'kb_write'].map(tool) }));
   const harness = await Harness.open(new MemoryStorage(), { models, registry }, ctx);
   const root = await harness.root(ctx, { agent: { model: { provider: 'faux', modelId: 'm' } } });
   faux.setResponses(responses);
@@ -86,6 +86,11 @@ describe('the agent\'s latest turn', () => {
       () => fauxAssistantMessage(''),
     ]);
     assert.equal(latestTurn(entries).text, 'Updated the draft.');
+    const discarded = await transcript(['m'], [
+      () => fauxAssistantMessage(fauxToolCall('discard_draft', { base: 'v' }), { stopReason: 'toolUse' }),
+      () => fauxAssistantMessage(''),
+    ]);
+    assert.equal(latestTurn(discarded).text, 'Discarded the draft.');
     assert.equal(latestTurn([]), null);
     const failed = latestTurn([
       { kind: 'pi.user', model: [{ role: 'user', content: 'x', timestamp: 1 }] },
