@@ -24,6 +24,7 @@ import {
   agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
 } from './deliver.js';
 import { toolsFor } from './agenttools.js';
+import { mentionedOutside } from './members.js';
 import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
@@ -246,7 +247,7 @@ export class ThreadAgent extends Agent {
       };
     } else {
       const entry = await entryOf(this.env, this.name);
-      const row = entry && await this.env.DB.prepare(`SELECT org, kind, channel_id, channel_name, source
+      const row = entry && await this.env.DB.prepare(`SELECT org, kind, tenant, channel_id, channel_name, source
         FROM threads WHERE thread = ?`).bind(entry.key).first();
       const root = entry && await this.env.DB.prepare(`SELECT permalink FROM messages
         WHERE thread = ? AND permalink IS NOT NULL ORDER BY at LIMIT 1`).bind(entry.key).first();
@@ -259,6 +260,7 @@ export class ThreadAgent extends Agent {
         team: entry ? entry.team : null,
         org: row ? row.org : null,
         kind: row ? row.kind : null,
+        tenant: row ? row.tenant : null,
         channelId: row ? row.channel_id : null,
         channelName: row ? row.channel_name : null,
         source: row ? row.source : null,
@@ -320,7 +322,15 @@ export class ThreadAgent extends Agent {
       return { result: 'unchanged', own: unseen.length };
     }
     const verdicts = await this.verdicts(fresh);
-    const input = deliveryText(entry, fresh, verdicts, { first: !mark });
+    const outside = await mentionedOutside(
+      this.env,
+      entry,
+      fresh.filter((m) => !(verdicts.get(m.id) && verdicts.get(m.id).flagged)),
+    ).catch((e) => {
+      console.log(JSON.stringify({ route: 'agent', members: 'failed', error: e.message }));
+      return null;
+    });
+    const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
     await this.syncTools();
     await this.syncMcp();
     const receipt = await this.harness.submit(input, {

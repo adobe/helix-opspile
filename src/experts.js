@@ -10,12 +10,13 @@
  * governing permissions and limitations under the License.
  */
 
+import { roster } from './agent/members.js';
 import { entryOf } from './drafts.js';
 import { affinities, entryRows, staffMatches } from './expertise.js';
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
 import {
-  ACCOUNTS, channelsOf, learnMembers, NAME, target,
+  ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
 
 /**
@@ -242,18 +243,17 @@ async function active(env, people, now) {
 }
 
 /**
- * Of `ids` (accounts), those in the thread's channel (on Teams, in its team), or null when its
- * members were never listed: then nothing is known, and most channels are like that.
+ * Of `ids` (accounts), those in the thread's channel (on Teams, in its team), or null without a
+ * complete list of its members (src/agent/members.js): then nothing is known, as for most.
  */
 async function membersOf(env, t, ids) {
-  const channels = JSON.stringify(await channelsOf(env, t));
-  const { results } = await env.DB.prepare(`SELECT user_id FROM channel_members
-    WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))`)
-    .bind(t.source, t.tenant, channels).all();
-  if (!results || !results.length) {
+  const { members } = await roster(env, {
+    source: t.source, tenant: t.tenant, channelId: t.channel_id,
+  });
+  if (!members) {
     return null;
   }
-  const listed = new Set(results.map((r) => r.user_id));
+  const listed = new Set(members.map((m) => m.user_id));
   return new Set(ids.filter((id) => listed.has(id)));
 }
 

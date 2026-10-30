@@ -593,7 +593,7 @@ const MEMBER_LOOKUPS_AT_ONCE = 4;
 const MAX_ACCOUNTS = 5000;
 
 /** The channels whose members count as the thread's: on Teams, every channel of its team. */
-export async function channelsOf(env, t) {
+async function channelsOf(env, t) {
   if (t.source !== 'teams' || !t.group_id) {
     return [t.channel_id];
   }

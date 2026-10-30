@@ -36,6 +36,7 @@ import {
   agentStatus, pokeAgent, seedAgent, tellDiscarded,
 } from '../src/agent/stub.js';
 import { channelThreads, resolveThread } from '../src/agent/history.js';
+import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tools.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
@@ -243,6 +244,28 @@ describe('thread agents', () => {
     assert.equal(e.queued.filter((q) => q.body.agent === THREAD).length, 3);
   });
 
+  it('are told about a mention, as ingested, of someone who is not in the channel', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, [
+      MESSAGES[0],
+      {
+        user: 'U2', ts: '1792584060.000200', thread_ts: '1792584000.000100', text: 'Thanks <@U1>',
+      },
+    ]));
+    const entry = await entryMessages(e, THREAD);
+    assert.equal(entry.tenant, 'E1');
+    const member = (id) => e.DB.sqlite.prepare(`INSERT INTO channel_members
+      (source, tenant, channel_id, user_id) VALUES ('slack', 'E1', 'C1', ?)`).run(id);
+    const listed = new Date().toISOString();
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ?').run(listed);
+    member('U2');
+    assert.deepEqual(await mentionedOutside(e, entry, entry.messages), {
+      names: ['Ada Staff'], at: listed, place: 'channel',
+    });
+    member('U1');
+    assert.equal(await mentionedOutside(e, entry, entry.messages), null);
+  });
+
   it('reach their Durable Object through the queue and the inbox API', async () => {
     const e = env({ AI: clef, ARTIFACTS: kbArtifacts() });
     await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
@@ -332,6 +355,40 @@ describe('thread agents', () => {
     assert.equal(off.reason, 'no agent');
     assert.equal(told.length, 2);
     assert.equal(discardText({ by: 'Ada', body: 'x' }, null), discardText({ by: 'Ada', body: 'x' }));
+  });
+
+  it('discard a draft they saved, and leave a colleague\'s alone', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const all = () => true;
+    const target = { key: THREAD, team: 'helix', threads: [THREAD] };
+    const ext = opspileExtension({
+      env: e, hasThread: true, target: async () => target, verdicts: async () => new Map(),
+    });
+    const tools = Object.fromEntries(ext.tools.map((t) => [t.name, t]));
+    const run = async (args) => {
+      const res = await tools.discard_draft.execute(args, {});
+      return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+    };
+    const draft = () => e.DB.prepare('SELECT body FROM drafts').first();
+
+    assert.deepEqual(await run({ base: 'x' }), { text: 'There is no draft.', error: false });
+    const agent = { id: await agentPerson(e) };
+    const saved = await (await saveDraft(e, agent, { thread: THREAD, text: 'Stale' }, all)).json();
+    const stale = await run({ base: '2026-01-01T00:00:00.000Z' });
+    assert.equal(stale.error, true);
+    assert.match(stale.text, /The draft changed[\s\S]*Nothing was discarded[\s\S]*Stale/);
+    assert.deepEqual(await draft(), { body: 'Stale' });
+    assert.deepEqual(await run({ base: saved.draft.updated_at }), { text: 'discarded', error: false });
+    assert.equal(await draft(), null);
+
+    e.DB.sqlite.exec("INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (7, 'ada@staff.example', 'Ada Staff', 1)");
+    const ada = { id: 7, name: 'Ada Staff', email: 'ada@staff.example' };
+    const hers = await (await saveDraft(e, ada, { thread: THREAD, text: 'Mine' }, all)).json();
+    const refused = await run({ base: hers.draft.updated_at });
+    assert.equal(refused.error, true);
+    assert.match(refused.text, /^Ada Staff saved the draft last .* it is theirs, so it was kept/);
+    assert.deepEqual(await draft(), { body: 'Mine' });
   });
 
   it('are told a discarded draft once Undo has run out, unless it came back', async () => {
@@ -667,7 +724,7 @@ describe('the earlier conversations of the channel', () => {
         'helix', 'channel', 'channels/other/', '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z', 1,
         '2026-10-20T00:00:00Z')`).run();
     const target = {
-      key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack',
+      key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack', tenant: 'E1', channelId: 'C1',
     };
     const agent = {
       env: e,
@@ -684,6 +741,25 @@ describe('the earlier conversations of the channel', () => {
     };
     return { e, run };
   }
+
+  it('says who is a member of the channel, and when it cannot tell', async () => {
+    const { e, run } = await setup();
+    globalThis.fetch = async () => {
+      throw new Error('no Slack here');
+    };
+    assert.match((await run('find_member', { query: 'ada' })).text, /^Cannot tell who is a member: its members could not be listed/);
+    const at = new Date().toISOString();
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ?, members_error = NULL').run(at);
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES ('slack', 'E1', 'C1', 'U1', 'ada@staff.example', 'Ada')`).run();
+    assert.equal((await run('find_member', { query: 'ada' })).text, `Members of this channel that match (1 members, listed ${at}):\n- Ada <ada@staff.example>`);
+    const none = (await run('find_member', { query: 'cy@customer.example' })).text;
+    assert.match(none, /^No member of this channel matches "cy@customer\.example" \(1 members, /);
+    assert.doesNotMatch(none, /no name opspile knows/);
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U9')`).run();
+    assert.match((await run('find_member', { query: 'cy' })).text, /1 of them have no name opspile knows, so they may be the one you are looking for: do not say this person is not a member\.$/);
+  });
 
   it('lists the other threads of the channel, latest first, without join messages', async () => {
     const { e, run } = await setup();

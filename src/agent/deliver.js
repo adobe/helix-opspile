@@ -99,6 +99,7 @@ export async function entryMessages(env, key) {
     team: entry.team,
     org: anchor ? anchor.org : null,
     kind: anchor ? anchor.kind : null,
+    tenant: anchor ? anchor.tenant : null,
     channelId: anchor ? anchor.channel_id : null,
     channelName: anchor ? anchor.channel_name : null,
     source: anchor ? anchor.source : null,
@@ -110,9 +111,10 @@ export async function entryMessages(env, key) {
 /**
  * The input for the messages after `watermark`: the whole thread (its first message and the
  * latest ones) on first contact, the new messages after that. `verdicts` maps message ids to
- * Clef verdicts.
+ * Clef verdicts, `outside` who the messages mention that is not in the channel, if anyone
+ * (src/agent/members.js).
  */
-export function deliveryText(entry, fresh, verdicts, { first }) {
+export function deliveryText(entry, fresh, verdicts, { first, outside }) {
   const shown = first && fresh.length > MAX_HISTORY
     ? [fresh[0], ...fresh.slice(-(MAX_HISTORY - 1))]
     : fresh;
@@ -121,5 +123,8 @@ export function deliveryText(entry, fresh, verdicts, { first }) {
   const lead = first
     ? `You have been assigned this thread. Here it is so far (${fresh.length} message${fresh.length === 1 ? '' : 's'}${skipped ? `, ${skipped} in the middle left out; use read_thread for all` : ''}):`
     : `New message${fresh.length === 1 ? '' : 's'} in the thread:`;
-  return `${lead}\n\n${blocks.join('\n\n')}`;
+  const out = outside
+    ? `\n\nMentioned above but not a member of this ${outside.place} (members listed ${outside.at}): ${outside.names.join(', ')}.`
+    : '';
+  return `${lead}\n\n${blocks.join('\n\n')}${out}`;
 }

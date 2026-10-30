@@ -27,6 +27,7 @@ import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
 import { channelThreads, MAX_LIST, resolveThread } from './history.js';
 import { writeKnowledge } from './kbwrite.js';
+import { findMember } from './members.js';
 import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
 import { MAX_POST, postAsApp } from './posting.js';
 import {
@@ -38,9 +39,10 @@ import { MAX_SOURCES } from '../sources.js';
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
  * reads its thread and the other threads of its channel (src/agent/history.js), both knowledge
  * bases and the listed GitHub repositories, writes the two knowledge bases, updates its
- * thread's shared draft and suggests colleagues to pull in (src/experts.js). It cannot post,
- * react or resolve: a person reads the draft and sends it. Unless the team turned them on
- * (agentToolsExtension, src/agent/agenttools.js): then it may post itself, or has a shell.
+ * thread's shared draft (or discards one it saved) and suggests colleagues to pull in
+ * (src/experts.js). It cannot post, react or resolve: a person reads the draft and sends it.
+ * Unless the team turned them on (agentToolsExtension, src/agent/agenttools.js): then it may
+ * post itself, or has a shell.
  */
 
 const MAX_INDEX = 8000;
@@ -70,12 +72,13 @@ const PREAMBLE = `You are the opspile agent for one support thread. opspile is t
 
 What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
-- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks.
+- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
 - Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Leave it when Adobe staff are handling the thread, and suggest only someone you can give a reason for.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
 - Look things up: the knowledge bases first, then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
+- Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
 - When a lookup takes many calls or a lot of filtering, write a codemode script: it calls your tools as \`await tools.<name>(args)\`, and only what it outputs reaches you. MCP servers, if your team or customer has any, are listed under mcp-servers and are reachable only from scripts.
 
@@ -412,6 +415,32 @@ export function opspileExtension(ctx) {
         },
       }),
       defineTool({
+        name: 'find_member',
+        description: 'Whether someone is a member of your channel (on Microsoft Teams: of its Teams team), by name or mail address, from the platform\'s list of members, at most an hour old. Says so when there is no list to go by.',
+        parameters: Type.Object({
+          query: Type.String({ description: 'A name, part of one, or a mail address' }),
+        }),
+        replay: 'safe',
+        async execute(args) {
+          const t = await ctx.target();
+          const res = await findMember(env, {
+            source: t.source, tenant: t.tenant, channelId: t.channelId,
+          }, args.query);
+          if (!res.members) {
+            return text(`Cannot tell who is a member: ${res.why}. Do not say whether anyone is.`);
+          }
+          const listed = `${res.members.length} members, listed ${res.at}`;
+          if (!res.matches.length) {
+            const unknown = res.unnamed
+              ? ` ${res.unnamed} of them have no name opspile knows, so they may be the one you are looking for: do not say this person is not a member.`
+              : '';
+            return text(`No member of this ${res.place} matches "${args.query}" (${listed}). A different spelling or a second account would not match.${unknown}`);
+          }
+          const lines = res.matches.map((m) => `- ${m.name}${m.email ? ` <${m.email}>` : ''}`);
+          return text(`Members of this ${res.place} that match (${listed}):\n${lines.join('\n')}`);
+        },
+      }),
+      defineTool({
         name: 'get_draft',
         description: 'The shared draft reply of your thread, if any: its text, its sources, who saved it last, and its version (for update_draft).',
         parameters: Type.Object({}),
@@ -454,6 +483,36 @@ export function opspileExtension(ctx) {
             return fail(body.error || `failed (${res.status})`);
           }
           return text(`saved (version ${body.draft.updated_at})`);
+        },
+      }),
+      defineTool({
+        name: 'discard_draft',
+        description: 'Discard the shared draft reply of your thread, without sending it, when it is out of date or no longer wanted (Adobe staff answered themselves, the question went away). Only a draft you saved last: a colleague\'s draft is theirs. Give `base`, the version from get_draft; if it changed since, nothing is discarded.',
+        parameters: Type.Object({
+          base: Type.String({ description: 'Version of the draft you are discarding' }),
+        }),
+        executionMode: 'sequential',
+        async execute(args) {
+          const t = await ctx.target();
+          const keys = [t.key, ...(t.threads || [])];
+          const draft = draftOf(await draftsFor(env, keys), keys);
+          if (!draft) {
+            return text('There is no draft.');
+          }
+          const me = { id: await agentPerson(env) };
+          if (draft.by.id !== me.id) {
+            return fail(`${draft.by.name || 'A colleague'} saved the draft last (version ${draft.updated_at}): it is theirs, so it was kept. Say in your note if it looks out of date.`);
+          }
+          const res = await discardDraft(env, me, { thread: t.key, base: args.base }, () => true);
+          const body = await res.json();
+          if (res.status === 409) {
+            const d = body.draft;
+            return fail(`The draft changed (version ${d.updated_at}, saved by ${d.by.name || 'someone'}). Nothing was discarded. Its text:\n\n${d.body}`);
+          }
+          if (!res.ok) {
+            return fail(body.error || `failed (${res.status})`);
+          }
+          return text(body.discarded ? 'discarded' : 'There is no draft.');
         },
       }),
     );

@@ -60,6 +60,8 @@ function env({ matches = [], chunks = [], search = true } = {}) {
     sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
       VALUES ('slack', 'E1', ?, 'person', ?, ?, ?)`).run(`U${id}`, name, id, ago(0));
   }
+  sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, fetched_at)
+    VALUES ('slack', 'E1', 'C1', ?)`).run(ago(0));
   addThread(THREAD);
   return {
     STAFF_DOMAINS: 'staff.example',
@@ -159,6 +161,12 @@ describe('expert finder', () => {
     assert.deepEqual(names(found), ['Di', 'Cy']);
     assert.equal(found.experts[1].member, false);
     assert.deepEqual(found.experts[1].reasons, ['knows about this topic', 'not in this channel']);
+    // A listing that failed proves nobody is out, whatever rows it left.
+    clearExpertLists();
+    e.DB.sqlite.prepare("UPDATE channels SET members_error = 'missing_scope'").run();
+    found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(names(found), ['Cy', 'Di']);
+    assert.equal(found.experts[0].member, null);
   });
 
   it('leaves out who is in the thread, who it mentions, the viewer, and who moved on', async () => {
