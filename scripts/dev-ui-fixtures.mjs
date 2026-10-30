@@ -731,6 +731,24 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // The workspace's own emoji: an image, in a message and a reaction; a name Slack has no
+  // emoji for, the closest Clef finds, marked as such; another in an address, left alone.
+  {
+    const key = seed({
+      ch: CHANNELS.aemAcme,
+      messages: [
+        ['sam', 130, 'Could someone approve the redirect change? urn:aem:sites stays as it is.'],
+        ['dana', 125, 'LGTM :approved: and :completed:'],
+      ],
+      reads: { dana: 'latest' },
+      label: {
+        kind: 'question', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.8, topics: ['seo'],
+      },
+    });
+    const entry = threads.get(key);
+    entry.reactionSeeds = [{ id: entry.rootId, emoji: 'approved', by: 'dana' }];
+  }
+
   // Two messages mention the viewer since she last read it, one before: the customer card
   // shows 2 unread mentions on ACME, and the personal view has ACME's channel.
   seed({

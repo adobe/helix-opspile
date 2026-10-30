@@ -18,7 +18,7 @@
  * - a single line break is a break, as in Slack and Teams
  * - no raw HTML (shown as text), no indented code (chat indents prose), no footnotes
  * - links open in a new tab; Slack and Teams images go through the inbox's media proxy
- * - `@Full Name` mentions and `:emoji:` codes, outside code; `emojiLookup`
+ * - `@Full Name` mentions and `:emoji:` codes (characters or images), outside code; `emojiLookup`
  *   (src/emojinames.js) finds an emoji by any platform's name for it, `matchEmoji` those
  *   whose name has what was typed (the composer's `:` suggestions)
  *
@@ -133,6 +133,12 @@ const decode = (s) => s.replace(/&(amp|lt|gt|quot|#x27|#39);/g, (_, e) => ({
 const MENTION = /(^|\s)(@[\p{L}][\p{L}.' -]{0,40}?[\p{L}])(?=[\s,.:;!?]|$)/gu;
 /** `:name:` with an optional `::skin-tone-N`. */
 const EMOJI_CODE = /:([a-z0-9_+-]+(?:::skin-tone-[2-6])?):/g;
+/**
+ * Whether the `:name:` of `length` at `at` in `text` stands on its own, not in a word or an
+ * address (`urn:aem:sites`, `10:30:45`), as src/shortcodes.js takes names in a reply.
+ */
+export const emojiAlone = (text, at, length) => !/[\p{L}\p{N}]$/u.test(text.slice(Math.max(0, at - 2), at))
+  && !/^[\p{L}\p{N}]/u.test(text.slice(at + length, at + length + 2));
 /** Where a marked line ending ends a block, rather than breaking a line. */
 const BLOCK_END = /(<\/(?:p|li|ul|ol|blockquote|h[1-6]|table|thead|tbody|tr|pre)>|<hr \/>)\uE000/g;
 
@@ -341,7 +347,8 @@ function fileCards({ links, unseen }, fileUrl) {
  * @param {string} src
  * @param {object} [options]
  * @param {RegExp|null} [options.mentions] from mentionPattern()
- * @param {(name: string) => string|undefined} [options.emoji] the character for an emoji name
+ * @param {(name: string, alone: boolean) => string|undefined} [options.emoji] the HTML for an
+ *   emoji name (its character, or an image); `alone`: see `emojiAlone`
  * @param {(url: string) => string} [options.proxy] the address to load an image from
  * @param {(name: string) => string|undefined} [options.kindOf] who a mentioned name is
  *   (`adobe`, `partner`, `customer`, `bot`): a class on the mention, and a hint
@@ -410,6 +417,6 @@ export function render(src, {
     }
     return text
       .replace(MENTION, mark)
-      .replace(EMOJI_CODE, (m, name) => emoji(name) || m);
+      .replace(EMOJI_CODE, (m, name, at, s) => emoji(name, emojiAlone(s, at, m.length)) || m);
   }).join('')).trim() + (files ? fileCards(files, fileUrl) : '');
 }

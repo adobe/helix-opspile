@@ -747,11 +747,24 @@ standard one may be a custom emoji and stays as typed. Answers are remembered pe
 addresses (bare, autolinks in `<…>`, link destinations) are left alone. Edits (`POST /api/edit`)
 go the same way. The inbox shows every platform's names as emoji the same way.
 
+**Custom emoji in the inbox.** `GET /api/emoji/custom` gives the page what `emoji.list` says,
+aliases followed: a custom emoji shows as its image, in messages, titles, previews, reactions
+and the thread list's moods, and an alias of a standard emoji as that emoji. The images load
+straight from Slack's CDN, which wants no sign-in; one that fails shows as `:name:`. Reactions of
+other platforms never use them: Teams stores `like`, which a workspace may have an emoji of its
+own for. `emoji.list` covers the workspace of the bot token only, so the other side's emoji in a
+Slack Connect channel have no image. For such a name, and any other nobody has, the page asks
+`GET /api/emoji/closest`: the emoji Clef picks as in a reply, three names a request and 40 a page
+load, shown with a dotted underline and a tooltip that says what it stands for. Only once
+`emoji.list` answered, since the name may be on it, and only for a `:name:` on its own, so
+`urn:aem:sites` stays as it is. Previews in plain text, like notifications, keep the name.
+
 **Emoji suggestions.** Typing `:` and two more characters of a name in the reply box (or in a
 message being edited) suggests up to eight emoji, as typing `@` suggests people. First, at
 once, those whose Slack name, or another platform's name for them, has what was typed: the
 whole name, then names it starts, then names with a part it starts, then any, one name per
-emoji (`matchEmoji`, `src/emojinames.js`). When that leaves room, Clef fills the list
+emoji (`matchEmoji`, `src/emojinames.js`), in a Slack thread the workspace's custom emoji too.
+When that leaves room, Clef fills the list
 (`GET /api/emoji`): it ranks the candidates above by how likely each is what is being
 typed, with no threshold, and the list takes them in that order, skipping the emoji it
 already has, until it is full. Picking one writes `:name: `.

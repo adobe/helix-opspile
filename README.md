@@ -58,6 +58,8 @@ still answer.
 | `GET /api/draft/source?thread=&url=` | How the inbox can show one of the sources of the thread's draft: `{ view: 'frame' }`, `{ view: 'markdown', text }` or `{ view: 'none', reason }` (src/sources.js) |
 | `GET /api/mentionable?thread=&q=` | Who can be mentioned in a reply: accounts in D1 for the thread's platform and workspace where `q` starts any word of the name, login, display name or mail, in any case; customers in the thread first, then the Adobe people whose messages are closest to the thread (`CONTENT` vectors, `expert`), then the rest of the thread, the channel's members, the best match, staff. An empty `q` lists the channel's members in the background when that is a week old. |
 | `GET /api/emoji?q=` | The composer's emoji suggestions for `:q` being typed: the candidates of `src/shortcodes.js` (the emoji most alike by name and CLDR keywords, then common ones), as Slack names, most likely first by Clef's probabilities, all of them. The inbox shows them after the names that have `q` in them, until its list is full. Empty when Clef fails or takes over 4 seconds; rankings are remembered per isolate. |
+| `GET /api/emoji/custom` | Slack's custom emoji for the inbox, from `emoji.list`: `images` (name → address), `aliases` (name → the standard emoji it stands for), `complete` (whether Slack said). |
+| `GET /api/emoji/closest?names=` | For names with neither a character nor an image (comma-separated, at most three looked at): name → the Slack name of the emoji Clef picks, without those it picks none for. Empty until `emoji.list` answered. |
 | `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). `start?files=1` also asks for file uploads (Slack `files:write`; Microsoft `Files.ReadWrite.All`, for files other than inline images on Teams), which the inbox offers when someone first attaches a file. The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/file?t=&u=` | A text file (CSV, log, JSON) a message of thread `t` links to, for the inbox's preview: fetched with the app's credentials as an agent's `read_file` does, and passed on only as `text/plain`. |
@@ -81,7 +83,7 @@ Nothing below is committed; set it on the Worker.
 
 | Name | Kind | What |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies read the workspace's custom emoji with it (bot scope `emoji:read`) |
+| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`) |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
@@ -372,8 +374,9 @@ asked for only when someone first attaches a file to a reply) and the redirect U
 `openid`, `email` and `profile` itself); the bot needs `team:read` for the workspace that links to
 Slack open in (`team.info`), `reactions:read` for the reaction
 events, `emoji:read` for the workspace's custom emoji (`emoji.list`, so a custom `:name:` in a
-reply stays as typed; without it Clef replaces no name on Slack that is not a standard one,
-since it may be a custom emoji), `files:read` for images and for the files shared in Slack Connect channels (their
+reply stays as typed and the inbox shows its image; without it Clef replaces no name on Slack
+that is not a standard one, since it may be a custom emoji, and the inbox shows them by name),
+`files:read` for images and for the files shared in Slack Connect channels (their
 events carry only a stub, which opspile looks up with `files.info`), and `files:write` for files
 sent as the opspile app. Its Event Subscriptions request URL is
 `<origin>/slack/events`.

@@ -197,6 +197,24 @@ describe('ui markdown', () => {
     assert.equal(mentionPattern([]), null);
   });
 
+  it('gives the emoji callback whether a name stands alone, and takes HTML from it', () => {
+    const seen = [];
+    const emoji = (name, alone) => {
+      seen.push([name, alone]);
+      return name === 'approved' ? '<img class="emoji" src="https://emoji.example/a.png">' : undefined;
+    };
+    assert.equal(
+      render('LGTM :approved: urn:aem:sites 10:30:45 (:done:)', { emoji }),
+      '<p>LGTM <img class="emoji" src="https://emoji.example/a.png"> urn:aem:sites 10:30:45 (:done:)</p>',
+    );
+    assert.deepEqual(seen, [['approved', true], ['aem', false], ['30', false], ['done', true]]);
+  });
+
+  it('leaves a message that is one custom emoji out of the galleries', () => {
+    const emoji = () => '<img class="emoji" src="https://emoji.example/a.png">';
+    assert.equal(render(':a: :b:', { emoji }), `<p>${emoji()} ${emoji()}</p>`);
+  });
+
   it('tells mentions of Adobe people from those of customers and partners', () => {
     const kinds = { 'ada lovelace': 'adobe', "grace o'hara": 'customer', someone: 'partner' };
     const out = render("@Ada Lovelace, @Grace O'Hara, @Someone and @Nobody", {
