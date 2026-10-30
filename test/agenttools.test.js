@@ -118,6 +118,57 @@ describe('agent tools', () => {
     assert.deepEqual(await toolsFor(e, { ...slack, key: null }), []);
   });
 
+  it('switch an internal tool per channel, by the admin team, in internal channels only', async () => {
+    const e = env();
+    const slack = target(SLACK, 'slack', 'C1');
+    const internal = () => {
+      e.DB.sqlite.exec(`INSERT OR REPLACE INTO orgs (slug, type, updated_at)
+        VALUES ('acme', 'internal', '2026-10-21T10:00:00Z')`);
+      e.DB.sqlite.exec(`INSERT OR REPLACE INTO channels (source, tenant, channel_id, shared, connected, fetched_at)
+        VALUES ('slack', 'E1', 'C1', 0, '[]', '2026-10-21T10:00:00Z')`);
+    };
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'any_thread', ...body });
+    const row = (rows) => rows.tools.find((t) => t.tool === 'any_thread');
+
+    assert.equal((await put(admin, { channel: 'C1', enabled: true })).status, 400);
+    internal();
+    assert.equal((await put(manager, { channel: 'C1', enabled: true })).status, 403);
+    assert.equal((await put(manager, { channel: 'C1', enabled: false })).status, 403);
+    assert.equal((await put(admin, { team: 'helix', enabled: true })).status, 400);
+    assert.deepEqual(await toolsFor(e, slack), []);
+
+    const res = await put(admin, { channel: 'C1', enabled: true });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await toolsFor(e, slack), ['any_thread']);
+
+    const listed = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');
+    assert.equal(row(listed.body).team, null);
+    assert.equal(row(listed.body).internal, true);
+    assert.equal(row(listed.body).may, false);
+    assert.equal(row((await call(e, admin, 'GET', '/api/kb/tools?repo=kb-team-helix')).body).may, true);
+
+    // However it got on: a channel that is shared since, or a customer's, has it no more.
+    e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C1'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+    e.DB.sqlite.exec('UPDATE channels SET shared = 0, connected = \'["T2"]\' WHERE channel_id = \'C1\'');
+    assert.deepEqual(await toolsFor(e, slack), []);
+    e.DB.sqlite.exec('UPDATE channels SET connected = \'[]\' WHERE channel_id = \'C1\'');
+    assert.deepEqual(await toolsFor(e, slack), ['any_thread']);
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'customer'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+    // A channel opspile knows no details of is not taken for internal.
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'internal'");
+    e.DB.sqlite.exec("DELETE FROM channels WHERE channel_id = 'C1'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+
+    // A team's switch, written by hand, does not count.
+    internal();
+    await put(admin, { channel: 'C1', enabled: null });
+    e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+      VALUES ('any_thread', 'team', 'helix', 1, '2026-10-21T10:00:00Z')`);
+    assert.deepEqual(await toolsFor(e, slack), []);
+  });
+
   it('are listed and switched by the admin team and the team\'s managers only', async () => {
     const e = env({ LOADER: undefined });
     let res = await call(e, outsider, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true });

@@ -1023,7 +1023,8 @@ labelled as written by people outside its control.
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
-| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
+| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
+| `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
 | `list_experts`, `suggest_expert` | colleagues not in the thread yet who could help, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
@@ -1170,8 +1171,8 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Three tools are off until the admin team or a team's managers turn them on, as the global MCP
-servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
+Four tools are off until they are turned on. Three by the admin team or a team's managers, as
+the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
 tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
@@ -1220,6 +1221,23 @@ runs code in a Dynamic Worker, so it is for those who may save the rule, as savi
 labeling of a thread; it cannot change the admin team's, which apply to every channel. Its
 section of the prompt asks it to add a rule only for what recurs and the existing rules miss,
 to test it first, and never to put a customer's name or a secret into one.
+
+**`any_thread`.** Agents read only their own channel's threads, but staff in an internal channel
+paste links to customers' threads elsewhere. With this tool the agent has `read_any_thread`:
+any thread of the inbox, whatever its channel, team or customer, by its key or a link to one of
+its messages (`resolveAnyThread`, `src/agent/history.js`), except in channels the rules ignore.
+It has no search: a person points it to a thread. The messages go through Clef's injection check
+like any others, and each thread an agent reads is kept in `agent_thread_reads`, since a
+transcript can be reset.
+
+Only the admin team switches it, one channel at a time (no team switch), and only in an
+**internal channel**: filed under an org of type `internal`, and not shared (`channels.shared`,
+`channels.connected`). A channel that stops being one loses the tool, whoever turned it on: it is
+checked with the switch before each read, and a channel opspile has no details of does not count.
+Neither says that nobody outside is in the channel (guests are not recorded), so the org's type
+alone does not turn it on. The prompt asks the agent to keep other customers' details out of the
+knowledge bases and out of what it posts; that and the channel's other tools are not restricted
+by code: what it read can reach them, `bash` and the `browser` server included.
 
 ## People
 

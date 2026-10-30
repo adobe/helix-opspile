@@ -625,7 +625,7 @@ function toolsTag() {
  * `kind` names the select (`tch`, `gch`), `fold` the <details> (`tper`, `per`).
  */
 function channelSwitches({
-  kind, fold, id, title, switches, team, works = () => true, open,
+  kind, fold, id, title, switches, team, works = () => true, unworkable, open,
 }) {
   const b = base();
   const list = (state.channels || []).filter((c) => c.kind === 'channel');
@@ -643,9 +643,10 @@ function channelSwitches({
     const sw = switches[c.channelId];
     const value = sw ? (sw.enabled ? 'on' : 'off') : '';
     const where = SOURCES[c.source] || c.source;
-    const tip = !ok ? `Not on ${where}` : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
+    const na = unworkable || `not on ${where}`;
+    const tip = !ok ? na : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
     const hidden = q && !label(c).toLowerCase().includes(q);
-    return `<div class="row2" data-find="${esc(label(c).toLowerCase())}"${hidden ? ' hidden' : ''}><span title="${esc(tip)}">${esc(label(c))}${ok ? '' : ` <i class="na">not on ${esc(where)}</i>`}</span>
+    return `<div class="row2" data-find="${esc(label(c).toLowerCase())}"${hidden ? ' hidden' : ''}><span title="${esc(tip)}">${esc(label(c))}${ok ? '' : ` <i class="na">${esc(na)}</i>`}</span>
       <select data-${kind}="${esc(id)}" data-channel="${esc(c.channelId)}" aria-label="${esc(title)} in ${esc(channelName(c))}"${c.may && ok ? '' : ' disabled'}>
         <option value=""${value === '' ? ' selected' : ''}>As its team${teamState ? ` (${teamState})` : ''}</option>
         <option value="on"${value === 'on' ? ' selected' : ''}>On</option>
@@ -667,8 +668,10 @@ const toolPerChannel = (t) => channelSwitches({
   id: t.tool,
   title: t.title,
   switches: t.channels,
-  team: t.team,
-  works: (c) => !t.platforms || t.platforms.includes(c.source),
+  // An internal tool has no team switch to follow.
+  team: t.team || (t.internal ? { enabled: false } : null),
+  works: (c) => t.may && (!t.platforms || t.platforms.includes(c.source)),
+  unworkable: t.may ? null : 'the admin team switches it',
   open: state.openTool === t.tool,
 });
 
@@ -705,6 +708,10 @@ const TOOL_CONFIRM = {
   computer: {
     on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer), and curl, which reaches the internet without a filter.`,
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
+  },
+  any_thread: {
+    on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
+    off: (where) => `Agents of ${where} stop reading other channels' threads at once. What they read before stays in their transcripts.`,
   },
 };
 

@@ -11,11 +11,11 @@
  */
 
 import {
-  AGENT_TOOLS, isAgentTool, platformsOf, setToolSwitch, toolProblem,
+  AGENT_TOOLS, agentTool, internalChannel, isAgentTool, platformsOf, setToolSwitch, toolProblem,
 } from './agent/agenttools.js';
 import { json } from './http.js';
 import { channelOwner, ownerOf } from './mcpadmin.js';
-import { managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './review.js';
 
 /**
  * The knowledge-base editor's API for the agents' switchable tools (src/agent/agenttools.js),
@@ -26,7 +26,8 @@ import { managesTeam } from './review.js';
  *   from.
  * - `PUT { tool, team | channel, enabled }` switches one for a team, or a channel
  *   (`enabled: null` lets the channel follow its team again). For the admin team and the
- *   managers of the team (of the team that owns the channel).
+ *   managers of the team (of the team that owns the channel). An `internal` tool only for
+ *   the admin team, per channel, and it turns on only in an internal channel.
  *
  * Agents notice at their next message.
  */
@@ -55,7 +56,9 @@ async function list(env, me, repo) {
       names: t.names,
       platforms: platformsOf(env, t.tool),
       problem: toolProblem(env, t.tool),
-      team: owner.scope === 'team'
+      internal: Boolean(t.internal),
+      may: !t.internal || isAdmin(me),
+      team: owner.scope === 'team' && !t.internal
         ? shownSwitch(rows.find((r) => r.tool === t.tool && r.scope === 'team')) || { enabled: false }
         : null,
       channels: Object.fromEntries(rows.filter((r) => r.tool === t.tool && r.scope === 'channel')
@@ -72,6 +75,17 @@ async function switchTool(env, me, body) {
   const { enabled } = body;
   if (enabled !== null && typeof enabled !== 'boolean') {
     return bad('give enabled: true or false (or null, for a channel to follow its team)');
+  }
+  if (agentTool(tool).internal) {
+    if (!isAdmin(me)) {
+      return json({ error: 'only the admin team switches this tool' }, 403);
+    }
+    if (body.team || !body.channel) {
+      return bad('this tool is switched per channel');
+    }
+    if (enabled && !await internalChannel(env, String(body.channel))) {
+      return bad('this tool works in internal channels only: the channel\'s org is not of type internal, or the channel is shared outside');
+    }
   }
   let scope;
   let target;
