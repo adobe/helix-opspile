@@ -461,10 +461,11 @@ Bradley–Terry model whose strength is that score, learned from games of three 
 - **Picks.** When someone opens a thread by clicking it in the list, the inbox sends the threads
   on screen then, their places and their features to `POST /api/rank/pick` (table
   `rank_events`; not while viewing as someone else or searching; only in your own views, of a
-  thread that exists). The cron deletes picks older than 90 days (`RANK_EVENTS_DAYS` in
+  thread that exists), with each one's status pile. The cron deletes picks older than 90 days (`RANK_EVENTS_DAYS` in
   `src/rankevents.js`): by then the weekly training has fetched them into `.rank/events.jsonl`. The clicked thread wins over
   each of them: fully over those above it, less over those below it, which may not have been
-  looked at.
+  looked at. The model orders threads within a pile, so a pick only wins over the others of its
+  pile (picks recorded before the piles were sent: over all of them).
 - **Replies.** When the same person answers several customers on the same day, the customer
   answered sooner wins over the one answered later, each thread as it was when its customer
   wrote.
@@ -481,17 +482,22 @@ it stays on your machine):
    messages, from the production API, read-only, with the session `npm run ui:session` copied.
    Alerts are a tenth of the sample. The sample before, and what was judged on it, moves to
    `.rank/<when it was pulled>/`, and is still trained on.
-2. `npm run rank -- duel [--rounds 12]` plays the tournament with Swiss pairings: Clef reads
+2. `npm run rank -- labels` fetches today's kind of every thread trained on, into
+   `.rank/labels.json`. The training uses it instead of the kind a thread had when it was pulled
+   or picked: a kind is a thread's subject, and when what the kinds mean changes (`people` and
+   `meeting` split off `access` and `other`), the judgements and picks made before stay good.
+   Run it after a relabel (`node scripts/replay.mjs --mode prod --relabel`); `weekly` runs it.
+3. `npm run rank -- duel [--rounds 12]` plays the tournament with Swiss pairings: Clef reads
    two threads (their messages and what the inbox shows of them) and the team's policy
    (`POLICY` in `scripts/rank-lib.mjs`), and says which comes first, asked both ways round. More
    rounds add to the games played; changing what Clef is shown (`PROMPT_VERSION`) asks again.
    It calls Workers AI with `CLOUDFLARE_ACCOUNT_ID` (the Worker's account) and
    `CLOUDFLARE_API_TOKEN`, or the token of `wrangler login`.
-3. `npm run rank -- llm [--judges haiku,sonnet] [--pairs 200]` has Claude models (on Bedrock,
+4. `npm run rank -- llm [--judges haiku,sonnet] [--pairs 200]` has Claude models (on Bedrock,
    with a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, in `AWS_REGION`) judge the same games
    as Clef, shown the same, asked both ways round, with a sentence of why: the pairs you judged,
    then `--pairs` more. `--judges name=<model id>` adds others.
-4. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
+5. `npm run rank -- judge [--port 8796]` shows two threads of Clef's games side by side in the
    browser, and you pick the one the team should turn to first (← →, ↓ for "same", `s` to skip,
    `u` to undo). Then it shows what Clef, the Claude judges (with their reasons), the model and
    the old score said, and how often each agrees with you so far (Clef's also by how sure it
@@ -499,16 +505,17 @@ it stays on your machine):
    where one or both threads are still pending, the ones Clef was unsure of, or where the model
    and Clef, or the model and the old score, disagree; "Blind" hides the answers. Your answers
    go to `.rank/human.jsonl`. It follows a new sample by itself.
-5. `npm run rank -- events` fetches the picks recorded since the last time
+6. `npm run rank -- events` fetches the picks recorded since the last time
    (`GET /api/rank/events`, admin team) into `.rank/events.jsonl`.
-6. `npm run rank -- train [--model boost|linear] [--trees 150] [--depth 3] [--shares click=0.3,…|counts]
+7. `npm run rank -- train [--model boost|linear] [--trees 150] [--depth 3] [--shares click=0.3,…|counts]
    [--weights …] [--without a,b] [--dry-run]` fits the model on all samples, picks and replies, prints how often the model
    picks the winner of each source's games about a thread it was not trained on (five folds by
    thread: no game with a held-out thread is trained on, whatever its source), next to the hand-made score it replaces (`classicScore` in `ui/inbox.js`), and how
    often each judge agrees with you, and writes the model into `ui/rank.js` (between
    `// MODEL:` and `// END MODEL`). A feature seen in fewer than `--min-support` threads is not
    learned, and the policy's signs (`SIGNS` in `scripts/rank-combo.mjs`: resolved lowers a
-   thread; waiting on us, unseen by Adobe and a first message nobody answered raise it) are
+   thread; waiting on us, urgency, unseen by Adobe and a first message nobody answered raise
+   it) are
    kept: the trees are monotone in them (a split on such a feature must order its leaves so, as
    XGBoost's monotone constraints do); in a linear model (`--model linear`, L2 `--l2 30`) a
    weight the games would turn the other way is held at 0, and the training says which.
@@ -516,15 +523,15 @@ it stays on your machine):
    Only feature names, thresholds and numbers are committed. A tree is `[feature, threshold,
    left, right]` or a leaf: the browser walks them (some 4 µs a thread), and D1 could as nested
    `CASE` expressions.
-7. `npm run rank -- compare [--trees 150] [--depth 3]` puts the linear model next to boosted
+8. `npm run rank -- compare [--trees 150] [--depth 3]` puts the linear model next to boosted
    trees and a random forest (`scripts/rank-trees.mjs`, learned from the same games with the same
    pairwise loss), on the same folds: held-out accuracy per source, log loss, size and the time
    to score a thread.
-8. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
-   browser, the picks, a new sample, the tournament, the Claude judges on part of it, then the
-   training; with `--pr`, the new weights go to a pull request against main (from a worktree of
+9. `npm run rank -- weekly [--pr]` does it all once a week: a fresh session from the signed-in
+   browser, the picks, a new sample, today's kinds, the tournament, the Claude judges on part of
+   it, then the training; with `--pr`, the new weights go to a pull request against main (from a worktree of
    it, and only when main computes the same features). A bb automation runs it on Mondays.
-9. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
+10. `npm run rank -- behavior` looks at what the teams do instead: for every thread of the
    sample, whether someone on its team opened it in the inbox and how many read it, and for
    every time a customer wrote, whether and how soon Adobe answered; by kind, urgency, who has
    the next move, size, age, platform, team, and what the message says (a question, alarm words,
