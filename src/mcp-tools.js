@@ -14,6 +14,7 @@ import { accountName, PLATFORMS, platformName } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
+import { MAX_SOURCES } from './sources.js';
 import {
   connections, mentionable, post, reactable,
 } from './post.js';
@@ -68,7 +69,10 @@ const latest = (t) => String(t.last_at || t.any_at || '');
 const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
 /** A shared draft as the tools show it; `version` is what post_draft's `base` names. */
 const draftOut = (d) => (d ? {
-  text: clip(d.body, 8000), by: (d.by && d.by.name) || null, version: d.updated_at,
+  text: clip(d.body, 8000),
+  ...(d.sources.length ? { sources: d.sources } : {}),
+  by: (d.by && d.by.name) || null,
+  version: d.updated_at,
 } : null);
 
 /** A response from the API helpers, as `{ data }` or `{ error }`. */
@@ -453,7 +457,11 @@ async function postDraft(env, me, args) {
     return m;
   }
   const request = {
-    thread: w.key, text: w.text, mentions: m.mentions, base: args.base || null,
+    thread: w.key,
+    text: w.text,
+    mentions: m.mentions,
+    sources: args.sources || [],
+    base: args.base || null,
   };
   const res = await saveDraft(env, me, request, mayWork(env, me));
   const body = await res.json().catch(() => ({}));
@@ -746,6 +754,21 @@ async function whoami(env, me) {
 
 const THREAD_ARG = { type: 'string', description: 'Thread key from list_threads' };
 const MENTION_ARG = { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' };
+const SOURCES_ARG = {
+  type: 'array',
+  maxItems: MAX_SOURCES,
+  description: 'What the draft rests on, for the person reviewing it before it is sent',
+  items: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The http(s) address of the page' },
+      title: { type: 'string', description: 'What it is, in a few words' },
+      quote: { type: 'string', description: 'The passage that backs the draft, word for word, in Markdown (up to 1000 characters)' },
+    },
+    required: ['url'],
+    additionalProperties: false,
+  },
+};
 const DRAFT_ARG = { type: 'string', description: 'The `version` of the shared draft (get_thread) this reply sends: it is used up' };
 const TEXT_ITEMS = (values) => ({ type: 'array', items: { type: 'string', enum: values } });
 const CUSTOMER_ARG = { type: 'array', items: { type: 'string' }, description: 'Customer names as list_threads shows them; case does not matter' };
@@ -845,7 +868,7 @@ export const TOOLS = [
   {
     name: 'post_draft',
     title: 'Save the shared draft',
-    description: 'Saves a reply as the thread\'s shared draft, without posting anything: everyone in the thread\'s ops teams sees it in the inbox and can change, send or discard it. A thread has at most one draft; to replace an existing one (get_thread shows it), give its `version` as `base`, so a colleague\'s newer draft is not overwritten unseen.',
+    description: 'Saves a reply as the thread\'s shared draft, without posting anything: everyone in the thread\'s ops teams sees it in the inbox and can change, send or discard it. A thread has at most one draft; to replace an existing one (get_thread shows it), give its `version` as `base`, so a colleague\'s newer draft is not overwritten unseen. `sources` replaces the draft\'s sources: what it rests on, for the person who reviews it. Only the team sees them; they are never sent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -853,6 +876,7 @@ export const TOOLS = [
         text: { type: 'string', description: 'The whole reply, in Markdown (up to 8000 characters)' },
         mention: MENTION_ARG,
         base: { type: 'string', description: 'The `version` of the draft this replaces, from get_thread' },
+        sources: SOURCES_ARG,
       },
       required: ['thread', 'text'],
       additionalProperties: false,

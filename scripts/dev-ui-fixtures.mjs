@@ -360,6 +360,22 @@ export function createStore(now = Date.now(), { big = false } = {}) {
   // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
   const appPosts = new Set();
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
+  // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
+  const sourceViews = new Map([
+    ['https://docs.example.com/purge', { view: 'frame', url: '/__dev/source-page' }],
+    ['https://docs.example.com/surrogate-keys.md', {
+      view: 'markdown',
+      url: 'https://docs.example.com/surrogate-keys.md',
+      text: '# Surrogate keys\n\nA surrogate key groups objects, so that one purge reaches them all.\n\n'
+        + '- `/en/*` and `/de/*` share the key `site-pages`\n- a key holds up to 2,000 objects\n\n'
+        + '## Purging by key\n\nPurge a key with `POST /purge`; it takes effect within a minute.',
+    }],
+  ]);
+  const sourcePage = `<!doctype html><title>Purging the CDN</title>
+    <body style="font: 15px/1.5 system-ui; margin: 24px; color: #222">
+    <h1>Purging the CDN</h1><p>Use a purge when content changed and cannot wait for its lifetime.</p>
+    <h2>By path</h2><p>Purged objects are <b>refetched on the next request</b>; errors are cached
+    for up to 5 minutes.</p><h2>By key</h2><p>A surrogate key purges a group of objects at once.</p>`;
   // Files attached to messages, served by the preview at /__dev/files/<id>/<name>.
   const uploads = new Map(); // id -> { name, type, bytes }
   const upload = (name, type, bytes) => {
@@ -506,7 +522,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
-   * `draft`: the thread's shared draft, `{ by, ago, body }`; `by` is a person key or 'agent'.
+   * `draft`: the thread's shared draft, `{ by, ago, body, sources? }`; `by` is a person key or
+   * 'agent'.
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft,
@@ -579,6 +596,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
         thread: key,
         body: draft.body,
         mentions: draft.mentions || [],
+        sources: draft.sources || [],
         by: { id: p.id, name: p.name },
         created_at: at,
         updated_at: at,
@@ -609,8 +627,26 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       body: 'Thanks @Sam Reyes, we can reproduce the 503s on /en/* and /de/*; preview is fine, so it '
         + 'looks like the CDN config from the 14:00 flush.\n\nCould you send us the `x-request-id` '
         + 'of one failing request? Meanwhile, purging by path is described here: '
-        + 'https://docs.example.com/purge',
+        + 'https://docs.example.com/purge\n\n**What we know so far:**\n'
+        + '- the 503s started with the 14:00 cache flush\n'
+        + '- only `/en/*` and `/de/*` are affected, because those paths share one surrogate key\n'
+        + '- the origin itself answers normally when it is asked directly\n\n'
+        + '**What happens next:** we are comparing the CDN configuration before and after the '
+        + 'flush. Purged objects are refetched on the next request, so the pages should recover '
+        + 'by themselves once the configuration is back.\n\n'
+        + 'Your CDN keeps errors for up to 5 minutes, so please purge `/en/*` and `/de/*` there '
+        + 'as well once we tell you the origin is healthy again. We will post here as soon as '
+        + 'we know more.',
       mentions: [{ id: 'slack-sam', name: 'Sam Reyes' }],
+      sources: [
+        {
+          url: 'https://docs.example.com/purge',
+          title: 'Purging the CDN',
+          quote: 'Purged objects are **refetched on the next request**; errors are cached for up to 5 minutes.',
+        },
+        { url: 'https://docs.example.com/surrogate-keys.md', title: 'Surrogate keys' },
+        { url: 'https://status.example.com/incidents/42', title: 'Status page' },
+      ],
     },
   });
 
@@ -964,6 +1000,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     mentions,
     appPosts,
     drafts,
+    sourceViews,
+    sourcePage,
     uploads,
     upload,
 

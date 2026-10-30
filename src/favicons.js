@@ -53,7 +53,7 @@ export const FITS = 0.5;
 const CACHE_MS = 60 * 60 * 1000;
 const CACHE_MAX = 200;
 // Sites are asked as a browser would ask: many answer a bot's user agent with an error page.
-const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)'
+export const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)'
   + ' Chrome/130.0.0.0 Safari/537.36';
 const ACCEPT = {
   html: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
