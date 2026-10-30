@@ -416,6 +416,23 @@
   .ph .sub { color: var(--mute); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ph .sub img { width: 14px; height: 14px; border-radius: 3px; }
   .ph .sub.stack { margin-top: 4px; }
+  .ph { position: relative; }
+  .ph:has(> .experts:not([hidden])) > .sub:nth-last-child(2) { padding-right: min(46%, 380px); }
+  .experts { position: absolute; right: 22px; bottom: 10px; display: flex; align-items: stretch; max-width: min(46%, 370px);
+    font-size: 12px; color: var(--mute); border: 1px solid var(--line); border-radius: 13px; background: var(--card); }
+  .experts button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  .experts .top { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 10px 2px 3px; border-radius: 13px; }
+  .experts .top span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .experts .av { flex: none; width: 20px; height: 20px; font-size: 8px; border-radius: 50%; }
+  .experts .top:hover, .experts .more:hover { background: var(--hover); color: var(--ink); }
+  .experts .more { flex: none; padding: 0 8px; border-left: 1px solid var(--line); border-radius: 0 13px 13px 0; }
+  .expertlist { position: absolute; right: 0; top: calc(100% + 4px); width: 340px; max-width: calc(100vw - 32px); margin: 0; padding: 4px;
+    list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 6; }
+  .expertlist button { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 7px; text-align: left; }
+  .expertlist button:hover, .expertlist button:focus-visible { background: var(--sel); }
+  .expertlist .av { width: 24px; height: 24px; font-size: 9px; border-radius: 6px; }
+  .expertlist b { display: block; font-weight: 500; color: var(--ink); }
+  .expertlist small { display: block; font-size: 11px; color: var(--mute); }
   .tag.tech { color: var(--ink); }
   .feed { padding: 8px 22px 40px; }
   .day { text-align: center; margin: 18px 0 8px; }
@@ -954,7 +971,10 @@
     .t .cust { max-width: 40%; }
     .ph { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; padding: 8px 12px 10px 4px; }
     .ph > :not(.close) { grid-column: 2; }
-    .ph .close { display: grid; grid-row: 1 / span 3; margin-top: -4px; }
+    .ph .close { display: grid; grid-row: 1 / span 4; margin-top: -4px; }
+    .ph:has(> .experts:not([hidden])) > .sub:nth-last-child(2) { padding-right: 0; }
+    .experts { position: relative; right: auto; bottom: auto; justify-self: start; max-width: 100%; margin-top: 6px; }
+    .expertlist { right: auto; left: 0; }
     .ph h2 { font-size: 16px; flex-wrap: wrap; row-gap: 2px; }
     .feed { padding: 4px 12px 24px; }
     .msg { gap: 8px; }

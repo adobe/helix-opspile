@@ -20,7 +20,7 @@ import { threadVectorId } from './vectors.js';
  * Each author's affinity is what their closest messages have over the weakest that still
  * counts, so someone who said several things close to the thread comes before someone who said
  * one thing a little less close. A thread without a vector yet (it is vectorized two minutes
- * after a post) is matched by its title.
+ * after a post) is matched by its title. The expert finder (src/experts.js) builds on this.
  */
 
 /** Staff messages looked at: Vectorize's most with full metadata. */
@@ -39,12 +39,13 @@ const cache = new Map();
 /**
  * Affinities from Vectorize matches (`{ score, metadata: { author, person } }`):
  * `{ authors, people }`, maps from author key and from D1 person id to a number above 0.
- * The messages of `exclude` (a person id: the viewer) do not count.
+ * The messages of `exclude` (a person id: the viewer) and those in `threads` (keys) do not count.
  */
-export function affinities(matches, { exclude = null } = {}) {
+export function affinities(matches, { exclude = null, threads = [] } = {}) {
   const usable = (matches || []).filter((m) => m && m.metadata
     && (m.metadata.author || m.metadata.person)
-    && (exclude === null || m.metadata.person !== exclude));
+    && (exclude === null || m.metadata.person !== exclude)
+    && !threads.includes(m.metadata.thread));
   const best = Math.max(-1, ...usable.map((m) => m.score));
   const floor = Math.max(EXPERT_MIN, best - EXPERT_WINDOW);
   const gains = { authors: new Map(), people: new Map() };
@@ -92,6 +93,27 @@ async function vectorOf(env, rows) {
   return res.data[0];
 }
 
+/** The threads of inbox entry `key`, the latest first, with what `staffMatches` goes by. */
+export async function entryRows(env, key) {
+  const { results } = await env.DB.prepare(`SELECT t.thread, t.embedded,
+      COALESCE(l.title, t.title) AS title
+    FROM threads t LEFT JOIN labels l ON l.thread = t.thread
+    WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC`).bind(key, key).all();
+  return results || [];
+}
+
+/** The staff messages closest to an entry's threads (`entryRows`), or null with no vector. */
+export async function staffMatches(env, rows) {
+  const vector = await vectorOf(env, rows);
+  if (!vector) {
+    return null;
+  }
+  const { matches } = await env.CONTENT.query(vector, {
+    topK: EXPERT_K, filter: { type: 'message', staff: true }, returnMetadata: 'all',
+  });
+  return matches;
+}
+
 /**
  * The Adobe people's affinity to inbox entry `key`, as `affinities` gives it, or null when
  * there is no CONTENT index or nothing to go by. `me` (a person id) is left out. Never throws:
@@ -102,11 +124,7 @@ export async function threadExperts(env, key, { me = null, now = Date.now() } = 
     return null;
   }
   try {
-    const { results } = await env.DB.prepare(`SELECT t.thread, t.embedded,
-        COALESCE(l.title, t.title) AS title
-      FROM threads t LEFT JOIN labels l ON l.thread = t.thread
-      WHERE t.thread = ? OR t.logical_thread = ? ORDER BY t.any_at DESC`).bind(key, key).all();
-    const rows = results || [];
+    const rows = await entryRows(env, key);
     if (!rows.length) {
       return null;
     }
@@ -115,13 +133,10 @@ export async function threadExperts(env, key, { me = null, now = Date.now() } = 
     if (hit && now - hit.at < CACHE_MS) {
       return hit.experts;
     }
-    const vector = await vectorOf(env, rows);
-    if (!vector) {
+    const matches = await staffMatches(env, rows);
+    if (!matches) {
       return null;
     }
-    const { matches } = await env.CONTENT.query(vector, {
-      topK: EXPERT_K, filter: { type: 'message', staff: true }, returnMetadata: 'all',
-    });
     const experts = affinities(matches, { exclude: me });
     cache.delete(version);
     cache.set(version, { at: now, experts });

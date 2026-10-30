@@ -32,7 +32,7 @@ const MAX_NAME = 80;
  * `{ why }` when there is no list to go by. With `fresh`, a list over an hour old (or a failure
  * that old) is listed again first.
  */
-async function roster(env, where, { now = Date.now(), fresh = false, ...deps } = {}) {
+export async function roster(env, where, { now = Date.now(), fresh = false, ...deps } = {}) {
   const key = [where.source, where.tenant, where.channelId];
   const channel = () => env.DB.prepare(`SELECT * FROM channels
     WHERE source = ? AND tenant = ? AND channel_id = ?`).bind(...key).first();
