@@ -991,12 +991,23 @@ labelled as written by people outside its control.
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images; plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent never reads another channel's threads |
+| `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. Unless `post_message` is on, this is its only write outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
+
+**Mentions of people who are not in.** When a message the agent is told about mentions someone
+on the platform (a `via = 'id'` row in `mentions`; a name in the text does not count) who is not
+in the channel, or on Teams the Teams team, the agent is told so below the messages and says so in
+its note, so a person can add them. `src/agent/members.js` goes by `channel_members`, and lists
+them again first when that is over an hour old, so someone added since is not called out. It says
+nothing when it cannot be sure: a failed listing (on Teams, without `TeamMember.Read.All`), nobody
+listed, a Teams shared channel (the list is the team's, and others are in the channel), or over
+2000 members. The `member` of the mention suggestions is no use for this: it is also true of
+anyone who posted.
 
 GitHub repositories are read from Artifacts mirrors: the cron imports each listed repository
 into a fresh Artifacts repo, promotes it once it is readable and deletes the mirror it

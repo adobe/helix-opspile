@@ -42,7 +42,7 @@ const RELABEL_AFTER_MS = 7 * DAY_MS;
 export const BATCH = 20;
 const RECENT_THREADS = 10;
 const MAX_PEOPLE = 25;
-const MAX_MEMBERS_LISTED = 2000;
+export const MAX_MEMBERS_LISTED = 2000;
 const SAMPLE_CHANNELS = 12;
 const SAMPLE_MEMBERS = 20;
 // Clef's probability for a team at which a channel is suggested to it without any activity.
