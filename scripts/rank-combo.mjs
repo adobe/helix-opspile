@@ -237,12 +237,6 @@ export function replyGames(threads, { minMinutes = 5 } = {}) {
   return games;
 }
 
-/**
- * Every game as a row `{ a, b, p, w, source, keys }`, `a` and `b` the feature objects, `keys`
- * the threads it is about: held-out folds go by thread, so that no thread a test game is about
- * was trained on (a thread is in many games, on either side; models that can remember one would
- * otherwise be scored on what they remembered).
- */
 /** An inbox entry with today's kind (`kinds`: thread → `{ label_kind, kind_p }`), if known. */
 export function withKind(entry, kinds) {
   const k = kinds && kinds[entry.thread];
@@ -267,6 +261,12 @@ export function featuresWithKind(thread, features, kinds, Rank) {
   return f;
 }
 
+/**
+ * Every game as a row `{ a, b, p, w, source, keys }`, `a` and `b` the feature objects, `keys`
+ * the threads it is about: held-out folds go by thread, so that no thread a test game is about
+ * was trained on (a thread is in many games, on either side; models that can remember one would
+ * otherwise be scored on what they remembered).
+ */
 export function rows({
   Rank, samples: list, events = [], weights = DEFAULT_WEIGHTS, kinds = null,
 }) {
@@ -278,7 +278,7 @@ export function rows({
     const features = new Map();
     const f = (k) => {
       if (!features.has(k)) {
-        features.set(k, Rank.features(byKey.get(k).entry, now));
+        features.set(k, Rank.features(withKind(byKey.get(k).entry, kinds), now));
       }
       return features.get(k);
     };

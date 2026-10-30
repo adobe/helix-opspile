@@ -419,6 +419,49 @@ describe('the combo model\'s games (scripts/rank-combo.mjs)', () => {
     assert.equal(featuresWithKind('w', { ...then, alert: 1 }, kinds, Rank).kind_people, 0);
   });
 
+  it('gives every source today\'s kinds: judged pairs, replies and picks', () => {
+    const Rank = loadRank();
+    const person = (name, staff) => ({ kind: 'person', name, staff });
+    const thread = (key, h) => ({
+      key,
+      entry: {
+        thread: key,
+        source: 'slack',
+        kind: 'channel',
+        last_at: ago(h),
+        label: { label_kind: 'access', kind_p: 0.6, urgency: 1 },
+      },
+      messages: [
+        { at: ago(30 + h / 10), author: person(`C${key}`, false), body: 'hi' },
+        { at: ago(29.9 - h / 100), author: person('Ada', true), body: 'welcome' },
+      ],
+    });
+    const threads = [thread('w', 1), thread('x', 2)];
+    const people = { label_kind: 'people', kind_p: 0.9 };
+    const kinds = { w: people, x: people };
+    const events = [{
+      id: 1,
+      clicked: 'w',
+      shown: threads.map((t, pos) => ({
+        thread: t.key, pos, features: Rank.features(t.entry, NOW),
+      })),
+    }];
+    const list = rows({
+      Rank,
+      samples: [{
+        data: { pulledAt: NOW, threads }, games: [{ a: 'w', b: 'x', p: 0.7 }], human: [], llm: [],
+      }],
+      events,
+      kinds,
+    });
+    assert.deepEqual([...new Set(list.map((r) => r.source))].sort(), ['clef', 'click', 'reply']);
+    for (const r of list) {
+      for (const f of [r.a, r.b]) {
+        assert.deepEqual([f.kind_access, f.kind_people, f.kindP], [0, 1, 0.9], r.source);
+      }
+    }
+  });
+
   it('lets a pick win over the others of its pile only, when the pick says which', () => {
     const Rank = loadRank();
     const f = (h) => Rank.features({ last_at: ago(h) }, NOW);
