@@ -12,6 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { ICONS } from '../src/icons.js';
 
 const bytes = (path) => Buffer.from(ICONS[path].base64, 'base64');
@@ -23,6 +24,9 @@ describe('icons', () => {
     const count = ico.readUInt16LE(4);
     const sizes = Array.from({ length: count }, (_, i) => ico[6 + i * 16]);
     assert.deepEqual(sizes, [16, 32, 48]);
+    // True colour with alpha: a palette and a 1-bit mask make the Adobe icon's edges jagged.
+    const depths = Array.from({ length: count }, (_, i) => ico.readUInt16LE(6 + i * 16 + 6));
+    assert.deepEqual(depths, [32, 32, 32]);
     assert.equal(ICONS['/favicon.ico'].type, 'image/x-icon');
   });
 
@@ -32,5 +36,16 @@ describe('icons', () => {
     assert.equal(png.readUInt32BE(16), 180);
     assert.equal(png.readUInt32BE(20), 180);
     assert.equal(ICONS['/apple-touch-icon.png'].type, 'image/png');
+  });
+
+  it('serves the Adobe icon as it is, and every page\'s header shows it with the name', () => {
+    const svg = readFileSync(new URL('../scripts/adobe-icon.svg', import.meta.url));
+    assert.deepEqual(bytes('/icon.svg'), svg);
+    assert.equal(ICONS['/icon.svg'].type, 'image/svg+xml');
+    for (const page of ['inbox', 'kb', 'admin']) {
+      const html = readFileSync(new URL(`../ui/${page}.html`, import.meta.url), 'utf8');
+      assert.match(html, /<title>Enterprise Support/);
+      assert.match(html, /<h1><a [^>]*><img src="\/icon\.svg" alt="Adobe"><span>Enterprise Support<\/span><\/a><\/h1>/);
+    }
   });
 });

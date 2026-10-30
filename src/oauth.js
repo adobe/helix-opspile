@@ -154,7 +154,7 @@ function consentPage({
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect an agent to opspile</title><link rel="icon" href="/favicon.ico">
+<title>Connect an agent to Enterprise Support</title><link rel="icon" href="/favicon.ico">
 <style>
   body { font: 15px/1.5 system-ui, sans-serif; background: #f4f5f7; color: #1d1d1f; margin: 0;
     display: grid; place-items: center; min-height: 100vh; }
@@ -168,10 +168,10 @@ function consentPage({
   button { font: inherit; padding: 8px 18px; border-radius: 18px; border: 1px solid #c9c9ce; background: #fff; cursor: pointer; }
   button.ok { background: #2f6fed; border-color: #2f6fed; color: #fff; }
 </style></head><body><main>
-<h1>Connect <q>${esc(client.name)}</q> to your opspile?</h1>
+<h1>Connect <q>${esc(client.name)}</q> to Enterprise Support?</h1>
 <p>It will act as <b>${esc(person.name || person.email)}</b>: read the inbox of your teams, and
 reply, react and resolve as you.</p>
-<p>After you approve, opspile sends the key to:</p>
+<p>After you approve, the inbox sends the key to:</p>
 <div class="host">${esc(host)}</div>
 <p class="mute">${local ? 'That is a program on your own computer.' : 'Only approve if you know this site and started connecting it just now.'}
 The client named itself; the address above is what counts.</p>

@@ -29,6 +29,10 @@ code and docs, is the decision model that labels threads and channels.
   fetches `/api/*` without following redirects: a redirect is Cloudflare Access's sign-in, so
   the page shows "Sign in again" instead of "Failed to fetch" (`POST /__dev/signout` in
   `npm run ui:dev` shows it).
+- People see this product as **Enterprise Support** ("the inbox" in a sentence), with the
+  Adobe icon; the bots post under their own names per platform, so the pages call them "the
+  bot". `opspile` stays the code name: the repository, identifiers, agent prompts, the MCP
+  server, and messages about how a deployment is set up.
 - The header is every page's too: `ui/header.css` (`<link rel="stylesheet" href="header.css">`,
   inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
   which keeps where each page was left in the browser tab, and you with your menu. Change it

@@ -63,7 +63,7 @@ export function personRule(platform, scope) {
   if (platform === 'slack') {
     return hasScope(scope, FILES_SCOPE.slack) ? { ...SLACK } : {
       count: 0,
-      why: 'opspile needs your permission to upload files to Slack as you: connect your Slack account again',
+      why: 'the inbox needs your permission to upload files to Slack as you: connect your Slack account again',
       reconnect: 'slack',
     };
   }
@@ -76,11 +76,11 @@ export function personRule(platform, scope) {
       total: HOSTED_MAX,
       types: WEB_IMAGES,
       other: false,
-      why: 'on Teams opspile attaches images (PNG, JPEG, GIF) only, until you connect your Microsoft account again with access to the channel\'s files',
+      why: 'on Teams the inbox attaches images (PNG, JPEG, GIF) only, until you connect your Microsoft account again with access to the channel\'s files',
       reconnect: 'teams',
     };
   }
-  return { count: 0, why: 'opspile cannot post to Discord as you' };
+  return { count: 0, why: 'the inbox cannot post to Discord as you' };
 }
 
 /** The rule for posting as the opspile app on `platform`. */
@@ -95,7 +95,7 @@ export function appRule(platform) {
       total: MB,
       types: WEB_IMAGES,
       other: false,
-      why: 'the opspile Teams bot attaches only images (PNG, JPEG, GIF up to 1 MB): Teams lets bots send other files in personal chats only',
+      why: 'the Teams bot attaches only images (PNG, JPEG, GIF up to 1 MB): Teams lets bots send other files in personal chats only',
     };
   }
   if (platform === 'discord') {
@@ -103,7 +103,7 @@ export function appRule(platform) {
       count: MAX_FILES, file: 10 * MB, total: 10 * MB, types: null, other: true,
     };
   }
-  return { count: 0, why: `opspile cannot attach files on ${platform}` };
+  return { count: 0, why: `the inbox cannot attach files on ${platform}` };
 }
 
 const size = (n) => (n >= MB ? `${(n / MB).toFixed(1).replace(/\.0$/, '')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);

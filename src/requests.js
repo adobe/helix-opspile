@@ -132,7 +132,7 @@ export async function createRequest(env, me, body) {
     UNION SELECT 1 FROM threads WHERE source = ?1 AND channel_id = ?2 LIMIT 1`)
     .bind(source, channelId).first();
   if (!seen) {
-    return json({ error: 'opspile has not seen this channel' }, 404);
+    return json({ error: 'the inbox has not seen this channel' }, 404);
   }
   const here = await env.DB.prepare(`SELECT 1 FROM threads WHERE source = ?1 AND channel_id = ?2
       AND team = ?3

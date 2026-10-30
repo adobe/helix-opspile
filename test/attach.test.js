@@ -110,7 +110,7 @@ describe('attachment rules', () => {
   it('lets Teams take inline images, and other files only with access to the channel files', () => {
     const images = personRule('teams', 'https://graph.microsoft.com/ChannelMessage.Send');
     assert.equal(checkFiles(images, [file('a.png', 'image/png'), file('b.gif', 'image/gif')]), null);
-    assert.match(checkFiles(images, [file('a.pdf', 'application/pdf')]), /cannot attach a\.pdf: on Teams opspile attaches images/);
+    assert.match(checkFiles(images, [file('a.pdf', 'application/pdf')]), /cannot attach a\.pdf: on Teams the inbox attaches images/);
     assert.match(checkFiles(images, [big(4 * MB)]), /up to 3 MB/);
     const all = personRule('teams', 'ChannelMessage.Send https://graph.microsoft.com/Files.ReadWrite.All');
     assert.equal(checkFiles(all, [file('a.pdf', 'application/pdf'), big(10 * MB)]), null);

@@ -51,7 +51,7 @@ export async function appPostCheck(env, key) {
     return {
       entry,
       target: t,
-      problem: 'the opspile app does not post in this channel: turn on "Post messages" for it'
+      problem: 'the bot does not post in this channel: turn on "Post messages" for it'
         + ' or its team in the knowledge-base editor first',
       status: 409,
     };

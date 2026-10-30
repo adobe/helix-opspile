@@ -23,6 +23,7 @@ describe('installable app', () => {
     assert.equal(res.headers.get('content-type'), 'application/manifest+json');
     const m = await res.json();
     assert.deepEqual([m.start_url, m.scope, m.display], ['/inbox', '/', 'standalone']);
+    assert.deepEqual([m.name, m.short_name], ['Enterprise Support', 'Support']);
     const sizes = m.icons.map((i) => `${i.sizes} ${i.purpose}`);
     assert.ok(sizes.includes('192x192 any') && sizes.includes('512x512 any') && sizes.includes('512x512 maskable'));
     for (const i of [...MANIFEST.icons, ...MANIFEST.shortcuts.flatMap((s) => s.icons)]) {

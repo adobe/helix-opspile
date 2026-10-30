@@ -21,8 +21,8 @@ import { ICON_EDGE } from './icons.js';
 
 export const MANIFEST = {
   id: '/inbox',
-  name: 'opspile',
-  short_name: 'opspile',
+  name: 'Enterprise Support',
+  short_name: 'Support',
   description: 'The ops inbox for Slack and Microsoft Teams',
   start_url: '/inbox',
   scope: '/',
@@ -48,12 +48,12 @@ export const MANIFEST = {
 };
 
 const OFFLINE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>opspile · offline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support · offline</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;background:#0f1114;color:#e8eaed;display:grid;
 place-items:center;min-height:100vh;margin:0}main{text-align:center;padding:24px}
 button{font:inherit;margin-top:12px;padding:6px 16px;border-radius:16px;border:1px solid #2a2f36;
 background:#1a1e23;color:inherit}</style></head><body><main><h1>You are offline</h1>
-<p>opspile needs a connection to show the inbox.</p>
+<p>You need a connection to see the inbox.</p>
 <button onclick="location.reload()">Try again</button></main></body></html>`;
 
 /**

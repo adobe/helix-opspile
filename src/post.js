@@ -785,7 +785,7 @@ export async function post(env, me, request, inTeam, files = []) {
     return json({ error: 'only staff can reply' }, 403);
   }
   if (t.source === 'discord') {
-    return json({ error: 'reply in Discord: opspile cannot post there as you' }, 409);
+    return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
   }
   const { token, scope } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
@@ -813,7 +813,7 @@ export async function post(env, me, request, inTeam, files = []) {
       if (up.error === 'missing_scope') {
         // A token from before files:write, or one it was taken from.
         return json({
-          error: 'Slack: opspile needs your permission to upload files: connect your Slack account again',
+          error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
           reconnect: 'slack',
           files: true,
         }, 409);

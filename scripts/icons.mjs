@@ -12,15 +12,18 @@
  */
 
 /**
- * Regenerates src/icons.js, the favicon and the touch icon, from one square source image.
+ * Regenerates src/icons.js from scripts/adobe-icon.svg, the Adobe icon as Adobe's brand files
+ * have it: keep it unaltered, and take a new one from there.
  *
- *   node scripts/icons.mjs path/to/icon.png
+ *   node scripts/icons.mjs
  *
- * Needs ImageMagick (`magick`) and `pngquant` on the PATH. The icons are inlined as base64
- * so the Worker serves them without depending on how the bundler treats binary imports.
+ * Needs `rsvg-convert`, ImageMagick (`magick`) and `pngquant` on the PATH. The icons are inlined
+ * as base64 so the Worker serves them without depending on how the bundler treats binary imports.
  *
- * At 16 px the whole picture is mush, so that size is cut from the card and the magnifier
- * only; 32 and 48 px, and the 180 px touch icon, use the whole image.
+ * The favicon is the red icon on nothing, as wide as the image: a browser's tab has the clear
+ * space around it. The app icons are the white icon on Adobe Red with the clear space the brand
+ * asks for, half the icon's width on every side. That is inside a maskable icon's safe zone
+ * too, so one picture is both.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -29,67 +32,32 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const [src] = process.argv.slice(2);
-if (!src) {
-  console.error('usage: node scripts/icons.mjs <square source image>');
-  process.exit(1);
-}
+const RED = '#EB1000';
 
-const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'icons.js');
+const here = dirname(fileURLToPath(import.meta.url));
+const out = join(here, '..', 'src', 'icons.js');
+const svg = join(here, 'adobe-icon.svg');
 const tmp = mkdtempSync(join(tmpdir(), 'opspile-icons-'));
 const t = (name) => join(tmp, name);
 const magick = (...args) => execFileSync('magick', args, { stdio: 'inherit' });
 
-// The 16 px crop is relative to the source size: x 13 %, y 14 %, 80 % wide and tall.
-const w = Number(execFileSync('magick', ['identify', '-format', '%w', src]).toString());
-const off = (p) => Math.round(w * p);
-magick(
-  src,
-  '-crop',
-  `${off(0.8)}x${off(0.8)}+${off(0.13)}+${off(0.14)}`,
-  '+repage',
-  '-resize',
-  '16x16',
-  '-unsharp',
-  '0x0.6',
-  t('16.png'),
-);
-magick(src, '-resize', '32x32', t('32.png'));
-magick(src, '-resize', '48x48', t('48.png'));
-magick(t('16.png'), t('32.png'), t('48.png'), t('favicon.ico'));
-magick(src, '-resize', '180x180', '-strip', t('180.png'));
-execFileSync('pngquant', ['--force', '--quality', '80-95', '--output', t('180q.png'), t('180.png')]);
-// The installed app (web app manifest): 192 and 512 px, and a maskable 512 px whose picture
-// sits in the inner 80 % (the safe zone), its edges stretched to fill the rest.
-const edge = execFileSync('magick', [
-  src, '(', '+clone', '-gravity', 'north', '-crop', '100%x3%+0+0', ')',
-  '(', '-clone', '0', '-gravity', 'south', '-crop', '100%x3%+0+0', ')', '-delete', '0',
-  '+repage', '-append', '-resize', '1x1!', '-format', '#%[hex:p{0,0}]', 'info:',
-]).toString().trim();
-magick(src, '-resize', '192x192', '-strip', t('192.png'));
-magick(src, '-resize', '512x512', '-strip', t('512.png'));
-// The border is the picture's own edge, stretched outwards (no seam), then softened.
-magick(
-  // The source's outermost 2 % is a frame; without it the stretched edge has no seam.
-  src,
-  '-shave',
-  '2%',
-  '-resize',
-  '410x410',
-  '-set',
-  'option:distort:viewport',
-  '512x512-51-51',
-  '-virtual-pixel',
-  'Edge',
-  '-distort',
-  'SRT',
-  '0',
-  '+repage',
-  '-strip',
-  t('mask.png'),
-);
-for (const n of ['192', '512', 'mask']) {
-  execFileSync('pngquant', ['--force', '--quality', '80-95', '--output', t(`${n}q.png`), t(`${n}.png`)]);
+const source = readFileSync(svg, 'utf8');
+writeFileSync(t('white.svg'), source.replace(/#eb1000/g, '#fff'));
+
+/** The icon, `width` px wide: its height follows from it. */
+const render = (file, width, png) => execFileSync('rsvg-convert', ['-w', String(width), '-o', png, file]);
+
+for (const size of [16, 32, 48]) {
+  render(svg, size, t(`a${size}.png`));
+  magick(t(`a${size}.png`), '-background', 'none', '-gravity', 'center', '-extent', `${size}x${size}`, t(`${size}.png`));
+}
+// True colour, or the ICO writer takes a palette and a 1-bit mask, and the edges go jagged.
+magick(t('16.png'), t('32.png'), t('48.png'), '-type', 'TrueColorAlpha', t('favicon.ico'));
+
+for (const size of [180, 192, 512]) {
+  render(t('white.svg'), size / 2, t(`w${size}.png`));
+  magick('-size', `${size}x${size}`, `xc:${RED}`, t(`w${size}.png`), '-gravity', 'center', '-composite', '-strip', t(`${size}.png`));
+  execFileSync('pngquant', ['--force', '--quality', '80-95', '--output', t(`${size}q.png`), t(`${size}.png`)]);
 }
 
 const b64 = (file) => readFileSync(file).toString('base64').replace(/.{1,96}/g, "  '$&'\n").trimEnd();
@@ -124,12 +92,11 @@ const ICON_512_PNG = [
 ${b64(t('512q.png')).replace(/'\n/g, "',\n")},
 ].join('');
 
-const ICON_MASKABLE_PNG = [
-${b64(t('maskq.png')).replace(/'\n/g, "',\n")},
-].join('');
+/** The Adobe icon itself, for the page headers. */
+const ICON_SVG = '${Buffer.from(source).toString('base64')}';
 
-/** The colour around the maskable icon's picture, for the manifest's theme. */
-export const ICON_EDGE = '${edge}';
+/** The colour around the app icon's picture, for the manifest's theme. */
+export const ICON_EDGE = '${RED}';
 
 /** pathname -> { type, base64 } */
 export const ICONS = {
@@ -137,7 +104,8 @@ export const ICONS = {
   '/apple-touch-icon.png': { type: 'image/png', base64: APPLE_TOUCH_ICON_PNG },
   '/icon-192.png': { type: 'image/png', base64: ICON_192_PNG },
   '/icon-512.png': { type: 'image/png', base64: ICON_512_PNG },
-  '/icon-maskable.png': { type: 'image/png', base64: ICON_MASKABLE_PNG },
+  '/icon-maskable.png': { type: 'image/png', base64: ICON_512_PNG },
+  '/icon.svg': { type: 'image/svg+xml', base64: ICON_SVG },
 };
 `);
 console.log(`wrote ${out}`);

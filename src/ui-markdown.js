@@ -329,7 +329,7 @@ function fileCards({ links, unseen }, fileUrl) {
   for (const what of unseen) {
     // Slack says what kind of file it is ("CSV file").
     const type = (/^([a-z0-9]{1,8}) file$/i.exec(what) || [])[1] || '';
-    list.push(fileCard({ name: encode(what), note: 'Shared from another workspace; opspile cannot see it', type }));
+    list.push(fileCard({ name: encode(what), note: 'Shared from another workspace; the inbox cannot see it', type }));
   }
   const shown = list.filter(Boolean);
   return shown.length ? `<div class="files">${shown.join('')}</div>` : '';

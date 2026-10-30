@@ -1501,7 +1501,7 @@ function message(m, prev, fresh, followed = false) {
   const editing = state.editing?.id === id;
   // Your own messages: ✎ edits them in place, as they were sent (as you, or as the app).
   const pen = canEdit(m) && !editing
-    ? `<button class="edit" data-edit="1" title="${m.editable === 'app' ? 'Edit, as the opspile app' : 'Edit your message'}" aria-label="Edit">✎</button>` : '';
+    ? `<button class="edit" data-edit="1" title="${m.editable === 'app' ? 'Edit, as the bot' : 'Edit your message'}" aria-label="Edit">✎</button>` : '';
   const picks = can ? `${QUICK.map((n) => {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
@@ -1510,7 +1510,7 @@ function message(m, prev, fresh, followed = false) {
   // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
-      <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the opspile app' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
+      <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the bot' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
     : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}${m.pending && m.files?.length ? pendingFiles(m.files) : ''}</div>`;
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
@@ -1528,7 +1528,7 @@ function message(m, prev, fresh, followed = false) {
 // every few seconds while it works, or while a new message waits for it to start. Not where
 // you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
 // avatar and name open the agent settings of the thread's team, at the thread's channel.
-const AGENT_NAME = 'Opspile Agent';
+const AGENT_NAME = 'Thread Agent';
 const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
 
@@ -1639,7 +1639,7 @@ function composer(thread, resolve = '') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
     const link = state.me.connectable?.discord && !state.me.connected?.discord
-      ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so opspile knows which posts are yours.' : '';
+      ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so the inbox knows which posts are yours.' : '';
     return `<div class="composer"><span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${DRAFT_LINE}</div>`;
   }
   if (!state.me.connected?.[p]) {
@@ -1826,7 +1826,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ...kinds.keys(),
   ], kinds);
   // The feed, one element per item; `enter` marks the messages that just arrived.
-  const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before opspile started listening.</div>' }];
+  const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before the inbox started listening.</div>' }];
   let prev = null;
   let day = null;
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
@@ -2225,7 +2225,7 @@ function renderDraftBar(key, force = false) {
     const acts = [];
     if (editable) acts.push(`<button data-draft="edit" title="${own ? 'Add the draft after what you wrote, to edit it' : 'Put the draft in the reply box, to edit it'}">${own ? 'Add to reply' : 'Edit'}</button>`);
     if (box && !readonly) acts.push('<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">Send as me</button>');
-    if (data.can_post_as_bot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the opspile app">Send as bot</button>');
+    if (data.can_post_as_bot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot">Send as bot</button>');
     if (!readonly) acts.push('<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button>');
     const tag = editable ? 'button' : 'span';
     const long = d.body.length > 80 || d.body.includes('\n');
@@ -2333,7 +2333,7 @@ async function sendDraft(key, asApp) {
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (asApp) {
     const error = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [] });
-    toast(error ? `Nothing was sent: ${error}.` : 'Sent as the opspile app.');
+    toast(error ? `Nothing was sent: ${error}.` : 'Sent as the bot.');
   } else {
     await send(key, data.thread, d);
   }
@@ -2549,7 +2549,7 @@ async function deliver(p) {
   } catch { /* offline, or the connection dropped */ }
   if (!res?.ok) {
     p.status = 'failed';
-    p.error = data.error || (res?.status ? `could not send (${res.status})` : 'could not reach opspile');
+    p.error = data.error || (res?.status ? `could not send (${res.status})` : 'could not reach the inbox');
     state.sendError = p.error;
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
     // The account may upload once it is connected again with file access.
@@ -2936,7 +2936,7 @@ function wireDrop() {
     if (!$('reply')) {
       let why = `connect your ${accountOf(thread.source)} account to reply here first`;
       if (state.data?.me?.readonly) why = 'this inbox is read-only while you view it as someone else';
-      else if (thread.source === 'discord') why = 'replies to Discord are written in Discord, where opspile cannot post as you';
+      else if (thread.source === 'discord') why = 'replies to Discord are written in Discord, where the inbox cannot post as you';
       rule = { count: 0, why };
     }
     return { key, thread, rule };
@@ -3685,7 +3685,7 @@ async function askToNotify() {
   if (!canNotify()) { toast('This browser does not show notifications.'); return false; }
   if (Notification.permission === 'default') await Notification.requestPermission().catch(() => {});
   renderNotify();
-  if (Notification.permission === 'denied') toast('Notifications are blocked for opspile: allow them in this browser\'s site settings.');
+  if (Notification.permission === 'denied') toast('Notifications are blocked for this site: allow them in this browser\'s site settings.');
   return Notification.permission === 'granted';
 }
 
@@ -3717,11 +3717,11 @@ function renderNotify() {
   const wanted = s.mentions || s.bells?.length;
   $('notifyHint').textContent = {
     unsupported: 'This browser does not show notifications.',
-    denied: 'Blocked for opspile in this browser: allow notifications in its site settings.',
+    denied: 'Blocked for this site in this browser: allow notifications in its site settings.',
     default: wanted ? 'This browser has not been allowed to show them yet.' : '',
     granted: '',
   }[perm] || '';
-  if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While opspile is open, in a tab or as the app.' : 'While opspile is open. The bell above the list adds the view on screen.';
+  if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While the inbox is open, in a tab or as the app.' : 'While the inbox is open. The bell above the list adds the view on screen.';
   $('notifyAllow').hidden = perm !== 'default';
 }
 function wireNotify() {
@@ -4742,7 +4742,7 @@ const WEBMCP_TOOLS = [
       const data = await showThread(key);
       if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
       const where = `${platform(data.thread)} (${data.thread.org || 'customer'})`;
-      const ask = () => confirmInPage(`Post this reply in ${where} as the opspile app?`, body, client?.signal, 'Post as opspile');
+      const ask = () => confirmInPage(`Post this reply in ${where} as the bot?`, body, client?.signal, 'Post as bot');
       const yes = client?.requestUserInteraction ? await client.requestUserInteraction(ask) : await ask();
       if (yes === null) return fail('Nobody confirmed within 2 minutes, so nothing was sent.');
       if (!yes) return fail('The user declined to send, so nothing was sent.');
