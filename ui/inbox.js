@@ -13,7 +13,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const state = {
-  me: null, team: null, data: null, open: null, sockets: [], live: 0, review: null, answers: null,
+  me: null, team: null, data: null, open: null, compose: null, awaiting: null, sockets: [], live: 0, review: null, answers: null,
   sel: { type: new Set(['conversation']) },
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
@@ -1243,6 +1243,7 @@ const preload = new IntersectionObserver((entries) => {
 }, { root: $('threads'), rootMargin: '200px' });
 
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M7 12h2"/></svg>';
+const COMPOSE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.8H3.6a1.1 1.1 0 0 0-1.1 1.1v8.5a1.1 1.1 0 0 0 1.1 1.1h8.5a1.1 1.1 0 0 0 1.1-1.1V8.5"/><path d="M12 1.9a1.2 1.2 0 0 1 1.7 1.7L8 9.3l-2.3.6.6-2.3z"/></svg>';
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
 
 function renderThreads() { inPass(threadRows); }
@@ -1372,7 +1373,9 @@ function threadRows() {
   // The bell: notifications for this view, with its filters (not while viewing as someone).
   const rung = bellOn();
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
-  const count = `<span class="lead">${filt}${unread}${bell}</span><span class="sort">${sorter}</span>`;
+  // Start a thread (not while viewing as someone: that is read-only).
+  const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
+  const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -1899,6 +1902,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Opened from the list, not from another thread: the entry before this one shows the list.
   const fromList = !state.open;
   state.open = key;
+  Object.assign(state, { compose: null, awaiting: null });
   syncReading();
   if (switching) prefetchAround(key);
   if (switching) toUrl(true, fromList ? { list: true } : null);
@@ -2828,7 +2832,7 @@ function discardSend(id) {
 // reply is still on its way would lose it: the box is already empty, the bubble lives in this
 // page only, and the post may be cut off. The browser asks first, then and only then.
 window.addEventListener('beforeunload', (e) => {
-  if (!state.sending.some((p) => p.status === 'sending')) return;
+  if (!state.sending.some((p) => p.status === 'sending') && !state.compose?.posting) return;
   e.preventDefault();
   e.returnValue = '';
 });
@@ -2852,6 +2856,263 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   openThread(key, { live: true });
   return null;
+}
+
+// ---------------------------------------------------------------- new threads
+// The ✎ button by the bell opens a composer in the pane, where a thread would be. It goes to the
+// one channel the filters leave (`channelsInView`); with more than one, or none, the header
+// has a search for one, and nothing can be posted until one is picked. Posting needs the same
+// as a reply (POST /api/post, as yourself) and takes the same text, files and mentions, which
+// wait under `NEW` as a thread's do under its key. The channel is picked anew each time; the
+// text stays in this tab until it is posted. The thread then comes back through the platform's
+// events, as a reply does, some ten seconds later, and opens once it is in the inbox.
+const NEW = 'new';
+const CHANNEL_MAX = 50;
+const CHANNELS_FOR_MS = 5 * 60 * 1000;
+const ARRIVAL_TRIES = 15;
+const ARRIVAL_EVERY_MS = 2000;
+let channelsAsked = null;
+
+/** Whether thread or composer `key` is the one in the pane. */
+const inPane = (key) => (state.compose ? NEW : state.open) === key;
+
+/** The channels the viewer may start a thread in (GET /api/channels), kept for a while. */
+function postableChannels() {
+  if (!channelsAsked || Date.now() - channelsAsked.at > CHANNELS_FOR_MS) {
+    channelsAsked = { at: Date.now(), list: get('/api/channels').then((d) => d.channels) };
+    channelsAsked.list.catch(() => { channelsAsked = null; });
+  }
+  return channelsAsked.list;
+}
+
+/**
+ * The channels the view on screen is about: its team's (or those of the personal view) that
+ * its customer and platform filters let through. Only those two say which channel: what the
+ * other filters pick are threads, in any channel.
+ */
+function channelsInView(channels) {
+  const lets = (id, v) => (!state.sel[id]?.size || state.sel[id].has(v)) && !state.not[id]?.has(v);
+  return channels.filter((c) => (personal() ? c.personal : c.teams.includes(state.team))
+    && lets('customer', c.org ?? '(none)') && lets('platform', PLATFORM[c.source]));
+}
+
+/** The channels found for what is typed (every word), those of the view on screen first. */
+function channelOptions(channels, inView, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = channels.filter((c) => {
+    const text = [c.name, c.group, c.orgName].join(' ').toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
+  return [...found.filter((c) => inView.includes(c)), ...found.filter((c) => !inView.includes(c))];
+}
+
+const channelIcon = (c) => `<img src="${esc(favicon(PLATFORM_SITE[PLATFORM[c.source]]))}" alt="${esc(PLATFORM[c.source])}" title="${esc(PLATFORM[c.source])}">`;
+/** Where a channel is, after its name: the customer, and on Teams the team it is in. */
+const channelWhere = (c) => [c.orgName, c.group].filter(Boolean).map(esc).join(' · ');
+
+function composeHead({ channel }) {
+  const close = `<button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>`;
+  const shut = '<button class="linkish cancel" data-close title="Close (Esc); what you wrote stays until you post it">Cancel</button>';
+  const where = channel
+    ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? ` · <span>${channelWhere(channel)}</span>` : ''} · <button class="linkish" data-rechannel>Change</button></div>`
+    : '<div class="chanpick"><input id="chan-q" type="search" role="combobox" aria-label="Channel to post in" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" placeholder="Pick a channel: search by name or customer" autocomplete="off" spellcheck="false"><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
+  return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
+}
+
+function composeFeed({ channel, error }) {
+  const said = channel ? `Your message starts a new thread in ${esc(channel.name)}, posted as you.` : 'Pick a channel above to post.';
+  return `<div class="scroller"><div class="feed">${error ? `<div class="compose-error" role="alert">Not posted: ${esc(error)}</div>` : ''}<div class="empty">${said}</div></div></div>`;
+}
+
+function composeBox({ channel, posting }) {
+  if (channel && !state.me.connected?.[channel.source]) {
+    return `<div class="composer"><span class="connect">To post as yourself, <a href="/api/auth/${channel.source}/start">connect your ${accountOf(channel.source)} account</a>.</span></div>`;
+  }
+  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+    <div class="tray" id="tray" hidden></div>${channel ? attachButton(channel) : ''}
+    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
+      placeholder="${channel ? `Write to ${esc(channel.name)}` : 'Write your message'}"></textarea>
+    <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : 'Post'}</button></span></div>`;
+}
+
+/** Shows the options for what is typed in the header's search, `open` or closed. */
+function renderChannels(open = true) {
+  const c = state.compose;
+  const input = $('chan-q');
+  const ul = $('chan-list');
+  if (!c || !input || !ul) return;
+  ul.hidden = !open;
+  input.setAttribute('aria-expanded', String(open));
+  if (!open) { input.removeAttribute('aria-activedescendant'); return; }
+  ul.innerHTML = c.options.slice(0, CHANNEL_MAX).map((o, i) => `<li role="option" id="chan-${i}" data-i="${i}" class="${i === c.i ? 'on' : ''}" aria-selected="${i === c.i}">${channelIcon(o)}<span class="nm">${esc(o.name)}</span><span class="hint">${channelWhere(o)}</span></li>`).join('')
+    || `<li class="none">${input.value.trim() ? 'No channel of yours matches.' : 'You have no channel to post in.'}</li>`;
+  if (c.options.length) input.setAttribute('aria-activedescendant', `chan-${c.i}`);
+  else input.removeAttribute('aria-activedescendant');
+  ul.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+}
+
+/** Picks channel `channel` (or none, to search again). Mentions are of one workspace or tenant. */
+function setChannel(channel) {
+  const c = state.compose;
+  if (!c) return;
+  if (channel?.ref !== c.channel?.ref) mention.picked.delete(NEW);
+  Object.assign(c, { channel, error: null });
+  renderCompose();
+  (channel ? $('reply') : $('chan-q'))?.focus();
+}
+
+function wireChannels() {
+  const c = state.compose;
+  const input = $('chan-q');
+  const ul = $('chan-list');
+  if (!input) return;
+  const find = () => {
+    Object.assign(c, { i: 0, options: channelOptions(c.all, channelsInView(c.all), input.value) });
+    renderChannels();
+  };
+  input.onfocus = find;
+  input.onclick = () => { if (ul.hidden) find(); };
+  input.oninput = find;
+  input.onblur = () => renderChannels(false);
+  input.onkeydown = (e) => {
+    const n = Math.min(c.options.length, CHANNEL_MAX);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (ul.hidden) { find(); return; }
+      if (n) c.i = (c.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      renderChannels();
+    } else if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      if (!ul.hidden && n) setChannel(c.options[c.i]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (!ul.hidden) renderChannels(false); else closeThread();
+    }
+  };
+  // A press keeps the focus in the search, so the list is still there for the click.
+  ul.onmousedown = (e) => e.preventDefault();
+  ul.onclick = (e) => {
+    const li = e.target.closest('li[data-i]');
+    if (li) setChannel(c.options[Number(li.dataset.i)]);
+  };
+  find();
+}
+
+/** The composer, in the pane, as `state.compose` has it. */
+function renderCompose() {
+  const c = state.compose;
+  const pane = $('pane');
+  pane.innerHTML = `${composeHead(c)}${composeFeed(c)}${composeBox(c)}`;
+  pane.__key = null;
+  wireChannels();
+  const box = $('reply');
+  if (!box) return;
+  box.value = composerFor(NEW).text;
+  growReply(box);
+  box.oninput = () => {
+    composerFor(NEW).text = box.value;
+    growReply(box);
+    suggest(NEW);
+  };
+  box.onclick = () => suggest(NEW);
+  box.onblur = () => setTimeout(closeMentions, 150);
+  box.onkeydown = (e) => {
+    if (mentionKey(e, NEW)) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeThread(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); postNew(); }
+  };
+  $('send').onclick = (e) => { e.preventDefault(); postNew(); };
+  if (c.channel) wireAttach(NEW, c.channel);
+}
+
+/** Opens the composer. `push`: a new entry in the history, so Back leaves it. */
+async function openCompose({ push = true } = {}) {
+  const c = {
+    channel: null, all: [], options: [], i: 0, posting: false, error: null,
+  };
+  Object.assign(state, { open: null, compose: c, awaiting: null });
+  syncReading();
+  toUrl(push, push ? { list: true } : null);
+  renderThreads();
+  hideSource();
+  closeMentions();
+  const pane = $('pane');
+  pane.__key = null;
+  pane.innerHTML = '<div class="empty">Loading channels…</div>';
+  try {
+    c.all = await postableChannels();
+  } catch (e) {
+    if (state.compose === c) pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (state.compose !== c) return;
+  const view = channelsInView(c.all);
+  if (view.length === 1) [c.channel] = view;
+  renderCompose();
+  (c.channel ? $('reply') : $('chan-q'))?.focus();
+}
+
+/** Opens the thread `key` started once it is in the inbox, unless the pane moved on. */
+function openWhenHere(key, shown, tries = ARRIVAL_TRIES) {
+  setTimeout(async () => {
+    if (state.awaiting !== key) return;
+    const here = await get(threadUrl(key)).catch(() => null);
+    if (state.awaiting !== key) return;
+    if (here) openThread(key);
+    else if (tries > 1) openWhenHere(key, shown, tries - 1);
+    else $('pane').innerHTML = `<div class="empty">Posted in ${esc(shown)}. It shows up in the inbox as soon as it arrives.</div>`;
+  }, ARRIVAL_EVERY_MS);
+}
+
+/** Posts the composer's text and files, once a channel is picked. */
+async function postNew() {
+  const c = state.compose;
+  const box = $('reply');
+  if (!c || !box || c.posting) return;
+  if (!c.channel) { $('chan-q')?.focus(); return; }
+  const text = box.value.trim();
+  const attached = state.attachments.get(NEW) || [];
+  if (!text && !attached.length) return;
+  // Picked before the channel changed, perhaps to a platform that takes less.
+  const rule = attachRule(c.channel);
+  const files = attached.map((a) => a.file);
+  const problem = attachProblem(rule, files);
+  if (problem) { attachRefused(rule, problem); return; }
+  closeMentions();
+  c.posting = true;
+  c.error = null;
+  $('send').disabled = true;
+  $('send').textContent = 'Posting…';
+  const { channel } = c;
+  const res = await postWith('/api/post', { channel: channel.ref, text, mentions: mentionsIn(NEW, text) }, files);
+  c.posting = false;
+  if (!res.ok) {
+    const { data } = res;
+    c.error = data.error || (res.status ? `could not post (${res.status})` : 'could not reach the inbox');
+    if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
+    const again = data.files && (data.reconnect || data.connect);
+    if (again) toast(c.error, { label: 'Connect again', href: `/api/auth/${again}/start?files=1` });
+    if (state.compose !== c) { toast(`Your new thread was not posted: ${c.error}`); return; }
+    renderCompose();
+    $('reply')?.focus();
+    return;
+  }
+  for (const a of attached) if (a.url) URL.revokeObjectURL(a.url);
+  state.attachments.delete(NEW);
+  state.composers.delete(NEW);
+  mention.picked.delete(NEW);
+  // Somewhere else by now: that stays on screen.
+  if (state.compose !== c) { toast(`Posted in ${channel.name}.`); return; }
+  state.compose = null;
+  syncReading();
+  toUrl(false);
+  renderThreads();
+  const said = `Posted in ${esc(channel.name)}.`;
+  $('pane').innerHTML = `<div class="empty">${said}${res.data.thread ? ' Opening the thread…' : ''}</div>`;
+  if (TAKING_TURNS.matches || !res.data.thread) toast(`Posted in ${channel.name}.`);
+  if (!res.data.thread) return;
+  state.awaiting = res.data.thread;
+  openWhenHere(res.data.thread, channel.name);
 }
 
 // ---------------------------------------------------------------- editing
@@ -3000,7 +3261,7 @@ function attachRefused(rule, text) {
 }
 
 function showAttachError(key, text) {
-  const tray = state.open === key && $('tray');
+  const tray = inPane(key) && $('tray');
   if (!tray) return;
   tray.querySelector('.attach-error')?.remove();
   const el = document.createElement('div');
@@ -3048,7 +3309,7 @@ const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" title="${es
 /** The tray: the files waiting to go with the reply, each with an × to take it off. */
 function renderTray(key) {
   const tray = $('tray');
-  if (!tray || state.open !== key) return;
+  if (!tray || !inPane(key)) return;
   const list = state.attachments.get(key) || [];
   tray.hidden = !list.length;
   tray.innerHTML = list.map(fileChip).join('');
@@ -3116,12 +3377,13 @@ function wireDrop() {
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
   // The open thread, and what its reply may carry; without a reply box, why there is none.
   const target = () => {
-    const key = state.open;
-    const thread = key && state.cache.get(key)?.data?.thread;
+    const key = state.compose ? NEW : state.open;
+    const thread = state.compose ? state.compose.channel : key && state.cache.get(key)?.data?.thread;
+    if (state.compose && !thread) return { key, thread, rule: { count: 0, why: 'pick a channel first' } };
     if (!thread) return null;
     let rule = attachRule(thread);
     if (!$('reply')) {
-      let why = `connect your ${accountOf(thread.source)} account to reply here first`;
+      let why = `connect your ${accountOf(thread.source)} account to ${state.compose ? 'post' : 'reply'} here first`;
       if (state.data?.me?.readonly) why = 'this inbox is read-only while you view it as someone else';
       else if (thread.source === 'discord') why = 'replies to Discord are written in Discord, where the inbox cannot post as you';
       rule = { count: 0, why };
@@ -3137,7 +3399,7 @@ function wireDrop() {
       pane.append(zone);
     }
     zone.classList.toggle('refused', !rule.count);
-    zone.innerHTML = `<div>${PAPERCLIP}<b>${rule.count ? `Drop to attach ${rule.other ? 'files' : 'images'}` : 'Cannot attach files here'}</b><span>${esc(rule.count ? `Up to ${rule.count}, ${fileSize(rule.total)} in all; they go with your reply.` : `${rule.why[0].toUpperCase()}${rule.why.slice(1)}.`)}</span></div>`;
+    zone.innerHTML = `<div>${PAPERCLIP}<b>${rule.count ? `Drop to attach ${rule.other ? 'files' : 'images'}` : 'Cannot attach files here'}</b><span>${esc(rule.count ? `Up to ${rule.count}, ${fileSize(rule.total)} in all; they go with your ${state.compose ? 'message' : 'reply'}.` : `${rule.why[0].toUpperCase()}${rule.why.slice(1)}.`)}</span></div>`;
     pane.classList.add('dropping');
   };
   pane.addEventListener('dragenter', (e) => {
@@ -3201,6 +3463,12 @@ async function postWith(path, payload, files = []) {
 const mention = { kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
 // The box suggestions are for: the reply box, or the message being edited, whichever has the
 // focus; the list of suggestions next to it.
+/** What /api/mentionable is asked about: the thread, or the channel a new one goes to (none yet). */
+function mentionScope(key) {
+  if (key !== NEW) return `thread=${encodeURIComponent(key)}`;
+  const c = state.compose?.channel;
+  return c ? `channel=${encodeURIComponent(c.ref)}` : null;
+}
 const mentionBox = () => (document.activeElement?.classList?.contains('editbox') ? document.activeElement : $('reply'));
 const mentionList = () => mentionBox()?.parentElement?.querySelector(':scope > ul.mentions') || null;
 const MENTION_AT = /(?:^|[\s(])@([\p{L}\p{N}._'-]*(?: [\p{L}\p{N}._'-]*){0,2})$/u;
@@ -3220,14 +3488,15 @@ function suggest(key) {
   const em = box && emojiQuery(box);
   if (em) { suggestEmoji(key, em); return; }
   const hit = box && mentionQuery(box, key);
-  if (!hit) { closeMentions(); return; }
+  const where = mentionScope(key);
+  if (!hit || !where) { closeMentions(); return; }
   const seq = ++mention.seq;
   mention.timer = setTimeout(async () => {
     let people = [];
     try {
-      ({ people } = await get(`/api/mentionable?thread=${encodeURIComponent(key)}&q=${encodeURIComponent(hit.q)}`));
+      ({ people } = await get(`/api/mentionable?${where}&q=${encodeURIComponent(hit.q)}`));
     } catch { /* no suggestions */ }
-    if (seq !== mention.seq || state.open !== key) return;
+    if (seq !== mention.seq || !inPane(key)) return;
     // A space after a name that matches nobody ends the mention.
     if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
     Object.assign(mention, { kind: 'person', list: people, i: 0, from: hit.from });
@@ -3265,7 +3534,7 @@ function clefRanking(q) {
 }
 
 function suggestEmoji(key, hit) {
-  const slack = /^slack:/.test(key);
+  const slack = /^slack:/.test(key === NEW ? state.compose?.channel?.ref : key);
   const found = Markdown.matchEmoji(slack ? ownEmoji.names : SLACK_EMOJI.names, slack ? ownEmoji.alike : SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
     .map((name) => ({ emoji: name }));
   if (!found.length) closeMentions();
@@ -3275,7 +3544,7 @@ function suggestEmoji(key, hit) {
   if (found.length >= EMOJI_MAX || !/[a-z]/.test(hit.q)) return;
   mention.timer = setTimeout(async () => {
     const ranked = await clefRanking(hit.q);
-    if (seq !== mention.seq || state.open !== key) return;
+    if (seq !== mention.seq || !inPane(key)) return;
     // One line per emoji: Clef's that are not in the list yet, until it is full.
     const have = new Set(mention.list.map((e) => emojiByName(e.emoji)));
     const more = [];
@@ -4110,6 +4379,7 @@ function toUrl(push = true, entry = null) {
   for (const [id, set] of Object.entries(state.sel)) if (set.size) q.set(`f.${id}`, [...set].join('|'));
   for (const [id, set] of Object.entries(state.not)) if (set.size) q.set(`not.${id}`, [...set].join('|'));
   if (state.open) q.set('t', state.open);
+  if (state.compose) q.set('compose', '1');
   if (state.review) q.set('review', '1');
   if (state.unread) q.set('unread', '1');
   if (state.as) q.set('as', String(state.as));
@@ -4162,18 +4432,21 @@ function fromUrl() {
   onePick();
   setUnread(q.get('unread') === '1');
   state.as = Number(q.get('as')) || null;
-  return { open: q.get('t'), review: q.get('review') === '1', q: q.get('q') || '' };
+  return {
+    open: q.get('t'), compose: q.get('compose') === '1' && !state.as, review: q.get('review') === '1', q: q.get('q') || '',
+  };
 }
 
 // ---------------------------------------------------------------- narrow screens
 // Under 700px the list and the open thread take turns (`main.reading` while one is open), and
 // under 1100px the filter cards are in a drawer (`main.filtering` while it is open).
 const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
-const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open));
+const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
   if (history.state?.list) { history.back(); return; }
-  state.open = null;
+  Object.assign(state, { open: null, compose: null, awaiting: null });
+  closeMentions();
   syncReading();
   renderThreads();
   $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
@@ -4301,7 +4574,7 @@ async function switchView(slug) {
   state.sort = slug ? 'team' : 'personal';
   onePick();
   if (scopeKey() === was) { render(); toUrl(); return; }
-  state.open = null; state.prevKeys = null;
+  Object.assign(state, { open: null, compose: null, awaiting: null, prevKeys: null });
   // A thread of a shared channel shows the read state of the team it is looked at from.
   state.cache.clear();
   syncReading();
@@ -4368,6 +4641,7 @@ async function start() {
     if (view) { if (view.getAttribute('aria-checked') === 'true') state.list.key = null; switchView(view.dataset.view || null); return; }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
+    if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
     if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); render(); toUrl(); return; }
     if (e.target.closest('a, .find')) return;
@@ -4383,6 +4657,7 @@ async function start() {
   wireRail();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
+    if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
     const inbox = e.target.closest('a[data-inbox]');
     if (inbox && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)) { e.preventDefault(); openInbox(inbox.getAttribute('href')); return; }
     const retry = e.target.closest('[data-retry]');
@@ -4458,13 +4733,16 @@ async function start() {
     const main = document.querySelector('main');
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const scope = scopeKey();
-    const { open, review, q: query } = fromUrl();
+    const {
+      open, compose, review, q: query,
+    } = fromUrl();
+    if (!compose) Object.assign(state, { compose: null, awaiting: null });
     renderUser();
     if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
@@ -4501,7 +4779,7 @@ async function start() {
       sel.value = id ? String(id) : '';
       state.cache.clear();
       state.prevKeys = null;
-      state.open = null;
+      Object.assign(state, { open: null, compose: null, awaiting: null });
       syncReading();
       $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
       await loadWho();
@@ -4529,7 +4807,8 @@ async function start() {
   await loadInbox(early);
   loadOwnEmoji();
   if (initial.review && state.me.admin) showReview(true);
-  if (initial.open) openThread(initial.open);
+  if (initial.compose) openCompose({ push: false });
+  else if (initial.open) openThread(initial.open);
   connect();
   registerTools();
 }

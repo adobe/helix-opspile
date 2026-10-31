@@ -369,6 +369,18 @@ function myChannels() {
     .map(at));
 }
 
+/** The channels ME may start a thread in, latest activity first, as src/post.js lists them. */
+function postable() {
+  const mine = myChannels();
+  const latest = (e) => e.row.last_at || e.row.any_at;
+  const channels = new Map();
+  [...store.threads.values()].sort((a, b) => String(latest(b)).localeCompare(String(latest(a))))
+    .filter(({ ch }) => (ch.kind || 'channel') === 'channel' && ch.source !== 'discord'
+      && (inTeam(ch.team) || mine.has(`${ch.source}:${ch.channelId}`)))
+    .forEach(({ ch, row }) => channels.set(`${ch.source}:${row.tenant}:${ch.channelId}`, ch));
+  return channels;
+}
+
 /** As src/channelrefs.js's nameChannelIds: Slack channel ids (`#C…`) as the channels' names. */
 function nameIds(s) {
   if (!s) {
@@ -996,14 +1008,33 @@ async function api(req, res, url) {
       emoji: Object.fromEntries(names.map((n, i) => [n, found[i]]).filter(([, e]) => e)),
     });
   }
+  if (url.pathname === '/api/channels') {
+    const mine = myChannels();
+    return json(res, {
+      channels: [...postable()].map(([ref, ch]) => ({
+        ref,
+        source: ch.source,
+        name: ch.name,
+        group: ch.teamId ? store.teams.find((t) => t.slug === ch.team)?.name : null,
+        org: ch.org,
+        orgName: ch.org,
+        teams: [ch.team],
+        personal: mine.has(`${ch.source}:${ch.channelId}`),
+      })),
+    });
+  }
   if (url.pathname === '/api/mentionable') {
     // As D1 would answer (src/post.js): the accounts of the platform, ranked as the Worker
-    // ranks them, those who posted in the thread first, then the channel's members.
-    const entry = store.threads.get(url.searchParams.get('thread'));
+    // ranks them, those who posted in the thread first, then the channel's members. For a
+    // thread being started (`channel`), nobody is in it, and nothing says what it is about.
+    const starting = postable().get(url.searchParams.get('channel'));
+    const entry = starting ? [...store.threads.values()].find((t) => t.ch === starting)
+      : store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
-    const here = new Set(thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
+    const here = new Set(starting ? []
+      : thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
     const posted = new Set([...store.threads.values()]
       .filter((t) => t.ch.channelId === entry.ch.channelId)
       .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
@@ -1011,7 +1042,8 @@ async function api(req, res, url) {
     // A stand-in for the vectors (src/expertise.js): an Adobe person's affinity is how many of
     // this thread's longer words their messages anywhere have, the viewer's own aside.
     const wordsOf = (s) => new Set(String(s || '').toLowerCase().match(/[a-z]{5,}/g) || []);
-    const about = wordsOf([entry.row.title, ...entry.messages.map((m) => m.body)].join(' '));
+    const about = wordsOf(starting ? ''
+      : [entry.row.title, ...entry.messages.map((m) => m.body)].join(' '));
     const affinity = new Map();
     for (const t of store.threads.values()) {
       for (const m of t.messages) {
@@ -1117,8 +1149,34 @@ async function api(req, res, url) {
     // JSON, or multipart with files, as src/attach.js reads it.
     const { body: posted, files } = await readPost(req);
     const {
-      thread: key, text: reply, mentions = [], draft: base,
+      thread: key, channel, text: reply, mentions = [], draft: base,
     } = posted;
+    // A thread started in a channel (src/post.js `channelPlace`): it arrives like a reply.
+    if (channel && !app) {
+      const ch = postable().get(channel);
+      if (!ch || (!String(reply || '').trim() && !files.length)) {
+        return json(res, { error: 'not found' }, 404);
+      }
+      await new Promise((r) => {
+        setTimeout(r, SEND_MS);
+      });
+      if (ch.rejects) {
+        return json(res, { error: `Slack: ${ch.rejects}` }, 502);
+      }
+      const at = new Date();
+      const started = store.startId(ch, at.getTime());
+      setTimeout(() => {
+        store.start(ch, started, 'dana', String(reply).trim(), at.toISOString());
+        broadcast(ch.team, { type: 'thread', thread: started.key });
+      }, ARRIVE_MS);
+      return json(res, {
+        ok: true,
+        platform: ch.source,
+        id: started.id,
+        text: String(reply).trim(),
+        thread: started.key,
+      });
+    }
     if (app && !store.threads.get(key)?.ch.appPosting) {
       return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
     }

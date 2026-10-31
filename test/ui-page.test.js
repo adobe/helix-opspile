@@ -36,6 +36,55 @@ describe('inbox page', () => {
     await transform(html, { loader: 'js', format: 'esm' });
   });
 
+  describe('the channel of a new thread', () => {
+    const CHANNELS = [
+      {
+        ref: 'a', source: 'slack', name: 'aem-acme', org: 'acme', orgName: 'ACME', teams: ['t1'], personal: true,
+      },
+      {
+        ref: 'b', source: 'teams', name: 'Acme ops', group: 'Support', org: 'acme', orgName: 'ACME', teams: ['t1'], personal: false,
+      },
+      {
+        ref: 'c', source: 'slack', name: 'aem-globex', org: 'globex', orgName: 'Globex', teams: ['t2'], personal: true,
+      },
+      {
+        ref: 'd', source: 'slack', name: 'internal', org: null, orgName: null, teams: ['t1'], personal: false,
+      },
+    ];
+    const pick = (view) => {
+      const { channelsInView, channelOptions } = piece('function channelsInView', 'const channelIcon', 'channelsInView, channelOptions', {
+        PLATFORM: { slack: 'Slack', teams: 'Teams' },
+        personal: () => !view.team,
+        state: { sel: {}, not: {}, ...view },
+      });
+      return { inView: channelsInView(CHANNELS).map((c) => c.ref), channelsInView, channelOptions };
+    };
+    const set = (...v) => new Set(v);
+
+    it('knows it from the customer and platform of the view on screen', () => {
+      assert.deepEqual(pick({ sel: { customer: set('acme') } }).inView, ['a']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('acme'), platform: set('Teams') } }).inView, ['b']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('(none)') } }).inView, ['d']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('acme') }, not: { platform: set('Slack') } }).inView, ['b']);
+    });
+
+    it('does not know it from filters that pick threads', () => {
+      const sel = { type: set('conversation'), status: set('waiting', 'hot') };
+      assert.deepEqual(pick({ sel }).inView, ['a', 'c']);
+      assert.deepEqual(pick({ team: 't1', sel: { ...sel, customer: set('acme') } }).inView, ['a', 'b']);
+    });
+
+    it('finds every channel by any word, the view\'s first', () => {
+      const { channelOptions, channelsInView } = pick({ team: 't2' });
+      const inView = channelsInView(CHANNELS);
+      const found = (q) => channelOptions(CHANNELS, inView, q).map((c) => c.ref);
+      assert.deepEqual(found(''), ['c', 'a', 'b', 'd']);
+      assert.deepEqual(found('aem'), ['c', 'a']);
+      assert.deepEqual(found('acme support'), ['b']);
+      assert.deepEqual(found('nothing'), []);
+    });
+  });
+
   it('formats times and days as toLocale*String did', () => {
     const { ago, clock, dayLabel } = piece('// Dates and times', 'const platform', 'ago, clock, dayLabel');
     for (const iso of ['2024-03-01T07:05:00Z', '2023-12-31T23:59:00Z', '2024-06-15T13:30:00Z']) {

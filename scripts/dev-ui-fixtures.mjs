@@ -1036,6 +1036,31 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       return key;
     },
 
+    /** The id and thread key of a thread about to start in `ch`, as a platform gives them. */
+    startId(ch, at) {
+      const id = newId(ch.source, at);
+      return { id, key: threadKey(ch, id) };
+    },
+
+    /** Starts thread `key` with message `id`, as its first message arriving would. */
+    start(ch, { id, key }, who, body, at = new Date().toISOString()) {
+      const entry = {
+        key,
+        ch,
+        rootId: id,
+        path: channelPath({
+          org: ch.org, team: ch.team, source: ch.source, channelId: ch.channelId, rootId: id, id,
+        }).replace(/\/[^/]+\.md$/, '/'),
+        messages: [],
+        row: null,
+      };
+      threads.set(key, entry);
+      put(entry, {
+        id, at, author: author(who), body,
+      });
+      return key;
+    },
+
     /** Replaces a message's text, as an edit arriving from the platform would. */
     edit(key, id, body, at = new Date().toISOString()) {
       const entry = threads.get(key);

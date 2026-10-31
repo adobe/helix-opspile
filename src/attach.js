@@ -200,8 +200,9 @@ const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({
 }[c]));
 
 /**
- * Uploads `files` to Slack with `token` and shares them in the thread, `comment` (mrkdwn) as
- * the message: `{ ok, files }` (the file ids), or `{ error }` (Slack's error code).
+ * Uploads `files` to Slack with `token` and shares them in the thread (no `threadTs`: in the
+ * channel, where they start one), `comment` (mrkdwn) as the message: `{ ok, files }` (the
+ * file ids), or `{ error }` (Slack's error code).
  */
 export async function slackUpload(token, { channel, threadTs, comment }, files) {
   const api = async (method, params) => {
@@ -229,7 +230,7 @@ export async function slackUpload(token, { channel, threadTs, comment }, files) 
   const done = await api('files.completeUploadExternal', {
     files: JSON.stringify(uploaded),
     channel_id: channel,
-    thread_ts: threadTs,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
     ...(comment ? { initial_comment: comment } : {}),
   });
   if (!done.ok) {

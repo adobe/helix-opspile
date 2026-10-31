@@ -924,6 +924,20 @@ The models see reactions too: each message is followed by who reacted with what 
 Adobe staff), and a reaction relabels the thread, so a customer's ✅ or 👍 on the answer can
 make Clef call it resolved.
 
+### New threads
+
+The ✎ button next to the list's bell opens a composer in the pane, where a thread would show.
+What it posts goes through `POST /api/post` as a reply does, as the person, with the same
+text, mentions and files, but names a channel instead of a thread, so no thread exists yet.
+The inbox has no channel filter: the channel is known when the customer and platform filters
+leave one channel of the view on screen (`channelsInView`, over `GET /api/channels`). The other
+filters pick threads, which can be in any channel. Otherwise the composer's header searches
+every channel the person may post in, the view's first, and **Post** stays off until one is
+picked; `POST /api/post` itself refuses a post that names neither a thread nor a channel.
+Alert and ignored channels are not offered, nor is Discord, where the inbox cannot post as the
+person. Nothing is written to D1: the thread comes back through ingestion like any message,
+some ten seconds later, and the page opens it once `/api/thread` has it.
+
 ### Drafts
 
 A reply can wait as a **draft**: **Save draft** appears above Send, next to Resolve, when the
