@@ -20,7 +20,7 @@
  * person: the finder leaves them out of the viewer's lists of that thread from then on).
  * `GET /api/experts/events` gives them to the admin team's training (`npm run rank -- experts`),
  * page by page; the cron deletes those older than EXPERT_EVENTS_DAYS, as for the team order's
- * picks (src/rankevents.js).
+ * picks (src/rankevents.js), but for rejects: those are kept, as the finder goes by them.
  */
 
 export const ACTIONS = ['shown', 'open', 'pick', 'dismiss', 'reject'];
@@ -133,12 +133,12 @@ export async function expertEvents(env, since = 0, limit = EVENTS_PAGE) {
   return { events: page, next: more ? page[page.length - 1].id : null };
 }
 
-/** Deletes events older than `days`, oldest first, at most `limit` a run. */
+/** Deletes events older than `days`, oldest first, at most `limit` a run; rejects stay. */
 export async function pruneExpertEvents(env, now = new Date(), {
   days = EXPERT_EVENTS_DAYS, limit = PRUNE_LIMIT,
 } = {}) {
   const before = new Date(now.getTime() - days * 86400000).toISOString();
   const res = await env.DB.prepare(`DELETE FROM expert_events WHERE id IN (
-      SELECT id FROM expert_events WHERE at < ? ORDER BY id LIMIT ?)`).bind(before, limit).run();
+      SELECT id FROM expert_events WHERE at < ? AND action <> 'reject' ORDER BY id LIMIT ?)`).bind(before, limit).run();
   return { deleted: res.meta?.changes ?? 0, before };
 }

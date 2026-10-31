@@ -915,7 +915,8 @@ who answered, are in `mentions` and `messages` already, so they are joined in tr
 recorded twice. Nothing is recorded while viewing as someone else. `GET /api/experts/events`
 (admin team) gives them out a page at a time; `npm run rank -- experts`, and the weekly run,
 fetch them into `.rank/expert-events.jsonl`, and the cron deletes them after 90 days
-(`EXPERT_EVENTS_DAYS`).
+(`EXPERT_EVENTS_DAYS`), all but the rejects, which the finder goes by (migration 0048 indexes
+them).
 
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
