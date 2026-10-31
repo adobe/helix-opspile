@@ -65,6 +65,7 @@ import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
+import { cleanExpertEvent } from '../src/expertevents.js';
 import { rankMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import {
@@ -175,6 +176,9 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
+// The expert finder's lists, by id, as production records them (src/expertevents.js).
+const expertLists = new Map();
+let expertList = 0;
 const EXPERTS = [
   {
     id: 'lena', name: 'Lena Berg', member: true, reasons: ['knows about this topic', 'typically responds in about 40 minutes', 'is active in this channel'],
@@ -1093,7 +1097,18 @@ async function api(req, res, url) {
       .map((e) => ({
         ...e, avatar: null, staff: true, kind: 'person', response: null,
       }));
-    return json(res, { platform: entry.row.source, experts });
+    // A list id, as production records each list (src/expertevents.js); its events are logged.
+    expertList += 1;
+    expertLists.set(expertList, experts.map((e) => e.id));
+    return json(res, { platform: entry.row.source, experts, list: expertList });
+  }
+  if (url.pathname === '/api/experts/event' && req.method === 'POST') {
+    const ev = cleanExpertEvent(await readJson(req));
+    const list = !ev.error && expertLists.get(ev.list);
+    const error = ev.error || (!list && 'no such list')
+      || (ev.action === 'pick' && !list.includes(ev.account) && 'not on that list');
+    console.log(error ? `expert event refused: ${error}` : `expert ${ev.action}${ev.account ? ` ${ev.account} at ${list.indexOf(ev.account)}` : ''} (list ${ev.list})`);
+    return error ? json(res, { error }, 400) : res.writeHead(204).end();
   }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source.

@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import {
-  clearExpertLists, experts, findExperts, hasPair, MAX_SUGGESTED, reasonsOf, responseTimes, roughly,
-  suggestExpert, titlePairs,
+  clearExpertLists, experts, findExperts, FINDER, hasPair, MAX_SUGGESTED, reasonsOf, responseTimes,
+  roughly, suggestExpert, titlePairs,
 } from '../src/experts.js';
 import { d1 } from './d1.js';
 
@@ -318,5 +318,29 @@ describe('expert finder', () => {
     assert.deepEqual(Object.keys(body.experts[0]).sort(), [
       'avatar', 'id', 'kind', 'member', 'name', 'reasons', 'response', 'staff',
     ]);
+  });
+
+  it('records each list for the viewer, with the numbers that made it, and says its id', async () => {
+    const e = env({ matches: [vector(0.9, 3)] });
+    e.addThread('slack:E1:C1:1.1');
+    e.addMessage('slack:E1:C1:1.1', 'x1', 1, DAYS);
+    const body = await (await experts(e, THREAD, () => true, { me: { id: 2 } })).json();
+    assert.deepEqual(Object.keys(body).sort(), ['experts', 'list', 'platform']);
+    const row = await e.DB.prepare(`SELECT person, thread, action, data FROM expert_events
+      WHERE id = ?`).bind(body.list).first();
+    assert.deepEqual([row.person, row.thread, row.action], [2, THREAD, 'list']);
+    const { finder, candidates } = JSON.parse(row.data);
+    assert.equal(finder, FINDER);
+    assert.deepEqual(candidates.map((c) => c.id), body.experts.map((x) => x.id));
+    const ada = candidates.find((c) => c.id === 'U1').features;
+    assert.equal(ada.channel, 1);
+    assert.equal(ada.channelThreads, 1);
+    assert.equal(ada.meaning, 0);
+    assert.equal(typeof ada.score, 'number');
+    assert.equal(JSON.stringify(candidates).includes('Ada'), false);
+    // Viewing as someone else, nothing is recorded.
+    const viewer = { id: 2, readonly: true };
+    const as = await (await experts(e, THREAD, () => true, { me: viewer })).json();
+    assert.equal(as.list, undefined);
   });
 });
