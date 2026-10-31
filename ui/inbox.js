@@ -3460,7 +3460,9 @@ async function postWith(path, payload, files = []) {
 // (src/mention-match.js).
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
-const mention = { kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, picked: new Map(), names: new Set() };
+const mention = {
+  kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, waiting: null, picked: new Map(), names: new Set(),
+};
 // The box suggestions are for: the reply box, or the message being edited, whichever has the
 // focus; the list of suggestions next to it.
 /** What /api/mentionable is asked about: the thread, or the channel a new one goes to (none yet). */
@@ -3482,25 +3484,83 @@ function mentionQuery(box, key) {
   return { q: m[1], from: box.selectionStart - m[1].length - 1 };
 }
 
+// Everything a thread's suggestions are picked from (`pool` of /api/mentionable, asked for
+// with the first suggestions of a thread), by `mentionScope`: with it, what is typed after the
+// @ is ranked here as the Worker ranks it (`Markdown.suggestMentions`, src/mention-match.js),
+// at once, instead of asking the Worker for every letter. A pool older than POOL_FRESH_MS is
+// still used, and asked for again in the background.
+// Kept by who is asking too (`state.as`): the experts leave the viewer out.
+const mentionPools = new Map(); // viewer and scope -> { pool, at, asking }
+const POOL_FRESH_MS = 2 * 60 * 1000;
+const POOLS_MAX = 20;
+const poolKey = (where) => `${state.as || ''}|${where}`;
+const keptPool = (where) => mentionPools.get(poolKey(where))?.pool;
+
+/** Keeps the pool of `where` from an answer of /api/mentionable that has one. */
+function keepPool(where, pool) {
+  mentionPools.delete(poolKey(where));
+  mentionPools.set(poolKey(where), { pool, at: Date.now(), asking: false });
+  while (mentionPools.size > POOLS_MAX) mentionPools.delete(mentionPools.keys().next().value);
+}
+
+/** Whether the next question about `where` should ask for its pool too (and that it does). */
+function askPool(where) {
+  const p = mentionPools.get(poolKey(where)) || {};
+  if (p.asking || (p.pool && Date.now() - p.at < POOL_FRESH_MS)) return false;
+  mentionPools.set(poolKey(where), { ...p, asking: true });
+  return true;
+}
+
+async function askMentionable(where, q, pool) {
+  try {
+    const data = await get(`/api/mentionable?${where}&q=${encodeURIComponent(q)}${pool ? '&pool=1' : ''}`);
+    if (data.pool) keepPool(where, data.pool);
+    return data.people || [];
+  } finally {
+    const p = mentionPools.get(poolKey(where));
+    if (pool && p?.asking) mentionPools.set(poolKey(where), { ...p, asking: false });
+  }
+}
+
+function showPeople(key, hit, people) {
+  // A space after a name that matches nobody ends the mention.
+  if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
+  Object.assign(mention, { kind: 'person', list: people, i: 0, from: hit.from });
+  renderMentions(key);
+}
+
 function suggest(key) {
   const box = mentionBox();
   clearTimeout(mention.timer);
+  mention.waiting = null;
   const em = box && emojiQuery(box);
   if (em) { suggestEmoji(key, em); return; }
   const hit = box && mentionQuery(box, key);
   const where = mentionScope(key);
   if (!hit || !where) { closeMentions(); return; }
   const seq = ++mention.seq;
+  const kept = keptPool(where);
+  if (kept) {
+    showPeople(key, hit, Markdown.suggestMentions(kept, hit.q));
+    // Stale: asked again for the next time, as the @ opening the suggestions asks.
+    if (askPool(where)) askMentionable(where, '', true).catch(() => {});
+    return;
+  }
+  mention.waiting = where;
   mention.timer = setTimeout(async () => {
+    const pool = askPool(where);
     let people = [];
     try {
-      ({ people } = await get(`/api/mentionable?${where}&q=${encodeURIComponent(hit.q)}`));
+      people = await askMentionable(where, hit.q, pool);
     } catch { /* no suggestions */ }
-    if (seq !== mention.seq || !inPane(key)) return;
-    // A space after a name that matches nobody ends the mention.
-    if (!people.length && /\s/.test(hit.q)) { closeMentions(); return; }
-    Object.assign(mention, { kind: 'person', list: people, i: 0, from: hit.from });
-    renderMentions(key);
+    if (!inPane(key)) return;
+    if (seq === mention.seq) {
+      mention.waiting = null;
+      showPeople(key, hit, people);
+    } else if (pool && mention.waiting === where && keptPool(where)) {
+      // More was typed while the pool came: what is waiting for the Worker is ranked here.
+      suggest(key);
+    }
   }, hit.q ? 120 : 0);
 }
 
@@ -3579,6 +3639,7 @@ const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${emojiChip(p
 
 function closeMentions() {
   mention.list = [];
+  mention.waiting = null;
   mention.seq += 1;
   clearTimeout(mention.timer);
   for (const ul of document.querySelectorAll('#pane ul.mentions')) { ul.hidden = true; ul.innerHTML = ''; }

@@ -21,6 +21,8 @@
  * - `@Full Name` mentions and `:emoji:` codes (characters or images), outside code; `emojiLookup`
  *   (src/emojinames.js) finds an emoji by any platform's name for it, `matchEmoji` those
  *   whose name has what was typed (the composer's `:` suggestions)
+ * - `suggestMentions` (src/mention-match.js): the composer's `@` suggestions from a thread's
+ *   pool, ranked as the Worker ranks them
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
@@ -39,6 +41,7 @@ import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
+export { suggestMentions } from './mention-match.js';
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
