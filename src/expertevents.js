@@ -45,14 +45,19 @@ function cleanFeatures(f) {
 
 /**
  * Records the list the finder computed for `me` on entry `thread` (`candidates` of
- * src/experts.js, best first) and answers with its id, or null when there is nothing to record.
+ * src/experts.js, best first; `held` when it showed none of its own) and answers with its id,
+ * or null when there is nothing to record.
  */
-export async function recordList(env, me, thread, { finder, candidates }, now = new Date()) {
+export async function recordList(env, me, thread, {
+  finder, candidates, held = false,
+}, now = new Date()) {
   if (!me || !me.id || me.readonly || !key(thread) || !candidates || !candidates.length) {
     return null;
   }
   const data = {
     finder,
+    // The finder held its list back (Adobe has the thread in hand): none of it was shown.
+    ...(held ? { held: true } : {}),
     candidates: candidates.slice(0, MAX_CANDIDATES).map((c, pos) => ({
       id: c.id, person: c.person, pos, features: cleanFeatures(c.features),
     })),

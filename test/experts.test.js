@@ -284,6 +284,33 @@ describe('expert finder', () => {
     assert.deepEqual(names(found), ['Ada']);
   });
 
+  it('holds its own list back while Adobe has the thread in hand, unless the viewer was asked', async () => {
+    const e = env();
+    e.addThread('slack:E1:C1:1.1');
+    e.addMessage('slack:E1:C1:1.1', 'x1', 1, DAYS);
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff,
+      counted, author_key) VALUES ('slack', 'E1', 'C1', 'c1', ?, ?, 0, 1, 'slack:E1:UX')`)
+      .run(THREAD, ago(120));
+    const asked = (me) => findExperts(e, THREAD, { me, now: NOW, whenNeeded: true });
+    // Only the customer wrote: nobody at Adobe is on it.
+    assert.deepEqual(names(await asked(3)), ['Ada']);
+    // Bo answered: the team has it, so the finder says nothing of its own; agents still do.
+    e.addMessage(THREAD, 'y1', 2, 60);
+    clearExpertLists();
+    const found = await asked(3);
+    assert.deepEqual([names(found), found.held], [[], true]);
+    assert.deepEqual(found.candidates.map((c) => c.id), ['U1']);
+    assert.deepEqual(names(await findExperts(e, THREAD, { me: 3, now: NOW })), ['Ada']);
+    await suggestExpert(e, THREAD, { id: 'U5', reason: 'Fixed this before', by: 'opspile-agent/test' });
+    assert.deepEqual(names(await asked(4)), ['Ed']);
+    // Bo asked Cy: Cy may be looking for whom to hand it to, until Cy answers.
+    e.mention(THREAD, 'y1', 3, 60);
+    assert.deepEqual(names(await asked(3)), ['Ed', 'Ada']);
+    assert.deepEqual(names(await asked(4)), ['Ed']);
+    e.addMessage(THREAD, 'y2', 3, 30);
+    assert.deepEqual(names(await asked(3)), ['Ed']);
+  });
+
   it('takes suggestions only of staff on the platform, with a reason, and only so many', async () => {
     const e = env();
     const by = 'opspile-agent/test';
