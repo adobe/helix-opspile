@@ -15,6 +15,7 @@ import { beforeEach, describe, it } from 'node:test';
 import {
   affinities, clearExperts, EXPERT_MIN, threadExperts,
 } from '../src/expertise.js';
+import { suggestMentions } from '../src/mention-match.js';
 import { mentionable } from '../src/post.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -154,6 +155,11 @@ describe('expertise', () => {
       ['Ed Cust', false], ['Cy Staff', true], ['Bo Staff', true],
       ['Ada', false], ['Al Staff', false], ['Di Cust', false],
     ]);
+    // The pool has the affinities: the page suggests the same from it.
+    const { pool } = await (await mentionable(e, THREAD, '', inTeam, { me, pool: true })).json();
+    assert.deepEqual(suggestMentions(pool, ''), people);
+    assert.ok(pool.accounts.find((a) => a.name === 'Cy Staff').affinity > 0);
+    assert.equal(pool.accounts.find((a) => a.name === 'Ada').affinity, undefined);
     // Without a viewer (the MCP tools look up names), no vectors are asked.
     e.calls.query.length = 0;
     await mentionable(e, THREAD, 'cy', inTeam);

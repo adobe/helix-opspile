@@ -771,7 +771,8 @@ emoji (`matchEmoji`, `src/emojinames.js`), in a Slack thread the workspace's cus
 When that leaves room, Clef fills the list
 (`GET /api/emoji`): it ranks the candidates above by how likely each is what is being
 typed, with no threshold, and the list takes them in that order, skipping the emoji it
-already has, until it is full. Picking one writes `:name: `.
+already has, until it is full. Picking one writes `:name: `. A ranking is the same for everyone:
+the Worker keeps it in the data center's cache for a day, and the browser keeps it too.
 
 **Files.** A reply can carry files (`src/attach.js`): the 📎 button beside the reply box,
 files dropped anywhere on the open thread (which shows where they go, or why they cannot), or
@@ -859,6 +860,15 @@ from Graph, where the app may list them) and whoever posted in the channel (on T
 channel of the team). Opening the suggestions lists a channel's members when that is a week
 old, and looks up the members opspile has never seen (`users.info`), so a colleague who is in
 the channel but never posted anywhere opspile reads can be mentioned too.
+
+The suggestions that open with the `@` bring along everything they are picked from (`pool` of
+`GET /api/mentionable`: the accounts of the workspace, each marked as in the thread, in the
+channel or by its affinity, and the bots), and the page ranks what is typed after it itself,
+with the Worker's own `suggestMentions` (in the markdown bundle), so completing a name asks the
+Worker nothing. Until the pool is there, each typed letter asks the Worker, as before. The page
+keeps a thread's pool for the page's life, and asks for it again in the background once it is
+two minutes old. The Worker reads the thread's place first, then whether the viewer may see
+it and all the suggestions need at once: one round trip to D1 after the place, not up to four.
 
 **Expert finder.** The bottom right of a thread's header names the colleague most worth pulling
 in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in about 4 hours"
