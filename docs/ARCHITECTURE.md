@@ -866,6 +866,13 @@ in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in 
 them after `@` does, and ▾ lists up to eight, each with all of its reasons. Nothing is sent: the
 reply stays the person's to write.
 
+It speaks only when someone is needed. Once Adobe has the thread in hand (staff posted in it, or
+were mentioned in it), its own people are the ones to ask, and the most active in the channel
+are mostly who is in it already: the header then shows only an agent's suggestion, if there is
+one. The exception is the person who was mentioned and has not posted since, who may be looking
+for whom to hand it to. The list is still computed and recorded (`held`, below), for the training
+to see whom the team pulled in anyway. A thread agent's `list_experts` always gets the full list.
+
 Four signals add up, each scaled to its best person: the threads someone worked in this channel
 and for this customer in the last 180 days (D1; the customer's counts half, as it mostly repeats
 the channel's), the staff messages closest to the thread by meaning (`CONTENT`, as for the
@@ -903,7 +910,8 @@ moment. So each list `GET /api/experts` computes for someone is kept (`expert_ev
 0047, `src/expertevents.js`): every candidate it ranked, up to 20 and not only the eight shown,
 by account and person, with the numbers that placed them (each signal scaled and as found, the
 score, topic, channel membership, response times, an agent's suggestion) and the finder's version
-(`FINDER` in `src/experts.js`), never what anyone wrote. The answer has its id (`list`), and the
+(`FINDER` in `src/experts.js`), and `held` when the header showed none of it, never what anyone
+wrote. The answer has its id (`list`), and the
 page says what happened to it (`POST /api/experts/event`): `shown` once each time the thread is
 opened with it in the header, `open` for its ▾ list, `pick` of someone (their place comes from
 the list, not the page), and `dismiss` when the ▾ list is closed, or left for another thread or

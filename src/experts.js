@@ -268,6 +268,32 @@ async function inEntry(env, threads) {
   return new Set((results || []).map((r) => r.person));
 }
 
+/**
+ * Whether Adobe has the entry in hand: staff posted in it or were mentioned in it. Then its
+ * own people are the ones to ask, and the finder only says more when `me` was mentioned and has
+ * not posted since (they may be looking for whom to hand it to). Agents' suggestions still show.
+ */
+async function inHand(env, threads, me) {
+  const list = JSON.stringify(threads);
+  const of = 'thread IN (SELECT value FROM json_each(?))';
+  // Mentions of a deleted message are gone already (src/normalizer.js). `answered`: a post of
+  // mine since I was last asked, not an early reply before someone handed it to me.
+  const asked = `SELECT MAX(at) FROM mentions WHERE ${of} AND person = ?`;
+  const row = await env.DB.prepare(`SELECT
+      EXISTS (SELECT 1 FROM messages WHERE ${of} AND staff = 1 AND counted = 1 AND deleted = 0)
+        AS posted,
+      EXISTS (SELECT 1 FROM mentions m JOIN people p ON p.id = m.person
+        WHERE m.${of} AND p.staff = 1) AS mentioned,
+      (${asked}) AS askedMe,
+      EXISTS (SELECT 1 FROM messages WHERE ${of} AND person = ? AND deleted = 0
+        AND at > COALESCE((${asked}), '')) AS answered`)
+    .bind(list, list, list, me, list, me, list, me).first();
+  if (!row || (!row.posted && !row.mentioned)) {
+    return false;
+  }
+  return !(me !== null && row.askedMe && !row.answered);
+}
+
 /** Of `people`, those who posted anywhere lately. */
 async function active(env, people, now) {
   const { results } = await env.DB.prepare(`SELECT DISTINCT person FROM messages
@@ -414,9 +440,14 @@ function candidate(e) {
  * The experts of inbox entry `key`, best first, agents' suggestions before the others, as
  * `{ platform, experts, candidates }`, or null when there is no such entry: `candidates` are
  * all that were ranked, in the same order, as the training records them (`candidate`). `me`
- * (a person id) is left out. Never throws for a signal that fails.
+ * (a person id) is left out. With `whenNeeded` (the inbox's header), only agents' suggestions
+ * while Adobe has the entry in hand (`inHand`), and `held` says so; the candidates are all of
+ * them still, for the training to see whom the team pulled in anyway. Never throws for a
+ * signal that fails.
  */
-export async function findExperts(env, key, { me = null, now = Date.now() } = {}) {
+export async function findExperts(env, key, {
+  me = null, now = Date.now(), whenNeeded = false,
+} = {}) {
   const t = key && await target(env, key);
   const rows = t ? await entryRows(env, key) : [];
   if (!rows.length) {
@@ -443,10 +474,13 @@ export async function findExperts(env, key, { me = null, now = Date.now() } = {}
     return { ...e, ...s, member: inChannel(members, s.id, Boolean(e && e.member)) };
   });
   const all = [...pinned, ...others];
+  const held = whenNeeded && others.length > 0 && await inHand(env, threads, me)
+    .catch(() => false);
   return {
     platform: t.source,
-    experts: all.slice(0, MAX_EXPERTS).map(shape),
+    experts: (held ? pinned : all).slice(0, MAX_EXPERTS).map(shape),
     candidates: all.map(candidate),
+    ...(held ? { held: true } : {}),
   };
 }
 
@@ -467,12 +501,12 @@ export async function experts(env, key, canSee, { me, waitUntil } = {}) {
       route: 'experts', members: t.source, error: err.message,
     }))));
   }
-  const found = await findExperts(env, e.key, { me: me ? me.id : null });
+  const found = await findExperts(env, e.key, { me: me ? me.id : null, whenNeeded: true });
   if (!found) {
     return json(found);
   }
-  const { candidates, ...body } = found;
-  const list = await recordList(env, me, e.key, { finder: FINDER, candidates })
+  const { candidates, held, ...body } = found;
+  const list = await recordList(env, me, e.key, { finder: FINDER, candidates, held })
     .catch((err) => {
       console.warn(JSON.stringify({ route: 'experts', record: 'list', error: err.message }));
       return null;

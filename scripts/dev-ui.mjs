@@ -1092,7 +1092,13 @@ async function api(req, res, url) {
       suggested: { at: new Date().toISOString() },
       reasons: ['Wrote the redirects for the last blog migration'],
     }] : [];
-    const experts = [...agent, ...EXPERTS.filter((e) => !agent.some((a) => a.id === e.id))]
+    // While Adobe has the thread in hand, only an agent's suggestion, unless I was asked in it
+    // and have not answered yet (src/experts.js, inHand).
+    const askedMe = messages.some((m) => JSON.stringify(m).includes(`@${me}`))
+      && !messages.some((m) => m.author?.name === me);
+    const held = messages.some((m) => m.author?.staff) && !askedMe;
+    const found = held ? [] : EXPERTS.filter((e) => !agent.some((a) => a.id === e.id));
+    const experts = [...agent, ...found]
       .filter((e) => !inThread(e.name) && e.name !== me)
       .map((e) => ({
         ...e, avatar: null, staff: true, kind: 'person', response: null,
