@@ -289,8 +289,12 @@
   #filters::-webkit-scrollbar { display: none; }
   #filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + 18px);
     border-left: 0; border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
-    transition: transform .18s ease-out; }
-  #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
+    --out: 0px; margin-right: calc(-1 * var(--out)); padding-right: calc(12px + var(--out));
+    transition: margin-right .18s ease-out, padding-right .18s ease-out; }
+  /* A card hangs further out by its right edge and padding alone: its contents stay put. */
+  main:not(.rail) #filters .card.active { --out: calc(var(--r) / 3); }
+  main:not(.rail) #filters .card:hover { --out: calc(var(--r) * 2 / 3); }
+  main:not(.rail) #filters .card.active:hover { --out: var(--r); }
   @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
   /* Room for the filter cards' overhang, so they never cover a status dot. */
   .t { padding-left: 18px; }
@@ -331,6 +335,7 @@
   @media (hover: none) {
     :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
   }
+  main.rail #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
   @media (prefers-reduced-motion: reduce) {
     main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
   }
