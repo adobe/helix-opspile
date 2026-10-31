@@ -395,6 +395,13 @@ describe('mcp tools', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('keeps the @Names of a draft sent as it is, without being told them again', async () => {
+    const e = await connected();
+    const ok = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Thanks @Cy, and @Nobody' });
+    assert.equal(structured(ok).ok, true);
+    assert.equal(calls[0].body.text, 'Thanks <@U7>, and @Nobody');
+  });
+
   it('post_as_user turns names into mentions, and says when a name is unknown', async () => {
     const e = await connected();
     const ok = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Thanks @Cy', mention: ['Cy'] });

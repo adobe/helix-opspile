@@ -16,7 +16,7 @@ import {
 } from 'node:test';
 import {
   checkState, connections, finishAuth, learnMembers, makeState, mentionable, post, seal, slackText,
-  splitMentions, teamsMessage, unseal,
+  splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/markdown.js';
 import { d1 } from './d1.js';
@@ -170,6 +170,22 @@ describe('mentions', () => {
       id: 'b-help', name: 'helper', avatar: null, here: false, staff: false, kind: 'bot',
     });
     assert.equal((await mentionable(e, 'slack:E1:C1:1.1', 'b', () => false)).status, 404);
+  });
+
+  it('finds the accounts of the @Names a text is written with', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const bob = { id: 'U2', name: 'Bob Builder', kind: 'person' };
+    assert.deepEqual(await writtenMentions(e, key, 'Hi @Bob Builder, thanks.'), [bob]);
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder and @Bob Builder'), [bob]);
+    // Only whole names, of this workspace, of people: the rest stays text.
+    assert.deepEqual(await writtenMentions(e, key, 'Hi @Bob, @Bob Elsewhere and @Bobbot'), []);
+    assert.deepEqual(await writtenMentions(e, key, 'no one here'), []);
+    assert.deepEqual(await writtenMentions(e, 'slack:E1:C1:9.9', '@Bob Builder'), []);
+    // Two accounts with one name: neither is guessed.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U9', 'person', 'Bob Builder', '2026-10-21T10:00:00Z')`).run();
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), []);
   });
 
   // Made-up: a colleague who never posted in the thread, with a login unlike her name.

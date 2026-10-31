@@ -18,6 +18,7 @@ import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { rankMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
+import { mentionCandidates } from './profiles.js';
 import { teamsOf } from './shares.js';
 import { refreshMembers } from './suggest.js';
 import { resolveShortcodes } from './shortcodes.js';
@@ -683,6 +684,16 @@ export async function mentionsByName(env, t, names) {
   }
   const seen = new Set();
   return found.filter((a) => count.get(a.name).size === 1 && !seen.has(a.name) && seen.add(a.name));
+}
+
+/**
+ * The accounts the `@Name`s of a text written for entry `key` stand for: agents write names and
+ * pick nobody from a list, so this is what makes their `@Name`s mentions (see `mentionsByName`).
+ */
+export async function writtenMentions(env, key, text) {
+  const names = mentionCandidates([text]);
+  const t = names.length && await target(env, key);
+  return t ? mentionsByName(env, t, names) : [];
 }
 
 /**

@@ -325,6 +325,8 @@ describe('the agent\'s switchable tools', () => {
 
   it('give it pi\'s bash on its computer and post_message, each with its guidance', async () => {
     const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U2', 'person', 'Cy Customer', '2026-10-21T10:00:00Z')`).run();
     const posts = [];
     globalThis.fetch = async (url, init) => {
       posts.push(JSON.parse(init.body));
@@ -370,7 +372,7 @@ describe('the agent\'s switchable tools', () => {
       },
       capture(step('bash', { command: 'cut -d, -f2 data.csv | sort -r; ls' })),
       capture(step('bash', { command: 'cat missing.txt' })),
-      capture(step('post_message', { text: 'Purges take up to 5 minutes.' })),
+      capture(step('post_message', { text: '@Cy Customer, purges take up to 5 minutes.' })),
       capture(fauxAssistantMessage('Posted the purge time.')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -389,8 +391,8 @@ describe('the agent\'s switchable tools', () => {
     assert.deepEqual(posts, [{
       channel: 'C1',
       thread_ts: '1792584000.000100',
-      text: 'Purges take up to 5 minutes.',
-      blocks: [{ type: 'markdown', text: 'Purges take up to 5 minutes.' }],
+      text: '<@U2>, purges take up to 5 minutes.',
+      blocks: [{ type: 'markdown', text: '<@U2>, purges take up to 5 minutes.' }],
     }]);
     assert.deepEqual(posted, ['1792584999.000900']);
     assert.equal(ws.runs[0].options.cwd, '/workspace');

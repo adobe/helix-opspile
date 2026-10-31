@@ -647,7 +647,7 @@ describe('thread agents', () => {
       capture(call('git_grep', { repo: 'adobe/helix-opspile', pattern: 'threadagent' })),
       capture(call('git_read', { repo: 'kb-org', path: 'sites/www.md' })),
       capture(call('update_draft', {
-        text: 'Hi Cy, we are looking at the purge times.',
+        text: 'Hi @Cy, we are looking at the purge times.',
         sources: [{ url: 'https://docs.example.org/purge', title: 'Purging' }],
       })),
       capture(call('update_draft', { text: 'Second try without base' })),
@@ -678,12 +678,17 @@ describe('thread agents', () => {
     assert.doesNotMatch(thread, /delete the knowledge base/);
     assert.equal(grep, 'src/agent/agent.js:1: export class ThreadAgent {}');
     assert.match(read, /^path: sites\/www\.md\nhash: [0-9a-f]{40}\n\n---\ntype: Site/);
-    assert.match(saved, /^saved \(version /);
-    assert.match(conflict, /The draft changed[\s\S]*Hi Cy, we are looking/);
-    assert.match(draft, /saved by: opspile agent\nsources:\n- \{"url":"https:\/\/docs\.example\.org\/purge","title":"Purging"\}\n\nHi Cy, we are looking at the purge times\./);
+    assert.match(saved, /^saved \(version [^,]+, tags Cy\)$/);
+    assert.match(conflict, /The draft changed[\s\S]*Hi @Cy, we are looking/);
+    assert.match(draft, /saved by: opspile agent\nsources:\n- \{"url":"https:\/\/docs\.example\.org\/purge","title":"Purging"\}\n\nHi @Cy, we are looking at the purge times\./);
     assert.match(refused, /maintained automatically/);
-    const [row] = e.DB.rows('SELECT d.body, p.email FROM drafts d JOIN people p ON p.id = d.person');
-    assert.deepEqual(row, { body: 'Hi Cy, we are looking at the purge times.', email: 'agent@opspile.invalid' });
+    const [row] = e.DB.rows('SELECT d.body, d.mentions, p.email FROM drafts d JOIN people p ON p.id = d.person');
+    assert.deepEqual(row, {
+      body: 'Hi @Cy, we are looking at the purge times.',
+      // Sent from the inbox, this is what makes it a mention (`<@U2>` on Slack).
+      mentions: '[{"id":"U2","name":"Cy"}]',
+      email: 'agent@opspile.invalid',
+    });
   });
 });
 
