@@ -3741,11 +3741,13 @@ function listen(team, live) {
 
 // ---------------------------------------------------------------- notifications
 // This browser shows them while an inbox is open (a tab, or the installed app, in the background
-// too), through the service worker, so that a click opens the thread (src/pwa.js). Two kinds,
-// both settings of the person (GET/PUT /api/settings, in D1, so every device has them; the user
+// too), through the service worker, so that a click opens the thread (src/pwa.js). Three kinds,
+// all settings of the person (GET/PUT /api/settings, in D1, so every device has them; the user
 // menu changes them):
 // - a message that mentions you, on unless turned off: the room's `thread` event names the
 //   people a message just posted newly mentions (src/normalizer.js);
+// - a message in a thread of yours (you posted in it, were mentioned in it or put 👀 on it), on
+//   unless turned off: the same event names those people;
 // - a bell on a view (a team's inbox, or Personal, with the filters set on it): a thread in it
 //   gets a message you have not read. The view's filters are checked on the inbox of the team
 //   whose room announced it: the one on screen, when it is that view, else its first page.
@@ -3902,9 +3904,10 @@ function renderNotify() {
   if (box.hidden) return;
   const s = state.settings;
   $('notifyMentions').setAttribute('aria-checked', String(Boolean(s.mentions)));
+  $('notifyThreads').setAttribute('aria-checked', String(Boolean(s.threads)));
   $('bells').innerHTML = (s.bells || []).map((b, i) => `<div class="bell">${BELL}<a href="${esc(bellHref(b))}" title="${esc(bellLabel(b))}">${esc(bellLabel(b))}</a><button type="button" data-unbell="${i}" title="Turn off notifications for this view" aria-label="Turn off notifications for ${esc(bellLabel(b))}">✕</button></div>`).join('');
   const perm = canNotify() ? Notification.permission : 'unsupported';
-  const wanted = s.mentions || s.bells?.length;
+  const wanted = s.mentions || s.threads || s.bells?.length;
   $('notifyHint').textContent = {
     unsupported: 'This browser does not show notifications.',
     denied: 'Blocked for this site in this browser: allow notifications in its site settings.',
@@ -3915,11 +3918,13 @@ function renderNotify() {
   $('notifyAllow').hidden = perm !== 'default';
 }
 function wireNotify() {
-  $('notifyMentions').onclick = async () => {
-    const on = !state.settings.mentions;
+  const toggle = (key) => async () => {
+    const on = !state.settings[key];
     if (on) await askToNotify();
-    saveSettings({ mentions: on });
+    saveSettings({ [key]: on });
   };
+  $('notifyMentions').onclick = toggle('mentions');
+  $('notifyThreads').onclick = toggle('threads');
   $('notifyAllow').onclick = () => askToNotify();
   $('bells').onclick = (e) => {
     const x = e.target.closest('[data-unbell]');
@@ -3934,20 +3939,22 @@ function wireNotify() {
     navigator.serviceWorker.startMessages?.();
   }
   renderNotify();
-  // Mentions notify unless turned off, once the browser allows it: asked for once, on a click.
-  if (!state.as && state.settings.mentions && canNotify() && Notification.permission === 'default'
-    && !localStorage.getItem('opspile.notify.asked')) {
+  // Mentions and your threads notify unless turned off, once the browser allows it: asked for
+  // once, on a click.
+  if (!state.as && (state.settings.mentions || state.settings.threads) && canNotify()
+    && Notification.permission === 'default' && !localStorage.getItem('opspile.notify.asked')) {
     localStorage.setItem('opspile.notify.asked', '1');
-    toast('Get a notification when someone mentions you?', { label: 'Allow', run: askToNotify });
+    toast('Get a notification when someone mentions you or writes in your threads?', { label: 'Allow', run: askToNotify });
   }
 }
 
-/** The teams whose rooms the notifications need: all of yours for mentions and Personal. */
+/** The teams whose rooms the notifications need: all of yours for mentions, threads, Personal. */
 function notifyTeams() {
   if (state.as || !state.settings) return [];
   const all = state.rooms || [];
   const bells = state.settings.bells || [];
-  if (state.settings.mentions || bells.some((b) => b.view === PERSONAL_VIEW)) return all;
+  if (state.settings.mentions || state.settings.threads
+    || bells.some((b) => b.view === PERSONAL_VIEW)) return all;
   return all.filter((slug) => bells.some((b) => b.view === slug));
 }
 
@@ -3992,9 +3999,12 @@ const clipNote = (s, n = 160) => {
     .replace(/<@[^>]+>/g, '@…').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim();
   return v.length > n ? `${v.slice(0, n - 1)}…` : v;
 };
-/** A message that mentions you: who wrote what, in which thread. */
-async function noteMention(ev, team) {
-  if (!state.settings?.mentions || !notifying() || !ev.mentions?.includes(state.me.id) || ev.by === state.me.id) return;
+/** A message that mentions you, or else is in a thread of yours: who wrote what, in which thread. */
+async function noteMessage(ev, team) {
+  const me = state.me.id;
+  const atMe = state.settings?.mentions && ev.mentions?.includes(me);
+  const mine = state.settings?.threads && ev.involved?.includes(me);
+  if (!(atMe || mine) || !notifying() || ev.by === me) return;
   const known = state.data?.threads.find((t) => t.thread === ev.thread || t.members?.some((m) => m.thread === ev.thread));
   let data = null;
   try { data = await get(`/api/thread?thread=${encodeURIComponent(ev.thread)}&team=${encodeURIComponent(team)}`); } catch { /* the title is enough */ }
@@ -4003,7 +4013,7 @@ async function noteMention(ev, team) {
   showNote({
     thread: known?.thread || ev.thread,
     at: ev.at,
-    title: `${ev.author || 'Someone'} mentioned you`,
+    title: `${ev.author || 'Someone'} ${atMe ? 'mentioned you' : 'wrote in your thread'}`,
     body: `${clipNote(title, 80)}${msg?.body ? `\n${clipNote(msg.body)}` : ''}`,
     // A room that is not one of your teams' (you are on none): the thread is in Personal.
     url: noteUrl((state.teams || []).some((t) => t.slug === team) ? team : PERSONAL_VIEW, known?.thread || ev.thread),
@@ -4083,7 +4093,7 @@ function bellsSoon(team) {
 /** Activity a room announced, for the notifications. */
 function noteEvent(ev, team) {
   if (ev.type !== 'thread' || state.as) return;
-  if (ev.mentions) noteMention(ev, team);
+  noteMessage(ev, team);
   bellsSoon(team);
 }
 

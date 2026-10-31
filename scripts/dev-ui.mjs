@@ -122,7 +122,7 @@ const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: k
 let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
-// Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
+// Dana's notification settings (src/settings.js): mentions and threads on, and a bell on Edge ops'
 // incidents, so the user menu lists one.
 let settings = withDefaults(store.me, {
   bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
@@ -1543,7 +1543,8 @@ const LINES = [
 
 /**
  * A new message in a random conversation, or in `key` (POST /__dev/simulate?thread=). One in
- * five, and every one with `mention` (`&mention=1`), mentions Dana, who is notified of it.
+ * five, and every one with `mention` (`&mention=1`), mentions Dana, who is notified of it, as
+ * of any message in a thread of theirs.
  */
 function simulate(key, mention = Math.random() < 0.2) {
   const live = [...store.threads.values()].filter((e) => e.row.kind === 'channel');
@@ -1561,13 +1562,21 @@ function simulate(key, mention = Math.random() < 0.2) {
   if (mention) {
     store.mentions.push({ thread: entry.row.thread, person: ME, at });
   }
-  // As src/normalizer.js announces it: whom the message newly mentions, and who wrote it.
+  const byName = new Map([...store.people.values()].map((p) => [p.name, p.id]));
+  const involved = [...new Set([
+    ...entry.messages.map((m) => byName.get(m.author.name)),
+    ...store.mentions.filter((m) => m.thread === entry.row.thread).map((m) => m.person),
+  ])].filter(Boolean);
+  // As src/normalizer.js announces it: whom the message newly mentions, whose thread it is, and
+  // who wrote it.
   broadcast(entry.row.team, {
     type: 'thread',
     thread: entry.row.thread,
-    ...(mention ? {
-      mentions: [ME], by: sender.id, author: sender.name, at,
-    } : {}),
+    mentions: mention ? [ME] : [],
+    involved,
+    by: sender.id,
+    author: sender.name,
+    at,
   });
   console.log(`[sim] ${sender.name} in ${entry.row.channel_name}`);
 }

@@ -32,10 +32,10 @@ async function call(DB, method, body, viewer = me) {
 }
 
 describe('settings', () => {
-  it('notifies of mentions by default, with no bells, and shows the agent\'s thinking', async () => {
+  it('notifies of mentions and my threads by default, with no bells, and shows the agent\'s thinking', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
     assert.deepEqual((await call(DB, 'GET')).body, {
-      mentions: true, bells: [], traces: true, channelTraces: {},
+      mentions: true, threads: true, bells: [], traces: true, channelTraces: {},
     });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
@@ -49,6 +49,7 @@ describe('settings', () => {
     assert.equal(r.status, 200);
     assert.deepEqual(r.body, {
       mentions: true,
+      threads: true,
       bells: [
         { view: 'helix', sel: { kind: ['access', 'incident'], type: ['conversation'] }, not: {} },
         { view: '~personal', sel: {}, not: {} },
@@ -59,6 +60,12 @@ describe('settings', () => {
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
     assert.deepEqual((await call(DB, 'GET')).body, r.body);
+    r = await call(DB, 'PUT', { threads: false });
+    assert.deepEqual([r.body.mentions, r.body.threads, r.body.bells.length], [false, false, 2]);
+  });
+
+  it('turns my threads on for those whose settings were stored before it existed', () => {
+    assert.equal(withDefaults(me, { mentions: false }).threads, true);
   });
 
   it('refuses bells on teams the person is not in, and malformed ones', async () => {
@@ -69,6 +76,7 @@ describe('settings', () => {
       { bells: [{ view: 'helix', sel: { 'bad id': ['x'] } }] },
       { bells: 'helix' },
       { mentions: 'no' },
+      { threads: 'no' },
     ]) {
       // eslint-disable-next-line no-await-in-loop
       assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body));

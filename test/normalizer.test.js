@@ -612,6 +612,106 @@ describe('backfill, mentions and labels', () => {
     assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM mentions')[0].n, 2);
   });
 
+  it('tells the room whose thread a new message is in, and only for a new message', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          notified.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const announced = () => notified.splice(0).filter((n) => n.type === 'thread').map((n) => n.involved);
+    const at = (s) => (Date.now() / 1000 - s).toFixed(6);
+    const message = (user, ts, extra = {}) => event({
+      type: 'message', channel: 'C1', user, ts, thread_ts: '1.1', text: 'Still broken', ...extra,
+    });
+    const first = `slack/E1/C1/2026/10/21/${at(30)}-a.json`;
+    const second = `slack/E1/C1/2026/10/21/${at(20)}-b.json`;
+    const ts = at(10);
+    const third = `slack/E1/C1/2026/10/21/${ts}-c.json`;
+    const unfurl = `slack/E1/C1/2026/10/21/${at(5)}-d.json`;
+    const e = env({
+      [first]: message('U2', at(30)),
+      [second]: message('U1', at(20)),
+      [third]: message('U2', ts),
+      [unfurl]: event({
+        type: 'message',
+        subtype: 'message_changed',
+        channel: 'C1',
+        ts: at(5),
+        event_ts: at(5),
+        message: {
+          type: 'message', user: 'U2', ts, thread_ts: '1.1', text: 'Still broken',
+        },
+        previous_message: { text: 'Still broken' },
+      }),
+    }, { ROOMS });
+
+    await processKey(e, first);
+    assert.deepEqual(announced(), [undefined], 'nobody known is in the thread yet');
+    await processKey(e, second);
+    assert.deepEqual(announced(), [[7]]);
+    // A reply from someone else: Ada posted in the thread, so they are told.
+    await processKey(e, third);
+    assert.deepEqual(announced(), [[7]]);
+    // An unfurl rewrites that message: nothing new to tell anyone.
+    await processKey(e, unfurl);
+    assert.deepEqual(announced(), [undefined]);
+  });
+
+  it('counts 👀 on a thread, and the threads of its group, as someone\'s thread', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: () => ({
+        fetch: async (u, init) => {
+          notified.push(JSON.parse(init.body));
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const announced = () => notified.splice(0).filter((n) => n.type === 'thread').at(-1).involved;
+    const at = (s) => (Date.now() / 1000 - s).toFixed(6);
+    const message = (user, ts, root, n) => [`slack/E1/C1/2026/10/21/${ts}-${n}.json`, event({
+      type: 'message', channel: 'C1', user, ts, thread_ts: root, text: 'Still broken',
+    })];
+    const rootTs = at(40);
+    const [root, rootEvent] = message('U2', rootTs, rootTs, 'a');
+    const eyes = 'slack/E1/C1/2026/10/21/eyes.json';
+    const [watched, watchedEvent] = message('U2', at(30), rootTs, 'b');
+    const otherTs = at(20);
+    const [other, otherEvent] = message('U2', otherTs, otherTs, 'c');
+    const [follow, followEvent] = message('U2', at(10), otherTs, 'd');
+    const e = env({
+      [root]: rootEvent,
+      [eyes]: event({
+        type: 'reaction_added',
+        user: 'U1',
+        reaction: 'eyes',
+        item: { type: 'message', channel: 'C1', ts: rootTs },
+        event_ts: at(35),
+      }),
+      [watched]: watchedEvent,
+      [other]: otherEvent,
+      [follow]: followEvent,
+    }, { ROOMS });
+    await processKey(e, root);
+    await processKey(e, eyes);
+    notified.length = 0;
+    await processKey(e, watched);
+    assert.deepEqual(announced(), [7]);
+    // A thread of its own at first, then folded into the one Ada is watching.
+    await processKey(e, other);
+    assert.equal(announced(), undefined);
+    const [a, b] = e.DB.rows('SELECT thread FROM threads ORDER BY root_at').map((r) => r.thread);
+    await e.DB.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').bind(a, b).run();
+    await processKey(e, follow);
+    assert.deepEqual(announced(), [7]);
+  });
+
   it('records mentions by name, and a staff author becomes a person', async () => {
     const e = env({ [reply]: replyEvent });
     await processKey(e, reply);
