@@ -1205,7 +1205,8 @@ function classicScore(t) {
 /**
  * The team order learns from what people open (`npm run rank`, src/rankevents.js): a thread
  * clicked in the list wins over the others on screen then. Sent with each of them: its place
- * in the list and what ui/rank.js makes of it now, so the training sees what the list showed.
+ * in the list, its status pile and what ui/rank.js makes of it now, so the training sees what
+ * the list showed (and compares threads within a pile, as the model orders them).
  * Not while viewing as someone else, searching, or clicking the thread already open.
  */
 function recordPick(key) {
@@ -1221,7 +1222,7 @@ function recordPick(key) {
     if (t && r.height && r.bottom > top && r.top < bottom && shown.length < 40) {
       const f = Rank.features(t);
       for (const k of Object.keys(f)) f[k] = Math.round(f[k] * 1000) / 1000;
-      shown.push({ thread: t.thread, pos: state.order.indexOf(t.thread), features: f });
+      shown.push({ thread: t.thread, pos: state.order.indexOf(t.thread), status: statusOf(t), features: f });
     }
   }
   if (shown.length < 2 || !shown.some((x) => x.thread === key)) return;

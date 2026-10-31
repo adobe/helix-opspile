@@ -35,6 +35,14 @@ describe('picks in the thread list (src/rankevents.js)', () => {
     assert.equal(p.model, '2026-10-29');
   });
 
+  it('keeps a status pile, when it is one', () => {
+    const p = cleanPick({
+      view: 'helix', clicked: 't1', shown: [{ ...shown[0], status: 'team' }, { ...shown[1], status: '<b>' }],
+    });
+    assert.equal(p.shown[0].status, 'team');
+    assert.equal('status' in p.shown[1], false);
+  });
+
   it('refuses what cannot be learned from', () => {
     const bad = (body) => assert.ok(cleanPick(body).error, JSON.stringify(body));
     bad(null);

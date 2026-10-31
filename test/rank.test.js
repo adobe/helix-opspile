@@ -20,7 +20,7 @@ import { agreementWithYou } from '../scripts/rank-judge.mjs';
 import { parseAnswer } from '../scripts/rank-llm.mjs';
 import { auc, customerTurns, logistic } from '../scripts/rank-behavior.mjs';
 import {
-  asOf, decide, foldOf, inFold, replyGames, rows, shareOut,
+  asOf, decide, featuresWithKind, foldOf, inFold, replyGames, rows, shareOut, withKind,
 } from '../scripts/rank-combo.mjs';
 import { boost, forest, treeScore } from '../scripts/rank-trees.mjs';
 import { SCRIPTS } from './ui.js';
@@ -397,6 +397,92 @@ describe('the combo model\'s games (scripts/rank-combo.mjs)', () => {
       }
       assert.ok(test.every((r) => r.keys.some((k) => out.has(k))));
     }
+  });
+
+  it('trains on today\'s kinds, for judged threads and for picks made before they changed', () => {
+    const Rank = loadRank();
+    const kinds = { w: { label_kind: 'people', kind_p: 0.9 } };
+    const entry = {
+      thread: 'w', last_at: ago(2), label: { label_kind: 'access', kind_p: 0.6, urgency: 1 },
+    };
+    const now = withKind(entry, kinds);
+    assert.equal(now.label.label_kind, 'people');
+    assert.equal(now.label.urgency, 1);
+    assert.equal(withKind(entry, {}), entry);
+    // A pick recorded when the welcome was still `access`.
+    const then = Rank.features(entry, NOW);
+    assert.equal(then.kind_access, 1);
+    const f = featuresWithKind('w', then, kinds, Rank);
+    assert.deepEqual([f.kind_access, f.kind_people, f.kindP], [0, 1, 0.9]);
+    assert.equal(f.recent2d, then.recent2d);
+    // An alert has no kind.
+    assert.equal(featuresWithKind('w', { ...then, alert: 1 }, kinds, Rank).kind_people, 0);
+  });
+
+  it('gives every source today\'s kinds: judged pairs, replies and picks', () => {
+    const Rank = loadRank();
+    const person = (name, staff) => ({ kind: 'person', name, staff });
+    const thread = (key, h) => ({
+      key,
+      entry: {
+        thread: key,
+        source: 'slack',
+        kind: 'channel',
+        last_at: ago(h),
+        label: { label_kind: 'access', kind_p: 0.6, urgency: 1 },
+      },
+      messages: [
+        { at: ago(30 + h / 10), author: person(`C${key}`, false), body: 'hi' },
+        { at: ago(29.9 - h / 100), author: person('Ada', true), body: 'welcome' },
+      ],
+    });
+    const threads = [thread('w', 1), thread('x', 2)];
+    const people = { label_kind: 'people', kind_p: 0.9 };
+    const kinds = { w: people, x: people };
+    const events = [{
+      id: 1,
+      clicked: 'w',
+      shown: threads.map((t, pos) => ({
+        thread: t.key, pos, features: Rank.features(t.entry, NOW),
+      })),
+    }];
+    const list = rows({
+      Rank,
+      samples: [{
+        data: { pulledAt: NOW, threads }, games: [{ a: 'w', b: 'x', p: 0.7 }], human: [], llm: [],
+      }],
+      events,
+      kinds,
+    });
+    assert.deepEqual([...new Set(list.map((r) => r.source))].sort(), ['clef', 'click', 'reply']);
+    for (const r of list) {
+      for (const f of [r.a, r.b]) {
+        assert.deepEqual([f.kind_access, f.kind_people, f.kindP], [0, 1, 0.9], r.source);
+      }
+    }
+  });
+
+  it('lets a pick win over the others of its pile only, when the pick says which', () => {
+    const Rank = loadRank();
+    const f = (h) => Rank.features({ last_at: ago(h) }, NOW);
+    const ev = (status) => ({
+      id: 1,
+      clicked: 'c',
+      shown: [
+        {
+          thread: 'hot', pos: 0, status: status && 'hot', features: f(1),
+        },
+        {
+          thread: 'c', pos: 1, status: status && 'team', features: f(2),
+        },
+        {
+          thread: 'd', pos: 2, status: status && 'team', features: f(3),
+        },
+      ],
+    });
+    const rivals = (e) => rows({ Rank, samples: [], events: [e] }).map((r) => r.keys[1]);
+    assert.deepEqual(rivals(ev(true)), ['d']);
+    assert.deepEqual(rivals(ev(false)), ['hot', 'd']);
   });
 
   it('gives each source its share of the training, whatever its number of games', () => {
