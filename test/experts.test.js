@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import {
-  clearExpertLists, experts, findExperts, MAX_SUGGESTED, reasonsOf, responseTimes, roughly,
-  suggestExpert,
+  clearExpertLists, experts, findExperts, hasPair, MAX_SUGGESTED, reasonsOf, responseTimes, roughly,
+  suggestExpert, titlePairs,
 } from '../src/experts.js';
 import { d1 } from './d1.js';
 
@@ -40,7 +40,7 @@ function env({ matches = [], chunks = [], search = true } = {}) {
   const addThread = (thread, { org = 'acme', channel = 'C1', logical = null } = {}) => {
     sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
       path, title, embedded, logical_thread, any_at, updated_at)
-      VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', 'p/', 'Purge is slow', 'h', ?, ?, ?)`)
+      VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', 'p/', 'Slow cache purge', 'h', ?, ?, ?)`)
       .run(thread, channel, thread.split(':')[3], org, logical, ago(0), ago(0));
   };
   const addMessage = (thread, id, person, minutes, { channel = 'C1' } = {}) => {
@@ -82,6 +82,7 @@ function env({ matches = [], chunks = [], search = true } = {}) {
 const vector = (score, person, thread = 'slack:E1:C9:1.1') => ({
   score, metadata: { person, thread, author: `slack:E1:U${person}` },
 });
+const word = (message, text, score = 1) => ({ score, text, item: { metadata: { message } } });
 const names = (found) => found.experts.map((e) => e.name);
 
 describe('expert finder', () => {
@@ -121,7 +122,7 @@ describe('expert finder', () => {
   it('adds up channel, customer, meaning and words, and says why', async () => {
     const e = env({
       matches: [vector(0.9, 3), vector(0.85, 3), vector(0.82, 4)],
-      chunks: [{ score: 1, item: { metadata: { message: 'slack:E1:C9:5.5|5.5' } } }],
+      chunks: [word('slack:E1:C9:5.5|5.5', 'The cache purge never ends')],
     });
     // Ada works the channel; Bo only the customer, in another channel.
     e.addThread('slack:E1:C1:1.1');
@@ -143,6 +144,47 @@ describe('expert finder', () => {
     assert.deepEqual(of('Bo').reasons, ['works with this customer', 'not in this channel']);
     assert.equal(of('Cy').id, 'U3');
     assert.equal(of('Cy').member, true);
+  });
+
+  it('takes two neighbouring words of the title, not any one of them', async () => {
+    const pairs = titlePairs('Image Service TEST worker secrets');
+    assert.ok(hasPair('We set up image-service last week', pairs));
+    assert.ok(hasPair('Two TEST workers, one prod', pairs));
+    assert.ok(hasPair('Rotate the worker secret', pairs));
+    assert.ok(!hasPair('Service files on a test box', pairs));
+    assert.ok(!hasPair('The secrets of a worker', pairs));
+    assert.ok(!hasPair('subservice testing', pairs));
+    assert.ok(!hasPair(undefined, pairs));
+    // A pair with a word that says nothing is no pair, and a title may have none.
+    assert.deepEqual(titlePairs('Purge is slow'), []);
+    assert.deepEqual(titlePairs('Purge'), []);
+    assert.deepEqual(titlePairs(null), []);
+
+    const e = env({
+      chunks: [
+        word('slack:E1:C9:5.5|5.5', 'The purge of the cache is done', 1),
+        word('slack:E1:C9:5.5|x1', 'A slow cache here', 0.5),
+      ],
+    });
+    e.addThread('slack:E1:C9:5.5', { org: 'other', channel: 'C9' });
+    e.addMessage('slack:E1:C9:5.5', '5.5', 1, 2 * DAYS, { channel: 'C9' });
+    e.addMessage('slack:E1:C9:5.5', 'x1', 2, 2 * DAYS, { channel: 'C9' });
+    const found = await findExperts(e, THREAD, { now: NOW });
+    // Ada's message scores higher, but only Bo's has two neighbouring words of the title.
+    assert.deepEqual(names(found), ['Bo']);
+    assert.deepEqual(found.experts[0].reasons, ['knows about this topic']);
+  });
+
+  it('asks for no words when the title has no pair to look for', async () => {
+    const e = env();
+    let asked = 0;
+    e.SEARCH.search = async () => {
+      asked += 1;
+      return { chunks: [] };
+    };
+    e.DB.sqlite.prepare("UPDATE threads SET title = 'Purge is slow'").run();
+    await findExperts(e, THREAD, { now: NOW });
+    assert.equal(asked, 0);
   });
 
   it('says nothing about who is in a channel whose members were never listed', async () => {
