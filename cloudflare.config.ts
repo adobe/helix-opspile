@@ -117,6 +117,9 @@ function resources(mode: string | undefined) {
   return {
     RAW: bindings.r2({ name: `helix-opspile-raw${suffix}` }),
     CHANNELS: bindings.r2({ name: `helix-opspile-channels${suffix}` }),
+    // Copies of the files attached to messages, for agents' computers (src/threadfiles.js).
+    // Its lifecycle rule deletes them after 30 days; `cf deploy` does not set it: see README.
+    FILES: bindings.r2({ name: `helix-opspile-files${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
     // Workers AI: Clef (thread labels) and Clairic (facts).

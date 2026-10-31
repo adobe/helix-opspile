@@ -28,6 +28,7 @@ import {
 } from './markdown.js';
 import { normalize, slackLinkIn } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
+import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
@@ -392,6 +393,10 @@ export async function processKey(env, key, cache = {}) {
     at: message.at,
   }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
 
+  // The message's files, copied for the agents (src/threadfiles.js), in a job of their own.
+  if (written && !deleted && env.FILES && attachmentsOf(body)) {
+    await env.NORMALIZE.send({ files: message.thread });
+  }
   // A reply whose root we have never seen: fetch the thread's history once.
   if (message.id !== message.rootId && !deleted) {
     const root = await findMessage(env.DB, { ...message, id: message.rootId });
@@ -473,6 +478,7 @@ export async function consume(batch, env) {
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
+      || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
       || (body.catchup && `catchup:${body.catchup.channelId}`);
     try {
@@ -496,6 +502,9 @@ export async function consume(batch, env) {
       } else if (body.refile) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await refile(env, body.refile) };
+      } else if (body.files) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await copyThreadFiles(env, body.files) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await pokeAgent(env, body.agent) };

@@ -53,9 +53,10 @@ export const AGENT_TOOLS = [
     names: ['bash'],
     description: 'A bash shell for the agent on Cloudflare Computer: just-bash in a Dynamic'
       + ' Worker, over a working directory of its own per thread that keeps its files. cat, grep,'
-      + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python',
+      + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python. The files attached'
+      + ' to the thread are in it, read-only, for 30 days',
     note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
-      + ' leave the inbox through it.',
+      + ' leave the inbox through it, the files attached to the thread included.',
     platforms: null,
   },
   {
