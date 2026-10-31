@@ -52,6 +52,7 @@ import { sweepVectors } from './vectors.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
+import { pruneExpertEvents } from './expertevents.js';
 
 const SCRIPTS = {
   'inbox.js': inboxJs,
@@ -262,6 +263,9 @@ export default {
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
+    ctx.waitUntil(pruneExpertEvents(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));
     // The klickhaus export (CLICKHOUSE_*): the threads that changed since, and the backfill.
     ctx.waitUntil(sweepExports(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))

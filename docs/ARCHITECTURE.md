@@ -897,6 +897,23 @@ migration 0045; user state, like drafts). Nobody is told or mentioned; a person 
 only staff with an account on the thread's platform, three per thread at most, tells the open
 inboxes (a room event `experts`), and a suggestion goes away once the person is in the thread.
 
+**What the finder learns from.** History says who answered threads, but not what the finder
+showed when, nor what people made of it, and the signals cannot be worked out again for a past
+moment. So each list `GET /api/experts` computes for someone is kept (`expert_events`, migration
+0047, `src/expertevents.js`): every candidate it ranked, up to 20 and not only the eight shown,
+by account and person, with the numbers that placed them (each signal scaled and as found, the
+score, topic, channel membership, response times, an agent's suggestion) and the finder's version
+(`FINDER` in `src/experts.js`), never what anyone wrote. The answer has its id (`list`), and the
+page says what happened to it (`POST /api/experts/event`): `shown` once each time the thread is
+opened with it in the header, `open` for its ▾ list, `pick` of someone (their place comes from
+the list, not the page), and `dismiss` when the ▾ list is closed, or left for another thread or
+page, with nobody picked: the clearest "none of these". Whom the person mentioned afterwards, and
+who answered, are in `mentions` and `messages` already, so they are joined in training, not
+recorded twice. Nothing is recorded while viewing as someone else. `GET /api/experts/events`
+(admin team) gives them out a page at a time; `npm run rank -- experts`, and the weekly run,
+fetch them into `.rank/expert-events.jsonl`, and the cron deletes them after 90 days
+(`EXPERT_EVENTS_DAYS`).
+
 Reactions are made the same way, from a small picker or by clicking a reaction a message
 already has (which adds yours, or takes it off). The Worker records a reaction in D1 as soon as
 the platform accepts it, exactly as the platform's event will, so it shows at once; the event

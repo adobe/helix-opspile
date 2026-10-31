@@ -47,6 +47,10 @@
  *   npm run rank -- judge [--port 8796]
  *     Two threads of Clef's games side by side in the browser: you pick, then see what Clef, the
  *     model and the old score said, and how often each agrees with you (scripts/rank-judge.mjs).
+ *   npm run rank -- experts
+ *     What the expert finder showed and what people did with it (src/expertevents.js), since
+ *     the last time, into `.rank/expert-events.jsonl`, for a better finder to learn from.
+ *     `weekly` fetches them too: production keeps them for 90 days.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -79,6 +83,8 @@ const HUMAN = join(DIR, 'human.jsonl');
 const LLM = join(DIR, 'llm.jsonl');
 // Picks in the list (production's rank_events), kept across samples.
 const EVENTS = join(DIR, 'events.jsonl');
+// The expert finder's lists and what was done with them (production's expert_events).
+const EXPERT_EVENTS = join(DIR, 'expert-events.jsonl');
 // Today's kind of every thread trained on (`labels`), kept across samples.
 const LABELS = join(DIR, 'labels.json');
 const RANK_JS = join(ROOT, 'ui', 'rank.js');
@@ -418,23 +424,23 @@ function fitRows(names, list, l2, held = new Set()) {
 
 const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
 
-/** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
-async function events() {
+/** Events of `path` (an admin API) since the last fetch, from production, appended to `file`. */
+async function fetchEvents(path, file, what) {
   const get = await session();
   const have = await (async () => {
-    if (!existsSync(EVENTS)) {
+    if (!existsSync(file)) {
       return [];
     }
-    return (await readFile(EVENTS, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return (await readFile(file, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
   })();
   let since = have.length ? have[have.length - 1].id : 0;
   let added = 0;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
-    const page = await get(`/api/rank/events?since=${since}`);
+    const page = await get(`${path}?since=${since}`);
     if (page.events.length) {
       // eslint-disable-next-line no-await-in-loop
-      await appendFile(EVENTS, page.events.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+      await appendFile(file, page.events.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
       added += page.events.length;
       since = page.events[page.events.length - 1].id;
     }
@@ -442,8 +448,14 @@ async function events() {
       break;
     }
   }
-  console.log(`${added} new picks, ${have.length + added} in all → ${EVENTS}`);
+  console.log(`${added} new ${what}, ${have.length + added} in all → ${file}`);
 }
+
+/** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
+const events = () => fetchEvents('/api/rank/events', EVENTS, 'picks');
+
+/** The expert finder's lists and what was done with them, into EXPERT_EVENTS. */
+const expertEvents = () => fetchEvents('/api/experts/events', EXPERT_EVENTS, 'expert finder events');
 
 async function readEvents() {
   if (!existsSync(EVENTS)) {
@@ -788,6 +800,8 @@ async function weekly(o) {
   run(process.execPath, ['scripts/dev-ui-session.mjs', origin]);
   // Production may not record picks yet (before the deploy of migration 0040).
   await events().catch((e) => console.log(`no picks this week: ${e.message}`));
+  // Before the deploy of migration 0047, there are none.
+  await expertEvents().catch((e) => console.log(`no expert finder events this week: ${e.message}`));
   await pull({ ...o, n: o.n });
   await labels(o);
   await duel({ ...o, rounds: o.rounds || 12 });
@@ -815,10 +829,11 @@ const step = {
   llm: llmStep,
   behavior: behaviorStep,
   events,
+  experts: expertEvents,
   weekly,
 }[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|labels|duel|llm|judge|events|train|compare|behavior|weekly'
+  console.error('usage: npm run rank -- pull|labels|duel|llm|judge|events|experts|train|compare|behavior|weekly'
     + ' (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {
