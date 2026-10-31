@@ -93,28 +93,34 @@ export function pickFile(files, wanted) {
   return files.find((f) => f.id === id || (ref && f.id === ref.id)) || null;
 }
 
-/** A Teams file from its copy in pile 1: `{ bytes, type, name }` or `{ error }`. */
-async function keptCopy(env, f, name) {
+const tooLarge = (bytes, max) => `too large (${Math.round(bytes / 1024 / 1024)} MB; up to ${Math.round(max / 1024 / 1024)} MB)`;
+
+/** A Teams file from its copy in pile 1: `{ body, type, name }` or `{ error }`. */
+async function keptCopy(env, f, name, max) {
   const kept = await keptTeamsFile(env, f.thread, f.url);
   if (!kept) {
     return { error: 'opspile has no copy of this Teams file (it could not read it from SharePoint)' };
   }
-  if (kept.size > MAX_FILE_BYTES) {
-    return { error: `too large (${Math.round(kept.size / 1024 / 1024)} MB; up to 10 MB)` };
+  if (kept.size > max) {
+    return { error: tooLarge(kept.size, max) };
   }
   return {
-    bytes: new Uint8Array(await kept.arrayBuffer()),
+    body: kept.body,
     type: (kept.httpMetadata && kept.httpMetadata.contentType) || 'application/octet-stream',
     name: (kept.customMetadata && kept.customMetadata.name) || name,
   };
 }
 
-/** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
-export async function download(env, f) {
+/**
+ * Opens the file with the app's credentials, without reading it, so that what passes it on
+ * holds none of it in memory: `{ body, type, name }` (`body`: a stream) or `{ error }`, also
+ * for a file the platform says is larger than `max`.
+ */
+export async function openFile(env, f, max = MAX_FILE_BYTES) {
   let { url } = f;
   let name = f.name || url.split('/').pop().split('?')[0];
   if (f.source === 'teams') {
-    return keptCopy(env, f, name);
+    return keptCopy(env, f, name, max);
   }
   let type = '';
   const headers = {};
@@ -131,8 +137,8 @@ export async function download(env, f) {
     if (!file || file.file_access === 'check_file_info' || !(file.url_private_download || file.url_private)) {
       return { error: 'Slack does not let opspile read this file' };
     }
-    if (file.size > MAX_FILE_BYTES) {
-      return { error: `too large (${Math.round(file.size / 1024 / 1024)} MB; up to 10 MB)` };
+    if (file.size > max) {
+      return { error: tooLarge(file.size, max) };
     }
     url = file.url_private_download || file.url_private;
     // The bot token goes to Slack's own file host only: a remote file's URL can be anywhere.
@@ -155,14 +161,23 @@ export async function download(env, f) {
     return { error: `could not download it (${res.status})` };
   }
   const length = Number(res.headers.get('content-length') || 0);
-  if (length > MAX_FILE_BYTES) {
-    return { error: `too large (${Math.round(length / 1024 / 1024)} MB; up to 10 MB)` };
+  if (length > max) {
+    return { error: tooLarge(length, max) };
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
+  return { body: res.body, type: type || got || 'application/octet-stream', name };
+}
+
+/** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
+export async function download(env, f) {
+  const { body, ...got } = await openFile(env, f);
+  if (got.error) {
+    return got;
+  }
+  const bytes = new Uint8Array(await new Response(body).arrayBuffer());
   if (bytes.length > MAX_FILE_BYTES) {
     return { error: 'too large (up to 10 MB)' };
   }
-  return { bytes, type: type || got || 'application/octet-stream', name };
+  return { ...got, bytes };
 }
 
 const base64 = (bytes) => {

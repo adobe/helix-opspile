@@ -960,7 +960,7 @@ async function api(req, res, url) {
     if (!f || !thread(url.searchParams.get('t'))) {
       return json(res, { error: 'not a file of this thread' }, 404);
     }
-    if (!/^text\/|json/.test(f.type)) {
+    if (!/^text\/|json/.test(f.type) && !/\.har$/i.test(f.name)) {
       return json(res, { error: `cannot preview this kind of file (${f.type})` }, 415);
     }
     res.writeHead(200, {
