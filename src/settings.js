@@ -16,6 +16,8 @@ import { json } from './http.js';
  * A person's inbox settings (`person_settings`, one JSON object per person):
  *
  * - `mentions`: a notification when a message mentions them (on unless they turn it off)
+ * - `threads`: a notification when someone writes in a thread of theirs, one they posted in, were
+ *   mentioned in or put 👀 on (on unless they turn it off)
  * - `bells`: views whose threads notify them when they get a new message. A view is a team's
  *   inbox (its slug) or the personal view (`~personal`), with the filters set on it, picked
  *   (`sel`) and excluded (`not`), by facet: `{ view, sel: { kind: ['incident'] }, not: {} }`.
@@ -27,7 +29,11 @@ import { json } from './http.js';
  * the settings only.
  */
 export const DEFAULTS = Object.freeze({
-  mentions: true, bells: Object.freeze([]), traces: true, channelTraces: Object.freeze({}),
+  mentions: true,
+  threads: true,
+  bells: Object.freeze([]),
+  traces: true,
+  channelTraces: Object.freeze({}),
 });
 
 export const PERSONAL = '~personal';
@@ -108,6 +114,7 @@ export function withDefaults(me, stored) {
   }
   return {
     mentions: typeof s.mentions === 'boolean' ? s.mentions : DEFAULTS.mentions,
+    threads: typeof s.threads === 'boolean' ? s.threads : DEFAULTS.threads,
     bells,
     traces: typeof s.traces === 'boolean' ? s.traces : DEFAULTS.traces,
     channelTraces,
@@ -128,20 +135,23 @@ export async function readSettings(env, me) {
 }
 
 /**
- * The settings `now` with what `body` changes (`mentions`, `bells`, `traces`, `channelTraces`;
- * `bells` replaces the list, `channelTraces` changes the channels it names, and `null` lets a
- * channel follow `traces` again): `{ settings }`, or `{ error }` when the body is not settings.
+ * The settings `now` with what `body` changes (`mentions`, `threads`, `bells`, `traces`,
+ * `channelTraces`; `bells` replaces the list, `channelTraces` changes the channels it names, and
+ * `null` lets a channel follow `traces` again): `{ settings }`, or `{ error }` when the body is
+ * not settings.
  */
 export function mergeSettings(me, now, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'expected a JSON object' };
   }
   const next = { ...now };
-  if ('mentions' in body) {
-    if (typeof body.mentions !== 'boolean') {
-      return { error: '`mentions` is true or false' };
+  for (const key of ['mentions', 'threads']) {
+    if (key in body) {
+      if (typeof body[key] !== 'boolean') {
+        return { error: `\`${key}\` is true or false` };
+      }
+      next[key] = body[key];
     }
-    next.mentions = body.mentions;
   }
   if ('bells' in body) {
     if (!Array.isArray(body.bells) || body.bells.length > MAX_BELLS) {

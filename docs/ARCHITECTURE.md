@@ -521,14 +521,18 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   view already shown sorts it afresh; the thread open then stays, if it passes the filters.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
-  in the inbox already open, or in a new one. There are two kinds, settings of the person in
+  in the inbox already open, or in a new one. There are three kinds, settings of the person in
   D1 (`person_settings`, `GET`/`PUT /api/settings`), so every device has them: a message that
   mentions you (on unless turned off in the user menu; the room's announcement says whom it
-  mentions), and a **bell** on a view. The bell above the thread list turns notifications on
-  for the view on screen with its filters (picked and excluded); a thread of that view that
-  gets a message you have not read then notifies you. The inbox listens to the rooms of the
-  teams its notifications need (all of yours, for mentions and Personal), checks a bell on
-  the inbox on screen when it reloads, and fetches the first page of a belled view that is
+  mentions), a new message from someone else in a thread of yours (you posted in it, were
+  mentioned in it or put 👀 on it, in any thread of its group; on unless turned off, and the
+  announcement says whose thread it is; bots' messages and edits do not count, and a message
+  that mentions you notifies as a mention), and a **bell** on a view. The bell above the
+  thread list turns notifications on for the view on screen with its filters (picked and
+  excluded); a thread of that view that gets a message you have not read then notifies you.
+  The inbox listens to the rooms of the teams its notifications need (all of yours, for
+  mentions, your threads and Personal), checks a bell on the inbox on screen when it reloads,
+  and fetches the first page of a belled view that is
   not on screen when its room announces activity. The menu lists the bells, each opening its
   view or turning it off. Inboxes in several tabs show one notification per thread, and none
   for the thread you are reading, nor while viewing as someone else. The first visit asks once

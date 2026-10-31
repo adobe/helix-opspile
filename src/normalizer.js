@@ -32,6 +32,7 @@ import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
+import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
 import { classify } from './rules.js';
 import {
@@ -279,6 +280,29 @@ const fresh = (message, now = Date.now()) => {
 };
 
 /**
+ * The people whose thread this is, as the inbox sees it (`mine` in ui/inbox.js): who posted in
+ * it, was mentioned in it or put 👀 on it, in any thread of its group.
+ */
+async function involvedIn(env, thread) {
+  const { results } = await env.DB.prepare(`WITH g AS (
+      SELECT COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?)
+    SELECT t.thread FROM threads t, g WHERE t.thread = g.k OR t.logical_thread = g.k`)
+    .bind(thread).all();
+  const keys = (results || []).map((r) => r.thread);
+  const list = JSON.stringify(keys);
+  const [{ results: people }, signals] = await Promise.all([
+    env.DB.prepare(`SELECT person FROM messages WHERE thread IN (SELECT value FROM json_each(?))
+        AND person IS NOT NULL AND deleted = 0 AND counted = 1
+      UNION SELECT person FROM mentions WHERE thread IN (SELECT value FROM json_each(?))`)
+      .bind(list, list).all(),
+    signalFacts(env, keys),
+  ]);
+  const seen = [...signals.values()].flat()
+    .filter((s) => s.signal === 'seen' && s.staff && s.person).map((s) => s.person);
+  return [...new Set([...(people || []).map((r) => r.person), ...seen])];
+}
+
+/**
  * Turns one pile-1 object into its pile-2 file. Returns a short result for the log.
  *
  * @param {object} env bindings
@@ -329,6 +353,10 @@ export async function processKey(env, key, cache = {}) {
 
   const deleted = op.op === 'delete';
   const { author, person } = await resolveAuthor(env, message.authorRef);
+  // Before it is indexed: an edit, an unfurl or a Teams reaction rewrites a message D1 already has.
+  // Only people's messages: a bot's does not make a thread unread either (`counted`).
+  const posted = Boolean(env.ROOMS) && !deleted && author.kind === 'person' && fresh(message)
+    && !await findMessage(env.DB, message);
   if (!deleted) {
     await recordBots(env, message);
   }
@@ -435,13 +463,15 @@ export async function processKey(env, key, cache = {}) {
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
   }) : [];
+  // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay or a
+  // catch-up long after) newly mentions, the people whose thread it is, and who wrote it.
+  const mentions = written && fresh(message) ? mentioned : [];
+  const involved = written && posted ? await involvedIn(env, message.thread) : [];
   await notifyRoom(env, rooms, {
     type: 'thread',
     thread: message.thread,
-    // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay
-    // or a catch-up long after) newly mentions, with who wrote it.
-    ...(written && fresh(message) && mentioned.length ? {
-      mentions: mentioned, by: person, author: author.name, at: message.at,
+    ...(mentions.length || involved.length ? {
+      mentions, involved, by: person, author: author.name, at: message.at,
     } : {}),
   });
   return {
