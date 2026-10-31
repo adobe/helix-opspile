@@ -18,6 +18,7 @@ import { notifyRoom } from './notify.js';
 import {
   ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
+import { fitResponses, joins, predict } from './response-model.js';
 
 /**
  * The expert finder of a thread: Adobe people worth pulling into it, who are not in it yet, each
@@ -46,9 +47,12 @@ const OUTSIDE = 0.7;
 /** People a list has at most, and people whose response times are worked out. */
 export const MAX_EXPERTS = 8;
 const MAX_MEASURED = 20;
-/** Answered mentions a "typically responds" needs, and how many of them must be answered. */
+/** Answers a "typically responds" needs, and how many mentions must be answered. */
 export const MIN_ANSWERS = 3;
 const MIN_RATE = 0.5;
+/** The response model is kept this long per isolate: it learns slowly and reads every message. */
+const MODEL_MS = 60 * 60 * 1000;
+let model = null;
 const WORD_RESULTS = 50;
 const MAX_TITLE = 120;
 /** Suggestions by agents an entry keeps, and the length of a reason. */
@@ -61,6 +65,7 @@ const cache = new Map();
 
 const day = 24 * 60 * 60 * 1000;
 const iso = (ms) => new Date(ms).toISOString();
+const ENTRY = 'COALESCE(t.logical_thread, t.thread) AS entry';
 
 /** Words that say nothing of what a title is about: no pair of a title has one of them. */
 const COMMON = new Set(`a an and are as at be but by can do does for from has have how i in is it
@@ -154,46 +159,58 @@ const quietly = (signal, promise) => promise.catch((e) => {
   return new Map();
 });
 
+/** The response model of everyone's answers lately, or null without any. */
+async function responseModel(env, now) {
+  if (model && now - model.at < MODEL_MS) {
+    return model.fit;
+  }
+  const { results } = await env.DB.prepare(`SELECT ${ENTRY},
+      x.source || ':' || x.tenant || ':' || x.channel_id AS channel, x.at, x.staff, x.person
+    FROM messages x JOIN threads t ON t.thread = x.thread
+    WHERE x.at >= ? AND x.counted = 1 AND x.deleted = 0`).bind(iso(now - WINDOW_DAYS * day)).all();
+  const rows = (results || []).map((r) => ({ ...r, at: Date.parse(r.at) }));
+  model = { at: now, fit: fitResponses(joins(rows)) };
+  return model.fit;
+}
+
 /**
- * How long people took to post in a thread after being mentioned in it, a re-threaded group as
- * one thread: person id to `{ minutes, answered, mentions }` (the median of those answered).
+ * What to say of how `people` respond, in `channel` at `now`, a re-threaded group as one thread:
+ * person id to `{ minutes, joins, answered, mentions }`. `minutes` and `joins` are the response
+ * model's (src/response-model.js); `answered` of `mentions` is how often they posted in a thread
+ * after being mentioned in it, which the model cannot see: it only knows who did answer.
  */
-export async function responseTimes(env, people, { now = Date.now() } = {}) {
+export async function responseTimes(env, people, { channel, now = Date.now() } = {}) {
   if (!people.length) {
     return new Map();
   }
   const list = JSON.stringify(people);
   const since = iso(now - WINDOW_DAYS * day);
-  const entry = 'COALESCE(t.logical_thread, t.thread) AS entry';
-  const [{ results: asked }, { results: posts }] = await Promise.all([
-    env.DB.prepare(`SELECT m.person, m.at, ${entry} FROM mentions m
+  const [{ results: asked }, { results: posts }, fit] = await Promise.all([
+    env.DB.prepare(`SELECT m.person, m.at, ${ENTRY} FROM mentions m
       JOIN threads t ON t.thread = m.thread
       WHERE m.person IN (SELECT value FROM json_each(?)) AND m.at >= ?`).bind(list, since).all(),
-    env.DB.prepare(`SELECT x.person, x.at, ${entry} FROM messages x
+    env.DB.prepare(`SELECT x.person, x.at, ${ENTRY} FROM messages x
       JOIN threads t ON t.thread = x.thread
       WHERE x.person IN (SELECT value FROM json_each(?)) AND x.at >= ? AND x.deleted = 0`)
       .bind(list, since).all(),
+    responseModel(env, now),
   ]);
   const seen = new Map();
   for (const m of asked || []) {
-    const answer = (posts || [])
-      .filter((x) => x.person === m.person && x.entry === m.entry && x.at > m.at)
-      .reduce((first, x) => (!first || x.at < first ? x.at : first), null);
-    const so = seen.get(m.person) || { mentions: 0, took: [] };
+    const so = seen.get(m.person) || { mentions: 0, answered: 0 };
     so.mentions += 1;
-    if (answer) {
-      so.took.push((Date.parse(answer) - Date.parse(m.at)) / 60000);
+    if ((posts || []).some((x) => x.person === m.person && x.entry === m.entry && x.at > m.at)) {
+      so.answered += 1;
     }
     seen.set(m.person, so);
   }
-  return new Map([...seen].map(([person, { mentions, took }]) => {
-    const sorted = took.sort((a, b) => a - b);
-    return [person, {
-      minutes: sorted.length ? Math.round(sorted[Math.floor((sorted.length - 1) / 2)]) : null,
-      answered: sorted.length,
-      mentions,
-    }];
-  }));
+  return new Map(people.map((person) => [person, {
+    minutes: fit ? Math.round(predict(fit, { person, channel, at: now })) : null,
+    joins: fit ? fit.people.get(person) || 0 : 0,
+    answered: 0,
+    mentions: 0,
+    ...seen.get(person),
+  }]));
 }
 
 /** A time in words: "within minutes", "about 35 minutes", "about 4 hours", "about 2 days". */
@@ -211,9 +228,9 @@ export function roughly(minutes) {
   return `about ${Math.round(hours / 24)} days`;
 }
 
-/** Whether a response time says something: enough mentions, and most of them answered. */
-const reliable = (r) => Boolean(r) && r.answered >= MIN_ANSWERS
-  && r.answered / r.mentions >= MIN_RATE;
+/** Whether a response time says something: enough answers, and most mentions answered. */
+const reliable = (r) => Boolean(r) && r.joins >= MIN_ANSWERS
+  && (!r.mentions || r.answered / r.mentions >= MIN_RATE);
 
 /** What to say about someone: `reasons`, the strongest first. */
 export function reasonsOf(e) {
@@ -337,7 +354,9 @@ async function rank(env, t, rows, now) {
       score: score * (member === false ? OUTSIDE : 1),
     };
   }).sort((a, b) => b.score - a.score).slice(0, MAX_MEASURED);
-  const times = await responseTimes(env, ranked.map((e) => e.person), { now });
+  const times = await responseTimes(env, ranked.map((e) => e.person), {
+    channel: `${t.source}:${t.tenant}:${t.channel_id}`, now,
+  });
   return ranked.map((e) => ({ ...e, response: times.get(e.person) || null }));
 }
 
@@ -471,7 +490,8 @@ export async function suggestExpert(env, key, {
   return { ok: true, name: person.name };
 }
 
-/** Forgets the kept lists (tests). */
+/** Forgets the kept lists and the response model (tests). */
 export function clearExpertLists() {
   cache.clear();
+  model = null;
 }

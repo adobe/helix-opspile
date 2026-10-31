@@ -881,9 +881,17 @@ words of the title got 12, 28 and 32, and no words at all 18, 27 and 30. The lis
 in the thread itself does not count either), anyone who has not posted for 90 days, and anyone
 without an account on the thread's platform, who could not be mentioned.
 
-A response time is the median between a mention and the person's next post in that thread (a
-re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
-included. It is only said with at least three answered mentions, most of those made. "Not in this
+A response time comes from a small hierarchical model (`src/response-model.js`) of the last 180
+days. It measures from a customer's message to the first post of someone new to the thread (a
+re-threaded group as one); whoever is already active there is left out, and so is a first post
+no customer came before. The log of that time is an average, plus what the hour and the day of
+the customer's message add, for everyone, for the channel and for the person, each in UTC, so a
+person's own hours stand for their timezone. Each level counts for as much as its data can
+carry, and is left out when its groups do not differ beyond chance. The model is fit per
+isolate, once an hour, and asked about the current hour and day. It only knows who did answer,
+so a time is only said with at least three such answers, and most mentions of the person
+answered in the thread. `npm run response:backtest` says whether the model beats one number for
+everyone. "Not in this
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
