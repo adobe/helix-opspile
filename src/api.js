@@ -22,8 +22,8 @@ import { edit } from './edit.js';
 import { experts } from './experts.js';
 import { cachedGraph } from './graph.js';
 import {
-  attachable, connections, disconnect, editable, finishAuth, mentionable, post, reactable,
-  startAuth,
+  attachable, connections, disconnect, editable, finishAuth, mentionable, post,
+  postableChannels, reactable, startAuth,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
@@ -960,8 +960,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), working, {
-      waitUntil, me,
+      waitUntil, me, channel: url.searchParams.get('channel'),
     });
+  }
+  if (url.pathname === '/api/channels') {
+    return postableChannels(env, me);
   }
   if (url.pathname === '/api/experts') {
     return experts(env, url.searchParams.get('thread'), seeing, { me, waitUntil });

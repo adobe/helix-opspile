@@ -246,10 +246,11 @@
   #threads .count .unread:hover { color: var(--ink); }
   #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   /* The bell: notifications for the view on screen (its team and filters), filled while on. */
-  #threads .count .bell { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; margin-left: 2px;
+  #threads .count .bell, #threads .count .newpost { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; margin-left: 2px;
     border-radius: 7px; color: var(--mute); }
-  #threads .count .bell svg { width: 15px; height: 15px; }
-  #threads .count .bell:hover { color: var(--ink); }
+  #threads .count .bell svg, #threads .count .newpost svg { width: 15px; height: 15px; }
+  #threads .count .bell:hover, #threads .count .newpost:hover { color: var(--ink); }
+  #threads .count .newpost[aria-pressed="true"] { color: var(--accent); }
   #threads .count .bell[aria-pressed="true"] { color: var(--accent); }
   #threads .count .bell[aria-pressed="true"] svg .body { fill: currentColor; }
   .t .tags { margin-left: auto; display: flex; gap: 4px; overflow: hidden; flex-shrink: 1; }
@@ -798,6 +799,24 @@
   .edithint { font-size: 11.5px; margin: 5px 4px 0; opacity: .85; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .edithint button { font-size: 11.5px; padding: 1px 9px; border-radius: 9px; }
   .edithint button[data-edit-save] { background: var(--card); color: var(--ink); border: 1px solid var(--line); margin-left: auto; }
+  /* A new thread: the channel it goes to, or the search for one, in the header. */
+  .ph.newthread h2 { justify-content: space-between; }
+  .ph.newthread .cancel { font-size: 12.5px; font-weight: 400; }
+  .ph.newthread .sub b { color: var(--ink); font-weight: 600; }
+  .ph.newthread .sub .linkish { font-size: inherit; }
+  .chanpick { position: relative; margin-top: 6px; }
+  .chanpick input { width: 100%; box-sizing: border-box; padding: 7px 12px; font: inherit; color: var(--ink);
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; outline: none; }
+  .chanpick input:focus { border-color: var(--accent); }
+  .chans { position: absolute; left: 0; right: 0; top: calc(100% + 4px); max-height: min(50vh, 340px); overflow-y: auto; margin: 0; padding: 4px;
+    list-style: none; background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); z-index: 5; }
+  .chans li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+  .chans li.on, .chans li[data-i]:hover { background: var(--sel); }
+  .chans li.none { color: var(--mute); cursor: default; }
+  .chans img { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+  .chans .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chans .hint { margin-left: auto; flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
+  .compose-error { margin: 16px 0 0; color: var(--red); text-align: center; }
   .ph .resolved { color: var(--green); }
   .ph .reopened { color: var(--yellow); }
   .toast button, .toast a { margin-left: 10px; font-size: 12px; padding: 1px 8px; color: var(--link); }
@@ -929,8 +948,8 @@
    */
   @media (hover: none) and (pointer: coarse) {
     #threads .count { padding-top: 6px; padding-bottom: 6px; }
-    #threads .count .filt, #threads .count .unread, #threads .count .bell { height: 27px; }
-    #threads .count .unread, #threads .count .bell { width: 32px; }
+    #threads .count .filt, #threads .count .unread, #threads .count .bell, #threads .count .newpost { height: 27px; }
+    #threads .count .unread, #threads .count .bell, #threads .count .newpost { width: 32px; }
     #threads .count .order span { padding: 4px 11px; }
     #threads .count .clearq { height: 27px; }
     /* 16px: Safari zooms into a smaller field it focuses. */

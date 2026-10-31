@@ -15,8 +15,8 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  checkState, connections, finishAuth, learnMembers, makeState, mentionable, post, seal, slackText,
-  splitMentions, teamsMessage, unseal, writtenMentions,
+  channelPlace, checkState, connections, finishAuth, learnMembers, makeState, mentionable, post,
+  postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/markdown.js';
 import { d1 } from './d1.js';
@@ -294,6 +294,64 @@ describe('mentions', () => {
   });
 });
 
+describe('channels to start a thread in', () => {
+  const thread = (e, id, channel, {
+    source = 'slack', team = 'helix', kind = 'channel', at = '2026-10-21T10:00:00Z',
+  } = {}) => e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id,
+    org, team, path, kind, channel_name, any_at, updated_at) VALUES (?, ?, 'E1', ?, ?, 'acme', ?,
+    'r/', ?, ?, ?, ?)`).run(id, source, channel, id, team, kind, `name-${channel}`, at, at);
+  const list = async (e, me = ME) => (await (await postableChannels(e, me)).json()).channels;
+
+  it('lists the viewer\'s teams\' conversations, latest first, without Discord', async () => {
+    const e = env();
+    thread(e, 'n1', 'C2', { at: '2026-10-22T10:00:00Z' });
+    thread(e, 'n2', 'CA', { kind: 'alert' });
+    thread(e, 'n3', 'CI', { kind: 'ignore' });
+    thread(e, 'n4', 'D1', { source: 'discord' });
+    thread(e, 'n5', 'CO', { team: 'other' });
+    assert.deepEqual((await list(e)).map((c) => c.ref), ['slack:E1:C2', 'slack:E1:C1', 'teams:T:19:c']);
+    assert.deepEqual((await list(e))[0], {
+      ref: 'slack:E1:C2',
+      source: 'slack',
+      name: 'name-C2',
+      group: null,
+      org: 'acme',
+      orgName: 'acme',
+      teams: ['helix'],
+      personal: false,
+    });
+  });
+
+  it('lists channels shared with a team, and those of the personal view', async () => {
+    const e = env();
+    thread(e, 'n1', 'CS', { team: 'other' });
+    thread(e, 'n2', 'CP', { team: 'other' });
+    thread(e, 'n3', 'CX', { team: 'other' });
+    e.DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('slack', 'CS', 'helix', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person)
+      VALUES ('slack', 'E1', 'CP', 'm1', 'n2', '2026-10-21T10:00:00Z', 1)`).run();
+    const channels = await list(e);
+    assert.deepEqual(channels.find((c) => c.ref === 'slack:E1:CS').teams, ['other', 'helix']);
+    assert.equal(channels.find((c) => c.ref === 'slack:E1:CP').personal, true);
+    assert.equal(channels.some((c) => c.ref === 'slack:E1:CX'), false);
+    // Someone on no team has their personal view only.
+    assert.deepEqual((await list(e, { ...ME, teams: [] })).map((c) => c.ref), ['slack:E1:CP']);
+  });
+
+  it('suggests people for a channel, none of them in a thread yet', async () => {
+    const e = withAccounts(env());
+    const names = async (channel, ok = inTeam) => {
+      const res = await mentionable(e, null, 'bob', ok, { channel });
+      return res.ok ? (await res.json()).people.map((p) => [p.name, p.here]) : res.status;
+    };
+    assert.deepEqual(await names('slack:E1:C1'), [['Bob Builder', false]]);
+    assert.deepEqual(await names('teams:T:19:c'), [['Bob Builder', false]]);
+    assert.equal(await names('slack:E1:C1', () => false), 404);
+    assert.equal(await names('slack:E1:nope'), 404);
+  });
+});
+
 describe('token sealing and OAuth state', () => {
   it('round-trips a sealed token and never stores it in the clear', async () => {
     const e = env();
@@ -344,7 +402,7 @@ describe('connecting and posting', () => {
       if (u.includes('/v1.0/users/')) {
         return Response.json({ displayName: 'Ada', mail: 'ada@staff.example' });
       }
-      if (u.includes('/replies')) {
+      if (u.includes('/replies') || u.endsWith('/messages')) {
         return Response.json({ id: '9' }, { status: 201 });
       }
       throw new Error(`unexpected ${u}`);
@@ -448,6 +506,44 @@ describe('connecting and posting', () => {
       mentionText: 'helper',
       mentioned: { application: { id: 'b-help', displayName: 'helper', applicationIdentityType: 'bot' } },
     }]);
+  });
+
+  it('starts a Slack thread in a channel, and says which entry it will be', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${await makeState(e, 1, 'slack')}`));
+    const res = await post(e, ME, { channel: 'slack:E1:C1', text: 'Heads-up.' }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
+    assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', text: 'Heads-up.' });
+    const { thread, id } = await res.json();
+    assert.equal(thread, `slack:E1:C1:${id}`);
+    assert.ok(id);
+  });
+
+  it('starts a Teams thread in a channel, whose id has colons of its own', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const res = await post(e, ME, { channel: 'teams:T:19:c', text: 'Heads-up.' }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = calls.find((c) => c.u.includes('graph.microsoft.com') && c.u.includes('/messages'));
+    assert.match(sent.u, /\/teams\/G1\/channels\/19%3Ac\/messages$/);
+    const { thread, id } = await res.json();
+    assert.equal(thread, `teams:T:G1:19:c:${id}`);
+  });
+
+  it('starts no thread without a channel, or in one that is not a conversation', async () => {
+    const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, kind, any_at, updated_at) VALUES ('slack:E1:CA:1.1', 'slack', 'E1', 'CA', '1.1', 'acme',
+      'helix', 'a/', 'alert', '2026-10-21T10:00:00Z', '2026-10-21T10:00:00Z')`).run();
+    const start = (channel, ok = inTeam) => post(e, ME, { channel, text: 'x' }, ok);
+    assert.equal((await start(undefined)).status, 404);
+    assert.equal((await start('slack:E1')).status, 404);
+    assert.equal((await start('slack:E1:C-unknown')).status, 404);
+    assert.equal((await start('slack:E1:CA')).status, 404);
+    assert.equal((await start('slack:E1:C1', () => false)).status, 404);
+    assert.equal(await channelPlace(e, 'slack:E1:CA'), null);
+    assert.deepEqual(calls, []);
   });
 
   it('only lets staff reply, and only in their teams', async () => {

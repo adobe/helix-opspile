@@ -298,6 +298,17 @@ describe('posting with files', () => {
     assert.ok(!calls.some((c) => c.url.includes('chat.postMessage')));
   });
 
+  it('starts a Slack thread with files, in the channel', async () => {
+    const e = env();
+    await connect(e, 'slack', 'xoxp-ada', 'chat:write,reactions:write,files:write');
+    const res = await send(e, '/api/post', { channel: 'slack:E1:C1', text: 'See this' }, [file('shot.png', 'image/png')]);
+    assert.equal(res.status, 200);
+    const done = new URLSearchParams(calls.find((c) => c.url.includes('completeUploadExternal')).init.body);
+    assert.equal(done.get('channel_id'), 'C1');
+    // Form fields: left out, not the text "undefined", which Slack would take for a thread.
+    assert.equal(done.has('thread_ts'), false);
+  });
+
   it('sends files without text, and asks to connect Slack again without files:write', async () => {
     const e = env();
     await connect(e, 'slack', 'xoxp-ada', 'chat:write,reactions:write');
