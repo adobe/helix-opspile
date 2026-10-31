@@ -106,6 +106,7 @@ async function keptCopy(env, f, name, max) {
   }
   return {
     body: kept.body,
+    size: kept.size,
     type: (kept.httpMetadata && kept.httpMetadata.contentType) || 'application/octet-stream',
     name: (kept.customMetadata && kept.customMetadata.name) || name,
   };
@@ -113,8 +114,8 @@ async function keptCopy(env, f, name, max) {
 
 /**
  * Opens the file with the app's credentials, without reading it, so that what passes it on
- * holds none of it in memory: `{ body, type, name }` (`body`: a stream) or `{ error }`, also
- * for a file the platform says is larger than `max`.
+ * holds none of it in memory: `{ body, size, type, name }` (`body`: a stream; `size`: what
+ * the platform says, where it does) or `{ error }`, also for a file it says is larger than `max`.
  */
 export async function openFile(env, f, max = MAX_FILE_BYTES) {
   let { url } = f;
@@ -123,6 +124,7 @@ export async function openFile(env, f, max = MAX_FILE_BYTES) {
     return keptCopy(env, f, name, max);
   }
   let type = '';
+  let size;
   const headers = {};
   if (f.source === 'slack') {
     if (!env.SLACK_BOT_TOKEN) {
@@ -147,6 +149,7 @@ export async function openFile(env, f, max = MAX_FILE_BYTES) {
     }
     name = file.name || name;
     type = file.mimetype || '';
+    ({ size } = file);
     headers.authorization = `Bearer ${env.SLACK_BOT_TOKEN}`;
   } else if (f.source === 'discord') {
     if (!discordEnabled(env)) {
@@ -164,7 +167,9 @@ export async function openFile(env, f, max = MAX_FILE_BYTES) {
   if (length > max) {
     return { error: tooLarge(length, max) };
   }
-  return { body: res.body, type: type || got || 'application/octet-stream', name };
+  return {
+    body: res.body, size: size || length || undefined, type: type || got || 'application/octet-stream', name,
+  };
 }
 
 /** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
