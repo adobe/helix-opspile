@@ -24,7 +24,8 @@ import {
  * with why (docs/ARCHITECTURE.md, "Expert finder"). Four signals, each scaled to its best person:
  * the threads someone worked in this channel and for this customer (D1), the staff messages
  * closest to the thread by meaning (CONTENT, src/expertise.js) and by words (SEARCH, the title
- * with BM25). Measured on production threads, channel and customer history say best who answers,
+ * with BM25, for messages that have two neighbouring words of it). Measured on production threads,
+ * channel and customer history say best who answers,
  * and the vectors and words find the people that history misses; their sum beat each alone.
  * Only names and numbers leave here, never text: the signals read channels of every team,
  * which neither the viewer nor a thread agent may read.
@@ -61,6 +62,27 @@ const cache = new Map();
 const day = 24 * 60 * 60 * 1000;
 const iso = (ms) => new Date(ms).toISOString();
 
+/** Words that say nothing of what a title is about: no pair of a title has one of them. */
+const COMMON = new Set(`a an and are as at be but by can do does for from has have how i in is it
+  its no not of on or our the their this to us was we were what when why will with you your`.split(/\s+/));
+
+const wordsIn = (text) => String(text || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+const single = (word) => word.replace(/s$/, '');
+
+/** A title's neighbouring words, as `hasPair` looks for them; `[]` when it has no such pair. */
+export function titlePairs(title) {
+  const words = wordsIn(title);
+  return words.slice(1).map((word, i) => [words[i], word])
+    .filter((pair) => !pair.some((word) => COMMON.has(word)))
+    .map((pair) => ` ${pair.map(single).join(' ')} `);
+}
+
+/** Whether `text` has one of the pairs, in any case, plural or not, across any punctuation. */
+export function hasPair(text, pairs) {
+  const said = ` ${wordsIn(text).map(single).join(' ')} `;
+  return pairs.some((pair) => said.includes(pair));
+}
+
 /** Each number over the map's largest. */
 function scaled(map) {
   const top = Math.max(0, ...map.values());
@@ -76,9 +98,13 @@ async function workedIn(env, from, where, bind, threads, since) {
   return new Map((results || []).map((r) => [r.person, r.n]));
 }
 
-/** The staff authors of the messages with the words of the title: person id to BM25 scores. */
+/**
+ * The staff authors of the messages with two neighbouring words of the title: person id to BM25
+ * scores. The search takes any word of the title, so one common word would be enough for it.
+ */
 async function byWords(env, title, threads) {
-  if (!env.SEARCH || !title) {
+  const pairs = titlePairs(title);
+  if (!env.SEARCH || !pairs.length) {
     return new Map();
   }
   const { chunks } = await env.SEARCH.search({
@@ -95,7 +121,8 @@ async function byWords(env, title, threads) {
   const hits = new Map();
   for (const c of chunks || []) {
     const message = c.item && c.item.metadata && c.item.metadata.message;
-    if (message && !hits.has(message) && !threads.includes(message.split('|')[0])) {
+    if (message && !hits.has(message) && !threads.includes(message.split('|')[0])
+      && hasPair(c.text, pairs)) {
       hits.set(message, c.score);
     }
   }

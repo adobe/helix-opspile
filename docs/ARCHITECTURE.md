@@ -865,11 +865,15 @@ reply stays the person's to write.
 Four signals add up, each scaled to its best person: the threads someone worked in this channel
 and for this customer in the last 180 days (D1; the customer's counts half, as it mostly repeats
 the channel's), the staff messages closest to the thread by meaning (`CONTENT`, as for the
-mention suggestions) and by words (`SEARCH`, the title with BM25, any word). On 60 production
+mention suggestions) and by words (`SEARCH`, the title with BM25, for messages that have two
+neighbouring words of it, plural or not, neither of them as common as "is": a search for any
+word lets one word like "media" or "dev" say someone knows the topic). On 60 production
 threads where a customer asked and staff answered, looking only at what was there before the
 question, the first to answer was in the top 3 of 36 of them and in the top 5 of 38; the vectors
 alone had 22 and 27, channel history alone 33 and 33. Labels' topics changed nothing and are not
-used. The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
+used. Asking for neighbouring words, on 70 such threads, moved the first to answer from first
+place on 13 of them to 18, from the top 3 of 25 to 28 and from the top 5 of 28 to 31; any two
+words of the title got 12, 28 and 32, and no words at all 18, 27 and 30. The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
 in the thread itself does not count either), anyone who has not posted for 90 days, and anyone
 without an account on the thread's platform, who could not be mentioned.
 
