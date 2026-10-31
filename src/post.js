@@ -21,6 +21,7 @@ import { markdownToMrkdwn } from './markdown.js';
 import { teamsOf } from './shares.js';
 import { refreshMembers } from './suggest.js';
 import { resolveShortcodes } from './shortcodes.js';
+import { messageHtml } from './ui-markdown.js';
 
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
@@ -518,14 +519,15 @@ export function teamsBotMessage(body, mentions = []) {
 }
 
 /**
- * Teams message `body` and `mentions`: each mention an `<at id>` with its entry, a person
- * as `user`, a bot as `application` (which the bot receives like a mention typed in Teams).
+ * Teams message `body` (Markdown, as HTML: the Graph API takes no Markdown) and `mentions`:
+ * each mention an `<at id>` with its entry, a person as `user`, a bot as `application` (which
+ * the bot receives like a mention typed in Teams).
  */
 export function teamsMessage(body, mentions = []) {
   const entries = [];
-  const content = splitMentions(body, mentions).map((p) => {
+  const marked = splitMentions(body, mentions).map((p) => {
     if (typeof p === 'string') {
-      return htmlEscape(p).replace(/\n/g, '<br>');
+      return p.replace(/\uE003/g, '');
     }
     const id = entries.length;
     entries.push({
@@ -535,8 +537,11 @@ export function teamsMessage(body, mentions = []) {
         ? { application: { id: p.id, displayName: p.name, applicationIdentityType: 'bot' } }
         : { user: { id: p.id, displayName: p.name, userIdentityType: 'aadUser' } },
     });
-    return `<at id="${id}">${htmlEscape(p.name)}</at>`;
+    return `\uE003${id}\uE003`;
   }).join('');
+  const content = messageHtml(marked).replace(/\uE003(\d+)\uE003/g, (_, id) => (
+    `<at id="${id}">${htmlEscape(entries[id].mentionText)}</at>`
+  ));
   return { body: { contentType: 'html', content }, ...(entries.length ? { mentions: entries } : {}) };
 }
 

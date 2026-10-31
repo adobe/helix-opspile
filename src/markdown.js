@@ -175,9 +175,54 @@ export function slackToMarkdown(text, userName = () => undefined) {
   }).join('').trim();
 }
 
+/** A list with no list inside it. */
+const INNER_LIST = /<(ul|ol)(?:\s[^>]*)?>((?:(?!<\/?(?:ul|ol)[\s>])[\s\S])*)<\/\1>/gi;
+
+/** One list, in a line each item: what an item holds on further lines is indented under it. */
+function listToMarkdown(tag, items) {
+  let n = 0;
+  return `\n\n${items.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => {
+    n += 1;
+    const marker = tag.toLowerCase() === 'ol' ? `${n}. ` : '- ';
+    const text = t.trim().replace(/\n+(?=- |\d+\. )/g, '\n').replace(/\n/g, `\n${' '.repeat(marker.length)}`);
+    return `${marker}${text}\n`;
+  })}\n`;
+}
+
+/** HTML lists to markdown, the innermost first, so a list in an item stays in the item. */
+function listsToMarkdown(html) {
+  let before;
+  let s = html;
+  do {
+    before = s;
+    s = s.replace(INNER_LIST, (_, tag, items) => listToMarkdown(tag, items));
+  } while (s !== before);
+  return s;
+}
+
+const TABLE_RULE = {
+  left: ':---', right: '---:', center: ':---:',
+};
+
+/** An HTML table to markdown: its first row is the header, each cell on one line. */
+function tableToMarkdown(table) {
+  const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
+    .map(([, row]) => [...row.matchAll(/<t[dh]([^>]*)>([\s\S]*?)<\/t[dh]>/gi)]);
+  if (!rows.length || !rows[0].length) {
+    return table;
+  }
+  const line = (cells) => `| ${cells.join(' | ')} |`;
+  const text = (html) => html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ')
+    .trim()
+    .replace(/(?<!\\)\|/g, '\\|');
+  const rule = rows[0].map(([, attrs]) => TABLE_RULE[(/\balign="(\w+)"/i.exec(attrs) || [])[1]] || '---');
+  const [head, ...body] = rows.map((cells) => line(cells.map(([, , cell]) => text(cell))));
+  return `\n\n${[head, line(rule), ...body].join('\n')}\n\n`;
+}
+
 /**
  * Teams message HTML to markdown. Handles the tags Teams produces: paragraphs, breaks,
- * emphasis, links, lists, code, quotes, mentions (`<at>`) and images.
+ * emphasis, links, lists, tables, code, quotes, mentions (`<at>`) and images.
  */
 export function htmlToMarkdown(html) {
   if (!html) {
@@ -206,15 +251,13 @@ export function htmlToMarkdown(html) {
     .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')
     .replace(/<(s|strike|del)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '~~$3~~')
     .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<[^>]+>/g, '').trim().split('\n').map((l) => `> ${l}`)
+    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
+      .split('\n')
+      .map((l) => `> ${l}`)
       .join('\n')}\n\n`)
-    .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, items) => {
-      let n = 0;
-      return `\n\n${items.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (__, t) => {
-        n += 1;
-        return `${n}. ${t.trim()}\n`;
-      })}\n`;
-    })
+    .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, tableToMarkdown)
+    .replace(/<hr\s*\/?>/gi, '\n\n---\n\n');
+  s = listsToMarkdown(s)
     .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => `- ${t.trim()}\n`)
     .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')

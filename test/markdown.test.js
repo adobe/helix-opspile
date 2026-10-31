@@ -72,6 +72,14 @@ describe('htmlToMarkdown', () => {
     assert.equal(htmlToMarkdown('<ol><li>a</li><li>b</li></ol>'), '1. a\n2. b');
   });
 
+  it('converts tables, with the first row as the header', () => {
+    assert.equal(
+      htmlToMarkdown('<table itemprop="copy-paste-table"><tbody><tr><td><p>a</p></td><td>b</td></tr><tr><td>c|d</td><td>e<br>f</td></tr></tbody></table>'),
+      '| a | b |\n| --- | --- |\n| c\\|d | e f |',
+    );
+    assert.equal(htmlToMarkdown('<table><tr></tr></table>'), '');
+  });
+
   it('keeps a link whose text is its URL (it used to be stripped as a tag)', () => {
     const url = 'https://www.example.com/docs/setup';
     assert.equal(

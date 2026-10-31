@@ -23,7 +23,8 @@
  *   whose name has what was typed (the composer's `:` suggestions)
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
- * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`.
+ * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
+ * Worker imports `messageHtml` (src/post.js) for what it posts to Teams.
  */
 
 import { micromark } from 'micromark';
@@ -150,6 +151,36 @@ const repair = (src) => src.replace(
   /\]\((https?:\/\/[^()"\n]*?\s[^()"\n]*?)\)/g,
   (_, url) => `](${url.trim().replace(/\s/g, '%20')})`,
 );
+
+/** Markdown to HTML, before anything of the page's: `br` for each line break. */
+const toHtml = (src, br) => micromark(repair(src), OPTIONS)
+  .replace(BLOCK_END, '$1\n')
+  .replaceAll(`<br />${BREAK}`, BREAK)
+  .replaceAll(BREAK, br);
+
+/** A message on its own, one paragraph (or none), needs no tag around it. */
+const ONE_PARAGRAPH = /^<p>((?:(?!<\/?p>)[\s\S])*)<\/p>$/;
+
+/**
+ * Markdown to the HTML of a message on a platform that takes HTML (a person's Teams post): no
+ * raw HTML, as in render, and nothing of the page's. Paragraphs are a blank line, and no line
+ * ending stays between the tags: htmlToMarkdown, which reads the message when it arrives back,
+ * would keep it. Strike-through is `<s>`, as Teams writes it, a bare mail address stays text
+ * (`@bot add x@example.com` is a command), and so does a task's box, which is no message's.
+ *
+ * @param {string} src
+ */
+export function messageHtml(src) {
+  return toHtml(String(src || ''), '<br>')
+    .split(/(<pre>[\s\S]*?<\/pre>)/)
+    .map((part, i) => (i % 2 ? part : part.replace(/\n/g, '').replace(/<\/p><p>/g, '<br><br>')))
+    .join('')
+    .trim()
+    .replace(/<(\/?)del>/g, '<$1s>')
+    .replace(/<input type="checkbox" disabled=""( checked="")? \/>/g, (_, on) => (on ? '[x]' : '[ ]'))
+    .replace(/<a href="mailto:([^"]*)">\1<\/a>/g, '$1')
+    .replace(ONE_PARAGRAPH, '$1');
+}
 
 // Images are shown at most this tall (the bubble limits the width).
 export const IMAGE_MAX_HEIGHT = 360;
@@ -374,9 +405,7 @@ export function render(src, {
   const files = splitAttachments(String(src || '').replaceAll(BREAK, ''));
   const body = files ? [files.text.trimEnd(), ...files.images].join('\n\n')
     : String(src || '').replaceAll(BREAK, '');
-  const html = cards(micromark(repair(body), OPTIONS)
-    .replace(BLOCK_END, '$1\n')
-    .replaceAll(BREAK, '<br />\n'));
+  const html = cards(toHtml(body, '<br />\n'));
   const channelLink = (m, before, token) => {
     const c = channel(token);
     if (!c || !c.href) {
