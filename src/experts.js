@@ -12,7 +12,7 @@
 
 import { roster } from './agent/members.js';
 import { entryOf } from './drafts.js';
-import { recordList } from './expertevents.js';
+import { recordList, rejectedBy } from './expertevents.js';
 import { affinities, entryRows, staffMatches } from './expertise.js';
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
@@ -404,6 +404,7 @@ function candidate(e) {
       topic: Number(Boolean(e.topic)),
       member: e.member === null || e.member === undefined ? -1 : Number(e.member),
       suggested: Number(Boolean(e.reason)),
+      rejected: Number(Boolean(e.rejected)),
       ...(r ? { mentioned: r.mentions, answered: r.answered } : {}),
       ...(r && r.minutes !== null ? { responseMinutes: r.minutes } : {}),
     },
@@ -414,7 +415,8 @@ function candidate(e) {
  * The experts of inbox entry `key`, best first, agents' suggestions before the others, as
  * `{ platform, experts, candidates }`, or null when there is no such entry: `candidates` are
  * all that were ranked, in the same order, as the training records them (`candidate`). `me`
- * (a person id) is left out. Never throws for a signal that fails.
+ * (a person id) is left out, and so is whom they said is not the right person for it (a
+ * candidate still, `rejected`). Never throws for a signal that fails.
  */
 export async function findExperts(env, key, { me = null, now = Date.now() } = {}) {
   const t = key && await target(env, key);
@@ -433,7 +435,11 @@ export async function findExperts(env, key, { me = null, now = Date.now() } = {}
       cache.delete(cache.keys().next().value);
     }
   }
-  const pins = await suggested(env, t, [...new Set([key, ...threads])], threads);
+  const keys = [...new Set([key, ...threads])];
+  const [pins, rejected] = await Promise.all([
+    suggested(env, t, keys, threads),
+    rejectedBy(env, me, keys).catch(() => new Set()),
+  ]);
   const others = ranked.list.filter((e) => e.person !== me
     && !pins.some((s) => s.id === e.id));
   const mine = pins.filter((s) => s.person !== me);
@@ -442,10 +448,12 @@ export async function findExperts(env, key, { me = null, now = Date.now() } = {}
     const e = ranked.list.find((x) => x.id === s.id);
     return { ...e, ...s, member: inChannel(members, s.id, Boolean(e && e.member)) };
   });
-  const all = [...pinned, ...others];
+  // Who `me` said is not the right person stays out of what is shown, not of what is recorded.
+  const all = [...pinned, ...others]
+    .map((e) => (rejected.has(e.id) ? { ...e, rejected: true } : e));
   return {
     platform: t.source,
-    experts: all.slice(0, MAX_EXPERTS).map(shape),
+    experts: all.filter((e) => !e.rejected).slice(0, MAX_EXPERTS).map(shape),
     candidates: all.map(candidate),
   };
 }

@@ -179,6 +179,8 @@ const text = (res, body, status = 200) => {
 // The expert finder's lists, by id, as production records them (src/expertevents.js).
 const expertLists = new Map();
 let expertList = 0;
+// Whom I said is not the right person, by thread.
+const expertRejects = new Map();
 const EXPERTS = [
   {
     id: 'lena', name: 'Lena Berg', member: true, reasons: ['knows about this topic', 'typically responds in about 40 minutes', 'is active in this channel'],
@@ -1093,21 +1095,28 @@ async function api(req, res, url) {
       reasons: ['Wrote the redirects for the last blog migration'],
     }] : [];
     const experts = [...agent, ...EXPERTS.filter((e) => !agent.some((a) => a.id === e.id))]
-      .filter((e) => !inThread(e.name) && e.name !== me)
+      .filter((e) => !inThread(e.name) && e.name !== me
+        && !expertRejects.get(entry.row.thread)?.has(e.id))
       .map((e) => ({
         ...e, avatar: null, staff: true, kind: 'person', response: null,
       }));
     // A list id, as production records each list (src/expertevents.js); its events are logged.
     expertList += 1;
-    expertLists.set(expertList, experts.map((e) => e.id));
+    expertLists.set(expertList, { thread: entry.row.thread, ids: experts.map((e) => e.id) });
     return json(res, { platform: entry.row.source, experts, list: expertList });
   }
   if (url.pathname === '/api/experts/event' && req.method === 'POST') {
     const ev = cleanExpertEvent(await readJson(req));
     const list = !ev.error && expertLists.get(ev.list);
     const error = ev.error || (!list && 'no such list')
-      || (ev.action === 'pick' && !list.includes(ev.account) && 'not on that list');
-    console.log(error ? `expert event refused: ${error}` : `expert ${ev.action}${ev.account ? ` ${ev.account} at ${list.indexOf(ev.account)}` : ''} (list ${ev.list})`);
+      || (ev.account && !list.ids.includes(ev.account) && 'not on that list');
+    console.log(error ? `expert event refused: ${error}` : `expert ${ev.action}${ev.account ? ` ${ev.account} at ${list.ids.indexOf(ev.account)}` : ''} (list ${ev.list})`);
+    if (!error && ev.action === 'reject') {
+      if (!expertRejects.has(list.thread)) {
+        expertRejects.set(list.thread, new Set());
+      }
+      expertRejects.get(list.thread).add(ev.account);
+    }
     return error ? json(res, { error }, 400) : res.writeHead(204).end();
   }
   if (url.pathname === '/api/draft/source') {

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { d1 } from './d1.js';
 import {
-  cleanExpertEvent, expertEvents, pruneExpertEvents, recordExpertEvent, recordList,
+  cleanExpertEvent, expertEvents, pruneExpertEvents, recordExpertEvent, recordList, rejectedBy,
 } from '../src/expertevents.js';
 
 // Made-up ids and names only.
@@ -58,6 +58,7 @@ describe('what is done with the expert finder\'s lists (src/expertevents.js)', (
     bad({ list: '1', action: 'shown' });
     bad({ list: 1, action: 'like' });
     bad({ list: 1, action: 'pick' });
+    bad({ list: 1, action: 'reject' });
     assert.deepEqual(cleanExpertEvent({ list: 1, action: 'shown', account: 'U3' }), { list: 1, action: 'shown' });
   });
 
@@ -85,13 +86,16 @@ describe('what is done with the expert finder\'s lists (src/expertevents.js)', (
     const now = new Date('2026-10-30T00:00:00Z');
     const list = await recordList(e, me, THREAD, { candidates }, old);
     await recordExpertEvent(e, me, { list, action: 'shown' }, old);
+    await recordExpertEvent(e, me, { list, action: 'reject', account: 'U3' }, old);
     await recordList(e, me, THREAD, { candidates }, now);
     const first = await expertEvents(e, 0, 2);
     assert.equal(first.events.length, 2);
     const rest = await expertEvents(e, first.next, 2);
-    assert.equal(rest.events.length, 1);
+    assert.equal(rest.events.length, 2);
     assert.equal(rest.next, null);
+    // A reject is kept: the finder still goes by it.
     assert.equal((await pruneExpertEvents(e, now)).deleted, 2);
-    assert.equal((await expertEvents(e)).events.length, 1);
+    assert.deepEqual((await expertEvents(e)).events.map((x) => x.action), ['reject', 'list']);
+    assert.deepEqual([...await rejectedBy(e, 1, [THREAD])], ['U3']);
   });
 });
