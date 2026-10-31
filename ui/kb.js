@@ -27,7 +27,7 @@ const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
-  channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {},
+  channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {}, openPer: new Set(),
   extraction: null,
 };
 const VIEWS = ['history', 'agents', 'mcp', 'extraction'];
@@ -555,6 +555,8 @@ async function showMcp({ force = false, nav = 'push' } = {}) {
   state.editing = null;
   renderFiles();
   toUrl(nav);
+  // Arriving: the list from its top (renderMcp keeps it where it is otherwise).
+  $('editor').replaceChildren();
   renderMcp();
   return true;
 }
@@ -618,19 +620,26 @@ function toolsTag() {
   return on.length ? `<span class="tag agent" title="${esc(on.map((t) => t.names.join(', ')).join(', '))}">${on.length} tool${on.length === 1 ? '' : 's'}</span>` : '';
 }
 
+const switchable = () => (state.channels || []).filter((c) => c.kind === 'channel');
+const switchValue = (sw) => (sw ? (sw.enabled ? 'on' : 'off') : '');
+const switchedBy = (sw) => (sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '');
+const perSummary = (switches) => {
+  const set = switchable().filter((c) => switches[c.channelId]).length;
+  return `Per channel${set ? ` (${set} set)` : ''}`;
+};
+
 /**
  * The per-channel switches of a tool or a global server: the channels switched on their own
  * first, then by name, with a filter when there are many. In a customer's knowledge base they
  * are all there is (no team switch above them), so they are shown; in a team's they fold.
- * `kind` names the select (`tch`, `gch`), `fold` the <details> (`tper`, `per`).
+ * `kind` names the select (`tch`, `gch`).
  */
 function channelSwitches({
-  kind, fold, id, title, switches, team, works = () => true, unworkable, open,
+  kind, id, title, switches, team, works = () => true, unworkable,
 }) {
   const b = base();
-  const list = (state.channels || []).filter((c) => c.kind === 'channel');
+  const list = switchable();
   if (!list.length) return '';
-  const set = list.filter((c) => switches[c.channelId]).length;
   const key = `${kind}:${id}`;
   const q = (state.perFilter[key] || '').trim().toLowerCase();
   const label = (c) => `${channelName(c)}${b.kind === 'org' ? ` · ${c.teamName}` : ''}`;
@@ -641,10 +650,10 @@ function channelSwitches({
   const rows = sorted.map((c) => {
     const ok = works(c);
     const sw = switches[c.channelId];
-    const value = sw ? (sw.enabled ? 'on' : 'off') : '';
+    const value = switchValue(sw);
     const where = SOURCES[c.source] || c.source;
     const na = unworkable || `not on ${where}`;
-    const tip = !ok ? na : sw && sw.by ? `Turned ${sw.enabled ? 'on' : 'off'} by ${sw.by}, ${ago(sw.at)}` : '';
+    const tip = ok ? switchedBy(sw) : na;
     const hidden = q && !label(c).toLowerCase().includes(q);
     return `<div class="row2" data-find="${esc(label(c).toLowerCase())}"${hidden ? ' hidden' : ''}><span title="${esc(tip)}">${esc(label(c))}${ok ? '' : ` <i class="na">${esc(na)}</i>`}</span>
       <select data-${kind}="${esc(id)}" data-channel="${esc(c.channelId)}" aria-label="${esc(title)} in ${esc(channelName(c))}"${c.may && ok ? '' : ' disabled'}>
@@ -658,13 +667,12 @@ function channelSwitches({
     placeholder="Filter ${list.length} channels" aria-label="Filter the channels of ${esc(title)}">` : '';
   const none = `<div class="none"${matches ? ' hidden' : ''}>No channel matches.</div>`;
   if (b.kind === 'org') return `<div class="per flat">${find}${rows}${none}</div>`;
-  return `<details class="per"${open ? ' open' : ''} data-${fold}="${esc(id)}"><summary>Per channel${set ? ` (${set} set)` : ''}</summary>${find}${rows}${none}</details>`;
+  return `<details class="per"${state.openPer.has(key) ? ' open' : ''} data-fold="${esc(key)}"><summary>${perSummary(switches)}</summary>${find}${rows}${none}</details>`;
 }
 
 /** The per-channel switches of a tool; channels on a platform it does not work on are left off. */
 const toolPerChannel = (t) => channelSwitches({
   kind: 'tch',
-  fold: 'tper',
   id: t.tool,
   title: t.title,
   switches: t.channels,
@@ -672,7 +680,6 @@ const toolPerChannel = (t) => channelSwitches({
   team: t.team || (t.internal ? { enabled: false } : null),
   works: (c) => t.may && (!t.platforms || t.platforms.includes(c.source)),
   unworkable: t.may ? null : 'the admin team switches it',
-  open: state.openTool === t.tool,
 });
 
 function toolRow(t) {
@@ -684,14 +691,16 @@ function toolRow(t) {
     <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(t.title)} for ${esc(b.name)}"
       title="${mayEdit() ? (on ? `Agents of ${esc(b.name)} have it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-tteam="${esc(t.tool)}"${mayEdit() ? '' : ' disabled'}></button>` : '';
   return `<div class="ch global">
-    <div class="who">
+    <div class="head">
       <div class="nm">${esc(t.title)}<span class="src mono">${esc(t.names.join(', '))}</span>${platforms}${t.problem ? '<span class="src err">not set up</span>' : ''}</div>
+      ${sw}
+    </div>
+    <div class="who">
       <div class="sub">${esc(t.description)}</div>
       ${t.note ? `<div class="sub">${esc(t.note)}</div>` : ''}
       ${t.problem ? `<div class="sub err">${esc(t.problem)}</div>` : ''}
       ${by ? `<div class="sub by">${by}</div>` : ''}
     </div>
-    ${sw}
     ${toolPerChannel(t)}
   </div>`;
 }
@@ -731,9 +740,6 @@ function bindTools() {
   const repo = state.repo;
   const find = (tool) => state.tools.find((t) => t.tool === tool);
   const stale = () => state.repo !== repo || state.view !== 'mcp';
-  for (const el of $('editor').querySelectorAll('[data-tper]')) {
-    el.addEventListener('toggle', () => { state.openTool = el.open ? el.dataset.tper : null; });
-  }
   for (const el of $('editor').querySelectorAll('[data-tteam]')) {
     el.onclick = async () => {
       const t = find(el.dataset.tteam);
@@ -759,18 +765,21 @@ function bindTools() {
       const c = state.channels.find((x) => x.channelId === el.dataset.channel);
       const enabled = el.value === '' ? null : el.value === 'on';
       if (enabled && !(await ask(`Turn on ${t.title} in ${channelName(c)}?`, TOOL_CONFIRM[t.tool].on(channelName(c)), 'Turn on'))) {
-        renderMcp();
+        el.value = switchValue(t.channels[c.channelId]);
         return;
       }
       const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: t.tool, channel: c.channelId, enabled }) });
       if (stale()) return;
-      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      if (!ok) {
+        el.value = switchValue(t.channels[c.channelId]);
+        showNote({ kind: 'err', text: body.error || 'Switching failed.' });
+        return;
+      }
       if (body.switch) t.channels[c.channelId] = body.switch;
       else delete t.channels[c.channelId];
-      state.openTool = t.tool;
       renderFiles();
       refreshBases();
-      renderMcp({ kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
+      channelSwitched(el, t.channels, { kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
 }
@@ -1050,7 +1059,7 @@ function githubSetup(g) {
 }
 
 const perChannel = (g) => channelSwitches({
-  kind: 'gch', fold: 'per', id: g.server, title: g.server, switches: g.channels, team: g.team, open: state.openGlobal === g.server,
+  kind: 'gch', id: g.server, title: g.server, switches: g.channels, team: g.team,
 });
 
 function globalRow(g) {
@@ -1069,15 +1078,17 @@ function globalRow(g) {
     <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(g.title)} for ${esc(b.name)}"
       title="${mayEdit() ? (on ? `Agents of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-gteam="${esc(g.server)}"${mayEdit() ? '' : ' disabled'}></button>` : '';
   return `<div class="ch global">
-    <div class="who">
+    <div class="head">
       <div class="nm">${esc(g.title)}<span class="src mono">${esc(names)}</span>${status}</div>
+      <span class="acts">${g.available && mayEdit() ? `<button data-gcheck="${esc(g.server)}">Check</button>` : ''}</span>
+      ${sw}
+    </div>
+    <div class="who">
       <div class="sub">${esc(g.description)}</div>
       ${g.problem ? `<div class="sub err">${esc(g.problem)}</div>` : ''}${errors}
       ${tools.length ? `<div class="tags">${toolTags(tools)}</div>` : ''}
       <div class="sub by">${[by, first && first.checkedAt && `checked ${esc(ago(first.checkedAt))}`].filter(Boolean).join(' · ')}</div>
     </div>
-    <span class="acts">${g.available && mayEdit() ? `<button data-gcheck="${esc(g.server)}">Check</button>` : ''}</span>
-    ${sw}
     ${githubSetup(g)}
     ${perChannel(g)}
   </div>`;
@@ -1120,6 +1131,36 @@ function flashNote() {
   return { kind: 'ok', text: `Connected ${s.name} as you: ${mcpUsable(s)} tool${mcpUsable(s) === 1 ? '' : 's'} for the agents.` };
 }
 
+/**
+ * Runs `change`, which may replace the list or resize the note above it, with the list staying
+ * where it is on the screen.
+ */
+function holdList(change) {
+  const list = () => $('editor').querySelector('.channels');
+  const before = list();
+  const origin = before && before.getBoundingClientRect().top - before.scrollTop;
+  change();
+  const after = list();
+  if (before && after) after.scrollTop = after.getBoundingClientRect().top - origin;
+}
+
+const showNote = (note) => holdList(() => {
+  $('note').className = `note ${note.kind}`;
+  $('note').textContent = note.text;
+});
+
+/**
+ * A channel's switch was saved: only its row and the count above it change, so the row is not
+ * sorted away from under you (that waits for the next time the list is rendered).
+ */
+function channelSwitched(el, switches, note) {
+  if (!el.isConnected) { renderMcp(note); return; }
+  el.closest('.row2').firstElementChild.title = switchedBy(switches[el.dataset.channel]);
+  const summary = el.closest('details')?.querySelector('summary');
+  if (summary) summary.textContent = perSummary(switches);
+  showNote(note);
+}
+
 function renderMcp(shownNote) {
   const note = shownNote || flashNote();
   const b = base();
@@ -1132,7 +1173,8 @@ function renderMcp(shownNote) {
   const globals = state.globals || [];
   const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
     : `Built-in, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
-  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
+  holdList(() => {
+    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
     <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
@@ -1140,6 +1182,7 @@ function renderMcp(shownNote) {
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}
     ${list && mayEdit() ? mcpForm(editing || {}) : ''}</div>`;
+  });
   bindTools();
   bindGlobals();
   bindFinds();
@@ -1271,8 +1314,14 @@ function renderMcp(shownNote) {
   if ($('mClear')) $('mClear').onclick = () => save({ headers: {} });
 }
 
-/** The filters of the per-channel lists: they hide the rows that do not match, as you type. */
+/**
+ * The per-channel lists: which are unfolded, and their filters, which hide the rows that do not
+ * match, as you type.
+ */
 function bindFinds() {
+  for (const el of $('editor').querySelectorAll('[data-fold]')) {
+    el.addEventListener('toggle', () => state.openPer[el.open ? 'add' : 'delete'](el.dataset.fold));
+  }
   for (const el of $('editor').querySelectorAll('[data-find-for]')) {
     el.oninput = () => {
       state.perFilter[el.dataset.findFor] = el.value;
@@ -1293,9 +1342,6 @@ function bindGlobals() {
   const repo = state.repo;
   const find = (server) => state.globals.find((g) => g.server === server);
   const stale = () => state.repo !== repo || state.view !== 'mcp';
-  for (const el of $('editor').querySelectorAll('[data-per]')) {
-    el.addEventListener('toggle', () => { state.openGlobal = el.open ? el.dataset.per : null; });
-  }
   for (const el of $('editor').querySelectorAll('[data-gteam]')) {
     el.onclick = async () => {
       const g = find(el.dataset.gteam);
@@ -1323,13 +1369,16 @@ function bindGlobals() {
       const enabled = el.value === '' ? null : el.value === 'on';
       const { ok, body } = await call('/api/kb/mcp/global', { method: 'PUT', body: JSON.stringify({ server: g.server, channel: c.channelId, enabled }) });
       if (stale()) return;
-      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
+      if (!ok) {
+        el.value = switchValue(g.channels[c.channelId]);
+        showNote({ kind: 'err', text: body.error || 'Switching failed.' });
+        return;
+      }
       if (body.switch) g.channels[c.channelId] = body.switch;
       else delete g.channels[c.channelId];
-      state.openGlobal = g.server;
       renderFiles();
       refreshBases();
-      renderMcp({ kind: 'ok', text: enabled === null ? `${g.title} in ${channelName(c)} follows its team again.` : `${g.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
+      channelSwitched(el, g.channels, { kind: 'ok', text: enabled === null ? `${g.title} in ${channelName(c)} follows its team again.` : `${g.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
   for (const el of $('editor').querySelectorAll('[data-gcheck]')) {

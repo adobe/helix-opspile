@@ -347,6 +347,16 @@ const ADMIN_CHANNELS = [
     clef: { none: 0.84, platform: 0.1, edge: 0.06 },
     kind: ['ignore', 0.9],
   },
+  // A customer with many channels: its tools' per-channel lists are long.
+  ...Array.from({ length: 40 }, (_, n) => ({
+    id: `C0INISITE${n}`,
+    source: 'slack',
+    name: `initech-site-${String(n + 1).padStart(2, '0')}`,
+    org: 'initech',
+    titles: ['Weekly check-in'],
+    clef: { platform: 0.8, edge: 0.15, none: 0.05 },
+    kind: ['channel', 0.9],
+  })),
 ];
 
 function seedAdminChannels(DB) {
