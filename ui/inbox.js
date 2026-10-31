@@ -20,7 +20,7 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
-  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, expertLists: new Map(), expertsSeen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -1740,9 +1740,41 @@ function placeExperts(key) {
   wireExperts(key);
 }
 
-async function loadExperts(key) {
+/**
+ * A better finder learns from what is done with its lists (POST /api/experts/event,
+ * src/expertevents.js): each list the Worker computed has an id (`list`), and the page says when
+ * it is `shown` in the open thread, its ▾ list is `open`ed, someone is `pick`ed, and when the ▾
+ * list is closed or left with nobody picked (`dismiss`). Not while viewing as someone else.
+ */
+function expertEvent(key, action, account) {
+  const list = state.expertLists.get(key);
+  if (state.as || !list) return;
+  fetch('/api/experts/event', {
+    method: 'POST',
+    credentials: 'same-origin',
+    keepalive: true,
+    body: JSON.stringify({ list, action, ...(account ? { account } : {}) }),
+  }).catch(() => {});
+}
+
+/** Says a list is on screen: once each time a thread is opened, and again when it changes. */
+function expertsShown(key) {
+  const seen = `${key}|${state.expertLists.get(key)}`;
+  if (state.open !== key || !state.experts.get(key)?.length || state.expertsSeen === seen) return;
+  state.expertsSeen = seen;
+  expertEvent(key, 'shown');
+}
+
+/** `fresh` when the thread was just opened (not a new message in it). */
+async function loadExperts(key, fresh = false) {
+  // Left for another thread with the ▾ list open: nobody was picked.
+  if (state.expertsOpen && state.expertsOpen !== key) dismissExperts();
+  if (fresh) state.expertsSeen = null;
   wireExperts(key);
-  if (state.experts.has(key) && state.expertsAt?.get(key) === threadRow(key)?.last_at) return;
+  if (state.experts.has(key) && state.expertsAt?.get(key) === threadRow(key)?.last_at) {
+    expertsShown(key);
+    return;
+  }
   let res;
   try {
     res = await get(`/api/experts?thread=${encodeURIComponent(key)}`);
@@ -1752,7 +1784,17 @@ async function loadExperts(key) {
   const same = JSON.stringify(state.experts.get(key)) === JSON.stringify(res.experts);
   state.experts.set(key, res.experts);
   state.expertsAt.set(key, threadRow(key)?.last_at);
+  state.expertLists.set(key, res.list || null);
   if (!same) placeExperts(key);
+  expertsShown(key);
+}
+
+/** The ▾ list goes away with nobody picked from it. */
+function dismissExperts() {
+  const key = state.expertsOpen;
+  if (!key) return;
+  state.expertsOpen = null;
+  expertEvent(key, 'dismiss');
 }
 
 /** Writes @Name into the reply box, where the caret is, and remembers the account. */
@@ -1778,7 +1820,7 @@ function pullExpert(key, e) {
 
 function closeExperts(key, focus = false) {
   if (state.expertsOpen !== key) return;
-  state.expertsOpen = null;
+  dismissExperts();
   placeExperts(key);
   if (focus) document.querySelector('#experts .more')?.focus();
 }
@@ -1789,14 +1831,22 @@ function wireExperts(key) {
   el.onclick = (e) => {
     const pick = e.target.closest('[data-expert]');
     if (e.target.closest('[data-experts-more]')) {
-      state.expertsOpen = state.expertsOpen === key ? null : key;
+      if (state.expertsOpen === key) {
+        dismissExperts();
+      } else {
+        state.expertsOpen = key;
+        expertEvent(key, 'open');
+      }
       placeExperts(key);
       document.querySelector('#experts [data-expert="1"]')?.focus();
     } else if (pick) {
       const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
       state.expertsOpen = null;
       placeExperts(key);
-      if (expert) pullExpert(key, expert);
+      if (expert) {
+        expertEvent(key, 'pick', expert.id);
+        pullExpert(key, expert);
+      }
     }
   };
   el.onkeydown = (e) => {
@@ -2064,7 +2114,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
-  loadExperts(key);
+  loadExperts(key, switching);
   const scroller = pane.querySelector('.scroller');
   if (live && !switching) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put.
@@ -4505,6 +4555,7 @@ const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="cu
 const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
+  dismissExperts();
   if (history.state?.list) { history.back(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null });
   closeMentions();
@@ -4784,6 +4835,8 @@ async function start() {
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
   document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
+  // Leaving the page with the expert finder's ▾ list open: nobody was picked from it.
+  addEventListener('pagehide', () => dismissExperts());
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
@@ -4803,7 +4856,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { dismissExperts(); state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();

@@ -19,6 +19,7 @@ import {
 } from './drafts.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
+import { expertEvents, recordExpertEvent } from './expertevents.js';
 import { experts } from './experts.js';
 import { cachedGraph } from './graph.js';
 import {
@@ -1088,6 +1089,16 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/rank/pick' && request.method === 'POST') {
     const res = await recordPick(env, me, await request.json().catch(() => null));
     return res.error ? json(res, 400) : new Response(null, { status: 204 });
+  }
+  if (url.pathname === '/api/experts/event' && request.method === 'POST') {
+    const res = await recordExpertEvent(env, me, await request.json().catch(() => null));
+    return res.error ? json(res, 400) : new Response(null, { status: 204 });
+  }
+  if (url.pathname === '/api/experts/events') {
+    if (!isAdmin(me)) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    return json(await expertEvents(env, url.searchParams.get('since'), url.searchParams.get('limit')));
   }
   if (url.pathname === '/api/rank/events') {
     if (!isAdmin(me)) {

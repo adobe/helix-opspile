@@ -12,6 +12,7 @@
 
 import { roster } from './agent/members.js';
 import { entryOf } from './drafts.js';
+import { recordList } from './expertevents.js';
 import { affinities, entryRows, staffMatches } from './expertise.js';
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
@@ -31,6 +32,12 @@ import {
  * which neither the viewer nor a thread agent may read.
  */
 
+/**
+ * What the finder is: the signals and weights below. Recorded with each list it shows
+ * (src/expertevents.js), so what people did with a list is learned with what made it; change
+ * it when they change.
+ */
+export const FINDER = 'signals-2026-10';
 /** History older than this does not count. */
 const WINDOW_DAYS = 180;
 /** Someone who has not posted for this long has moved on. */
@@ -305,12 +312,10 @@ async function rank(env, t, rows, now) {
     quietly('meaning', byMeaning(env, rows, threads)),
     quietly('words', byWords(env, title, threads)),
   ]);
-  const signals = {
-    channel: scaled(channel),
-    customer: scaled(customer),
-    meaning: scaled(meaning),
-    words: scaled(words),
+  const found = {
+    channel, customer, meaning, words,
   };
+  const signals = Object.fromEntries(Object.entries(found).map(([k, m]) => [k, scaled(m)]));
   const people = [...new Set(Object.values(signals).flatMap((m) => [...m.keys()]))];
   const inThread = await inEntry(env, threads);
   const open = people.filter((p) => !inThread.has(p));
@@ -323,6 +328,7 @@ async function rank(env, t, rows, now) {
   const ranked = listed.map((person) => {
     const a = known.get(person);
     const of = (signal) => signals[signal].get(person) || 0;
+    const raw = (signal) => found[signal].get(person) || 0;
     const member = inChannel(members, a.id, of('channel') > 0);
     const score = Object.keys(WEIGHTS).reduce((s, k) => s + WEIGHTS[k] * of(k), 0);
     return {
@@ -335,6 +341,17 @@ async function rank(env, t, rows, now) {
       channel: of('channel') > 0,
       customer: of('customer') > 0,
       score: score * (member === false ? OUTSIDE : 1),
+      // Each signal scaled, as it is added up, and as it was found (threads; affinity; BM25).
+      signals: {
+        channel: of('channel'),
+        customer: of('customer'),
+        meaning: of('meaning'),
+        words: of('words'),
+        channelThreads: raw('channel'),
+        customerThreads: raw('customer'),
+        meaningRaw: raw('meaning'),
+        wordsRaw: raw('words'),
+      },
     };
   }).sort((a, b) => b.score - a.score).slice(0, MAX_MEASURED);
   const times = await responseTimes(env, ranked.map((e) => e.person), { now });
@@ -373,9 +390,31 @@ function shape(e) {
 }
 
 /**
+ * A list entry as the training gets it (src/expertevents.js): its account and person, and the
+ * numbers that placed it. Nothing of what it says in words.
+ */
+function candidate(e) {
+  const r = e.response;
+  return {
+    id: e.id,
+    person: e.person,
+    features: {
+      ...(e.signals || {}),
+      score: e.score || 0,
+      topic: Number(Boolean(e.topic)),
+      member: e.member === null || e.member === undefined ? -1 : Number(e.member),
+      suggested: Number(Boolean(e.reason)),
+      ...(r ? { mentioned: r.mentions, answered: r.answered } : {}),
+      ...(r && r.minutes !== null ? { responseMinutes: r.minutes } : {}),
+    },
+  };
+}
+
+/**
  * The experts of inbox entry `key`, best first, agents' suggestions before the others, as
- * `{ platform, experts }`, or null when there is no such entry. `me` (a person id) is left out.
- * Never throws for a signal that fails.
+ * `{ platform, experts, candidates }`, or null when there is no such entry: `candidates` are
+ * all that were ranked, in the same order, as the training records them (`candidate`). `me`
+ * (a person id) is left out. Never throws for a signal that fails.
  */
 export async function findExperts(env, key, { me = null, now = Date.now() } = {}) {
   const t = key && await target(env, key);
@@ -403,15 +442,19 @@ export async function findExperts(env, key, { me = null, now = Date.now() } = {}
     const e = ranked.list.find((x) => x.id === s.id);
     return { ...e, ...s, member: inChannel(members, s.id, Boolean(e && e.member)) };
   });
+  const all = [...pinned, ...others];
   return {
     platform: t.source,
-    experts: [...pinned, ...others].slice(0, MAX_EXPERTS).map(shape),
+    experts: all.slice(0, MAX_EXPERTS).map(shape),
+    candidates: all.map(candidate),
   };
 }
 
 /**
  * GET /api/experts?thread=…: the thread's expert finder. It lists the channel's members in the
  * background when that is a week old, as the mention suggestions do, for what it says of them.
+ * The list is recorded for the viewer (src/expertevents.js), and `list` is its id, for what
+ * the page then says of it; not while viewing as someone else.
  */
 export async function experts(env, key, canSee, { me, waitUntil } = {}) {
   const e = await entryOf(env, key);
@@ -424,7 +467,17 @@ export async function experts(env, key, canSee, { me, waitUntil } = {}) {
       route: 'experts', members: t.source, error: err.message,
     }))));
   }
-  return json(await findExperts(env, e.key, { me: me ? me.id : null }));
+  const found = await findExperts(env, e.key, { me: me ? me.id : null });
+  if (!found) {
+    return json(found);
+  }
+  const { candidates, ...body } = found;
+  const list = await recordList(env, me, e.key, { finder: FINDER, candidates })
+    .catch((err) => {
+      console.warn(JSON.stringify({ route: 'experts', record: 'list', error: err.message }));
+      return null;
+    });
+  return json(list ? { ...body, list } : body);
 }
 
 /**
