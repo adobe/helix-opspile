@@ -271,19 +271,23 @@ async function inEntry(env, threads) {
 /**
  * Whether Adobe has the entry in hand: staff posted in it or were mentioned in it. Then its
  * own people are the ones to ask, and the finder only says more when `me` was mentioned and has
- * not posted yet (they may be looking for whom to hand it to). Agents' suggestions still show.
+ * not posted since (they may be looking for whom to hand it to). Agents' suggestions still show.
  */
 async function inHand(env, threads, me) {
   const list = JSON.stringify(threads);
   const of = 'thread IN (SELECT value FROM json_each(?))';
+  // Mentions of a deleted message are gone already (src/normalizer.js). `answered`: a post of
+  // mine since I was last asked, not an early reply before someone handed it to me.
+  const asked = `SELECT MAX(at) FROM mentions WHERE ${of} AND person = ?`;
   const row = await env.DB.prepare(`SELECT
       EXISTS (SELECT 1 FROM messages WHERE ${of} AND staff = 1 AND counted = 1 AND deleted = 0)
         AS posted,
       EXISTS (SELECT 1 FROM mentions m JOIN people p ON p.id = m.person
         WHERE m.${of} AND p.staff = 1) AS mentioned,
-      EXISTS (SELECT 1 FROM mentions WHERE ${of} AND person = ?) AS askedMe,
-      EXISTS (SELECT 1 FROM messages WHERE ${of} AND person = ? AND deleted = 0) AS answered`)
-    .bind(list, list, list, me, list, me).first();
+      (${asked}) AS askedMe,
+      EXISTS (SELECT 1 FROM messages WHERE ${of} AND person = ? AND deleted = 0
+        AND at > COALESCE((${asked}), '')) AS answered`)
+    .bind(list, list, list, me, list, me, list, me).first();
   if (!row || (!row.posted && !row.mentioned)) {
     return false;
   }

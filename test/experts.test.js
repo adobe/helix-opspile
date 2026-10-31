@@ -309,6 +309,9 @@ describe('expert finder', () => {
     assert.deepEqual(names(await asked(4)), ['Ed']);
     e.addMessage(THREAD, 'y2', 3, 30);
     assert.deepEqual(names(await asked(3)), ['Ed']);
+    // Asked again after answering, as when someone hands the thread over: the list again.
+    e.mention(THREAD, 'y3', 3, 10);
+    assert.deepEqual(names(await asked(3)), ['Ed', 'Ada']);
   });
 
   it('takes suggestions only of staff on the platform, with a reason, and only so many', async () => {

@@ -869,7 +869,7 @@ reply stays the person's to write.
 It speaks only when someone is needed. Once Adobe has the thread in hand (staff posted in it, or
 were mentioned in it), its own people are the ones to ask, and the most active in the channel
 are mostly who is in it already: the header then shows only an agent's suggestion, if there is
-one. The exception is the person who was mentioned and has not posted yet, who may be looking
+one. The exception is the person who was mentioned and has not posted since, who may be looking
 for whom to hand it to. The list is still computed and recorded (`held`, below), for the training
 to see whom the team pulled in anyway. A thread agent's `list_experts` always gets the full list.
 
