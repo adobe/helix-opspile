@@ -68,7 +68,7 @@ describe('GET /api/file', () => {
         return Response.json(f ? {
           ok: true,
           file: {
-            id, url_private: `https://files.slack.com/files-pri/T1-${id}/${f.name}`, url_private_download: `https://files.slack.com/files-pri/T1-${id}/download/${f.name}`, ...f, size: f.body.length,
+            id, url_private: `https://files.slack.com/files-pri/T1-${id}/${f.name}`, url_private_download: `https://files.slack.com/files-pri/T1-${id}/download/${f.name}`, size: f.body.length, ...f,
           },
         } : { ok: false, error: 'file_not_found' });
       }
@@ -102,6 +102,25 @@ describe('GET /api/file', () => {
     assert.equal(decodeURIComponent(res.headers.get('x-file-name')), 'table.csv');
     // Text by its name where the platform does not say.
     assert.equal(await (await get(KEY, HAR)).text(), '{"log":{}}');
+  });
+
+  it('passes a large HAR through, and keeps the limit for other text', async () => {
+    const big = 'x'.repeat(1024);
+    FILES.F0HAR.size = 77 * 1024 * 1024;
+    FILES.F0HAR.body = big;
+    FILES.F0CSV.size = 11 * 1024 * 1024;
+    try {
+      assert.equal(await (await get(KEY, HAR)).text(), big);
+      const csv = await get(KEY, CSV);
+      assert.equal(csv.status, 502);
+      assert.equal((await csv.json()).error, 'too large (11 MB; up to 10 MB)');
+      FILES.F0HAR.size = 151 * 1024 * 1024;
+      assert.equal((await (await get(KEY, HAR)).json()).error, 'too large (151 MB; up to 150 MB)');
+    } finally {
+      delete FILES.F0HAR.size;
+      delete FILES.F0CSV.size;
+      FILES.F0HAR.body = '{"log":{}}';
+    }
   });
 
   it('refuses files that are not text, not of the thread, or of a deleted message', async () => {

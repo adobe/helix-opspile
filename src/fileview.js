@@ -10,7 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
-import { download, pickFile, threadFiles } from './agent/files.js';
+import {
+  MAX_FILE_BYTES, openFile, pickFile, threadFiles,
+} from './agent/files.js';
 import { refreshAttachment } from './discord.js';
 import { folderFiles } from './filecache.js';
 import { json } from './http.js';
@@ -26,7 +28,9 @@ import { keptTeamsFile } from './teamsfiles.js';
  * - `GET /api/file?t=<thread>&u=<link>`: a text file (a CSV, a log, JSON), for the preview of
  *   it (ui/table.js). Only text is passed on, and always as `text/plain` (never HTML the
  *   browser would run): what the file is comes in `x-file-type`, its name in `x-file-name`
- *   (URI-encoded).
+ *   (URI-encoded). It is passed through as it arrives, never held here. Up to 10 MB, and more
+ *   for a HAR (a browser's recording of a failure easily runs to many times that, and the
+ *   page reads it request by request).
  * - `GET /api/file/stream?t=&u=`: a video or audio file, streamed with the browser's `Range`
  *   (seeking asks for parts of it), for the inbox's player. Slack's MP4 copy of a video when
  *   it made one (QuickTime recordings play everywhere then).
@@ -37,6 +41,9 @@ import { keptTeamsFile } from './teamsfiles.js';
 // (Slack calls a .har `application/octet-stream`, Teams copies keep what SharePoint said).
 const TEXT_TYPE = /^(text\/(?!html)|application\/(json|x-ndjson|ld\+json|yaml|x-yaml|xml|csv|x-csv|x-sh|sql)$)/;
 export const TEXT_NAME = /\.(csv|tsv|txt|log|json|ndjson|jsonl|har|md|markdown|ya?ml|xml|ini|conf|cfg|toml|env|properties|sql|sh|diff|patch)$/i;
+
+// What the browser's tab is asked to hold of a recording, parsed.
+export const MAX_HAR_BYTES = 150 * 1024 * 1024;
 
 const baseType = (type) => String(type || '').split(';')[0].trim().toLowerCase();
 export const isText = (type, name) => TEXT_TYPE.test(baseType(type))
@@ -156,15 +163,17 @@ export async function threadFile(env, key, wanted, { load = cachedMessages } = {
   if (!f) {
     return json({ error: 'not a file of this thread' }, 404);
   }
-  const got = await download(env, f);
+  const har = /\.har$/i.test(f.name || f.url.split(/[?#]/)[0]);
+  const got = await openFile(env, f, har ? MAX_HAR_BYTES : MAX_FILE_BYTES);
   if (got.error) {
     return json({ error: got.error }, 502);
   }
   if (!isText(got.type, got.name)) {
+    await got.body?.cancel();
     return json({ error: `cannot preview this kind of file (${got.type})` }, 415);
   }
   // Text the browser is told nothing else about: no sniffing, nothing it may load or run.
-  return new Response(got.bytes, {
+  return new Response(got.body, {
     headers: {
       ...SAFE,
       'content-type': 'text/plain; charset=utf-8',

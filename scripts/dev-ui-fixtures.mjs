@@ -199,6 +199,51 @@ function publishCsv() {
   return `${rows.join('\n')}\n`;
 }
 
+/**
+ * A browser's recording of a page failing, as the Network panel saves it (the preview shows it
+ * by its name: Slack calls a .har `application/octet-stream`). The host and token are made up.
+ */
+function recordingHar() {
+  const at = (ms) => new Date(Date.UTC(2026, 9, 30, 16, 20, 0, ms)).toISOString();
+  const headers = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
+  const token = `eyJhbGciOiJSUzI1NiJ9.${Buffer.from('{"sub":"made-up"}').toString('base64url')}.c2lnbmF0dXJl`;
+  const request = (method, url, ms, status, wait, more = {}) => ({
+    startedDateTime: at(ms),
+    time: wait + 14,
+    request: {
+      method,
+      url,
+      headers: headers({ accept: 'application/json', authorization: `Bearer ${token}`, cookie: 'session=made-up' }),
+      queryString: [...new URL(url).searchParams].map(([name, value]) => ({ name, value })),
+    },
+    response: {
+      status,
+      statusText: status === 200 ? 'OK' : '',
+      headers: headers({ 'content-type': 'application/json', 'x-request-id': `req-${ms}`, 'set-cookie': 'session=made-up' }),
+      content: {
+        size: 1840, mimeType: 'application/json', text: JSON.stringify({ items: [], status }),
+      },
+      ...more.response,
+    },
+    timings: {
+      blocked: 2, dns: 0, connect: 0, ssl: 0, send: 1, wait, receive: 11,
+    },
+    serverIPAddress: '192.0.2.10',
+    _resourceType: more.type || 'fetch',
+  });
+  const entries = [
+    request('GET', 'https://assets.example/app/index.html', 0, 200, 40, { type: 'document' }),
+    request('GET', 'https://assets.example/app/main.js', 120, 200, 31, { type: 'script' }),
+    request('POST', 'https://ims.example/ims/check/v6/token?client_id=picker&access_token=made-up', 410, 200, 188),
+    request('GET', 'https://author.example/adobe/repositories/discovery', 640, 200, 8214),
+    request('GET', 'https://author.example/adobe/folders/search?limit=50', 8900, 504, 12003),
+    request('GET', 'https://author.example/adobe/assets/search?limit=50', 21000, 0, 0, {
+      response: { _error: 'net::ERR_CONNECTION_RESET', statusText: '' },
+    }),
+  ];
+  return JSON.stringify({ log: { version: '1.2', creator: { name: 'WebInspector', version: '537.36' }, entries } });
+}
+
 function screenshot(title, color, bars, w = 640, h = 360) {
   const bar = (v, i) => `<rect x="${60 + i * 52}" y="${h - 60 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
   return new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
@@ -829,6 +874,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
       ['mei', 65, `Reproduced on two regions, attaching the headers.\n\nAttachments:\n![headers.png](${upload('headers.png', 'image/svg+xml', screenshot('Response headers, two regions', '#6366f1', [40, 90, 60, 120, 30]))} "640x360")`],
+      ['mei', 64, `The recording of the page failing.\n\nAttachments:\n- [picker failing.har](${upload('picker failing.har', 'application/octet-stream', Buffer.from(recordingHar()))})`],
       // A screenshot attached in Teams (a SharePoint file), copied into pile 1 and shown
       // inline; the other file stays a link.
       ['mei', 64, '![Screenshot 2026-10-21 at 10.02.11 AM.png](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/Screenshot%202026-10-21%20at%2010.02.11%E2%80%AFAM.png "1280x720")\n\nAttachments:\n\n- [headers.har](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/headers.har)'],

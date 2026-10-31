@@ -605,6 +605,24 @@
   :is(.file-view, .file-dialog) .fv-table .fv-none { color: var(--mute); text-align: center; padding: 14px; }
   :is(.file-view, .file-dialog) .fv-text { margin: 0; border: 0; border-radius: 0; max-height: 340px; overflow: auto;
     white-space: pre; background: var(--pane); color: var(--ink); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px; }
+  /* A HAR: requests that open, the failed ones marked, the URL taking the width it can. */
+  :is(.file-view, .file-dialog) .fv-har tbody tr[data-i] { cursor: pointer; }
+  :is(.file-view, .file-dialog) .fv-har :is(th, td):last-child { max-width: 70ch; }
+  :is(.file-view, .file-dialog) .fv-har tr.fv-failed td:nth-child(3) { color: var(--red); font-weight: 600; }
+  :is(.file-view, .file-dialog) .fv-table tr.fv-detail td { white-space: normal; max-width: none; overflow: visible; background: var(--col); padding: 0; }
+  :is(.file-view, .file-dialog) .fv-request { position: sticky; left: 0; box-sizing: border-box; width: 720px; max-width: 92vw; padding: 8px 12px 12px;
+    overflow-wrap: anywhere; }
+  .fv-request p { margin: 0 0 4px; color: var(--mute); }
+  .fv-request .fv-url { color: var(--ink); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .fv-request .fv-why { color: var(--red); }
+  .fv-request h4 { margin: 10px 0 4px; font-size: 12px; font-weight: 600; }
+  .fv-request dl { display: grid; grid-template-columns: minmax(90px, 220px) 1fr; gap: 1px 12px; margin: 0;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .fv-request dt { color: var(--mute); }
+  .fv-request dd { margin: 0; min-width: 0; }
+  .fv-request .fv-secret { color: var(--mute); }
+  .fv-request button { padding: 0 7px; font-size: 11.5px; line-height: 1.6; border-radius: 5px; cursor: pointer; }
+  .fv-request .fv-text { max-height: 320px; white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; }
   :is(.file-view, .file-dialog) .fv-more { padding: 5px 10px; color: var(--mute); border-top: 1px solid var(--line); font-size: 12px; }
   :is(.file-view, .file-dialog) :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   dialog.file-dialog { width: min(1280px, calc(100vw - 32px)); height: min(860px, calc(100dvh - 32px)); max-width: none; max-height: none;
