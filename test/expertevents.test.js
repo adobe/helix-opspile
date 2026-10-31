@@ -58,6 +58,7 @@ describe('what is done with the expert finder\'s lists (src/expertevents.js)', (
     bad({ list: '1', action: 'shown' });
     bad({ list: 1, action: 'like' });
     bad({ list: 1, action: 'pick' });
+    bad({ list: 1, action: 'reject' });
     assert.deepEqual(cleanExpertEvent({ list: 1, action: 'shown', account: 'U3' }), { list: 1, action: 'shown' });
   });
 

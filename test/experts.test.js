@@ -16,6 +16,7 @@ import {
   clearExpertLists, experts, findExperts, FINDER, hasPair, MAX_SUGGESTED, reasonsOf, responseTimes,
   roughly, suggestExpert, titlePairs,
 } from '../src/experts.js';
+import { recordExpertEvent } from '../src/expertevents.js';
 import { d1 } from './d1.js';
 
 // Made-up ids, names and vectors only.
@@ -282,6 +283,23 @@ describe('expert finder', () => {
     e.addMessage(THREAD, 'y1', 5, 1);
     found = await findExperts(e, THREAD, { now: NOW });
     assert.deepEqual(names(found), ['Ada']);
+  });
+
+  it('leaves out whom the viewer said is not the right person, for them and that thread', async () => {
+    const e = env({ matches: [vector(0.9, 3)] });
+    e.addThread('slack:E1:C1:1.1');
+    e.addMessage('slack:E1:C1:1.1', 'x1', 1, DAYS);
+    e.addThread('slack:E1:C9:1.1', { org: 'other', channel: 'C9' });
+    e.addMessage('slack:E1:C9:1.1', 'x3', 3, DAYS, { channel: 'C9' });
+    const viewer = { id: 2 };
+    const body = await (await experts(e, THREAD, () => true, { me: viewer })).json();
+    assert.deepEqual(body.experts.map((x) => x.name), ['Ada', 'Cy']);
+    assert.deepEqual(await recordExpertEvent(e, viewer, { list: body.list, action: 'reject', account: 'U1' }), { ok: true });
+    const again = await findExperts(e, THREAD, { me: 2, now: NOW });
+    assert.deepEqual(names(again), ['Cy']);
+    assert.deepEqual(again.candidates.map((c) => [c.id, c.features.rejected]), [['U1', 1], ['U3', 0]]);
+    // Someone else still gets them.
+    assert.deepEqual(names(await findExperts(e, THREAD, { me: 4, now: NOW })), ['Ada', 'Cy']);
   });
 
   it('takes suggestions only of staff on the platform, with a reason, and only so many', async () => {

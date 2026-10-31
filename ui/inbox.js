@@ -1729,7 +1729,7 @@ function expertsHtml(key) {
   const open = state.expertsOpen === key;
   const top = list[0];
   const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues to pull in" title="More colleagues">▾</button>` : '';
-  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button><button class="reject" data-expert-reject="${i}" title="Not the right person for this thread" aria-label="${esc(e.name)} is not the right person for this thread">✕</button></li>`).join('')}</ul>` : '';
   return `<div class="experts" id="experts"><button class="top" data-expert="0" title="${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(expertLine(top))}</span></button>${more}${rows}</div>`;
 }
 
@@ -1818,6 +1818,24 @@ function pullExpert(key, e) {
   box.focus();
 }
 
+/**
+ * "Not the right person": they leave the list, and the finder leaves them out of my lists of
+ * this thread from then on (a `reject`, which the training learns from too).
+ */
+function rejectExpert(key, i) {
+  const list = state.experts.get(key) || [];
+  const expert = list[i];
+  if (!expert) return;
+  expertEvent(key, 'reject', expert.id);
+  const rest = list.filter((_, j) => j !== i);
+  state.experts.set(key, rest);
+  if (!rest.length) state.expertsOpen = null;
+  placeExperts(key);
+  const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
+  (rows[Math.min(i, rows.length - 1)] || document.querySelector('#experts .top'))?.focus();
+  toast(`${expert.name} won’t be suggested to you for this thread again.`);
+}
+
 function closeExperts(key, focus = false) {
   if (state.expertsOpen !== key) return;
   dismissExperts();
@@ -1830,7 +1848,10 @@ function wireExperts(key) {
   if (!el) return;
   el.onclick = (e) => {
     const pick = e.target.closest('[data-expert]');
-    if (e.target.closest('[data-experts-more]')) {
+    const reject = e.target.closest('[data-expert-reject]');
+    if (reject) {
+      rejectExpert(key, Number(reject.dataset.expertReject));
+    } else if (e.target.closest('[data-experts-more]')) {
       if (state.expertsOpen === key) {
         dismissExperts();
       } else {
@@ -1854,7 +1875,7 @@ function wireExperts(key) {
     if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const rows = [...el.querySelectorAll('.expertlist button')];
+    const rows = [...el.querySelectorAll('.expertlist [data-expert]')];
     const i = rows.indexOf(document.activeElement);
     rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
   };

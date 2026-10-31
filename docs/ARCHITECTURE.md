@@ -865,6 +865,9 @@ in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in 
 (`GET /api/experts`, `src/experts.js`). Clicking it mentions them in the reply box, as picking
 them after `@` does, and ▾ lists up to eight, each with all of its reasons. Nothing is sent: the
 reply stays the person's to write.
+Each of the eight has ✕, "Not the right person for this thread": they leave the list, and the
+finder leaves them out of that person's lists of the thread from then on (a `reject`, below; for
+everyone else they stay).
 
 Four signals add up, each scaled to its best person: the threads someone worked in this channel
 and for this customer in the last 180 days (D1; the customer's counts half, as it mostly repeats
@@ -906,7 +909,7 @@ score, topic, channel membership, response times, an agent's suggestion) and the
 (`FINDER` in `src/experts.js`), never what anyone wrote. The answer has its id (`list`), and the
 page says what happened to it (`POST /api/experts/event`): `shown` once each time the thread is
 opened with it in the header, `open` for its ▾ list, `pick` of someone (their place comes from
-the list, not the page), and `dismiss` when the ▾ list is closed, or left for another thread or
+the list, not the page), `reject` for ✕, and `dismiss` when the ▾ list is closed, or left for another thread or
 page, with nobody picked: the clearest "none of these". Whom the person mentioned afterwards, and
 who answered, are in `mentions` and `messages` already, so they are joined in training, not
 recorded twice. Nothing is recorded while viewing as someone else. `GET /api/experts/events`

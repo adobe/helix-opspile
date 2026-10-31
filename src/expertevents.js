@@ -15,13 +15,17 @@
  * for a better finder to learn from (docs/ARCHITECTURE.md, "Expert finder"). GET /api/experts
  * records the `list` it computed, every candidate with its signals, and answers with its id;
  * the page then says, about that list, `POST /api/experts/event`: `shown` (on screen in the open
- * thread), `open` (▾), `pick` (someone, by account) and `dismiss` (the ▾ list closed with nobody
- * picked: the strongest "none of these"). `GET /api/experts/events` gives them to the admin
- * team's training (`npm run rank -- experts`), page by page; the cron deletes those older than
- * EXPERT_EVENTS_DAYS, as for the team order's picks (src/rankevents.js).
+ * thread), `open` (▾), `pick` (someone, by account), `dismiss` (the ▾ list closed with nobody
+ * picked: the strongest "none of these") and `reject` (someone, by account, is not the right
+ * person: the finder leaves them out of the viewer's lists of that thread from then on).
+ * `GET /api/experts/events` gives them to the admin team's training (`npm run rank -- experts`),
+ * page by page; the cron deletes those older than EXPERT_EVENTS_DAYS, as for the team order's
+ * picks (src/rankevents.js).
  */
 
-export const ACTIONS = ['shown', 'open', 'pick', 'dismiss'];
+export const ACTIONS = ['shown', 'open', 'pick', 'dismiss', 'reject'];
+/** Actions about one person on a list, by account. */
+const ABOUT = ['pick', 'reject'];
 export const EVENTS_PAGE = 500;
 /** How long events are kept in D1, and how many the cron deletes in a run at most. */
 export const EXPERT_EVENTS_DAYS = 90;
@@ -69,10 +73,10 @@ export function cleanExpertEvent(body) {
   if (!Number.isInteger(list) || list <= 0 || !ACTIONS.includes(action)) {
     return { error: `an event needs a list and one of ${ACTIONS.join(', ')}` };
   }
-  if (action === 'pick' && !key(account)) {
-    return { error: 'a pick needs the account picked' };
+  if (ABOUT.includes(action) && !key(account)) {
+    return { error: `a ${action} needs the account` };
   }
-  return { list, action, ...(action === 'pick' ? { account } : {}) };
+  return { list, action, ...(ABOUT.includes(action) ? { account } : {}) };
 }
 
 /**
@@ -90,7 +94,7 @@ export async function recordExpertEvent(env, me, body, now = new Date()) {
     return { error: 'no such list of yours' };
   }
   let pos = null;
-  if (ev.action === 'pick') {
+  if (ABOUT.includes(ev.action)) {
     const c = JSON.parse(list.data).candidates.find((x) => x.id === ev.account);
     if (!c) {
       return { error: 'not on that list' };
@@ -102,6 +106,17 @@ export async function recordExpertEvent(env, me, body, now = new Date()) {
     .bind(me.id, now.toISOString(), list.thread, ev.action, ev.list, ev.account || null, pos)
     .run();
   return { ok: true };
+}
+
+/** The accounts person `me` said are not the right ones for entry `keys` (its threads too). */
+export async function rejectedBy(env, me, keys) {
+  if (!me) {
+    return new Set();
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT account FROM expert_events
+    WHERE person = ? AND action = 'reject' AND thread IN (SELECT value FROM json_each(?))`)
+    .bind(me, JSON.stringify(keys)).all();
+  return new Set((results || []).map((r) => r.account));
 }
 
 /** The events after `since` (an id), oldest first, a page at a time; `next` when there are more. */
