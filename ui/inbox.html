@@ -86,11 +86,17 @@
     padding: 4px 4px; border-radius: 6px; cursor: pointer; }
   .fr:hover { background: var(--hover); }
   /* A picked value stands out from the rest of its card: tinted, outlined, its label bold. */
-  .fr.on { background: color-mix(in srgb, var(--accent) 22%, var(--card));
-    box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .fr.on { background: color-mix(in srgb, var(--accent) 22%, var(--card)); }
+  .fr.on::after { content: ""; position: absolute; inset: 0; border: 1.5px solid var(--accent);
+    border-radius: inherit; pointer-events: none; }
   .fr.on:hover { background: color-mix(in srgb, var(--accent) 28%, var(--card)); }
   .fr.on .lab { font-weight: 700; color: var(--ink); }
   .fr.on .n { color: var(--ink); font-weight: 650; }
+  /* Neighbors picked together are outlined as one, without an edge or corners between them. */
+  .fr.on:has(+ .fr.on) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+  .fr.on:has(+ .fr.on)::after { border-bottom: 0; }
+  .fr.on + .fr.on { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .fr.on + .fr.on::after { border-top: 0; }
   /*
    * Excluded values, as klickhaus shows them: struck through and faded, with the \2260 button
    * that excludes a value (or stops) shown red. It sits over the end of the label, on hover.
