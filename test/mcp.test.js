@@ -16,7 +16,7 @@ import {
 } from 'node:test';
 import { render } from '../src/channels.js';
 import { headerValue, mcp, PROTOCOL } from '../src/mcp.js';
-import { checkConfirmState, confirmState, TOOLS } from '../src/mcp-tools.js';
+import { TOOLS } from '../src/mcp-tools.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 
@@ -387,35 +387,12 @@ describe('mcp tools', () => {
     assert.equal(calls[0].body.text, 'Looking now');
   });
 
-  it('post_as_user asks the user first (MRTR elicitation), and posts only after they accept', async () => {
+  it('posts at once, whatever the client says it can ask', async () => {
     const e = await connected();
     const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
-    const args = { thread: SLACK, text: 'Looking now' };
-    const first = await callTool(e, 'post_as_user', args, { meta });
-    assert.equal(first.body.result.resultType, 'input_required');
-    assert.equal(first.body.result.inputRequests.confirm_post.method, 'elicitation/create');
-    assert.equal(calls.length, 0);
-    const retry = (answer, state = first.body.result.requestState, a = args) => send(e, req('tools/call', {
-      name: 'post_as_user', arguments: a, inputResponses: { confirm_post: answer }, requestState: state,
-    }, { meta, id: 2 }));
-    const declined = await retry({ action: 'decline' });
-    assert.match(declined.body.result.content[0].text, /did not confirm/);
-    const tampered = await retry({ action: 'accept' }, first.body.result.requestState, { ...args, text: 'Something else' });
-    assert.match(tampered.body.result.content[0].text, /does not match/);
-    assert.equal(calls.length, 0);
-    const accepted = await retry({ action: 'accept', content: {} });
-    assert.equal(structured(accepted).ok, true);
+    const r = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Looking now' }, { meta });
+    assert.equal(structured(r).ok, true);
     assert.equal(calls.length, 1);
-  });
-
-  it('confirmation state is bound to the person, the call and a deadline', async () => {
-    const e = env();
-    const args = { thread: SLACK, text: 'x' };
-    const state = await confirmState(e, ME, 'post_as_user', args, 1000);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 2000), true);
-    assert.equal(await checkConfirmState(e, { ...ME, id: 2 }, 'post_as_user', args, state, 2000), false);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 1000 + 11 * 60 * 1000), false);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, `${state}x`, 2000), false);
   });
 
   it('post_as_user turns names into mentions, and says when a name is unknown', async () => {
@@ -536,21 +513,8 @@ describe('mcp tools', () => {
     assert.match(none.body.result.content[0].text, /Slack bot is not set up/);
     const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-test' };
     appOn(e);
-    const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
-    const args = { thread: SLACK, text: 'Looking now' };
-    const first = await callTool(e, 'post_as_bot', args, { meta });
-    assert.match(first.body.result.inputRequests.confirm_post.params.message, /as the opspile app/);
-    assert.equal(calls.length, 0);
-    // A confirmation for post_as_user does not pass for post_as_bot.
-    const other = await confirmState(e, ME, 'post_as_user', args);
-    const swapped = await send(e, req('tools/call', {
-      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: other,
-    }, { meta, id: 2 }));
-    assert.match(swapped.body.result.content[0].text, /does not match/);
-    const accepted = await send(e, req('tools/call', {
-      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: first.body.result.requestState,
-    }, { meta, id: 3 }));
-    assert.equal(structured(accepted).ok, true);
+    const r = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Looking now' });
+    assert.equal(structured(r).ok, true);
     assert.equal(calls.length, 1);
   });
 

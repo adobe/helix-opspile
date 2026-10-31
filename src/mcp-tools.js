@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { accountName, PLATFORMS, platformName } from './platforms.js';
+import { accountName, PLATFORMS } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
@@ -33,8 +33,7 @@ import { mayWork, memberOf, teamless } from './shares.js';
  * in the inbox. Read-only "view as" refuses writes, as the API does.
  *
  * A tool returns `{ data }` (shown to the model as JSON and as structuredContent), or
- * `{ error }` (a tool error, so the model can correct itself), or `{ input }` (an MRTR
- * InputRequiredResult, to ask the user before a reply goes out).
+ * `{ error }` (a tool error, so the model can correct itself).
  *
  * Three ways to answer in a thread, as in the inbox: `post_draft` saves the thread's shared
  * draft (src/drafts.js), which the team sees and sends; `post_as_user` posts as the person
@@ -48,7 +47,6 @@ const WAITING = ['us', 'customer', 'vendor', 'nobody'];
 const MAX_LIST = 50;
 const MAX_MESSAGES = 100;
 const MAX_BODY = 2000;
-const CONFIRM_TTL_MS = 10 * 60 * 1000;
 
 const clip = (s, n) => {
   const v = String(s ?? '').trim();
@@ -321,76 +319,6 @@ async function getThread(env, me, args) {
   };
 }
 
-// ---- reply confirmation (MRTR) -------------------------------------------------------
-
-const enc = new TextEncoder();
-const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
-  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-
-async function sign(env, data) {
-  const key = await crypto.subtle.importKey('raw', unb64u(env.TOKEN_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  // A separate context from the OAuth state in post.js, so one can never pass as the other.
-  return b64u(await crypto.subtle.sign('HMAC', key, enc.encode(`mcp-confirm:${data}`)));
-}
-async function digest(value) {
-  return b64u(await crypto.subtle.digest('SHA-256', enc.encode(JSON.stringify(value))));
-}
-
-/** Signed state for a confirmation: who, which call, until when (MRTR requestState). */
-export async function confirmState(env, me, name, args, now = Date.now()) {
-  const body = b64u(enc.encode(JSON.stringify({
-    p: me.id, n: name, d: await digest(args), exp: now + CONFIRM_TTL_MS,
-  })));
-  return `${body}.${await sign(env, body)}`;
-}
-
-export async function checkConfirmState(env, me, name, args, state, now = Date.now()) {
-  const [body, sig] = String(state || '').split('.');
-  if (!body || !sig || sig !== await sign(env, body)) {
-    return false;
-  }
-  const s = JSON.parse(new TextDecoder().decode(unb64u(body)));
-  return s.p === me.id && s.n === name && s.exp > now && s.d === await digest(args);
-}
-
-/**
- * Asks the user, through the client, before a reply goes out (under their name, or the
- * opspile app's), when the client can ask (`elicitation`, modern protocol only). Returns
- * `{ input }` for the first round, null to go ahead, or `{ error }` when the user declined or
- * the state is bad.
- */
-async function confirmPost(env, me, name, args, ctx, question) {
-  if (!ctx.modern || !ctx.capabilities.elicitation || !env.TOKEN_KEY) {
-    return null;
-  }
-  const answer = ctx.inputResponses && ctx.inputResponses.confirm_post;
-  if (!answer) {
-    return {
-      input: {
-        inputRequests: {
-          confirm_post: {
-            method: 'elicitation/create',
-            params: {
-              mode: 'form',
-              message: `${question}\n\n${clip(args.text, 1500)}`,
-              requestedSchema: { type: 'object', properties: {} },
-            },
-          },
-        },
-        requestState: await confirmState(env, me, name, args),
-      },
-    };
-  }
-  if (!await checkConfirmState(env, me, name, args, ctx.requestState)) {
-    return { error: `The confirmation expired or does not match this reply. Call ${name} again.` };
-  }
-  if (answer.action !== 'accept') {
-    return { error: 'The user did not confirm, so nothing was posted.' };
-  }
-  return null;
-}
-
 const READ_ONLY = { error: 'Read-only while viewing as someone else.' };
 const NOT_FOUND = { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
 
@@ -410,8 +338,6 @@ async function writeTarget(env, me, args) {
   }
   return { key, text, t };
 }
-
-const whereOf = (t) => `${platformName(platformOf(t.thread))} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
 
 /**
  * Names to mention, as written after @ in the text, to the platform accounts: `{ mentions }`
@@ -485,7 +411,7 @@ async function postDraft(env, me, args) {
 }
 
 /** post_as_user: replies in the thread as the signed-in person. */
-async function postAsUser(env, me, args, ctx) {
+async function postAsUser(env, me, args) {
   const w = await writeTarget(env, me, args);
   if (w.error) {
     return w;
@@ -493,10 +419,6 @@ async function postAsUser(env, me, args, ctx) {
   const m = await mentionsOf(env, me, w.key, w.text, args.mention);
   if (m.error) {
     return m;
-  }
-  const asked = await confirmPost(env, me, 'post_as_user', args, ctx, `Post this reply in ${whereOf(w.t)} as you?`);
-  if (asked) {
-    return asked;
   }
   const body = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await post(env, me, body, mayWork(env, me)));
@@ -512,12 +434,11 @@ async function postAsUser(env, me, args, ctx) {
 }
 
 /** post_as_bot: replies in the thread as the opspile app, where it may post there. */
-async function postAsBot(env, me, args, ctx) {
+async function postAsBot(env, me, args) {
   const w = await writeTarget(env, me, args);
   if (w.error) {
     return w;
   }
-  // Before asking the user: no point confirming what cannot go out.
   const check = await appPostCheck(env, w.key);
   if (check.problem) {
     return { error: `Cannot post as the opspile app: ${check.problem}. Use post_draft or post_as_user instead.` };
@@ -525,10 +446,6 @@ async function postAsBot(env, me, args, ctx) {
   const m = await mentionsOf(env, me, w.key, w.text, args.mention);
   if (m.error) {
     return m;
-  }
-  const asked = await confirmPost(env, me, 'post_as_bot', args, ctx, `Post this reply in ${whereOf(w.t)} as the opspile app?`);
-  if (asked) {
-    return asked;
   }
   const request = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
@@ -889,7 +806,7 @@ export const TOOLS = [
   {
     name: 'post_as_user',
     title: 'Reply as yourself',
-    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. Needs their connected account (whoami). The user is asked to confirm first when the client supports elicitation. Use post_draft for anything a colleague should review first.',
+    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. Needs their connected account (whoami). It goes out at once: the server does not ask, the client\'s tool approval is the check. Use post_draft for anything a colleague should review first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -909,7 +826,7 @@ export const TOOLS = [
   {
     name: 'post_as_bot',
     title: 'Reply as the opspile app',
-    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). Slack and Teams take up to 8000 characters, Discord 2000. The user is asked to confirm first when the client supports elicitation.',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). Slack and Teams take up to 8000 characters, Discord 2000. It goes out at once: the server does not ask, the client\'s tool approval is the check.',
     inputSchema: {
       type: 'object',
       properties: {
