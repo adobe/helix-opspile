@@ -1230,6 +1230,22 @@ send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
 
+`/workspace/uploads` is read-only and holds the files attached to the thread's messages
+(`src/threadfiles.js`). Every file is copied to the `FILES` bucket, under
+`<thread>/<sha256 of the file's id>`, by a queue job when its message arrives, or at the latest
+before the agent is told about it. It is kept for 30 days: the bucket's lifecycle rule deletes
+it, and a file whose message is older is neither copied nor shown. The mount is filled by
+`uploadsMount` into the object's SQLite, so each change of the list takes a new Workspace, and a
+schedule (`expireUploads`) empties it when the oldest file expires, even if the agent sleeps.
+Files of withheld messages stay out of it, as they do of `read_file`, but a file itself is not
+checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
+says not to quote them, and code does not stop the shell from reading or sending them.
+
+The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
+`jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and
+`INDEX.txt` says which. A HAR also gets `<name>.requests.ndjson` (`src/har.js`): one line per
+request, no bodies or cookies, credentials hidden, read as a stream, whatever the HAR's size.
+
 **`extraction_rules`.** The agent reads, tests and changes its team's extraction rules and tech
 stack (`list_extraction_rules`, `test_extraction_rule`, `save_extraction_rule`,
 `delete_extraction_rule`, `save_tech`, `delete_tech`; see "Labels and facts"), as

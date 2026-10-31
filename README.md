@@ -136,6 +136,7 @@ Nothing below is committed; set it on the Worker.
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
+| `FILES` | R2 bucket | Copies of the files attached to messages, for agents' computers: `helix-opspile-files` (`-stage`). Delete them after 30 days with a lifecycle rule, set once by hand after the first deploy: `npx wrangler r2 bucket lifecycle add helix-opspile-files expire-30d --expire-days 30` |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
 | `AI` | Workers AI | Clef (thread labels, re-threading, the agents' prompt-injection check) and Clairic (facts), `bge-base-en-v1.5` embeddings |
 | `VECTORS` | Vectorize | `helix-opspile-roots` (`-stage`): one vector per root message. Create it by hand: 768 dimensions, cosine, metadata indexes `channel` (string) and `at` (number) |
