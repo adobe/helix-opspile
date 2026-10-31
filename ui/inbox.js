@@ -4494,8 +4494,8 @@ const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="cu
 const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
-  if (history.state?.list) { history.back(); return; }
   dismissExperts();
+  if (history.state?.list) { history.back(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null });
   closeMentions();
   syncReading();
@@ -4795,7 +4795,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { dismissExperts(); state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
