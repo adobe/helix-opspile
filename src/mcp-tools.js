@@ -16,7 +16,7 @@ import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
 import { MAX_SOURCES } from './sources.js';
 import {
-  connections, mentionable, post, reactable,
+  connections, mentionable, post, reactable, writtenMentions,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { PICKER, react, resolve } from './react.js';
@@ -341,7 +341,8 @@ async function writeTarget(env, me, args) {
 
 /**
  * Names to mention, as written after @ in the text, to the platform accounts: `{ mentions }`
- * (`{ id, name }`, as /api/post and /api/draft take them), or `{ error }`.
+ * (`{ id, name }`, as /api/post and /api/draft take them), or `{ error }`. Each `@Name` in the
+ * text that stands for one account counts too, so that a draft sent as it is keeps its mentions.
  */
 async function mentionsOf(env, me, key, text, names) {
   const mentions = [];
@@ -359,7 +360,12 @@ async function mentionsOf(env, me, key, text, names) {
     }
     mentions.push({ id: exact.id, name: exact.name });
   }
-  return { mentions };
+  const written = await writtenMentions(env, key, text);
+  const seen = new Set(mentions.map((m) => m.id));
+  return {
+    mentions: [...mentions, ...written.filter((m) => !seen.has(m.id))
+      .map(({ id, name }) => ({ id, name }))],
+  };
 }
 
 /** A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went. */

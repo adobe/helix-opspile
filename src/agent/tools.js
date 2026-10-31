@@ -32,6 +32,7 @@ import {
 import { writeKnowledge } from './kbwrite.js';
 import { findMember } from './members.js';
 import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
+import { writtenMentions } from '../post.js';
 import { MAX_POST, postAsApp } from './posting.js';
 import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
@@ -84,7 +85,7 @@ const PREAMBLE = `You are the opspile agent for one support thread. opspile is t
 
 What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
-- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
+- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. To tag someone, write @ and their full name as the thread shows it; update_draft says who it tagged, and any other @Name stays plain text and notifies nobody. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
 - Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Leave it when Adobe staff are handling the thread, and suggest only someone you can give a reason for.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
@@ -488,8 +489,13 @@ export function opspileExtension(ctx) {
         async execute(args) {
           const t = await ctx.target();
           const me = { id: await agentPerson(env) };
+          const mentions = await writtenMentions(env, t.key, args.text);
           const request = {
-            thread: t.key, text: args.text, base: args.base || null, sources: args.sources || [],
+            thread: t.key,
+            text: args.text,
+            mentions,
+            base: args.base || null,
+            sources: args.sources || [],
           };
           const res = await saveDraft(env, me, request, () => true);
           const body = await res.json();
@@ -500,7 +506,8 @@ export function opspileExtension(ctx) {
           if (!res.ok) {
             return fail(body.error || `failed (${res.status})`);
           }
-          return text(`saved (version ${body.draft.updated_at})`);
+          const tagged = mentions.map((m) => m.name).join(', ');
+          return text(`saved (version ${body.draft.updated_at}${tagged ? `, tags ${tagged}` : ''})`);
         },
       }),
       defineTool({
@@ -698,7 +705,8 @@ export function agentToolsExtension(ctx, tools) {
         if (max && String(args.text || '').trim().length > max) {
           return fail(`Too long: ${platformName(t.source)} takes up to ${max} characters. Nothing was posted.`);
         }
-        const res = await postAsApp(env, t.key, args.text);
+        const mentions = await writtenMentions(env, t.key, args.text);
+        const res = await postAsApp(env, t.key, args.text, { mentions });
         if (res.error) {
           return fail(`Nothing was posted: ${res.error}`);
         }
