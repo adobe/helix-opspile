@@ -3916,6 +3916,8 @@ function markRead(t) {
 // reloading, because bells are checked on its reloads (checkBells).
 let reload;
 const changed = new Set();
+// In `changed` when no thread in particular changed, so a tab in the background still catches up.
+const GAP = 'gap';
 const hidden = () => document.visibilityState === 'hidden';
 const belled = () => notifying() && (state.settings?.bells || []).some((b) => b.view === scopeKey());
 function reloadSoon(thread) {
@@ -4134,12 +4136,24 @@ function syncSockets() {
   const want = wantedTeams();
   if (want.length !== have.size || want.some((t) => !have.has(t))) connect();
 }
-function listen(team, live) {
+/**
+ * A socket is back: what the room announced meanwhile is gone, so everything may have changed.
+ * Reloads the inbox and the open thread now, or a tab in the background when it is shown again.
+ */
+function caughtUp() {
+  for (const k of state.cache.keys()) if (k !== state.open) state.cache.delete(k);
+  // Once, when several rooms come back together.
+  if (state.open && state.experts.delete(state.open)) loadExperts(state.open);
+  reloadSoon(state.open || GAP);
+}
+function listen(team, live, { again = false } = {}) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(team)}${state.as ? `&as=${state.as}` : ''}`);
   ws.team = team;
   state.sockets.push(ws);
   // Reconnecting is only shown when it takes a while (not for a view switch or a blip).
   ws.onopen = () => {
+    // A room only the notifications listen to says nothing about the inbox on screen.
+    if (again && screenTeams().includes(team)) caughtUp();
     if (state.sockets.some((x) => x.readyState !== 1)) return;
     clearTimeout(state.offline); state.offline = null; $('offline').hidden = true;
   };
@@ -4147,7 +4161,7 @@ function listen(team, live) {
     const i = state.sockets.indexOf(ws);
     if (i < 0) return;
     state.sockets.splice(i, 1);
-    setTimeout(() => { if (state.live === live) listen(team, live); }, 3000);
+    setTimeout(() => { if (state.live === live) listen(team, live, { again: true }); }, 3000);
     state.offline ??= setTimeout(() => {
       $('offline').hidden = false;
       // Signed out (Access answers with a redirect, which app.js shows), or offline?
