@@ -183,13 +183,28 @@ export async function recordOutcome(env, id, outcome) {
 }
 
 /**
- * Opens request `id` again, when the assignment it was confirmed for failed. A manager may have
- * asked again meanwhile: that request stands, and this one stays as it is.
+ * Claims open request `id` as confirmed: whether this call did, or someone decided it first. The
+ * assignment follows; `recordOutcome` says what came of it, and `reopenRequest` that it failed.
+ */
+export async function claimRequest(env, me, id) {
+  const [by, name, at] = stamp(me);
+  const { meta } = await env.DB.prepare(`UPDATE channel_requests SET status = 'confirmed',
+      decided_by = ?, decided_name = ?, decided_at = ? WHERE id = ? AND status = 'open'`)
+    .bind(by, name, at, Number(id)).run();
+  return meta.changes > 0;
+}
+
+/**
+ * Opens request `id` again, when the assignment it was confirmed for failed. If a manager asked
+ * again meanwhile, that request stands, and this one is closed as withdrawn: it did nothing.
  */
 export async function reopenRequest(env, id) {
   await env.DB.prepare(`UPDATE OR IGNORE channel_requests SET status = 'open', decided_by = NULL,
       decided_name = NULL, decided_at = NULL WHERE id = ? AND status = 'confirmed'`)
     .bind(Number(id)).run();
+  await env.DB.prepare(`UPDATE channel_requests SET status = 'withdrawn', outcome = NULL
+    WHERE id = ? AND status = 'confirmed'`).bind(Number(id)).run();
+  return getRequest(env, id);
 }
 
 /**

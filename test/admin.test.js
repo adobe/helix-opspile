@@ -312,6 +312,47 @@ describe('admin: channel assignment requests', () => {
     assert.deepEqual({ ...row }, { status: 'open', decided_by: null, outcome: null });
   });
 
+  it('stay confirmed when the assignment went through and something after it failed', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /DELETE FROM channel_teams/, () => {
+      throw new Error('D1 is down');
+    });
+    await assert.rejects(call(e, ADA, 'POST', '/api/admin/requests/confirm', { id }), /D1 is down/);
+    const [row] = e.DB.rows('SELECT status, outcome FROM channel_requests');
+    assert.deepEqual({ ...row }, { status: 'confirmed', outcome: 'assigned' });
+  });
+
+  it('close when the assignment failed and the manager asked again meanwhile', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /INSERT INTO rules/, () => {
+      e.DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, requested_by,
+        requested_name, requested_at) VALUES ('slack', 'C3', 'edge', 'cy@staff.example', 'Cy', 'now')`).run();
+      throw new Error('D1 is down');
+    });
+    await assert.rejects(call(e, ADA, 'POST', '/api/admin/requests/confirm', { id }));
+    assert.deepEqual(
+      e.DB.rows('SELECT status FROM channel_requests ORDER BY id').map((r) => r.status),
+      ['withdrawn', 'open'],
+    );
+  });
+
+  it('answer a second request made while the first was being confirmed', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /INSERT INTO rules/, () => {
+      e.DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, requested_by,
+        requested_name, requested_at) VALUES ('slack', 'C3', 'edge', 'cy@staff.example', 'Cy', 'now')`).run();
+    });
+    const r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      e.DB.rows('SELECT status FROM channel_requests ORDER BY id').map((x) => x.status),
+      ['confirmed', 'confirmed'],
+    );
+  });
+
   it('are answered when a rule moves the channel into the team', async () => {
     const e = withManagers();
     const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;

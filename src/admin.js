@@ -25,7 +25,8 @@ import {
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons, orgDomain } from './favicons.js';
 import {
-  closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, recordOutcome,
+  claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
+  recordOutcome,
   reopenRequest, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
@@ -434,7 +435,7 @@ async function unshareChannel(env, me, body) {
  * channel another team holds is shared with the new team instead, and stays where it is.
  * Handing it to the admin team, or `move`, moves it all the same.
  */
-async function assign(env, me, body, remove, { settle = true } = {}) {
+async function assign(env, me, body, remove) {
   const target = clean(body.target);
   const channelId = clean(body.channelId);
   if (!['team', 'org'].includes(target) || !channelId) {
@@ -451,7 +452,7 @@ async function assign(env, me, body, remove, { settle = true } = {}) {
       const shared = await shareChannel(env, me, {
         source: source || home.source, channelId, team: value,
       }, home.team, body.dryRun);
-      if (settle && shared.ok && !body.dryRun) {
+      if (shared.ok && !body.dryRun) {
         await settleRequests(env, me, { channelId, team: value, outcome: 'shared' });
       }
       return shared;
@@ -483,7 +484,7 @@ async function assign(env, me, body, remove, { settle = true } = {}) {
     await unshare(env, { source: source || home.source, channelId, team: value });
   }
   // The open requests for it, if any, are answered with it.
-  if (target === 'team' && settle && res.ok && !body.dryRun) {
+  if (target === 'team' && res.ok && !body.dryRun) {
     const outcome = outcomeOf(await res.clone().json());
     await settleRequests(env, me, { channelId, team: value, outcome });
   }
@@ -521,6 +522,14 @@ async function openRequest(env, id) {
   return { request: r };
 }
 
+/** Whether a channel is assigned to or shared with a team, by hand. */
+async function assigned(env, { source, channelId }, slug) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM rules WHERE target = 'team'
+      AND field = 'channel_id' AND pattern = ?1 AND value = ?2
+    UNION SELECT 1 FROM channel_teams WHERE source = ?3 AND channel_id = ?4 AND team = ?2 LIMIT 1`)
+    .bind(manualPattern(channelId), slug, source, channelId).first());
+}
+
 /**
  * POST /api/admin/requests/confirm `{ id, dryRun?, move? }`: the admin team grants a request.
  * It is the manual assignment of `assign`, as if made on the team's page: `dryRun` says what
@@ -540,28 +549,33 @@ async function confirmRequest(env, me, body) {
     value: request.team,
     move: body.move,
     dryRun: body.dryRun,
-  }, false, { settle: false });
+  }, false);
   if (body.dryRun) {
     const res = await assignment();
     return json({ ...await res.json(), request }, res.status);
   }
-  // Closed first: whoever closes it decides, and a request declined or withdrawn meanwhile moves
+  // Claimed first: whoever closes it decides, and a request declined or withdrawn meanwhile moves
   // nothing. A failed assignment opens it again.
-  const closed = await closeRequest(env, me, request.id, { status: 'confirmed' });
-  if (!closed.closed) {
-    return json({ error: 'decided meanwhile', ...closed }, 409);
+  if (!await claimRequest(env, me, request.id)) {
+    return json({
+      error: 'decided meanwhile', closed: false, request: await getRequest(env, request.id),
+    }, 409);
   }
   let res;
   try {
     res = await assignment();
   } catch (e) {
-    await reopenRequest(env, request.id);
+    // The rule may be saved and the channel on its way, whatever failed after that.
+    if (await assigned(env, channel, request.team)) {
+      await recordOutcome(env, request.id, 'assigned');
+    } else {
+      await reopenRequest(env, request.id);
+    }
     throw e;
   }
   const answer = await res.json();
   if (!res.ok) {
-    await reopenRequest(env, request.id);
-    return json({ ...answer, request }, res.status);
+    return json({ ...answer, request: await reopenRequest(env, request.id) }, res.status);
   }
   return json({
     ...answer, closed: true, request: await recordOutcome(env, request.id, outcomeOf(answer)),
