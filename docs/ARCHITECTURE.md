@@ -1159,9 +1159,9 @@ until two minutes before it expires, else a refresh, and a refresh too when the 
 only the holder of a 30-second lease in D1 (`oauth_lock`) refreshes, and the others wait and
 read its result. Disconnecting and connecting again do not wait for the lease, so a refresh only
 writes over the grant it started from: one that comes back to another grant leaves it alone, and
-revokes the tokens it got. A grant the server rejects (`invalid_grant`) is dropped with the reason, which
-the editor and the agents' prompt show until someone connects again; a new URL, client or
-scope, a switch back to headers, **Disconnect** and deleting the server revoke it where the
+revokes the tokens it got. A grant the server rejects (`invalid_grant`) is dropped with the
+reason, which the editor and the agents' prompt show until someone connects again; a new URL,
+client or scope, a switch back to headers, **Disconnect** and deleting the server revoke it where the
 server has a revocation endpoint. The cron refreshes grants nobody refreshed for a week, so
 refresh tokens that expire unused (opspile's own after 30 days) stay alive. opspile's own
 `/mcp` is such a server, so agents can be given what a person sees in the inbox.

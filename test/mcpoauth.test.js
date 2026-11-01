@@ -255,6 +255,47 @@ describe('MCP servers that sign in with OAuth', () => {
     assert.equal(row(server.id).oauth_error, null);
   });
 
+  it('hands out the new grant when an old refresh is refused after someone connected again', async () => {
+    const { server } = await connected();
+    const fresh = row(server.id);
+    current.DB.sqlite.prepare(`UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z'
+      WHERE id = ?`).run(server.id);
+    const stale = row(server.id).oauth;
+    const made = await freshToken(current, server.id);
+    const good = row(server.id);
+    // The row as it was before that refresh: an old grant, with a token that is gone.
+    current.DB.sqlite.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_expires_at = '2000-01-01T00:00:00Z'
+      WHERE id = ?`).run(stale, server.id);
+    const replace = () => {
+      current.DB.sqlite.prepare('UPDATE mcp_servers SET oauth = ?, oauth_expires_at = ? WHERE id = ?')
+        .run(good.oauth, good.oauth_expires_at, server.id);
+    };
+    const got = await quiet(() => freshToken(current, server.id, { fetch: during(replace) }));
+    assert.equal(got.token, made.token);
+    assert.equal(row(server.id).oauth_error, null);
+    assert.ok(fresh.oauth_by);
+  });
+
+  it('does not revoke what a takeover of its lease stored for the same grant', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const revoked = [];
+    const fetching = during(() => {
+      // Same grant (same oauth_at), written by whoever took over.
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = oauth || '.' WHERE id = ?").run(server.id);
+    });
+    await assert.rejects(freshToken(current, server.id, {
+      fetch: async (input, init) => {
+        if (new URL(String(input.url || input)).pathname.endsWith('/revoke')) {
+          revoked.push('revoke');
+        }
+        return fetching(input, init);
+      },
+    }));
+    assert.deepEqual(revoked, []);
+  });
+
   it('gives back only its own lease', async () => {
     const { server } = await connected();
     current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")

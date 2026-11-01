@@ -291,14 +291,17 @@ export function grantState(row) {
 }
 
 async function load(env, id) {
-  const row = await env.DB.prepare(`SELECT oauth, oauth_expires_at, oauth_error FROM mcp_servers
-    WHERE id = ? AND auth = 'oauth'`).bind(id).first();
+  const row = await env.DB.prepare(`SELECT oauth, oauth_at, oauth_expires_at, oauth_error
+    FROM mcp_servers WHERE id = ? AND auth = 'oauth'`).bind(id).first();
   const o = row && row.oauth ? await openOauth(env, row.oauth) : null;
   if (!o || !o.tokens) {
     throw new NotConnectedError((row && row.oauth_error) || NOT_CONNECTED);
   }
   return {
-    o, sealed: row.oauth, expiresAt: row.oauth_expires_at ? Date.parse(row.oauth_expires_at) : null,
+    o,
+    sealed: row.oauth,
+    at: row.oauth_at,
+    expiresAt: row.oauth_expires_at ? Date.parse(row.oauth_expires_at) : null,
   };
 }
 
@@ -335,16 +338,19 @@ async function revoke(o, fetchFn) {
 }
 
 /**
- * Drops the tokens of grant `cur`, which the server no longer accepts, and says why. Only that
- * grant: someone may have connected again meanwhile.
+ * Drops the tokens of grant `cur`, which the server no longer accepts, and throws why. Only that
+ * grant: when someone connected again meanwhile, this is null, as for a refresh that lost.
  */
 async function drop(env, id, cur, why) {
-  await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_error = ?, oauth_expires_at = NULL,
-      updated_at = ? WHERE id = ? AND oauth = ?`)
+  const { meta } = await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_error = ?,
+      oauth_expires_at = NULL, updated_at = ? WHERE id = ? AND oauth = ?`)
     .bind(await sealOauth(env, { ...cur.o, tokens: null }), why, iso(Date.now()), id, cur.sealed)
     .run();
+  if (!meta.changes) {
+    return null;
+  }
   console.log(JSON.stringify({ route: 'agent', mcp: 'oauth dropped', id }));
-  return new NotConnectedError(why);
+  throw new NotConnectedError(why);
 }
 
 /**
@@ -356,7 +362,7 @@ async function drop(env, id, cur, why) {
 async function refresh(env, id, cur, fetchFn) {
   const { o } = cur;
   if (!o.tokens.refresh_token) {
-    throw await drop(env, id, cur, 'the sign-in expired, and the server gave no refresh token: connect it again');
+    return drop(env, id, cur, 'the sign-in expired, and the server gave no refresh token: connect it again');
   }
   let tokens;
   try {
@@ -369,7 +375,7 @@ async function refresh(env, id, cur, fetchFn) {
     });
   } catch (e) {
     if (GONE.has(e.code)) {
-      throw await drop(env, id, cur, `the server no longer accepts the sign-in (${e.code}): connect it again`);
+      return drop(env, id, cur, `the server no longer accepts the sign-in (${e.code}): connect it again`);
     }
     throw e;
   }
@@ -380,7 +386,12 @@ async function refresh(env, id, cur, fetchFn) {
       oauth_refreshed_at = ?, oauth_error = NULL WHERE id = ? AND oauth = ?`)
     .bind(await sealOauth(env, next), expiresAt, iso(now), id, cur.sealed).run();
   if (!meta.changes) {
-    await revoke(next, fetchFn);
+    // Unless it is the same grant, refreshed by whoever took over a lease that ran out: a server
+    // that hands out the same refresh token twice would lose the one now stored.
+    const row = await env.DB.prepare('SELECT oauth_at FROM mcp_servers WHERE id = ?').bind(id).first();
+    if (!row || row.oauth_at !== cur.at) {
+      await revoke(next, fetchFn);
+    }
     return null;
   }
   return { token: next.tokens.access_token, expiresAt: expiresAt ? Date.parse(expiresAt) : null };
