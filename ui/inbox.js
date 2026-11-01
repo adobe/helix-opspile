@@ -4120,7 +4120,8 @@ function syncSockets() {
  */
 function caughtUp() {
   for (const k of state.cache.keys()) if (k !== state.open) state.cache.delete(k);
-  if (state.open) { state.experts.delete(state.open); loadExperts(state.open); }
+  // Once, when several rooms come back together.
+  if (state.open && state.experts.delete(state.open)) loadExperts(state.open);
   reloadSoon(state.open || GAP);
 }
 function listen(team, live, { again = false } = {}) {
