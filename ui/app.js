@@ -89,6 +89,8 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
       }
       if (!done) return;
       clearInterval(watch);
+      // Signed in already, from another tab: the page was told.
+      if (!bar) return;
       if (await signedIn()) back();
       else {
         opened.close();
