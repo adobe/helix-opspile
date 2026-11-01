@@ -1711,7 +1711,9 @@ async function loadAgent(key, { latest = null } = {}) {
     const entry = known || { turn: null, latest };
     entry.failed = (entry.failed || 0) + 1;
     state.agents.set(key, entry);
-    if (entry.turn?.state !== 'working' && !latest) return;
+    // Working, or a message it may not have picked up yet: as when the request answers.
+    const last = latest || entry.latest;
+    if (entry.turn?.state !== 'working' && !(last && Date.now() - Date.parse(last) < AGENT_WAIT_MS)) return;
     if (entry.failed < AGENT_FAILS) askAgain(entry);
     else if (entry.turn?.state === 'working') { entry.turn = null; placeAgent(key); }
     return;
