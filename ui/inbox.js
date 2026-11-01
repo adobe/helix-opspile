@@ -1627,6 +1627,7 @@ function message(m, prev, fresh, followed = false) {
 const AGENT_NAME = 'Thread Agent';
 const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
+const AGENT_FAILS = 5;
 
 /** The open thread's row (its channel, its team), from the thread as it was fetched. */
 const threadRow = (key) => state.cache.get(key)?.data?.thread || null;
@@ -1693,10 +1694,28 @@ async function loadAgent(key, { latest = null } = {}) {
     placeAgent(key);
     return;
   }
+  // Not while the tab is in the background: asked again once it is shown (visibilitychange).
+  const askAgain = (entry) => {
+    entry.timer = setTimeout(() => {
+      if (state.open !== key) return;
+      if (hidden()) entry.due = true;
+      else loadAgent(key);
+    }, AGENT_POLL_MS);
+  };
   let res;
   try {
     res = await get(`/api/agent?thread=${encodeURIComponent(key)}`);
   } catch {
+    // A blip: the turn on screen may be over by now, so it is not left at that. After a few, the
+    // spinner goes, since it no longer says anything.
+    const entry = known || { turn: null, latest };
+    entry.failed = (entry.failed || 0) + 1;
+    state.agents.set(key, entry);
+    // Working, or a message it may not have picked up yet: as when the request answers.
+    const last = latest || entry.latest;
+    if (entry.turn?.state !== 'working' && !(last && Date.now() - Date.parse(last) < AGENT_WAIT_MS)) return;
+    if (entry.failed < AGENT_FAILS) askAgain(entry);
+    else if (entry.turn?.state === 'working') { entry.turn = null; placeAgent(key); }
     return;
   }
   const turn = res.enabled ? res.turn || null : null;
@@ -1707,14 +1726,7 @@ async function loadAgent(key, { latest = null } = {}) {
   // Working, or a message newer than its turn that it has not picked up yet (it waits a few
   // seconds for more): ask again, while the thread stays open.
   const waiting = res.enabled && last && (!turn || turn.startedAt < last) && Date.now() - Date.parse(last) < AGENT_WAIT_MS;
-  if (turn?.state === 'working' || waiting) {
-    // Not while the tab is in the background: asked again once it is shown (visibilitychange).
-    entry.timer = setTimeout(() => {
-      if (state.open !== key) return;
-      if (hidden()) entry.due = true;
-      else loadAgent(key);
-    }, AGENT_POLL_MS);
-  }
+  if (turn?.state === 'working' || waiting) askAgain(entry);
 }
 
 // ---------------------------------------------------------------- expert finder
