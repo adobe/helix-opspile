@@ -25,7 +25,8 @@ import {
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons, orgDomain } from './favicons.js';
 import {
-  closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, settleRequests,
+  closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, recordOutcome,
+  reopenRequest, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
@@ -279,6 +280,11 @@ async function applyRules(env, me, { next, dryRun, write }) {
   const saved = await write();
   const jobs = await enqueueMoves(env, moves);
   for (const m of moves) {
+    // In the team's inbox now: nothing left to ask for.
+    // eslint-disable-next-line no-await-in-loop
+    await settleRequests(env, me, {
+      channelId: m.channel.channelId, team: m.to.team, outcome: 'moved',
+    });
     // A channel filed under a new org or team gets their knowledge bases on its next move;
     // make sure a new org has one right away.
     if (m.to.org !== UNASSIGNED) {
@@ -527,7 +533,7 @@ async function confirmRequest(env, me, body) {
     return error;
   }
   const { channel } = request;
-  const res = await assign(env, me, {
+  const assignment = () => assign(env, me, {
     target: 'team',
     source: channel.source,
     channelId: channel.channelId,
@@ -535,14 +541,31 @@ async function confirmRequest(env, me, body) {
     move: body.move,
     dryRun: body.dryRun,
   }, false, { settle: false });
+  if (body.dryRun) {
+    const res = await assignment();
+    return json({ ...await res.json(), request }, res.status);
+  }
+  // Closed first: whoever closes it decides, and a request declined or withdrawn meanwhile moves
+  // nothing. A failed assignment opens it again.
+  const closed = await closeRequest(env, me, request.id, { status: 'confirmed' });
+  if (!closed.closed) {
+    return json({ error: 'decided meanwhile', ...closed }, 409);
+  }
+  let res;
+  try {
+    res = await assignment();
+  } catch (e) {
+    await reopenRequest(env, request.id);
+    throw e;
+  }
   const answer = await res.json();
-  if (!res.ok || body.dryRun) {
+  if (!res.ok) {
+    await reopenRequest(env, request.id);
     return json({ ...answer, request }, res.status);
   }
-  const closed = await closeRequest(env, me, request.id, {
-    status: 'confirmed', outcome: outcomeOf(answer),
+  return json({
+    ...answer, closed: true, request: await recordOutcome(env, request.id, outcomeOf(answer)),
   });
-  return json({ ...answer, ...closed });
 }
 
 /** POST /api/admin/requests/decline `{ id, reason? }`: the admin team turns a request down. */
