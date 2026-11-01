@@ -52,11 +52,16 @@ const texts = (m) => (Array.isArray(m.content) ? m.content : [])
 
 const calls = (m) => (Array.isArray(m.content) ? m.content : []).filter((c) => c.type === 'toolCall');
 
+// Longer than a model request and its retries take.
+const STUCK_MS = 15 * 60 * 1000;
+
 /**
  * `{ state: 'working' | 'done' | 'failed', text, startedAt, endedAt }` for the latest turn of
- * `entries` (the transcript), or null before the first. `busy`: a run is pending.
+ * `entries` (the transcript), or null before the first. `busy`: a run is pending. A turn that
+ * stopped half way with no run pending counts as working for a while, as the run may be between
+ * two steps, and then as failed: otherwise the inbox would ask about it for as long as it is open.
  */
-export function latestTurn(entries, { busy = false } = {}) {
+export function latestTurn(entries, { busy = false, now = Date.now() } = {}) {
   const list = entries || [];
   const start = list.map((e) => e.kind).lastIndexOf('pi.user');
   if (start < 0) {
@@ -69,6 +74,16 @@ export function latestTurn(entries, { busy = false } = {}) {
   const last = assistant[assistant.length - 1];
   const turn = { startedAt: at(input), endedAt: null };
   if (busy || !last || last.stopReason === 'toolUse') {
+    // No run is pending, and the transcript stopped in the middle of the turn long ago: it died.
+    const since = (last && last.timestamp) || (input && input.timestamp);
+    if (!busy && since && now - new Date(since).getTime() > STUCK_MS) {
+      return {
+        ...turn,
+        state: 'failed',
+        endedAt: at(last || input),
+        text: 'The turn did not finish.',
+      };
+    }
     const call = last && calls(last).pop();
     return {
       ...turn,
