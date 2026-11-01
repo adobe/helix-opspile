@@ -4120,6 +4120,7 @@ function syncSockets() {
  */
 function caughtUp() {
   for (const k of state.cache.keys()) if (k !== state.open) state.cache.delete(k);
+  if (state.open) { state.experts.delete(state.open); loadExperts(state.open); }
   reloadSoon(state.open || GAP);
 }
 function listen(team, live, { again = false } = {}) {
@@ -4128,7 +4129,8 @@ function listen(team, live, { again = false } = {}) {
   state.sockets.push(ws);
   // Reconnecting is only shown when it takes a while (not for a view switch or a blip).
   ws.onopen = () => {
-    if (again) caughtUp();
+    // A room only the notifications listen to says nothing about the inbox on screen.
+    if (again && screenTeams().includes(team)) caughtUp();
     if (state.sockets.some((x) => x.readyState !== 1)) return;
     clearTimeout(state.offline); state.offline = null; $('offline').hidden = true;
   };

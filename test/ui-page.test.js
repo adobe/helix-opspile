@@ -317,8 +317,14 @@ describe('inbox page', () => {
     }
     const reloads = [];
     const state = {
-      sockets: [], live: 1, open: 'b', cache: new Map([['a', 1], ['b', 2]]), offline: 1,
+      sockets: [],
+      live: 1,
+      open: 'b',
+      cache: new Map([['a', 1], ['b', 2]]),
+      offline: 1,
+      experts: new Map([['b', []]]),
     };
+    const experts = [];
     const { listen } = piece('/**\n * A socket is back', '// ---------------------------------------------------------------- notifications', 'listen', {
       WebSocket: FakeSocket,
       location: { protocol: 'https:', host: 'x' },
@@ -329,9 +335,17 @@ describe('inbox page', () => {
       setTimeout: (f) => f(),
       clearTimeout: () => {},
       noteEvent: () => {},
-      screenTeams: () => [],
+      screenTeams: () => ['helix'],
+      loadExperts: (k) => experts.push(k),
       fetch: async () => {},
     });
+    listen('notifications', 1);
+    sockets[0].onclose();
+    sockets[1].onopen();
+    assert.deepEqual(reloads, [], 'a room that is not on screen changes nothing there');
+    sockets.length = 0;
+    state.sockets.length = 0;
+
     listen('helix', 1);
     sockets[0].onopen();
     assert.deepEqual(reloads, []);
@@ -342,6 +356,8 @@ describe('inbox page', () => {
     sockets[1].onopen();
     assert.deepEqual(reloads, ['b']);
     assert.deepEqual([...state.cache.keys()], ['b']);
+    assert.deepEqual(experts, ['b']);
+    assert.equal(state.experts.has('b'), false);
 
     // With no thread open, a tab in the background still has something to catch up on.
     state.open = null;
