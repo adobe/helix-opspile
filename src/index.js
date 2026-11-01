@@ -38,7 +38,7 @@ import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
-import { oauth } from './oauth.js';
+import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import { inboxPage, page } from './page.js';
 import { slackEvents } from './slack.js';
@@ -251,6 +251,9 @@ export default {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    ctx.waitUntil(pruneOauth(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));

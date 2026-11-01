@@ -14,6 +14,7 @@ import { accountName, PLATFORMS } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
+import { isResolved } from './resolve.js';
 import { MAX_SOURCES } from './sources.js';
 import {
   connections, mentionable, post, reactable, writtenMentions,
@@ -57,12 +58,7 @@ const urgencyOf = (t) => (t.label && t.label.urgency != null
   ? URGENCY[Math.max(0, Math.min(3, Math.round(t.label.urgency)))] : 'low');
 const kindOf = (t) => (t.kind === 'alert' ? 'alert'
   : (t.label && KINDS.includes(t.label.label_kind) && t.label.label_kind) || 'other');
-const resolvedOf = (t) => {
-  if (t.resolution && t.resolution.verdict) {
-    return t.resolution.verdict === 'resolved';
-  }
-  return Boolean(t.label && t.label.resolved_p != null && t.label.resolved_p >= 0.5);
-};
+const resolvedOf = (t) => isResolved(t.resolution && t.resolution.verdict, t.label);
 const latest = (t) => String(t.last_at || t.any_at || '');
 const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
 /** A shared draft as the tools show it; `version` is what post_draft's `base` names. */

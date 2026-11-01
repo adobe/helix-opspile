@@ -16,7 +16,7 @@ import { describe, it } from 'node:test';
 import { personById } from '../src/api.js';
 import { mcp, PROTOCOL } from '../src/mcp.js';
 import {
-  bearerPerson, oauth, redirectAllowed, redirectMatches,
+  bearerPerson, oauth, pruneOauth, redirectAllowed, redirectMatches,
 } from '../src/oauth.js';
 import { d1 } from './d1.js';
 
@@ -74,6 +74,23 @@ async function approve(e, client, uri = 'https://agent.example/callback') {
 }
 
 describe('oauth for mcp clients', () => {
+  it('forgets codes and tokens that ran out, and only those', async () => {
+    const e = env();
+    const client = await registered(e);
+    const at = (ms) => new Date(NOW + ms).toISOString();
+    const token = e.DB.sqlite.prepare(`INSERT INTO oauth_tokens (hash, kind, client, person,
+      expires_at, created_at) VALUES (?, 'access', ?, 1, ?, ?)`);
+    token.run('gone', client, at(-1000), at(-2000));
+    token.run('good', client, at(1000), at(-2000));
+    const code = e.DB.sqlite.prepare(`INSERT INTO oauth_codes (hash, client, person, redirect_uri,
+      challenge, expires_at) VALUES (?, ?, 1, 'https://agent.example/callback', 'c', ?)`);
+    code.run('gone', client, at(-1000));
+    code.run('good', client, at(1000));
+    assert.deepEqual(await pruneOauth(e, new Date(NOW)), { codes: 1, tokens: 1 });
+    assert.deepEqual(e.DB.rows('SELECT hash FROM oauth_tokens').map((r) => r.hash), ['good']);
+    assert.deepEqual(e.DB.rows('SELECT hash FROM oauth_codes').map((r) => r.hash), ['good']);
+  });
+
   it('lets any https or local redirect URI register, nothing else', () => {
     assert.ok(redirectAllowed('https://anything.example/cb'));
     assert.ok(redirectAllowed('http://localhost:3000/cb'));
