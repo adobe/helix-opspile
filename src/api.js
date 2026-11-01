@@ -961,7 +961,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/mentionable') {
     return mentionable(env, url.searchParams.get('thread'), url.searchParams.get('q'), working, {
-      waitUntil, me, channel: url.searchParams.get('channel'),
+      waitUntil, me, channel: url.searchParams.get('channel'), pool: url.searchParams.has('pool'),
     });
   }
   if (url.pathname === '/api/channels') {
@@ -971,7 +971,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return experts(env, url.searchParams.get('thread'), seeing, { me, waitUntil });
   }
   if (url.pathname === '/api/emoji') {
-    return json({ emoji: await rankEmoji(env, url.searchParams.get('q')) });
+    const emoji = await rankEmoji(env, url.searchParams.get('q'), undefined, { waitUntil });
+    const res = json({ emoji });
+    // The same for everyone, for a while: the browser keeps a ranking (none: Clef failed).
+    if (emoji.length) {
+      res.headers.set('cache-control', 'private, max-age=86400');
+    }
+    return res;
   }
   if (url.pathname === '/api/emoji/custom') {
     const own = await workspaceEmoji(env);

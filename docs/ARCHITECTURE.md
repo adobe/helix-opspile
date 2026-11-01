@@ -771,7 +771,8 @@ emoji (`matchEmoji`, `src/emojinames.js`), in a Slack thread the workspace's cus
 When that leaves room, Clef fills the list
 (`GET /api/emoji`): it ranks the candidates above by how likely each is what is being
 typed, with no threshold, and the list takes them in that order, skipping the emoji it
-already has, until it is full. Picking one writes `:name: `.
+already has, until it is full. Picking one writes `:name: `. A ranking is the same for everyone:
+the Worker keeps it in the data center's cache for a day, and the browser keeps it too.
 
 **Files.** A reply can carry files (`src/attach.js`): the 📎 button beside the reply box,
 files dropped anywhere on the open thread (which shows where they go, or why they cannot), or
@@ -859,6 +860,15 @@ from Graph, where the app may list them) and whoever posted in the channel (on T
 channel of the team). Opening the suggestions lists a channel's members when that is a week
 old, and looks up the members opspile has never seen (`users.info`), so a colleague who is in
 the channel but never posted anywhere opspile reads can be mentioned too.
+
+The suggestions that open with the `@` bring along everything they are picked from (`pool` of
+`GET /api/mentionable`: the accounts of the workspace, each marked as in the thread, in the
+channel or by its affinity, and the bots), and the page ranks what is typed after it itself,
+with the Worker's own `suggestMentions` (in the markdown bundle), so completing a name asks the
+Worker nothing. Until the pool is there, each typed letter asks the Worker, as before. The page
+keeps a thread's pool for the page's life, and asks for it again in the background once it is
+two minutes old. The Worker reads the thread's place first, then whether the viewer may see
+it and all the suggestions need at once: one round trip to D1 after the place, not up to four.
 
 **Expert finder.** The bottom right of a thread's header names the colleague most worth pulling
 in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in about 4 hours"
@@ -1272,6 +1282,22 @@ customer messages; nothing stops an agent from sending what it read, so the prom
 send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
+
+`/workspace/uploads` is read-only and holds the files attached to the thread's messages
+(`src/threadfiles.js`). Every file is copied to the `FILES` bucket, under
+`<thread>/<sha256 of the file's id>`, by a queue job when its message arrives, or at the latest
+before the agent is told about it. It is kept for 30 days: the bucket's lifecycle rule deletes
+it, and a file whose message is older is neither copied nor shown. The mount is filled by
+`uploadsMount` into the object's SQLite, so each change of the list takes a new Workspace, and a
+schedule (`expireUploads`) empties it when the oldest file expires, even if the agent sleeps.
+Files of withheld messages stay out of it, as they do of `read_file`, but a file itself is not
+checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
+says not to quote them, and code does not stop the shell from reading or sending them.
+
+The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
+`jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and
+`INDEX.txt` says which. A HAR also gets `<name>.requests.ndjson` (`src/har.js`): one line per
+request, no bodies or cookies, credentials hidden, read as a stream, whatever the HAR's size.
 
 **`extraction_rules`.** The agent reads, tests and changes its team's extraction rules and tech
 stack (`list_extraction_rules`, `test_extraction_rule`, `save_extraction_rule`,
