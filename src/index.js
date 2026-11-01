@@ -29,6 +29,9 @@ import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
+import { listDead, pruneDead, redrive } from './deadjobs.js';
+import { sweepLabels } from './label.js';
+import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
 import { json, text } from './http.js';
@@ -118,6 +121,18 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (pathname === '/diag/dead') {
+      // The queue jobs that used up their retries: GET lists them; POST `{ ids? }` sends them
+      // out again, those of `ids` or the oldest.
+      if (!authorizedDiag(request, env)) {
+        return text('forbidden\n', 403);
+      }
+      if (request.method === 'POST') {
+        const { ids = null } = await request.json().catch(() => ({}));
+        return json(await redrive(env, { ids }));
+      }
+      return json(await listDead(env));
     }
     if (pathname === '/diag/discord') {
       // The Discord poller: GET says how the last poll went; POST polls now (and reads the
@@ -257,6 +272,15 @@ export default {
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    ctx.waitUntil(sweepRethreads(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', rethreads: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', rethreads: 'error', error: e.message }))));
+    ctx.waitUntil(sweepLabels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', labels: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', labels: 'error', error: e.message }))));
+    ctx.waitUntil(pruneDead(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', deadJobs: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', deadJobs: 'error', error: e.message }))));
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));

@@ -11,6 +11,7 @@
  */
 
 import { platformName } from './platforms.js';
+import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
   extract, rulesFor, techFor, techNames,
@@ -449,6 +450,10 @@ async function labelAlert(env, thread, now) {
   return { result: 'titled', title: Boolean(title) };
 }
 
+const LABEL_SWEEP_AFTER_MS = 60 * 60 * 1000;
+const LABEL_SWEEP_DAYS = 14;
+const LABEL_SWEEP_LIMIT = 50;
+
 /**
  * Labels one thread. Skips threads that have not changed since they were last labeled,
  * and alert threads (their kind is known and nobody is waiting).
@@ -537,4 +542,36 @@ export async function labelThread(env, key, now = new Date()) {
     facts: loose.length,
     title: Boolean(title),
   };
+}
+
+/**
+ * Cron: the threads a person posted in since their label, and quiet for longer than a label job
+ * and its retries take: the job died. Recent ones only: nobody looks at the older ones' labels.
+ * A thread whose job died within the day waits, so that one that always fails goes out once a day.
+ */
+export async function sweepLabels(env, now = new Date()) {
+  if (!env.AI || !env.NORMALIZE) {
+    return { skipped: 'no AI binding' };
+  }
+  if (!sweepsNow(now)) {
+    return { skipped: 'not this run' };
+  }
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    LEFT JOIN labels l ON l.thread = t.thread
+    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ?
+      AND (l.thread IS NULL OR l.labeled_through < t.last_at)
+      AND EXISTS (SELECT 1 FROM messages m WHERE m.thread = t.thread AND m.deleted = 0)
+      AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'label:' || t.thread AND d.at > ?)
+    ORDER BY t.last_at DESC LIMIT ?`)
+    .bind(
+      new Date(now.getTime() - LABEL_SWEEP_DAYS * 86400 * 1000).toISOString(),
+      new Date(now.getTime() - LABEL_SWEEP_AFTER_MS).toISOString(),
+      new Date(now.getTime() - 86400 * 1000).toISOString(),
+      LABEL_SWEEP_LIMIT,
+    ).all();
+  for (const [i, { thread }] of (results || []).entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ label: thread }, sweepDelay(i));
+  }
+  return { queued: (results || []).length };
 }

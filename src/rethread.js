@@ -11,6 +11,7 @@
  */
 
 import { parse, render } from './channels.js';
+import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { CLEF } from './label.js';
 import { QUOTE_HEAD, quotesAsText } from './markdown.js';
 import { notifyRoom } from './notify.js';
@@ -305,6 +306,10 @@ export async function askClefConversation(env, text, at, convs) {
   return best && best.p >= MIN_CLEF_CONVERSATION ? best : { p: best ? best.p : 0 };
 }
 
+// Longer than a job's retries take.
+const SWEEP_AFTER_MS = 60 * 60 * 1000;
+const SWEEP_LIMIT = 100;
+
 /**
  * Re-threads one thread by its root. Idempotent: a thread that was decided once is not
  * decided again (pass `force` to redo it).
@@ -538,4 +543,37 @@ export async function rethread(env, key, { force = false } = {}) {
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
   };
+}
+
+/**
+ * Cron: the roots whose job died (their hash is written before the work that can fail, and
+ * `rethreaded_at` after it) go out again, within the window re-threading looks back. A root that
+ * was skipped on purpose (a system notice, an empty one) has no hash.
+ */
+export async function sweepRethreads(env, now = new Date()) {
+  if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
+    return { skipped: 'no VECTORS index' };
+  }
+  if (!sweepsNow(now)) {
+    return { skipped: 'not this run' };
+  }
+  // Not a root that is deleted or a notice by now, which the job skips, and not one that died
+  // within the day: a root that always fails goes out once a day, not with every cron run.
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    WHERE t.skeleton_hash IS NOT NULL AND t.rethreaded_at IS NULL AND t.root_at >= ? AND t.root_at < ?
+      AND m.deleted = 0 AND COALESCE(m.author_kind, '') != 'system'
+      AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'rethread:' || t.thread AND d.at > ?)
+    ORDER BY t.root_at LIMIT ?`)
+    .bind(
+      new Date(now.getTime() - WINDOW_DAYS * 86400 * 1000).toISOString(),
+      new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(),
+      new Date(now.getTime() - 86400 * 1000).toISOString(),
+      SWEEP_LIMIT,
+    ).all();
+  for (const [i, { thread }] of (results || []).entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ rethread: thread }, sweepDelay(i));
+  }
+  return { queued: (results || []).length };
 }

@@ -12,6 +12,7 @@
 
 import { agentEnabled } from './agent/enabled.js';
 import { AGENT_DELAY_SECONDS, pokeAgent } from './agent/stub.js';
+import { recordDead } from './deadjobs.js';
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
@@ -567,6 +568,11 @@ export async function consume(batch, env) {
         await env.NORMALIZE.send({ agent: body.rethread }).catch(() => {});
       }
       msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
+
+      if (msg.attempts >= LAST_ATTEMPT) {
+        // eslint-disable-next-line no-await-in-loop
+        await recordDead(env, key, body, e.message);
+      }
     }
   }
 }
