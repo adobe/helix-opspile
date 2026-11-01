@@ -272,14 +272,37 @@ export async function finishSignIn(env, row, person, params, options = {}) {
     ).run();
 }
 
+/**
+ * What the `oauth_*` columns of an `mcp_servers` row come to:
+ *
+ *   none → signing in → connected → rejected → signing in → connected
+ *
+ * `connected` includes a refresh under way (`oauth_lock`), which agents wait out. Disconnecting,
+ * and a change of URL or client, go back to `none`, and may leave a sign-in under way behind.
+ */
+export function grantState(row) {
+  if (row.oauth_error) {
+    return 'rejected';
+  }
+  if (row.oauth_by) {
+    return 'connected';
+  }
+  return row.oauth_state ? 'signing in' : 'none';
+}
+
 async function load(env, id) {
-  const row = await env.DB.prepare(`SELECT oauth, oauth_expires_at, oauth_error FROM mcp_servers
-    WHERE id = ? AND auth = 'oauth'`).bind(id).first();
+  const row = await env.DB.prepare(`SELECT oauth, oauth_at, oauth_expires_at, oauth_error
+    FROM mcp_servers WHERE id = ? AND auth = 'oauth'`).bind(id).first();
   const o = row && row.oauth ? await openOauth(env, row.oauth) : null;
   if (!o || !o.tokens) {
     throw new NotConnectedError((row && row.oauth_error) || NOT_CONNECTED);
   }
-  return { o, expiresAt: row.oauth_expires_at ? Date.parse(row.oauth_expires_at) : null };
+  return {
+    o,
+    sealed: row.oauth,
+    at: row.oauth_at,
+    expiresAt: row.oauth_expires_at ? Date.parse(row.oauth_expires_at) : null,
+  };
 }
 
 const usable = (cur, rejected, now) => cur.o.tokens.access_token !== rejected
@@ -287,19 +310,59 @@ const usable = (cur, rejected, now) => cur.o.tokens.access_token !== rejected
 
 const answer = (cur) => ({ token: cur.o.tokens.access_token, expiresAt: cur.expiresAt });
 
-/** Drops the tokens of a grant the server no longer accepts, and says why. */
-async function drop(env, id, o, why) {
-  await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_error = ?, oauth_expires_at = NULL,
-      updated_at = ? WHERE id = ?`)
-    .bind(await sealOauth(env, { ...o, tokens: null }), why, iso(Date.now()), id).run();
-  console.log(JSON.stringify({ route: 'agent', mcp: 'oauth dropped', id }));
-  return new NotConnectedError(why);
+/**
+ * Revokes the grant at the authorization server (RFC 7009), if it has a revocation endpoint:
+ * the refresh token, and the access token for servers that do not revoke both at once. Quietly.
+ */
+async function revoke(o, fetchFn) {
+  const endpoint = o.server && o.server.metadata && o.server.metadata.revocation_endpoint;
+  if (!endpoint || !o.tokens || !o.client) {
+    return;
+  }
+  const hints = [['refresh_token', o.tokens.refresh_token], ['access_token', o.tokens.access_token]];
+  for (const [hint, token] of hints.filter(([, t]) => t)) {
+    const body = new URLSearchParams({
+      token,
+      token_type_hint: hint,
+      client_id: o.client.client_id,
+      ...(o.client.client_secret ? { client_secret: o.client.client_secret } : {}),
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await fetchFn(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+    }).then((r) => r.body?.cancel()).catch(() => {});
+  }
 }
 
+/**
+ * Drops the tokens of grant `cur`, which the server no longer accepts, and throws why. Only that
+ * grant: when someone connected again meanwhile, this is null, as for a refresh that lost.
+ */
+async function drop(env, id, cur, why) {
+  const { meta } = await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_error = ?,
+      oauth_expires_at = NULL, updated_at = ? WHERE id = ? AND oauth = ?`)
+    .bind(await sealOauth(env, { ...cur.o, tokens: null }), why, iso(Date.now()), id, cur.sealed)
+    .run();
+  if (!meta.changes) {
+    return null;
+  }
+  console.log(JSON.stringify({ route: 'agent', mcp: 'oauth dropped', id }));
+  throw new NotConnectedError(why);
+}
+
+/**
+ * Refreshes grant `cur`: the new token, or null when the grant changed meanwhile (a disconnect,
+ * or someone connecting again). Those writes do not wait for the lease, and a refresh that comes
+ * back after them must not bring the old grant back: the row stays as it is, and the tokens just
+ * issued are revoked, so nothing outlives the grant.
+ */
 async function refresh(env, id, cur, fetchFn) {
   const { o } = cur;
   if (!o.tokens.refresh_token) {
-    throw await drop(env, id, o, 'the sign-in expired, and the server gave no refresh token: connect it again');
+    return drop(env, id, cur, 'the sign-in expired, and the server gave no refresh token: connect it again');
   }
   let tokens;
   try {
@@ -312,33 +375,45 @@ async function refresh(env, id, cur, fetchFn) {
     });
   } catch (e) {
     if (GONE.has(e.code)) {
-      throw await drop(env, id, o, `the server no longer accepts the sign-in (${e.code}): connect it again`);
+      return drop(env, id, cur, `the server no longer accepts the sign-in (${e.code}): connect it again`);
     }
     throw e;
   }
   const now = Date.now();
   const next = { ...o, tokens: kept(tokens) };
   const expiresAt = expiry(tokens, now);
-  await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_expires_at = ?,
-      oauth_refreshed_at = ?, oauth_error = NULL WHERE id = ?`)
-    .bind(await sealOauth(env, next), expiresAt, iso(now), id).run();
+  const { meta } = await env.DB.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_expires_at = ?,
+      oauth_refreshed_at = ?, oauth_error = NULL WHERE id = ? AND oauth = ?`)
+    .bind(await sealOauth(env, next), expiresAt, iso(now), id, cur.sealed).run();
+  if (!meta.changes) {
+    // Unless it is the same grant, refreshed by whoever took over a lease that ran out: a server
+    // that hands out the same refresh token twice would lose the one now stored.
+    const row = await env.DB.prepare('SELECT oauth_at FROM mcp_servers WHERE id = ?').bind(id).first();
+    if (!row || row.oauth_at !== cur.at) {
+      await revoke(next, fetchFn);
+    }
+    return null;
+  }
   return { token: next.tokens.access_token, expiresAt: expiresAt ? Date.parse(expiresAt) : null };
 }
 
-/** Takes the refresh lease of server `id`; false while someone else holds it. */
+/** Takes the refresh lease of server `id`: its time, or null while someone else holds it. */
 async function lease(env, id) {
   const now = Date.now();
+  const until = iso(now + LOCK_MS);
   const res = await env.DB.prepare(`UPDATE mcp_servers SET oauth_lock = ?
-    WHERE id = ? AND (oauth_lock IS NULL OR oauth_lock < ?)`).bind(iso(now + LOCK_MS), id, iso(now)).run();
-  return Boolean(res.meta && res.meta.changes);
+    WHERE id = ? AND (oauth_lock IS NULL OR oauth_lock < ?)`).bind(until, id, iso(now)).run();
+  return res.meta && res.meta.changes ? until : null;
 }
 
-const release = (env, id) => env.DB.prepare('UPDATE mcp_servers SET oauth_lock = NULL WHERE id = ?')
-  .bind(id).run().catch(() => {});
+/** Gives lease `until` back, unless it ran out and someone else holds the lock now. */
+const release = (env, id, until) => env.DB.prepare(`UPDATE mcp_servers SET oauth_lock = NULL
+  WHERE id = ? AND oauth_lock = ?`).bind(id, until).run().catch(() => {});
 
 /** Refreshes under the lease, if this caller gets it: the token, or null for the others. */
 async function underLease(env, id, rejected, fetchFn) {
-  if (!await lease(env, id)) {
+  const until = await lease(env, id);
+  if (!until) {
     return null;
   }
   try {
@@ -347,7 +422,7 @@ async function underLease(env, id, rejected, fetchFn) {
     return usable(again, rejected, Date.now()) ? answer(again)
       : await refresh(env, id, again, fetchFn);
   } finally {
-    await release(env, id);
+    await release(env, id, until);
   }
 }
 
@@ -395,33 +470,6 @@ export function oauthAuthProvider(env, id, options = {}) {
       current = await freshToken(env, id, { ...options, rejected: current && current.token });
     },
   };
-}
-
-/**
- * Revokes the grant at the authorization server (RFC 7009), if it has a revocation endpoint:
- * the refresh token, and the access token for servers that do not revoke both at once. Quietly.
- */
-async function revoke(o, fetchFn) {
-  const endpoint = o.server && o.server.metadata && o.server.metadata.revocation_endpoint;
-  if (!endpoint || !o.tokens || !o.client) {
-    return;
-  }
-  const hints = [['refresh_token', o.tokens.refresh_token], ['access_token', o.tokens.access_token]];
-  for (const [hint, token] of hints.filter(([, t]) => t)) {
-    const body = new URLSearchParams({
-      token,
-      token_type_hint: hint,
-      client_id: o.client.client_id,
-      ...(o.client.client_secret ? { client_secret: o.client.client_secret } : {}),
-    });
-    // eslint-disable-next-line no-await-in-loop
-    await fetchFn(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body,
-      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
-    }).then((r) => r.body?.cancel()).catch(() => {});
-  }
 }
 
 /** Revokes the grant of server `row` where the server can; quietly. */
