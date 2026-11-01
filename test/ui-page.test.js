@@ -398,6 +398,31 @@ describe('inbox page', () => {
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
   });
 
+  it('looks at the list again as time passes, while it is on screen', () => {
+    let tick = null;
+    let every = 0;
+    let renders = 0;
+    let away = false;
+    piece('// A thread\'s status depends on the time too', 'document.addEventListener(\'visibilitychange\'', 'state', {
+      setInterval: (f, ms) => {
+        tick = f;
+        every = ms;
+      },
+      hidden: () => away,
+      state: { data: {} },
+      render: () => {
+        renders += 1;
+      },
+      STATUS_TICK_MS: 60000,
+    });
+    assert.equal(every, 60000);
+    tick();
+    assert.equal(renders, 1);
+    away = true;
+    tick();
+    assert.equal(renders, 1);
+  });
+
   it('outlines neighboring picked values as one, with no edge between them', () => {
     const css = PAGES['inbox.html'];
     assert.match(css, /\.fr\.on:has\(\+ \.fr\.on\)::after \{ border-bottom: 0; \}/);
