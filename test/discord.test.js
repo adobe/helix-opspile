@@ -398,6 +398,24 @@ describe('DiscordPoller', () => {
     assert.equal(replyTarget(msg(REPLY, { message_reference: { message_id: ROOT } })), null);
   });
 
+  it('polls the guilds after one that keeps failing', async () => {
+    const { p, ctx } = poller();
+    const BAD = '999999999999999999';
+    const { fetch } = api;
+    const asked = [];
+    p.env.DISCORD_GUILDS = `${BAD},${G}`;
+    globalThis.fetch = async (url, init) => {
+      asked.push(String(url));
+      return String(url).includes(`/guilds/${BAD}/`)
+        ? Response.json({ code: 50001 }, { status: 403 }) : fetch(url, init);
+    };
+    const out = await quiet(() => p.poll());
+    assert.equal(out.messages, 2);
+    assert.match(out.error, /discord 403/);
+    assert.ok(asked.some((u) => u.includes(`/guilds/${G}/channels`)));
+    assert.deepEqual(await ctx.storage.get('last'), out);
+  });
+
   it('reads history once, then only what is new: two requests when nothing happened', async () => {
     const { p, stored } = poller();
     const first = await quiet(() => p.poll());

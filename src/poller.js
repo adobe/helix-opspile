@@ -131,14 +131,18 @@ export class DiscordPoller extends DurableObject {
     await this.ctx.storage.put('polls', polls);
     const recheck = force || polls % RECHECK_EVERY === 0;
     const out = { at: new Date().toISOString(), recheck };
-    try {
-      for (const guild of guildsOf(this.env)) {
+    // Each guild on its own: one that keeps failing must not stop the guilds after it.
+    for (const guild of guildsOf(this.env)) {
+      try {
         // eslint-disable-next-line no-await-in-loop
-        Object.assign(out, await this.pollGuild(guild, recheck));
+        const got = await this.pollGuild(guild, recheck);
+        for (const [k, v] of Object.entries(got)) {
+          out[k] = (out[k] || 0) + v;
+        }
+      } catch (e) {
+        out.error = e.message;
+        log({ poll: 'error', guild, error: e.message });
       }
-    } catch (e) {
-      out.error = e.message;
-      log({ poll: 'error', error: e.message });
     }
     await this.ctx.storage.put('last', out);
     if (out.messages || out.changed || out.error) {
