@@ -305,6 +305,10 @@ export async function askClefConversation(env, text, at, convs) {
   return best && best.p >= MIN_CLEF_CONVERSATION ? best : { p: best ? best.p : 0 };
 }
 
+// Longer than a job's retries take.
+const SWEEP_AFTER_MS = 60 * 60 * 1000;
+const SWEEP_LIMIT = 100;
+
 /**
  * Re-threads one thread by its root. Idempotent: a thread that was decided once is not
  * decided again (pass `force` to redo it).
@@ -538,4 +542,28 @@ export async function rethread(env, key, { force = false } = {}) {
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
   };
+}
+
+/**
+ * Cron: the roots whose job died (their hash is written before the work that can fail, and
+ * `rethreaded_at` after it) go out again, within the window re-threading looks back. A root that
+ * was skipped on purpose (a system notice, an empty one) has no hash.
+ */
+export async function sweepRethreads(env, now = new Date()) {
+  if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
+    return { skipped: 'no VECTORS index' };
+  }
+  const { results } = await env.DB.prepare(`SELECT thread FROM threads
+    WHERE skeleton_hash IS NOT NULL AND rethreaded_at IS NULL AND root_at >= ? AND root_at < ?
+    ORDER BY root_at LIMIT ?`)
+    .bind(
+      new Date(now.getTime() - WINDOW_DAYS * 86400 * 1000).toISOString(),
+      new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(),
+      SWEEP_LIMIT,
+    ).all();
+  for (const { thread } of results || []) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ rethread: thread });
+  }
+  return { queued: (results || []).length };
 }

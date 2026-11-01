@@ -1425,6 +1425,14 @@ Two new apps:
   stores each thread's parent, each reply's root, the last message id per channel and thread,
   and its view of the last day's messages; the cron pokes it, so a stopped alarm restarts.
 
+**Failed jobs.** The NORMALIZE queue retries a job five times. Its last failure is recorded in
+`dead_jobs` (migration 0050, `src/deadjobs.js`; ids and keys only, kept for 30 days), which
+`/diag/dead` lists and sends out again. Most jobs need nobody to do that: the cron's sweeps find
+vectors, full-text items and exports that are behind, roots whose re-threading died
+(`skeleton_hash` set, `rethreaded_at` not), recent threads with a person's message after their
+label, and open backfills. A dead `refile` does not heal by itself, since sweeping would apply
+today's rules to every channel, and waits to be sent out again.
+
 ## Open questions
 
 - Slack Connect: does adding the app to a shared channel require approval from the other

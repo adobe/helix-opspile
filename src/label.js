@@ -449,6 +449,10 @@ async function labelAlert(env, thread, now) {
   return { result: 'titled', title: Boolean(title) };
 }
 
+const LABEL_SWEEP_AFTER_MS = 60 * 60 * 1000;
+const LABEL_SWEEP_DAYS = 14;
+const LABEL_SWEEP_LIMIT = 50;
+
 /**
  * Labels one thread. Skips threads that have not changed since they were last labeled,
  * and alert threads (their kind is known and nobody is waiting).
@@ -537,4 +541,29 @@ export async function labelThread(env, key, now = new Date()) {
     facts: loose.length,
     title: Boolean(title),
   };
+}
+
+/**
+ * Cron: the threads a person posted in since their label, and quiet for longer than a label job
+ * and its retries take: the job died. Recent ones only: nobody looks at the older ones' labels.
+ */
+export async function sweepLabels(env, now = new Date()) {
+  if (!env.AI || !env.NORMALIZE) {
+    return { skipped: 'no AI binding' };
+  }
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    LEFT JOIN labels l ON l.thread = t.thread
+    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ?
+      AND (l.thread IS NULL OR l.labeled_through < t.last_at)
+    ORDER BY t.last_at DESC LIMIT ?`)
+    .bind(
+      new Date(now.getTime() - LABEL_SWEEP_DAYS * 86400 * 1000).toISOString(),
+      new Date(now.getTime() - LABEL_SWEEP_AFTER_MS).toISOString(),
+      LABEL_SWEEP_LIMIT,
+    ).all();
+  for (const { thread } of results || []) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ label: thread });
+  }
+  return { queued: (results || []).length };
 }
