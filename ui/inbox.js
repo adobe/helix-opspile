@@ -3044,9 +3044,9 @@ function composeHead({ channel }) {
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
 
-function composeFeed({ channel, error, unsure }) {
+function composeFeed({ channel, error, unsure, lost }) {
   const said = channel ? `Your message starts a new thread in ${esc(channel.name)}, posted as you.` : 'Pick a channel above to post.';
-  return `<div class="scroller"><div class="feed">${error ? `<div class="compose-error" role="alert">${unsure ? 'May have been posted' : 'Not posted'}: ${esc(error)}</div>` : ''}<div class="empty">${said}</div></div></div>`;
+  return `<div class="scroller"><div class="feed">${error ? `<div class="compose-error" role="alert">${unsure ? 'May have been posted' : (lost ? 'Not sure it was posted' : 'Not posted')}: ${esc(error)}</div>` : ''}<div class="empty">${said}</div></div></div>`;
 }
 
 function composeBox({ channel, posting, unsure }) {
@@ -3222,6 +3222,8 @@ async function postNew() {
     const { data } = res;
     if (sendOutcome(res) === 'failed') c.try = null;
     c.unsure = Boolean(data.unknown);
+    // The answer was lost: posting again is a safe retry, but that it did not go out is not known.
+    c.lost = sendOutcome(res) === 'unknown';
     c.error = data.error || (res.status ? `could not post (${res.status})` : 'could not reach the inbox');
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
     const again = data.files && (data.reconnect || data.connect);
