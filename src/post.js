@@ -394,7 +394,8 @@ export async function finishAuth(env, me, platform, url) {
 
 /**
  * The person's token for a platform, refreshed if it has expired: `{ token, userId, scope }`,
- * or null when they have not connected (or a Slack token expired).
+ * or null when they have not connected (or a Slack token expired, or the platform no longer
+ * accepts a refresh token, which ends the connection). A failure that may pass throws.
  */
 export async function personalToken(env, person, platform) {
   const row = await env.DB.prepare('SELECT * FROM user_tokens WHERE person = ? AND platform = ?')
@@ -423,8 +424,17 @@ export async function personalToken(env, person, platform) {
       data = await msToken(env, refresh, scope);
       break;
     } catch (e) {
+      // One scope may just be without consent: it takes every one of them refusing.
       if (i === tries.length - 1) {
-        throw e;
+        if (!/invalid_grant/.test(e.message)) {
+          throw e;
+        }
+        // The sign-in is over: revoked, or too old. Not connected any more, so that the page
+        // offers to connect again, unless someone did meanwhile.
+        // eslint-disable-next-line no-await-in-loop
+        await env.DB.prepare(`DELETE FROM user_tokens WHERE person = ? AND platform = ?
+          AND updated_at = ?`).bind(person, platform, row.updated_at).run();
+        return null;
       }
     }
   }

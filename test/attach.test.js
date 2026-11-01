@@ -202,6 +202,22 @@ describe('connecting with file access', () => {
     assert.match(asked[1], /Files\.ReadWrite\.All/);
   });
 
+  it('ends the connection when Microsoft no longer takes the refresh token', async () => {
+    const e = env();
+    await connect(e, 'teams', 'ms-old', 'ChannelMessage.Send', '2000-01-01T00:00:00Z');
+    globalThis.fetch = async () => Response.json({ error: 'invalid_grant' }, { status: 400 });
+    assert.equal(await personalToken(e, 1, 'teams'), null);
+    assert.deepEqual(e.DB.rows('SELECT * FROM user_tokens'), []);
+  });
+
+  it('keeps the connection through a failure that may pass', async () => {
+    const e = env();
+    await connect(e, 'teams', 'ms-old', 'ChannelMessage.Send', '2000-01-01T00:00:00Z');
+    globalThis.fetch = async () => Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+    await assert.rejects(personalToken(e, 1, 'teams'), /temporarily_unavailable/);
+    assert.equal(e.DB.rows('SELECT * FROM user_tokens').length, 1);
+  });
+
   it('refreshes without file access when that consent is gone, so replies keep working', async () => {
     const asked = [];
     globalThis.fetch = async (url, init = {}) => {
