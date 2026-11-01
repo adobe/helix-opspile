@@ -307,6 +307,49 @@ describe('inbox page', () => {
     assert.doesNotMatch(open, /data-pick=|data-edit="1"|>hi</);
   });
 
+  it('catches up after a socket comes back, and not when it first connects', () => {
+    const sockets = [];
+    class FakeSocket {
+      constructor() {
+        this.readyState = 1;
+        sockets.push(this);
+      }
+    }
+    const reloads = [];
+    const state = {
+      sockets: [], live: 1, open: 'b', cache: new Map([['a', 1], ['b', 2]]), offline: 1,
+    };
+    const { listen } = piece('/**\n * A socket is back', '// ---------------------------------------------------------------- notifications', 'listen', {
+      WebSocket: FakeSocket,
+      location: { protocol: 'https:', host: 'x' },
+      state,
+      GAP: 'gap',
+      reloadSoon: (k) => reloads.push(k),
+      $: () => ({}),
+      setTimeout: (f) => f(),
+      clearTimeout: () => {},
+      noteEvent: () => {},
+      screenTeams: () => [],
+      fetch: async () => {},
+    });
+    listen('helix', 1);
+    sockets[0].onopen();
+    assert.deepEqual(reloads, []);
+    assert.deepEqual([...state.cache.keys()], ['a', 'b']);
+
+    sockets[0].onclose();
+    assert.equal(sockets.length, 2);
+    sockets[1].onopen();
+    assert.deepEqual(reloads, ['b']);
+    assert.deepEqual([...state.cache.keys()], ['b']);
+
+    // With no thread open, a tab in the background still has something to catch up on.
+    state.open = null;
+    sockets[1].onclose();
+    sockets[2].onopen();
+    assert.deepEqual(reloads, ['b', 'gap']);
+  });
+
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
     const { sendBar, sendState } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendState', {
       esc: (x) => String(x ?? ''),

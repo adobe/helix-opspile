@@ -448,7 +448,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   An inbox on screen reloads its first page (and the open thread, if it changed) half a second
   after an announcement. A tab in the background does not: it notes which threads changed and
   catches up when it is shown again, unless a bell watches the inbox it shows (bells are checked
-  on its reloads). The thread agent's status is not polled from the background either.
+  on its reloads). The thread agent's status is not polled from the background either. A socket
+  that was down has missed what its room announced, so when it comes back the inbox and the open
+  thread reload, in the background tab's case once it is shown.
 - The index is derived: a `messages` row per pile-2 file, and a `threads` row recomputed from
   its messages on every write (last activity by a person, last speaker and whether they are
   staff, title, message count), so it is the same in any replay order. Alert threads use the
