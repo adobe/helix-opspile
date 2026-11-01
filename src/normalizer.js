@@ -537,7 +537,7 @@ export async function consume(batch, env) {
         r = { key, ...await copyThreadFiles(env, body.files) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
-        r = { key, ...await pokeAgent(env, body.agent) };
+        r = { key, ...await pokeAgent(env, body.agent, { retry: msg.attempts < LAST_ATTEMPT }) };
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };

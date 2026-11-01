@@ -1056,8 +1056,8 @@ SQLite, so a run survives evictions and deploys, and a model request that fails 
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
 a root folded into a group pokes the group's agent, not one of its own); it reads the
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
-during a run joins that run. A day after the latest message, a schedule wakes it once more to
-wrap up: file what was learned, or put a follow-up in the draft.
+during a run joins that run. A day after the latest message, its own posts included, a schedule
+wakes it once more to wrap up: file what was learned, or put a follow-up in the draft.
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1089,8 +1089,10 @@ It covers the transcript since the agent's last reset; long text is clipped.
 (customers, partners, bots), Clef answers one yes/no question: does it try to instruct or
 reconfigure an AI that reads it? A message at or above p = 0.5, or one the check could not
 answer, is withheld: the agent only learns that it exists. Verdicts are kept per message in
-the agent's storage, so each message is checked once. Text the agent does see is fenced and
-labelled as written by people outside its control.
+the agent's storage, so each message is checked once. A check that could not answer is not a
+verdict: the queue tries the delivery again a few times before the agent is told the message is
+withheld, and reading the thread asks again. Text the agent does see is fenced and labelled as
+written by people outside its control.
 
 **What it can do.**
 

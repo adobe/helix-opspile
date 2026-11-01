@@ -20,11 +20,8 @@ import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import { entryOf } from '../drafts.js';
-import {
-  agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
-} from './deliver.js';
 import { toolsFor } from './agenttools.js';
-import { mentionedOutside } from './members.js';
+import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
@@ -62,7 +59,6 @@ import { latestTurn } from './turn.js';
  * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that).
  */
 
-export const IDLE_SECONDS = 24 * 60 * 60;
 const TARGET_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
@@ -70,11 +66,6 @@ const SCRIPT_INTERRUPT_BUDGET = 50_000;
 
 // The platform ids of the agent's latest posts: they come back as messages, which it is not told.
 const MAX_POSTED = 50;
-
-const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
-  + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
-  + ' team owes the customer an answer or a follow-up, make sure the draft has it; otherwise'
-  + ' change nothing.';
 
 export class ThreadAgent extends Agent {
   constructor(ctx, env) {
@@ -333,105 +324,19 @@ export class ThreadAgent extends Agent {
     return value;
   }
 
-  /** Clef verdicts for the untrusted ones among `messages`, by message id, checked once each. */
+  /** Clef verdicts for the untrusted ones among `messages` (src/agent/delivery.js). */
   async verdicts(messages) {
-    const out = new Map();
-    const checks = messages.filter(untrusted);
-    for (let i = 0; i < checks.length; i += 100) {
-      const batch = checks.slice(i, i + 100);
-      // eslint-disable-next-line no-await-in-loop
-      const stored = await this.ctx.storage.get(batch.map((m) => `verdict:${m.id}`));
-      for (const m of batch) {
-        let v = stored.get(`verdict:${m.id}`);
-        if (!v) {
-          // eslint-disable-next-line no-await-in-loop
-          v = await screen(this.env, m);
-          // eslint-disable-next-line no-await-in-loop
-          await this.ctx.storage.put(`verdict:${m.id}`, v);
-          console.log(JSON.stringify({
-            route: 'agent', check: 'injection', message: m.id, p: v.p, flagged: v.flagged,
-          }));
-        }
-        out.set(m.id, v);
-      }
-    }
-    return out;
+    return verdictsOf(this, messages);
   }
 
-  /** Tells the agent about the messages it has not seen. Called for every new message. */
-  async deliver() {
-    const problem = modelProblem(this.env);
-    if (problem) {
-      return { result: 'skip', reason: problem };
-    }
-    const t = await this.target();
-    if (!t.key || t.kind !== 'channel' || !await agentEnabled(this.env, t.channelId, t.team)) {
-      return { result: 'skip', reason: 'no agent for this thread' };
-    }
-    const entry = await entryMessages(this.env, t.key);
-    const mark = await this.ctx.storage.get('mark');
-    const unseen = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
-    // Its own posts (post_message) come back as messages; it is not told about them.
-    const own = new Set((await this.ctx.storage.get('posted')) || []);
-    const fresh = unseen.filter((m) => !own.has(String(m.id)));
-    if (!unseen.length) {
-      return { result: 'unchanged' };
-    }
-    const last = markOf(unseen[unseen.length - 1]);
-    if (!fresh.length) {
-      await this.ctx.storage.put('mark', last);
-      return { result: 'unchanged', own: unseen.length };
-    }
-    const verdicts = await this.verdicts(fresh);
-    const outside = await mentionedOutside(
-      this.env,
-      entry,
-      fresh.filter((m) => !(verdicts.get(m.id) && verdicts.get(m.id).flagged)),
-    ).catch((e) => {
-      console.log(JSON.stringify({ route: 'agent', members: 'failed', error: e.message }));
-      return null;
-    });
-    const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
-    await this.syncTools();
-    await this.syncMcp();
-    await this.syncUploads(entry);
-    const receipt = await this.harness.submit(input, {
-      operationId: `messages:${last}`,
-      whenBusy: 'steer',
-    });
-    await this.ctx.storage.put('mark', last);
-    await this.armIdle(last);
-    const flagged = [...verdicts.values()].filter((v) => v.flagged).length;
-    return {
-      result: 'delivered', messages: fresh.length, flagged, accepted: receipt.accepted,
-    };
-  }
-
-  /** Wakes the agent a day after the latest message, unless another one comes first. */
-  async armIdle(mark) {
-    const previous = await this.ctx.storage.get('idle');
-    if (previous) {
-      await this.cancelSchedule(previous).catch(() => false);
-    }
-    const s = await this.schedule(IDLE_SECONDS, 'idle', { mark });
-    await this.ctx.storage.put('idle', s.id);
+  /** Tells the agent about the messages it has not seen (src/agent/delivery.js). */
+  async deliver(options) {
+    return deliver(this, options);
   }
 
   /** Schedule callback: a day without messages. */
   async idle(payload) {
-    const mark = await this.ctx.storage.get('mark');
-    if (!payload || payload.mark !== mark || modelProblem(this.env)) {
-      return;
-    }
-    // Turned off since: no wrap-up either.
-    const t = await this.target();
-    if (!t.key || !await agentEnabled(this.env, t.channelId, t.team)) {
-      return;
-    }
-    await this.ctx.storage.delete('idle');
-    await this.syncTools();
-    await this.syncMcp();
-    await this.harness.submit(IDLE_PROMPT, { operationId: `idle:${mark}`, whenBusy: 'followUp' });
+    return idle(this, payload);
   }
 
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
