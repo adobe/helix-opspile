@@ -312,7 +312,8 @@ const SWEEP_LIMIT = 100;
 
 /**
  * Re-threads one thread by its root. Idempotent: a thread that was decided once is not
- * decided again (pass `force` to redo it).
+ * decided again (pass `force` to redo it). `rethreaded_at` says it was decided, and is written
+ * last, so a job that fails half way is repeated by its retry, not cut short by this guard.
  */
 export async function rethread(env, key, { force = false } = {}) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
@@ -439,9 +440,9 @@ export async function rethread(env, key, { force = false } = {}) {
       .bind(match.thread).first();
     logical = (target && target.logical_thread) || match.thread;
   }
-  await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = ?, logical_p = ?,
-    rethreaded_at = ? WHERE thread = ?`)
-    .bind(logical, match ? match.via : null, match ? match.p : null, new Date().toISOString(), key)
+  await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = ?, logical_p = ?
+    WHERE thread = ?`)
+    .bind(logical, match ? match.via : null, match ? match.p : null, key)
     .run();
   await markRootFile(env, thread, logical);
 
@@ -535,6 +536,10 @@ export async function rethread(env, key, { force = false } = {}) {
   if (thread.kind === 'alert' && env.NORMALIZE) {
     await env.NORMALIZE.send({ label: logical || key });
   }
+  // Decided only now that all of it is done: a retry starts from the top until then, and decides
+  // again what it wrote so far.
+  await env.DB.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread = ?')
+    .bind(new Date().toISOString(), key).run();
   return {
     result: logical ? 'rethreaded' : 'new-topic',
     via: match ? match.via : null,
