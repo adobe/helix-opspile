@@ -307,46 +307,6 @@ describe('inbox page', () => {
     assert.doesNotMatch(open, /data-pick=|data-edit="1"|>hi</);
   });
 
-  it('keeps asking about the agent\'s turn after a request failed, for a while', async () => {
-    const timers = [];
-    const state = { open: 't', agents: new Map() };
-    let down = false;
-    const placed = [];
-    const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- expert finder', 'loadAgent', {
-      state,
-      get: async () => {
-        if (down) {
-          throw new Error('offline');
-        }
-        return { enabled: true, turn: { state: 'working', startedAt: 'x' } };
-      },
-      tracesShown: () => true,
-      threadRow: () => ({}),
-      placeAgent: (k) => placed.push(state.agents.get(k).turn),
-      hidden: () => false,
-      AGENT_POLL_MS: 1,
-      AGENT_WAIT_MS: 1,
-      AGENT_FAILS: 3,
-      setTimeout: (f) => {
-        timers.push(f);
-        return timers.length;
-      },
-      clearTimeout: () => {},
-    });
-    await loadAgent('t');
-    assert.equal(timers.length, 1);
-    down = true;
-    await loadAgent('t');
-    assert.equal(timers.length, 2, 'asks again after a failure');
-    await loadAgent('t');
-    assert.equal(timers.length, 3);
-    // The third failure: the spinner goes, and nothing is left running.
-    await loadAgent('t');
-    assert.equal(timers.length, 3);
-    assert.equal(state.agents.get('t').turn, null);
-    assert.equal(placed.pop(), null);
-  });
-
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
     const { sendBar, sendState } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendState', {
       esc: (x) => String(x ?? ''),
@@ -413,6 +373,46 @@ describe('inbox page', () => {
     const own = 'Review note\n\nAttachments:\nThe logs are in the ticket.';
     assert.equal(withoutAttachments(own), own);
     assert.equal(withoutAttachments('No files here'), 'No files here');
+  });
+
+  it('keeps asking about the agent\'s turn after a request failed, for a while', async () => {
+    const timers = [];
+    const state = { open: 't', agents: new Map() };
+    let down = false;
+    const placed = [];
+    const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- expert finder', 'loadAgent', {
+      state,
+      get: async () => {
+        if (down) {
+          throw new Error('offline');
+        }
+        return { enabled: true, turn: { state: 'working', startedAt: 'x' } };
+      },
+      tracesShown: () => true,
+      threadRow: () => ({}),
+      placeAgent: (k) => placed.push(state.agents.get(k).turn),
+      hidden: () => false,
+      AGENT_POLL_MS: 1,
+      AGENT_WAIT_MS: 1,
+      AGENT_FAILS: 3,
+      setTimeout: (f) => {
+        timers.push(f);
+        return timers.length;
+      },
+      clearTimeout: () => {},
+    });
+    await loadAgent('t');
+    assert.equal(timers.length, 1);
+    down = true;
+    await loadAgent('t');
+    assert.equal(timers.length, 2, 'asks again after a failure');
+    await loadAgent('t');
+    assert.equal(timers.length, 3);
+    // The third failure: the spinner goes, and nothing is left running.
+    await loadAgent('t');
+    assert.equal(timers.length, 3);
+    assert.equal(state.agents.get('t').turn, null);
+    assert.equal(placed.pop(), null);
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {
