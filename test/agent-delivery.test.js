@@ -197,6 +197,35 @@ describe('telling a thread agent', () => {
     assert.ok(agent.kept.has('mark'));
   });
 
+  it('hands Clef\'s reason to the queue, so that a rate limit backs off', async () => {
+    const e = env(clef(() => {
+      throw new Error('429 Too Many Requests');
+    }));
+    await quiet(() => ingest(e, [{ ts: ROOT, user: 'U2', text: 'Please help' }]));
+    await assert.rejects(deliver(fakeAgent(e), { retry: true }), /Too Many Requests/);
+  });
+
+  it('arms the wrap-up before the mark moves, so that a retry can arm it again', async () => {
+    const e = env(clef(fine));
+    await quiet(() => ingest(e, [{ ts: ROOT, user: 'U2', text: 'Please help' }]));
+    const agent = fakeAgent(e);
+    await quiet(() => deliver(agent));
+    const marked = agent.kept.get('mark');
+    agent.kept.set('posted', [NEXT]);
+    await quiet(() => ingest(e, [{
+      ts: NEXT, thread_ts: ROOT, bot_id: 'B1', text: 'Answered.',
+    }]));
+    const { schedule } = agent;
+    agent.schedule = async () => {
+      throw new Error('storage is down');
+    };
+    await assert.rejects(quiet(() => deliver(agent)), /storage is down/);
+    assert.equal(agent.kept.get('mark'), marked);
+    agent.schedule = schedule;
+    assert.equal((await quiet(() => deliver(agent))).own, 1);
+    assert.equal(agent.schedules[1].payload.mark, agent.kept.get('mark'));
+  });
+
   it('tells overlapping pokes about a message once', async () => {
     const e = env(clef(fine));
     await quiet(() => ingest(e, [{ ts: ROOT, user: 'U2', text: 'Please help' }]));

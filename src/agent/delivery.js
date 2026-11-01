@@ -111,15 +111,18 @@ async function tell(agent, { retry }) {
   }
   const last = markOf(unseen[unseen.length - 1]);
   if (!fresh.length) {
-    await storage.put('mark', last);
-    // The wrap-up counts from the latest message, its own too, and looks for this mark.
+    // The wrap-up counts from the latest message, its own too, and looks for this mark. Armed
+    // first: a retry finds nothing unseen once the mark has moved, and would not arm it again.
     await armIdle(agent, last);
+    await storage.put('mark', last);
     return { result: 'unchanged', own: unseen.length };
   }
   const verdicts = await agent.verdicts(fresh);
-  // Before the mark moves past them: the queue asks again, a while later.
-  if (retry && [...verdicts.values()].some((v) => v.p === null)) {
-    throw new Error('the injection check failed');
+  // Before the mark moves past them: the queue asks again, a while later. With Clef's reason,
+  // so that a rate limit backs off as the queue's rate limits do.
+  const failed = [...verdicts.values()].find((v) => v.p === null);
+  if (retry && failed) {
+    throw new Error(`the injection check failed: ${failed.error}`);
   }
   const outside = await mentionedOutside(
     env,
@@ -137,8 +140,8 @@ async function tell(agent, { retry }) {
     operationId: `messages:${last}`,
     whenBusy: 'steer',
   });
-  await storage.put('mark', last);
   await armIdle(agent, last);
+  await storage.put('mark', last);
   const flagged = [...verdicts.values()].filter((v) => v.flagged).length;
   return {
     result: 'delivered', messages: fresh.length, flagged, accepted: receipt.accepted,
