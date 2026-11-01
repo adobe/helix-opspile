@@ -619,6 +619,22 @@ describe('backfill, mentions and labels', () => {
       assert.match(row(e).error, /ratelimited/);
     });
 
+    it('backs off when Slack says ratelimited', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      const msg = {
+        body: { backfill: request },
+        attempts: 1,
+        ack() {},
+        retry(options) {
+          this.options = options;
+        },
+      };
+      await quiet(() => consume({ messages: [msg] }, e));
+      assert.ok(msg.options.delaySeconds >= 60, `${msg.options.delaySeconds}`);
+    });
+
     it('ends on an error that stays', async () => {
       const e = env({});
       open(e, '2026-10-21T10:00:00.000Z');
