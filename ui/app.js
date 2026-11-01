@@ -78,10 +78,12 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
       location.reload(); // no window allowed: sign in in this one
       return;
     }
+    // This window, not `popup`: signing in from another tab may clear that meanwhile.
+    const opened = popup;
     const watch = setInterval(async () => {
-      let done = popup.closed;
+      let done = opened.closed;
       try {
-        done ||= popup.location.pathname === '/api/me' && popup.document.readyState === 'complete';
+        done ||= opened.location.pathname === '/api/me' && opened.document.readyState === 'complete';
       } catch {
         // at the sign-in page, on another origin
       }
@@ -89,8 +91,8 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
       clearInterval(watch);
       if (await signedIn()) back();
       else {
-        popup?.close();
-        popup = null;
+        opened.close();
+        if (popup === opened) popup = null;
       }
     }, 500);
   }
