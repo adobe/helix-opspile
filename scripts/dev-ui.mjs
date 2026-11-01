@@ -1095,11 +1095,11 @@ async function api(req, res, url) {
       suggested: { at: new Date().toISOString() },
       reasons: ['Wrote the redirects for the last blog migration'],
     }] : [];
-    // While Adobe has the thread in hand, only an agent's suggestion, unless I was asked in it
-    // and have not answered yet (src/experts.js, inHand).
+    // Once Adobe wrote three messages in the thread, only an agent's suggestion, unless I was
+    // asked in it and have not answered yet (src/experts.js, inHand).
     const askedMe = messages.some((m) => JSON.stringify(m).includes(`@${me}`))
       && !messages.some((m) => m.author?.name === me);
-    const held = messages.some((m) => m.author?.staff) && !askedMe;
+    const held = messages.filter((m) => m.author?.staff).length >= 3 && !askedMe;
     const found = held ? [] : EXPERTS.filter((e) => !agent.some((a) => a.id === e.id));
     const experts = [...agent, ...found]
       .filter((e) => !inThread(e.name) && e.name !== me)

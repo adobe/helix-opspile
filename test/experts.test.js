@@ -284,7 +284,7 @@ describe('expert finder', () => {
     assert.deepEqual(names(found), ['Ada']);
   });
 
-  it('holds its own list back while Adobe has the thread in hand, unless the viewer was asked', async () => {
+  it('holds its own list back after three messages from Adobe, unless the viewer was asked', async () => {
     const e = env();
     e.addThread('slack:E1:C1:1.1');
     e.addMessage('slack:E1:C1:1.1', 'x1', 1, DAYS);
@@ -294,19 +294,28 @@ describe('expert finder', () => {
     const asked = (me) => findExperts(e, THREAD, { me, now: NOW, whenNeeded: true });
     // Only the customer wrote: nobody at Adobe is on it.
     assert.deepEqual(names(await asked(3)), ['Ada']);
-    // Bo answered: the team has it, so the finder says nothing of its own; agents still do.
+    // Bo answered once, and mentioned Di: a first answer may only say who will look.
     e.addMessage(THREAD, 'y1', 2, 60);
+    e.mention(THREAD, 'y1', 4, 60);
+    clearExpertLists();
+    assert.deepEqual(names(await asked(3)), ['Ada']);
+    // Three messages from Adobe: the team has it, so the finder says nothing of its own; agents
+    // still do.
+    e.addMessage(THREAD, 'y4', 2, 50);
+    e.addMessage(THREAD, 'y5', 2, 40);
     clearExpertLists();
     const found = await asked(3);
     assert.deepEqual([names(found), found.held], [[], true]);
     assert.deepEqual(found.candidates.map((c) => c.id), ['U1']);
     assert.deepEqual(names(await findExperts(e, THREAD, { me: 3, now: NOW })), ['Ada']);
     await suggestExpert(e, THREAD, { id: 'U5', reason: 'Fixed this before', by: 'opspile-agent/test' });
-    assert.deepEqual(names(await asked(4)), ['Ed']);
+    assert.deepEqual(names(await asked(6)), ['Ed']);
+    // Di was mentioned in Bo's first answer and has not posted: Di still gets the list.
+    assert.deepEqual(names(await asked(4)), ['Ed', 'Ada']);
     // Bo asked Cy: Cy may be looking for whom to hand it to, until Cy answers.
-    e.mention(THREAD, 'y1', 3, 60);
+    e.mention(THREAD, 'y5', 3, 40);
     assert.deepEqual(names(await asked(3)), ['Ed', 'Ada']);
-    assert.deepEqual(names(await asked(4)), ['Ed']);
+    assert.deepEqual(names(await asked(6)), ['Ed']);
     e.addMessage(THREAD, 'y2', 3, 30);
     assert.deepEqual(names(await asked(3)), ['Ed']);
     // Asked again after answering, as when someone hands the thread over: the list again.
