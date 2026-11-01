@@ -315,7 +315,9 @@ describe('inbox page', () => {
     const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- expert finder', 'loadAgent', {
       state,
       get: async () => {
-        if (down) throw new Error('offline');
+        if (down) {
+          throw new Error('offline');
+        }
         return { enabled: true, turn: { state: 'working', startedAt: 'x' } };
       },
       tracesShown: () => true,
