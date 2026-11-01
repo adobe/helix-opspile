@@ -107,7 +107,9 @@ export async function postApp(env, me, request, inTeam, files = []) {
   ]);
   const res = await postAsApp(env, check.entry.key, sent, { files, mentions });
   if (res.error) {
-    return json({ error: res.error }, /^too long/.test(res.error) ? 400 : 502);
+    return json({
+      error: res.error, ...(res.unknown ? { unknown: true } : {}),
+    }, /^too long/.test(res.error) ? 400 : 502);
   }
   // Theirs to edit later (src/edit.js).
   await recordAppPost(env, me, check.target, res.id);

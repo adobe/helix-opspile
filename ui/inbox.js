@@ -2057,8 +2057,10 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (p.status === 'sending' || p.status === 'failed') return true;
     if (p.status !== 'unknown' && Date.now() - p.sentAt >= 60000) return false;
     if (p.thread !== key) return true;
+    // An earlier message with the same words ("Thanks") is not this one.
+    const since = p.status === 'unknown' ? Date.parse(p.at) - SEND_CLOCK_MS : 0;
     const m = messages.find((x) => (p.postedId ? String(x.id) === String(p.postedId)
-      : x.author?.name === p.author.name
+      : x.author?.name === p.author.name && Date.parse(x.at) >= since
         && looseText(p.files?.length ? withoutAttachments(x.body) : x.body) === looseText(p.body)));
     if (m) settled.add(`${m.thread}|${m.id}`);
     return !m;
@@ -2609,8 +2611,12 @@ async function sendDraft(key, asApp) {
   if (!d) return;
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (asApp) {
-    const error = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [] });
-    toast(error ? `Nothing was sent: ${error}.` : 'Sent as the bot.');
+    const sendIt = async (again = false) => {
+      const failed = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [], again });
+      if (failed?.unsure) toast(`It may have been sent: ${failed.error}.`, { label: 'Send again', run: () => sendIt(true) });
+      else toast(failed ? `Nothing was sent: ${failed.error}.` : 'Sent as the bot.');
+    };
+    await sendIt();
   } else {
     await send(key, data.thread, d);
   }
@@ -2713,6 +2719,10 @@ const SEND_TO = 0.9;
 const SEND_EASE_MS = 800;
 const SEND_FINISH_MS = 250;
 const SEND_FADE_MS = 300;
+// How far this browser's clock and the platform's may be apart.
+const SEND_CLOCK_MS = 60 * 1000;
+// The Worker keeps a reply's key for a day (src/postkeys.js): after that, Retry could post twice.
+const SEND_KEY_MS = 23 * 60 * 60 * 1000;
 
 /**
  * The bar of reply `p` at `now`: how full it is (0 to 1), how visible, and whether it is
@@ -2740,15 +2750,18 @@ function sendBar(p, now) {
  */
 const sendOutcome = (res) => (!res?.status || res.data?.unknown || (res.status >= 500 && !res.data?.error) ? 'unknown' : 'failed');
 
+/** Whether only the person can decide to send reply `p` again: its key can no longer tell. */
+const sendDecides = (p, now) => Boolean(p.asked) || now - Date.parse(p.at) >= SEND_KEY_MS;
+
 /**
  * What goes under a reply being sent: the bar (the same markup from start to end, so the
  * feed keeps its node while the bar fills), why it failed, or nothing once it is through.
  */
-function sendState(p) {
+function sendState(p, now = Date.now()) {
   if (p.status === 'unknown') {
-    const again = p.asked ? 'Send again' : 'Retry';
-    return `<div class="unsent" role="alert"><span class="why">${p.asked ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}</span>
-      <button data-retry="${esc(p.id)}"${p.asked ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${again}</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+    const decide = sendDecides(p, now);
+    return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}</span>
+      <button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
   }
   if (p.status === 'failed') {
     return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}</span>
@@ -2915,7 +2928,7 @@ function retrySend(id) {
   if (!p || (p.status !== 'failed' && p.status !== 'unknown')) return;
   // The same key, so a post that did go out is not posted again, unless the person decided to.
   Object.assign(p, {
-    status: 'sending', startedAt: null, error: null, key: p.asked ? crypto.randomUUID() : p.key, asked: false,
+    status: 'sending', startedAt: null, error: null, key: sendDecides(p, Date.now()) ? crypto.randomUUID() : p.key, asked: false,
   });
   showSending(p.thread);
   animateSending();
@@ -2946,17 +2959,20 @@ const appKeys = new Map();
  * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
  * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
- * mentions, as when you send it. Resolves to null, or the error.
+ * mentions, as when you send it. `again` sends it under a new key, knowing it may go out twice.
+ * Resolves to null, or to `{ error, unsure }`; `unsure` when nobody knows whether it went out.
  */
-async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [] } = {}) {
-  // Sending the same text again after a lost answer is a retry, unless the Worker cannot tell.
-  const once = `${key}\u0000${text}`;
+async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [], again = false } = {}) {
+  // Sending the same thing again after a lost answer is a retry. A key stays until the post is
+  // settled, so that nothing goes out twice without the person saying so (`again`).
+  const once = JSON.stringify([key, text, files.map((f) => [f.name, f.size])]);
+  if (again) appKeys.delete(once);
   if (!appKeys.has(once)) appKeys.set(once, crypto.randomUUID());
   const res = await postWith('/api/post/app', {
     thread: key, text, key: appKeys.get(once), ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
   }, files);
-  if (res.ok || res.data.unknown || sendOutcome(res) === 'failed') appKeys.delete(once);
-  if (!res.ok) return res.data.error || `could not send (${res.status})`;
+  if (res.ok || sendOutcome(res) === 'failed') appKeys.delete(once);
+  if (!res.ok) return { error: res.data.error || `could not send (${res.status})`, unsure: sendOutcome(res) === 'unknown' };
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
     state.composers.set(key, { text: '', from: '', base: null });
@@ -3028,12 +3044,12 @@ function composeHead({ channel }) {
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
 
-function composeFeed({ channel, error }) {
+function composeFeed({ channel, error, unsure }) {
   const said = channel ? `Your message starts a new thread in ${esc(channel.name)}, posted as you.` : 'Pick a channel above to post.';
-  return `<div class="scroller"><div class="feed">${error ? `<div class="compose-error" role="alert">Not posted: ${esc(error)}</div>` : ''}<div class="empty">${said}</div></div></div>`;
+  return `<div class="scroller"><div class="feed">${error ? `<div class="compose-error" role="alert">${unsure ? 'May have been posted' : 'Not posted'}: ${esc(error)}</div>` : ''}<div class="empty">${said}</div></div></div>`;
 }
 
-function composeBox({ channel, posting }) {
+function composeBox({ channel, posting, unsure }) {
   if (channel && !state.me.connected?.[channel.source]) {
     return `<div class="composer"><span class="connect">To post as yourself, <a href="/api/auth/${channel.source}/start">connect your ${accountOf(channel.source)} account</a>.</span></div>`;
   }
@@ -3041,7 +3057,7 @@ function composeBox({ channel, posting }) {
     <div class="tray" id="tray" hidden></div>${channel ? attachButton(channel) : ''}
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="${channel ? `Write to ${esc(channel.name)}` : 'Write your message'}"></textarea>
-    <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : 'Post'}</button></span></div>`;
+    <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : (unsure ? 'Post again' : 'Post')}</button></span></div>`;
 }
 
 /** Shows the options for what is typed in the header's search, `open` or closed. */
@@ -3193,15 +3209,19 @@ async function postNew() {
   $('send').disabled = true;
   $('send').textContent = 'Posting…';
   const { channel } = c;
-  c.key ??= crypto.randomUUID();
+  // Posting the same thing again after a lost answer is a retry, under the same key. Something
+  // else, or the same once the Worker could not tell and the button said so, is a new post.
+  const posted = JSON.stringify([channel.ref, text, files.map((f) => [f.name, f.size])]);
+  if (!c.try || c.try.posted !== posted || c.unsure) c.try = { posted, key: crypto.randomUUID() };
   const res = await postWith('/api/post', {
-    channel: channel.ref, text, mentions: mentionsIn(NEW, text), key: c.key,
+    channel: channel.ref, text, mentions: mentionsIn(NEW, text), key: c.try.key,
   }, files);
   c.posting = false;
+  c.unsure = false;
   if (!res.ok) {
     const { data } = res;
-    // Posting again after a lost answer is a retry, unless the Worker cannot tell.
-    if (data.unknown || sendOutcome(res) === 'failed') c.key = null;
+    if (sendOutcome(res) === 'failed') c.try = null;
+    c.unsure = Boolean(data.unknown);
     c.error = data.error || (res.status ? `could not post (${res.status})` : 'could not reach the inbox');
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
     const again = data.files && (data.reconnect || data.connect);
@@ -5409,8 +5429,9 @@ const WEBMCP_TOOLS = [
       const d = draft && data.draft?.updated_at === draft ? data.draft : null;
       const mentions = [...new Map([...(d?.mentions || []), ...mentionsIn(key, body)]
         .map((m) => [m.id, m])).values()];
-      const error = await sendAsApp(key, body, draft, { mentions });
-      return error ? fail(`Nothing was sent: ${error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
+      const failed = await sendAsApp(key, body, draft, { mentions });
+      if (failed?.unsure) return fail(`It may have been sent: ${failed.error}. Check the thread before sending it again.`);
+      return failed ? fail(`Nothing was sent: ${failed.error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
     },
   },
   {

@@ -56,21 +56,26 @@ export async function claimPost(env, me, key) {
 
 /**
  * Records how the post of `key` ended: its ids, or nothing when it was refused, so that a retry
- * posts. Quietly: the post is done, and a retry then finds that nobody knows.
+ * posts. An answer that says nobody knows (`unknown`: the connection to the platform dropped) is
+ * not a refusal, and keeps the claim. Quietly: the post is done, and a retry then finds that
+ * nobody knows.
  */
 export async function settlePost(env, me, key, res) {
   if (!usable(key)) {
     return;
   }
   try {
+    const {
+      ok, platform, id, thread, files, unknown,
+    } = await res.clone().json();
+    if (unknown) {
+      return;
+    }
     if (!res.ok) {
       await env.DB.prepare('DELETE FROM post_keys WHERE person = ? AND key = ?')
         .bind(me.id, key).run();
       return;
     }
-    const {
-      ok, platform, id, thread, files,
-    } = await res.clone().json();
     await env.DB.prepare('UPDATE post_keys SET answer = ? WHERE person = ? AND key = ?')
       .bind(JSON.stringify({
         ok, platform, id, thread, files,

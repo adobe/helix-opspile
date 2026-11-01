@@ -116,7 +116,9 @@ describe('posting as the opspile app, with mentions', () => {
     const posts = calls.filter((c) => c.u.endsWith('/chat.postMessage'));
     assert.equal(posts.length, 1);
     assert.equal((await first.json()).id, '1.9');
-    assert.deepEqual(await again.json(), { ok: true, platform: 'slack', id: '1.9', again: true });
+    assert.deepEqual(await again.json(), {
+      ok: true, platform: 'slack', id: '1.9', again: true,
+    });
   });
 
   it('says so when a first try never finished', async () => {
@@ -131,11 +133,50 @@ describe('posting as the opspile app, with mentions', () => {
     assert.equal((await again.json()).unknown, true);
   });
 
+  it('keeps the key when the connection to the platform dropped, on Discord and Teams', async () => {
+    for (const [thread, key] of [[DISCORD, 'k3'], [TEAMS, 'k4']]) {
+      const e = env();
+      const { fetch } = globalThis;
+      globalThis.fetch = async (url, init) => {
+        const u = String(url);
+        if (u.startsWith('https://discord.com/api/') || u.includes('/v3/conversations/')) {
+          throw new Error('the connection dropped');
+        }
+        return fetch(url, init);
+      };
+      const body = { thread, text: 'Hello', key };
+      // eslint-disable-next-line no-await-in-loop
+      const first = await call(e, 'POST', '/api/post/app', body);
+      assert.equal(first.status, 502);
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await first.json()).unknown, true);
+      globalThis.fetch = fetch;
+      // eslint-disable-next-line no-await-in-loop
+      const again = await call(e, 'POST', '/api/post/app', body);
+      assert.equal(again.status, 409, 'the retry does not post');
+    }
+  });
+
+  it('lets a retry post after Discord refused', async () => {
+    const e = env();
+    const { fetch } = globalThis;
+    globalThis.fetch = async (url, init) => (String(url).startsWith('https://discord.com/api/')
+      ? Response.json({ code: 50013 }, { status: 403 }) : fetch(url, init));
+    const body = { thread: DISCORD, text: 'Hello', key: 'k5' };
+    const first = await call(e, 'POST', '/api/post/app', body);
+    assert.equal(first.status, 502);
+    assert.equal((await first.json()).unknown, undefined);
+    globalThis.fetch = fetch;
+    assert.equal((await call(e, 'POST', '/api/post/app', body)).status, 200);
+  });
+
   it('keeps a post that went out when the draft it used up cannot be discarded', async () => {
     const e = env();
     const { prepare } = e.DB;
     e.DB.prepare = function broken(sql) {
-      if (/SELECT d\.\*/.test(sql)) throw new Error('D1 is down');
+      if (/SELECT d\.\*/.test(sql)) {
+        throw new Error('D1 is down');
+      }
       return prepare.call(this, sql);
     };
     const res = await call(e, 'POST', '/api/post/app', { thread: SLACK, text: 'Hello', draft: 'v1' });

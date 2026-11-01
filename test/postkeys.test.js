@@ -68,6 +68,13 @@ describe('a reply\'s key', () => {
     assert.equal(await claimPost(e, ME, 'k1'), null);
   });
 
+  it('stays claimed when the Worker says nobody knows', async () => {
+    const e = env();
+    assert.equal(await claimPost(e, ME, 'k1'), null);
+    await settlePost(e, ME, 'k1', Response.json({ error: 'dropped', unknown: true }, { status: 502 }));
+    assert.equal((await claimPost(e, ME, 'k1')).status, 409);
+  });
+
   it('is one person\'s', async () => {
     const e = env();
     assert.equal(await claimPost(e, ME, 'k1'), null);

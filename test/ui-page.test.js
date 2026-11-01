@@ -308,7 +308,9 @@ describe('inbox page', () => {
   });
 
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
-    const { sendBar, sendOutcome, sendState } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendOutcome, sendState', {
+    const {
+      sendBar, sendDecides, sendOutcome, sendState,
+    } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendDecides, sendOutcome, sendState', {
       esc: (x) => String(x ?? ''),
     });
     // Waiting for the replies before it: a sliver.
@@ -345,6 +347,14 @@ describe('inbox page', () => {
     assert.match(sendState({
       id: 'x', status: 'unknown', error: 'e', asked: true,
     }), /May have been sent.*title="It may go out twice[^>]*>Send again/s);
+    // A key lasts a day: after that, only the person can decide.
+    const at = '2026-10-21T10:00:00Z';
+    assert.equal(sendDecides({ at }, Date.parse('2026-10-21T20:00:00Z')), false);
+    assert.equal(sendDecides({ at }, Date.parse('2026-10-22T10:00:00Z')), true);
+    assert.equal(sendDecides({ at, asked: true }, Date.parse(at)), true);
+    assert.match(sendState({
+      id: 'x', status: 'unknown', error: 'e', at,
+    }, Date.parse('2026-10-22T10:00:00Z')), />Send again</);
   });
 
   it('refuses the attachments the Worker would refuse, before they are sent', () => {
