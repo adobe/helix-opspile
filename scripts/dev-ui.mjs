@@ -66,7 +66,7 @@ import { ICONS } from '../src/icons.js';
 import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { cleanExpertEvent } from '../src/expertevents.js';
-import { rankMentions } from '../src/mention-match.js';
+import { suggestMentions } from '../src/mention-match.js';
 import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -1060,20 +1060,23 @@ async function api(req, res, url) {
         }
       }
     }
-    const found = rankMentions([...store.people.values(), ...store.members].map((p) => ({
-      id: `${entry.row.source}-${p.key}`,
-      name: p.name,
-      aliases: [p.login, p.email],
-      avatar: null,
-      here: here.has(p.name),
-      member: listed.has(p.key) || posted.has(p.name),
-      staff: p.staff,
-      affinity: p.staff ? affinity.get(p.name) || 0 : 0,
-      kind: 'person',
-    })), url.searchParams.get('q'), 8).map((p) => ({
-      ...p, aliases: undefined, affinity: undefined, ...(p.affinity > 0 ? { expert: true } : {}),
-    }));
-    return json(res, { platform: entry.row.source, people: found });
+    const pool = {
+      accounts: [...store.people.values(), ...store.members].map((p) => ({
+        id: `${entry.row.source}-${p.key}`,
+        name: p.name,
+        aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
+        here: here.has(p.name),
+        member: listed.has(p.key) || posted.has(p.name),
+        staff: p.staff,
+        affinity: p.staff ? affinity.get(p.name) || 0 : 0,
+      })),
+      bots: [],
+    };
+    return json(res, {
+      platform: entry.row.source,
+      people: suggestMentions(pool, url.searchParams.get('q')),
+      ...(url.searchParams.has('pool') ? { pool } : {}),
+    });
   }
   if (url.pathname === '/api/experts') {
     // Stands in for src/experts.js: the colleagues not in the thread yet, in the fake data's
@@ -1094,7 +1097,13 @@ async function api(req, res, url) {
       suggested: { at: new Date().toISOString() },
       reasons: ['Wrote the redirects for the last blog migration'],
     }] : [];
-    const experts = [...agent, ...EXPERTS.filter((e) => !agent.some((a) => a.id === e.id))]
+    // Once Adobe wrote three messages in the thread, only an agent's suggestion, unless I was
+    // asked in it and have not answered yet (src/experts.js, inHand).
+    const askedMe = messages.some((m) => JSON.stringify(m).includes(`@${me}`))
+      && !messages.some((m) => m.author?.name === me);
+    const held = messages.filter((m) => m.author?.staff).length >= 3 && !askedMe;
+    const found = held ? [] : EXPERTS.filter((e) => !agent.some((a) => a.id === e.id));
+    const experts = [...agent, ...found]
       .filter((e) => !inThread(e.name) && e.name !== me
         && !expertRejects.get(entry.row.thread)?.has(e.id))
       .map((e) => ({

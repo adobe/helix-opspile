@@ -31,6 +31,9 @@ import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { seed, seedPin } from './seed.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
+import {
+  keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
+} from '../threadfiles.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
@@ -212,8 +215,67 @@ export class ThreadAgent extends Agent {
           egress: { mode: 'direct' },
         }),
       ],
+      ...(this.env.FILES ? {
+        mounts: {
+          [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
+        },
+      } : {}),
     });
     return this.ws;
+  }
+
+  /**
+   * Puts the files of the thread's messages it may read into its computer: copied if they are
+   * not yet, and only where it has a computer. A thread goes on without them if this fails.
+   */
+  async syncUploads(entry) {
+    if (!this.env.FILES || !(this.tools && this.tools.includes('computer'))) {
+      return;
+    }
+    try {
+      const messages = entry ? entry.messages : [];
+      const verdicts = await this.verdicts(messages);
+      const readable = (m) => !(verdicts.get(m.id) && verdicts.get(m.id).flagged);
+      const copies = await keepThreadFiles(this.env, messages, { readable });
+      await this.setUploads(mountList(copies));
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', uploads: 'failed', error: e.message }));
+    }
+  }
+
+  /**
+   * Stores what the mount holds. A Workspace fills its mount once, so a change takes a new one,
+   * and the copy in this object's SQLite goes when the first of its files expires.
+   */
+  async setUploads(list) {
+    const before = await this.ctx.storage.get('uploads');
+    if (JSON.stringify(before || {}) === JSON.stringify(list)) {
+      return;
+    }
+    await this.ctx.storage.put('uploads', list);
+    this.ws = null;
+    const previous = await this.ctx.storage.get('uploads-expiry');
+    if (previous) {
+      await this.cancelSchedule(previous).catch(() => false);
+      await this.ctx.storage.delete('uploads-expiry');
+    }
+    if (Number.isFinite(list.expires)) {
+      const s = await this.schedule(new Date(list.expires), 'expireUploads');
+      await this.ctx.storage.put('uploads-expiry', s.id);
+    }
+  }
+
+  /** Schedule callback: the oldest file of the thread is 30 days old. */
+  async expireUploads() {
+    const list = await this.ctx.storage.get('uploads');
+    if (!list) {
+      return;
+    }
+    await this.ctx.storage.delete('uploads-expiry');
+    const copies = (list.all || []).filter((c) => c.expires > Date.now());
+    await this.setUploads(mountList(copies));
+    // The computer may be asleep: the expired files leave its SQLite now, not at its next use.
+    await this.workspace().ready();
   }
 
   /** For the shell in the Dynamic Worker (through WorkspaceServiceProxy): the files. */
@@ -332,6 +394,7 @@ export class ThreadAgent extends Agent {
     const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
     await this.syncTools();
     await this.syncMcp();
+    await this.syncUploads(entry);
     const receipt = await this.harness.submit(input, {
       operationId: `messages:${last}`,
       whenBusy: 'steer',

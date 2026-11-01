@@ -131,6 +131,26 @@ describe('processKey', () => {
     globalThis.fetch = realFetch;
   });
 
+  it('asks for the copies of a message\'s files, where there is a bucket for them', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const raw = {
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000100',
+        text: 'See attached',
+        files: [{ name: 'a.txt', permalink: 'https://acme.slack.com/files/U2/F1/a.txt' }],
+      }),
+    };
+    const withBucket = env(raw, { FILES: {} });
+    await processKey(withBucket, key);
+    assert.ok(withBucket.queued.some((q) => q.body.files === 'slack:E1:C1:1792584000.000100'));
+    const without = env(raw);
+    await processKey(without, key);
+    assert.ok(!without.queued.some((q) => q.body.files));
+  });
+
   it('writes a Slack message as markdown with a normalized author', async () => {
     const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
     const e = env({
@@ -496,6 +516,13 @@ describe('processKey', () => {
 });
 
 describe('consume', () => {
+  it('takes the job of copying a thread\'s files, with or without a bucket', async () => {
+    const acked = [];
+    const job = { body: { files: 'slack:E1:C1:1.1' }, ack: () => acked.push('job'), retry: () => acked.push('retry') };
+    await quiet(() => consume({ messages: [job] }, env({})));
+    assert.deepEqual(acked, ['job']);
+  });
+
   it('acks processed messages and retries failures', async () => {
     const e = env({});
     e.RAW.get = async (key) => {

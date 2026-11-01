@@ -402,6 +402,45 @@ describe('emoji suggestions in the composer', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('keeps rankings in the data center for other isolates, not failures', async () => {
+    const stored = new Map();
+    globalThis.caches = {
+      default: {
+        match: async (url) => (stored.has(url) ? new Response(stored.get(url)) : undefined),
+        put: async (url, res) => {
+          stored.set(url, await res.text());
+        },
+      },
+    };
+    try {
+      let asked = 0;
+      const AI = {
+        async run() {
+          asked += 1;
+          return { answers: { emoji: { choice: 'e1', probabilities: { e1: 0.9 } } } };
+        },
+      };
+      const waits = [];
+      const ranked = await rankEmoji({ AI }, 'party', undefined, { waitUntil: (p) => waits.push(p) });
+      await Promise.all(waits);
+      assert.equal(stored.size, 1);
+      forget();
+      assert.deepEqual(await rankEmoji({ AI }, 'party'), ranked);
+      assert.equal(asked, 1);
+      const failing = {
+        AI: {
+          run: async () => {
+            throw new Error('overloaded');
+          },
+        },
+      };
+      assert.deepEqual(await rankEmoji(failing, 'celeb'), []);
+      assert.equal(stored.size, 1);
+    } finally {
+      delete globalThis.caches;
+    }
+  });
+
   it('suggests nothing without Clef, for too little, or when Clef fails or is slow', async () => {
     assert.deepEqual(await rankEmoji({}, 'party'), []);
     const AI = { run: () => assert.fail('not asked') };

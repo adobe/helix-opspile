@@ -41,6 +41,9 @@ describe('what is done with the expert finder\'s lists (src/expertevents.js)', (
     assert.deepEqual(ev.candidates.map((c) => [c.id, c.person, c.pos]), [['U3', 3, 0], ['U4', 4, 1]]);
     assert.deepEqual(ev.candidates[0].features, { channel: 1, meaning: 0.3333, member: -1 });
     assert.deepEqual(ev.candidates[1].features, { channel: 0.5 });
+    assert.equal(ev.held, undefined);
+    await recordList(e, me, THREAD, { finder: 'f1', candidates, held: true });
+    assert.equal((await expertEvents(e)).events[1].held, true);
   });
 
   it('records nothing while viewing as someone else, or for an empty list', async () => {

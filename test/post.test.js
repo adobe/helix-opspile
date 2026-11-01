@@ -19,6 +19,7 @@ import {
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/markdown.js';
+import { suggestMentions } from '../src/mention-match.js';
 import { d1 } from './d1.js';
 
 // Made-up keys, ids and people only.
@@ -281,6 +282,38 @@ describe('mentions', () => {
     assert.equal(listed.length, 2);
     assert.deepEqual(looked, ['U-NEW']);
     assert.deepEqual(await learnMembers(e, { ...t, source: 'discord' }), { skipped: 'members are not listed here' });
+  });
+
+  it('answers with the pool, from which the page suggests as the Worker does', async () => {
+    const e = withColleagues(withAccounts(env()));
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U27')`).run();
+    const ask = async (thread, q, opts) => (await mentionable(e, thread, q, inTeam, opts)).json();
+    const { pool } = await ask('slack:E1:C1:1.1', '', { pool: true });
+    const kira = pool.accounts.find((a) => a.name === 'Kira Selby');
+    // Only what is set, and the mail without its domain.
+    assert.deepEqual(kira, {
+      id: 'U10', name: 'Kira Selby', aliases: ['kselby', 'Kiki', 'kira.s'], staff: true,
+    });
+    assert.equal(pool.accounts.find((a) => a.id === 'U27').member, true);
+    for (const [thread, typed] of [['slack:E1:C1:1.1', ['', 'k', 'KSEL', 'kira.s', 'b', 'bob b', 'staff', 'x y']],
+      ['teams:T:G:19:c:5', ['', 'b', 'help', 'h']]]) {
+      // eslint-disable-next-line no-await-in-loop
+      const { pool: p } = await ask(thread, '', { pool: true });
+      for (const q of typed) {
+        // eslint-disable-next-line no-await-in-loop
+        const { people, pool: none } = await ask(thread, q);
+        assert.equal(none, undefined);
+        assert.deepEqual(suggestMentions(p, q), people, `${thread} ${q}`);
+      }
+    }
+  });
+
+  it('gives no pool to a viewer who may not see the thread', async () => {
+    const e = withAccounts(env());
+    const res = await mentionable(e, 'slack:E1:C1:1.1', 'b', async () => false, { pool: true });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'not found' });
   });
 
   it('lists the members in the background when the suggestions open', async () => {

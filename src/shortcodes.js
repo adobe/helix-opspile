@@ -319,19 +319,53 @@ export async function askClef(env, code, list, timeoutMs = CLEF_TIMEOUT_MS) {
   }
 }
 
+// Rankings are the same for everyone: kept in the data center's cache (the Cache API) for a
+// day too, so other isolates, and other people typing the same, do not ask Clef again.
+const RANKING_TTL_S = 24 * 60 * 60;
+const rankingUrl = (q) => `https://opspile.invalid/emoji-ranking/v1?q=${encodeURIComponent(q)}`;
+const colo = () => (typeof caches !== 'undefined' && caches.default) || null;
+
+async function cachedRanking(q) {
+  try {
+    const hit = await colo()?.match(rankingUrl(q));
+    const ranked = hit && await hit.json();
+    return Array.isArray(ranked) ? ranked : null;
+  } catch {
+    return null;
+  }
+}
+
+function keepRanking(q, ranked, waitUntil) {
+  const cache = colo();
+  if (!cache || !ranked.length) {
+    return;
+  }
+  const put = cache.put(rankingUrl(q), new Response(JSON.stringify(ranked), {
+    headers: { 'content-type': 'application/json', 'cache-control': `max-age=${RANKING_TTL_S}` },
+  })).catch(() => {});
+  if (waitUntil) {
+    waitUntil(put);
+  }
+}
+
 /**
  * The composer's emoji suggestions for `typed`, what follows a `:` being typed: the
  * `candidates` of it, as Slack names, most likely first by Clef's probabilities, all of them
  * (no threshold: the composer fills its list with them after the names that have `typed`
- * in them). Empty when Clef fails or takes longer than `timeoutMs`; rankings are remembered.
+ * in them). Empty when Clef fails or takes longer than `timeoutMs`; rankings are remembered,
+ * in the isolate and in the data center's cache (kept there in `waitUntil`, where given).
  */
-export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS) {
+export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS, { waitUntil } = {}) {
   const q = String(typed || '').toLowerCase().replace(/^:+|:+$/g, '').slice(0, 60);
   if (!env.AI || q.length < 2 || !/[a-z]/.test(q)) {
     return [];
   }
   if (rankings.has(q)) {
     return rankings.get(q);
+  }
+  const cached = await cachedRanking(q);
+  if (cached) {
+    return remember(q, cached, rankings);
   }
   const list = candidates(q);
   try {
@@ -355,6 +389,7 @@ export async function rankEmoji(env, typed, timeoutMs = SUGGEST_TIMEOUT_MS) {
     const ranked = list.map((name, i) => ({ name, p: Number(p[`e${i}`]) || 0 }))
       .sort((x, y) => y.p - x.p) // stable: candidates' order where Clef is unsure
       .map((e) => e.name);
+    keepRanking(q, ranked, waitUntil);
     return remember(q, ranked, rankings);
   } catch (e) {
     console.log(JSON.stringify({ route: 'emoji', error: String(e && e.message) }));
