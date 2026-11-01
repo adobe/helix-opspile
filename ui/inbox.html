@@ -440,6 +440,10 @@
   .expertlist .av { width: 24px; height: 24px; font-size: 9px; border-radius: 6px; }
   .expertlist b { display: block; font-weight: 500; color: var(--ink); }
   .expertlist small { display: block; font-size: 11px; color: var(--mute); }
+  .expertlist li { display: flex; align-items: flex-start; }
+  .expertlist button.reject { flex: none; width: auto; padding: 6px 8px; color: var(--mute); opacity: .45; }
+  .expertlist li:hover button.reject, .expertlist button.reject:focus-visible { opacity: 1; }
+  .expertlist button.reject:hover { color: var(--ink); }
   .tag.tech { color: var(--ink); }
   .feed { padding: 8px 22px 40px; }
   .day { text-align: center; margin: 18px 0 8px; }

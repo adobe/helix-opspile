@@ -1728,8 +1728,11 @@ function expertsHtml(key) {
   if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
   const open = state.expertsOpen === key;
   const top = list[0];
-  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues to pull in" title="More colleagues">▾</button>` : '';
-  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  // ✕ only where a reject can be recorded, and then ▾ even for one, so each can be rejected.
+  const rejectable = expertsRecordable(key);
+  const more = list.length > 1 || rejectable ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="${list.length > 1 ? 'More colleagues to pull in' : 'About this colleague'}" title="${list.length > 1 ? 'More colleagues' : 'Why them, or not the right person'}">▾</button>` : '';
+  const reject = (e, i) => (rejectable ? `<button class="reject" data-expert-reject="${i}" title="Not the right person for this thread" aria-label="${esc(e.name)} is not the right person for this thread">✕</button>` : '');
+  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button>${reject(e, i)}</li>`).join('')}</ul>` : '';
   return `<div class="experts" id="experts"><button class="top" data-expert="0" title="${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(expertLine(top))}</span></button>${more}${rows}</div>`;
 }
 
@@ -1748,13 +1751,18 @@ function placeExperts(key) {
  */
 function expertEvent(key, action, account) {
   const list = state.expertLists.get(key);
-  if (state.as || !list) return;
-  fetch('/api/experts/event', {
+  if (!expertsRecordable(key)) return Promise.resolve(false);
+  return fetch('/api/experts/event', {
     method: 'POST',
     credentials: 'same-origin',
     keepalive: true,
     body: JSON.stringify({ list, action, ...(account ? { account } : {}) }),
-  }).catch(() => {});
+  }).then((res) => res.ok, () => false);
+}
+
+/** Whether what is done with the thread's list can be recorded: it has an id, and I am me. */
+function expertsRecordable(key) {
+  return !state.as && !state.data?.me?.readonly && Boolean(state.expertLists?.get(key));
 }
 
 /** Says a list is on screen: once each time a thread is opened, and again when it changes. */
@@ -1818,6 +1826,29 @@ function pullExpert(key, e) {
   box.focus();
 }
 
+/**
+ * "Not the right person": they leave the list, and the finder leaves them out of my lists of
+ * this thread from then on (a `reject`, which the training learns from too).
+ */
+async function rejectExpert(key, i, button) {
+  const expert = state.experts.get(key)?.[i];
+  if (!expert || button?.disabled) return;
+  if (button) button.disabled = true;
+  // Only once the Worker has it: until then, they would be back on the next load.
+  if (!await expertEvent(key, 'reject', expert.id)) {
+    if (button) button.disabled = false;
+    toast(`Couldn’t save that ${expert.name} is not the right person. Try again.`);
+    return;
+  }
+  const rest = (state.experts.get(key) || []).filter((e) => e.id !== expert.id);
+  state.experts.set(key, rest);
+  if (!rest.length) state.expertsOpen = null;
+  placeExperts(key);
+  const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
+  (rows[Math.min(i, rows.length - 1)] || document.querySelector('#experts .top'))?.focus();
+  toast(`${expert.name} won’t be suggested to you for this thread again.`);
+}
+
 function closeExperts(key, focus = false) {
   if (state.expertsOpen !== key) return;
   dismissExperts();
@@ -1830,7 +1861,10 @@ function wireExperts(key) {
   if (!el) return;
   el.onclick = (e) => {
     const pick = e.target.closest('[data-expert]');
-    if (e.target.closest('[data-experts-more]')) {
+    const reject = e.target.closest('[data-expert-reject]');
+    if (reject) {
+      rejectExpert(key, Number(reject.dataset.expertReject), reject);
+    } else if (e.target.closest('[data-experts-more]')) {
       if (state.expertsOpen === key) {
         dismissExperts();
       } else {
@@ -1838,7 +1872,8 @@ function wireExperts(key) {
         expertEvent(key, 'open');
       }
       placeExperts(key);
-      document.querySelector('#experts [data-expert="1"]')?.focus();
+      const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
+      (rows[1] || rows[0])?.focus();
     } else if (pick) {
       const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
       state.expertsOpen = null;
@@ -1854,7 +1889,7 @@ function wireExperts(key) {
     if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const rows = [...el.querySelectorAll('.expertlist button')];
+    const rows = [...el.querySelectorAll('.expertlist [data-expert]')];
     const i = rows.indexOf(document.activeElement);
     rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
   };
