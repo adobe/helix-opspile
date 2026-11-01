@@ -561,17 +561,18 @@ export async function consume(batch, env) {
     } catch (e) {
       console.error(JSON.stringify({ route: 'normalize', key, error: e.message }));
       // Rate limits (Vectorize, Workers AI) back off longer and spread out.
-      const limited = /Too Many Requests|429|rate.?limit/i.test(e.message);
+      const limited = /Too Many Requests|429|rate limit/i.test(e.message);
+      // A root that cannot be re-threaded still gets its agent, before the job is given up.
+      if (body.rethread && body.poke && msg.attempts >= LAST_ATTEMPT) {
+        // eslint-disable-next-line no-await-in-loop
+        await env.NORMALIZE.send({ agent: body.rethread }).catch(() => {});
+      }
+      msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
+
       if (msg.attempts >= LAST_ATTEMPT) {
-        // A root that cannot be re-threaded still gets its agent, before the job is given up.
-        if (body.rethread && body.poke) {
-          // eslint-disable-next-line no-await-in-loop
-          await env.NORMALIZE.send({ agent: body.rethread }).catch(() => {});
-        }
         // eslint-disable-next-line no-await-in-loop
         await recordDead(env, key, body, e.message);
       }
-      msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
     }
   }
 }
