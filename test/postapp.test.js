@@ -108,6 +108,40 @@ describe('posting as the opspile app, with mentions', () => {
   });
   const sent = (pred) => calls.filter(pred).pop();
 
+  it('posts a reply once, however often it is retried under its key', async () => {
+    const e = env();
+    const body = { thread: SLACK, text: 'Hello', key: 'k1' };
+    const first = await call(e, 'POST', '/api/post/app', body);
+    const again = await call(e, 'POST', '/api/post/app', body);
+    const posts = calls.filter((c) => c.u.endsWith('/chat.postMessage'));
+    assert.equal(posts.length, 1);
+    assert.equal((await first.json()).id, '1.9');
+    assert.deepEqual(await again.json(), { ok: true, platform: 'slack', id: '1.9', again: true });
+  });
+
+  it('says so when a first try never finished', async () => {
+    const e = env();
+    globalThis.fetch = async () => {
+      throw new Error('the connection dropped');
+    };
+    const body = { thread: SLACK, text: 'Hello', key: 'k2' };
+    await assert.rejects(call(e, 'POST', '/api/post/app', body));
+    const again = await call(e, 'POST', '/api/post/app', body);
+    assert.equal(again.status, 409);
+    assert.equal((await again.json()).unknown, true);
+  });
+
+  it('keeps a post that went out when the draft it used up cannot be discarded', async () => {
+    const e = env();
+    const { prepare } = e.DB;
+    e.DB.prepare = function broken(sql) {
+      if (/SELECT d\.\*/.test(sql)) throw new Error('D1 is down');
+      return prepare.call(this, sql);
+    };
+    const res = await call(e, 'POST', '/api/post/app', { thread: SLACK, text: 'Hello', draft: 'v1' });
+    assert.equal(res.status, 200);
+  });
+
   it('mentions the picked people on Slack, in the text and in the markdown block', async () => {
     const res = await call(env(), 'POST', '/api/post/app', {
       thread: SLACK,

@@ -48,6 +48,7 @@ import {
   inPersonalView, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
+import { claimPost, settlePost } from './postkeys.js';
 import { ATTENTION, readState, waitingOn } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
@@ -898,17 +899,29 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     const { body, files } = read;
     const inMine = mayWork(env, me);
+    // A retry of a reply that may have gone out does not post it again (src/postkeys.js).
+    const again = await claimPost(env, me, body.key);
+    if (again && !again.ok) {
+      return again;
+    }
     // As the person, or as the opspile app (where it may post in the channel).
-    const res = url.pathname === '/api/post'
-      ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
+    let res = again;
+    if (!res) {
+      res = url.pathname === '/api/post'
+        ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
+      await settlePost(env, me, body.key, res);
+    }
     if (files.length) {
       console.log(JSON.stringify({
         route: 'post', action: 'files', count: files.length, ok: res.ok, status: res.status,
       }));
     }
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
+    // The post went out: whatever happens here, the answer says so.
     if (res.ok && typeof body.draft === 'string') {
-      await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine);
+      await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine).catch((e) => {
+        console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
+      });
     }
     return res;
   }

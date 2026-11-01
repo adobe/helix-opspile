@@ -2050,11 +2050,12 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Replies I sent that have not arrived yet: a reply has arrived once a message has the id
   // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
   // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions). One still on its way,
-  // or that failed, stays; one the platform took, for a minute at most.
+  // or that failed, stays; one the platform took, for a minute at most. One nobody knows about
+  // stays until it arrives, which settles it, or the person decides.
   const settled = new Set();
   state.sending = state.sending.filter((p) => {
     if (p.status === 'sending' || p.status === 'failed') return true;
-    if (Date.now() - p.sentAt >= 60000) return false;
+    if (p.status !== 'unknown' && Date.now() - p.sentAt >= 60000) return false;
     if (p.thread !== key) return true;
     const m = messages.find((x) => (p.postedId ? String(x.id) === String(p.postedId)
       : x.author?.name === p.author.name
@@ -2733,10 +2734,22 @@ function sendBar(p, now) {
 }
 
 /**
+ * How a post that did not go well ended. `failed`: the platform or the Worker refused it, so it
+ * did not go out. `unknown`: nobody can say. The answer was lost (no status, or an error page
+ * instead of an answer), or the Worker says the first try did not finish.
+ */
+const sendOutcome = (res) => (!res?.status || res.data?.unknown || (res.status >= 500 && !res.data?.error) ? 'unknown' : 'failed');
+
+/**
  * What goes under a reply being sent: the bar (the same markup from start to end, so the
  * feed keeps its node while the bar fills), why it failed, or nothing once it is through.
  */
 function sendState(p) {
+  if (p.status === 'unknown') {
+    const again = p.asked ? 'Send again' : 'Retry';
+    return `<div class="unsent" role="alert"><span class="why">${p.asked ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}</span>
+      <button data-retry="${esc(p.id)}"${p.asked ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${again}</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+  }
   if (p.status === 'failed') {
     return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}</span>
       <button data-retry="${esc(p.id)}">Retry</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
@@ -2820,11 +2833,13 @@ async function deliver(p) {
   let data = {};
   try {
     // With files, as multipart (src/attach.js).
-    res = await postWith('/api/post', { thread: p.thread, text: p.body, mentions: p.mentions, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
+    res = await postWith('/api/post', { thread: p.thread, text: p.body, mentions: p.mentions, key: p.key, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
     data = res.data || {};
   } catch { /* offline, or the connection dropped */ }
   if (!res?.ok) {
-    p.status = 'failed';
+    p.status = sendOutcome(res);
+    // The Worker says the first try did not finish: only the person can decide to send it again.
+    p.asked = Boolean(data.unknown);
     p.error = data.error || (res?.status ? `could not send (${res.status})` : 'could not reach the inbox');
     state.sendError = p.error;
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
@@ -2887,7 +2902,7 @@ async function send(key, thread, draft = null) {
   }
   sendSeq += 1;
   const p = {
-    thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: thread.source, status: 'sending', ...ownLook(key, thread.source),
+    thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: thread.source, status: 'sending', ...ownLook(key, thread.source),
   };
   state.sending.push(p);
   showSending(key);
@@ -2897,8 +2912,11 @@ async function send(key, thread, draft = null) {
 /** Sends a reply that failed again. */
 function retrySend(id) {
   const p = state.sending.find((x) => x.id === id);
-  if (!p || p.status !== 'failed') return;
-  Object.assign(p, { status: 'sending', startedAt: null, error: null });
+  if (!p || (p.status !== 'failed' && p.status !== 'unknown')) return;
+  // The same key, so a post that did go out is not posted again, unless the person decided to.
+  Object.assign(p, {
+    status: 'sending', startedAt: null, error: null, key: p.asked ? crypto.randomUUID() : p.key, asked: false,
+  });
   showSending(p.thread);
   animateSending();
   postPending(p);
@@ -2907,7 +2925,7 @@ function retrySend(id) {
 /** Throws a reply that failed away, with a moment to take that back. */
 function discardSend(id) {
   const i = state.sending.findIndex((x) => x.id === id);
-  if (i < 0 || state.sending[i].status !== 'failed') return;
+  if (i < 0 || (state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown')) return;
   const [p] = state.sending.splice(i, 1);
   showSending(p.thread);
   toast('Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
@@ -2922,6 +2940,8 @@ window.addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
+const appKeys = new Map();
+
 /**
  * Posts `text` in the thread as the opspile app (POST /api/post/app), where the channel lets
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
@@ -2929,9 +2949,13 @@ window.addEventListener('beforeunload', (e) => {
  * mentions, as when you send it. Resolves to null, or the error.
  */
 async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [] } = {}) {
+  // Sending the same text again after a lost answer is a retry, unless the Worker cannot tell.
+  const once = `${key}\u0000${text}`;
+  if (!appKeys.has(once)) appKeys.set(once, crypto.randomUUID());
   const res = await postWith('/api/post/app', {
-    thread: key, text, ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
+    thread: key, text, key: appKeys.get(once), ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
   }, files);
+  if (res.ok || res.data.unknown || sendOutcome(res) === 'failed') appKeys.delete(once);
   if (!res.ok) return res.data.error || `could not send (${res.status})`;
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -3169,10 +3193,15 @@ async function postNew() {
   $('send').disabled = true;
   $('send').textContent = 'Posting…';
   const { channel } = c;
-  const res = await postWith('/api/post', { channel: channel.ref, text, mentions: mentionsIn(NEW, text) }, files);
+  c.key ??= crypto.randomUUID();
+  const res = await postWith('/api/post', {
+    channel: channel.ref, text, mentions: mentionsIn(NEW, text), key: c.key,
+  }, files);
   c.posting = false;
   if (!res.ok) {
     const { data } = res;
+    // Posting again after a lost answer is a retry, unless the Worker cannot tell.
+    if (data.unknown || sendOutcome(res) === 'failed') c.key = null;
     c.error = data.error || (res.status ? `could not post (${res.status})` : 'could not reach the inbox');
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
     const again = data.files && (data.reconnect || data.connect);
