@@ -15,7 +15,9 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { parse } from '../src/channels.js';
-import { runBackfill, slackBackfillKey } from '../src/backfill.js';
+import {
+  requestOf, runBackfill, slackBackfillKey, sweepBackfills,
+} from '../src/backfill.js';
 import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import { consume, processKey, recordBots } from '../src/normalizer.js';
@@ -585,6 +587,86 @@ describe('backfill, mentions and labels', () => {
     assert.equal(backfills.length, 1);
     assert.deepEqual(backfills[0].body.backfill, {
       source: 'slack', tenant: 'E1', channelId: 'C1', groupId: undefined, rootId: '1.1', thread: 'slack:E1:C1:1.1',
+    });
+  });
+
+  describe('a request that does not go through', () => {
+    const THREAD = 'slack:E1:C1:1.1';
+    const request = {
+      source: 'slack', tenant: 'E1', channelId: 'C1', rootId: '1.1', thread: THREAD,
+    };
+    const open = (e, at, seen = '2026-10-21T10:00:00.000Z') => {
+      e.DB.sqlite.prepare('INSERT INTO backfills (thread, requested_at) VALUES (?, ?)').run(THREAD, at);
+      e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, any_at, updated_at) VALUES (?, 'slack', 'E1', 'C1', '1.1', 'acme', 'helix', 'p/', ?, ?)`)
+        .run(THREAD, seen, seen);
+    };
+    const row = (e) => ({ ...e.DB.rows('SELECT done_at, error, requested_at FROM backfills')[0] });
+    const slackSays = (error) => {
+      globalThis.fetch = async () => Response.json({ ok: false, error });
+    };
+    const real = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = real;
+    });
+
+    it('retries an error that may pass, and leaves it open', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      await assert.rejects(runBackfill(e, request), /ratelimited/);
+      assert.equal(row(e).done_at, null);
+      assert.match(row(e).error, /ratelimited/);
+    });
+
+    it('ends on an error that stays', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('not_in_channel');
+      assert.equal((await runBackfill(e, request)).result, 'backfill-failed');
+      assert.ok(row(e).done_at);
+    });
+
+    it('clears the error once it goes through', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      await assert.rejects(runBackfill(e, request));
+      globalThis.fetch = async () => Response.json({ ok: true, messages: [] });
+      assert.equal((await runBackfill(e, request)).result, 'backfilled');
+      assert.equal(row(e).error, null);
+    });
+
+    it('is sent out again by the cron, an hour apart', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z', '2026-10-21T10:00:00.000Z');
+      e.queued.length = 0;
+      const now = new Date('2026-10-21T10:30:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, now), { sent: 0, gaveUp: 0 });
+      const later = new Date('2026-10-21T11:30:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, later), { sent: 1, gaveUp: 0 });
+      assert.deepEqual(e.queued.map((q) => q.body.backfill.thread), [THREAD]);
+      assert.deepEqual(await sweepBackfills(e, later), { sent: 0, gaveUp: 0 });
+    });
+
+    it('is given up once the thread has been quiet for a week', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z', '2026-10-21T10:00:00.000Z');
+      e.queued.length = 0;
+      const now = new Date('2026-10-29T10:00:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, now), { sent: 0, gaveUp: 1 });
+      assert.deepEqual([row(e).error, e.queued.length], ['gave up', 0]);
+      assert.ok(row(e).done_at);
+    });
+
+    it('is rebuilt from the thread key, on every platform', () => {
+      assert.deepEqual(requestOf('slack:E1:C1:1.1'), request);
+      assert.deepEqual(requestOf('teams:T:G1:19:abc@thread.tacv2:1729'), {
+        source: 'teams', tenant: 'T', groupId: 'G1', channelId: '19:abc@thread.tacv2', rootId: '1729', thread: 'teams:T:G1:19:abc@thread.tacv2:1729',
+      });
+      assert.deepEqual(requestOf('discord:1:2:3'), {
+        source: 'discord', tenant: '1', channelId: '2', rootId: '3', thread: 'discord:1:2:3',
+      });
     });
   });
 
