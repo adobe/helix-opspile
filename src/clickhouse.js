@@ -15,7 +15,7 @@ import { threadMessages } from './label.js';
 import { withoutQuotes } from './markdown.js';
 import { relationOf } from './profiles.js';
 import {
-  mergeFacts, resolution, resolutionFacts, signalFacts,
+  isResolved, mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { effectiveLabel, reviewsFor } from './review.js';
 import { waitingOn } from './threads.js';
@@ -205,8 +205,7 @@ async function entries(env, groups) {
     });
     out.set(g, {
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || anchor.title || '',
-      resolved: verdict ? verdict === 'resolved'
-        : Boolean(label && label.resolved_p != null && label.resolved_p >= 0.5),
+      resolved: isResolved(verdict, label),
       waiting,
       label: {
         'label.next_actor': (label && label.next_actor) || '',
