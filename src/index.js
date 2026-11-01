@@ -255,15 +255,15 @@ export default {
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
-    ctx.waitUntil(sweepBackfills(env)
-      .then((r) => console.log(JSON.stringify({ route: 'cron', backfills: r })))
-      .catch((e) => console.error(JSON.stringify({ route: 'cron', backfills: 'error', error: e.message }))));
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
+    ctx.waitUntil(sweepBackfills(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', backfills: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', backfills: 'error', error: e.message }))));
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
