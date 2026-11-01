@@ -416,6 +416,22 @@ describe('DiscordPoller', () => {
     assert.deepEqual(await ctx.storage.get('last'), out);
   });
 
+  it('adds up what it found in every guild, and names each one that failed', async () => {
+    const { p, ctx } = poller();
+    const [SECOND, BAD, WORSE] = ['888888888888888888', '999999999999999999', '777777777777777777'];
+    const { fetch } = api;
+    p.env.DISCORD_GUILDS = `${BAD},${G},${WORSE},${SECOND}`;
+    const refused = (url) => [BAD, WORSE].some((g) => String(url).includes(`/guilds/${g}/`));
+    globalThis.fetch = async (url, init) => (refused(url)
+      ? Response.json({ code: 50001 }, { status: 403 }) : fetch(url, init));
+    const out = await quiet(() => p.poll());
+    // The second good guild lists the same channel: its channels add up, its messages are read.
+    assert.equal(out.channels, 4);
+    assert.equal(out.messages, 2);
+    assert.match(out.error, new RegExp(`^${BAD}: .*; ${WORSE}: `));
+    assert.deepEqual(await ctx.storage.get('last'), out);
+  });
+
   it('reads history once, then only what is new: two requests when nothing happened', async () => {
     const { p, stored } = poller();
     const first = await quiet(() => p.poll());

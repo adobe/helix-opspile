@@ -140,7 +140,8 @@ export class DiscordPoller extends DurableObject {
           out[k] = (out[k] || 0) + v;
         }
       } catch (e) {
-        out.error = e.message;
+        // Every guild that failed, for /diag: which one, without reading the logs.
+        out.error = [out.error, `${guild}: ${e.message}`].filter(Boolean).join('; ');
         log({ poll: 'error', guild, error: e.message });
       }
     }
