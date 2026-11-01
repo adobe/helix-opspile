@@ -534,9 +534,6 @@ export function opspileExtension(ctx) {
           }
           const res = await discardDraft(env, me, { thread: t.key, base: args.base }, () => true);
           const body = await res.json();
-          if (res.status === 409 && !body.draft) {
-            return fail('The draft you started from is gone: someone discarded or sent it. Nothing was saved. Look at the thread before you save a new one, without `base`.');
-          }
           if (res.status === 409) {
             const d = body.draft;
             return fail(`The draft changed (version ${d.updated_at}, saved by ${d.by.name || 'someone'}). Nothing was discarded. Its text:\n\n${d.body}`);

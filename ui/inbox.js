@@ -2651,7 +2651,7 @@ async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
     // Gone meanwhile: saving what you wrote is your call, and then it is a new draft.
     setCachedDraft(key, null);
     toast(`${res.data.error}.`, { label: 'Save it anyway', run: () => saveDraft(key, text, null, { fromBox, sources }) });
-    return { error: res.data.error, conflict: true };
+    return { error: res.data.error, gone: true };
   }
   if (!res.ok) {
     const error = res.data.error || `could not save the draft (${res.status})`;
@@ -5312,6 +5312,7 @@ const WEBMCP_TOOLS = [
       const data = await showThread(key);
       if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
       const res = await saveDraft(key, body, base || null, { sources: sources || [] });
+      if (res.gone) return fail('The draft this was written from is gone: someone discarded or sent it. Nothing was saved. Look at the thread, and call this again without base to save a new one.');
       if (res.conflict) {
         const d = res.conflict;
         return fail(`${base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (saved ${d.updated_at} by ${draftBy(d)}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text: ${clip(d.body, 1200)}`);
