@@ -577,8 +577,12 @@ async function confirmRequest(env, me, body) {
   if (!res.ok) {
     return json({ ...answer, request: await reopenRequest(env, request.id) }, res.status);
   }
+  const outcome = outcomeOf(answer);
+  console.log(JSON.stringify({
+    route: 'admin', request: 'confirmed', by: me.id, id: request.id, outcome, closed: true,
+  }));
   return json({
-    ...answer, closed: true, request: await recordOutcome(env, request.id, outcomeOf(answer)),
+    ...answer, closed: true, request: await recordOutcome(env, request.id, outcome),
   });
 }
 
