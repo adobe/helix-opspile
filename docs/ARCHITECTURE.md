@@ -993,7 +993,8 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   key when it is saved again.
 - A draft's `updated_at` is its version. A save names the version its text was written from,
   and a draft that changed meanwhile is not overwritten: the colleague's draft is shown, with
-  an offer to overwrite it. A discard does the same.
+  an offer to overwrite it. A discard does the same. A save from a draft that is gone (discarded
+  or sent) saves nothing either, and offers to save it as a new one.
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
   you, or the thread agent), when, and how it starts, opened to all of it with ▾. The reply box
   is yours, and a draft never replaces what you typed. Resting the pointer on the line, or

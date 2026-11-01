@@ -2647,6 +2647,12 @@ async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
     toast(`${res.data.error}.`, { label: 'Overwrite', run: () => saveDraft(key, text, res.data.draft.updated_at, { fromBox, sources }) });
     return { error: res.data.error, conflict: res.data.draft };
   }
+  if (res.status === 409 && res.data.conflict) {
+    // Gone meanwhile: saving what you wrote is your call, and then it is a new draft.
+    setCachedDraft(key, null);
+    toast(`${res.data.error}.`, { label: 'Save it anyway', run: () => saveDraft(key, text, null, { fromBox, sources }) });
+    return { error: res.data.error, conflict: true };
+  }
   if (!res.ok) {
     const error = res.data.error || `could not save the draft (${res.status})`;
     toast(error);
