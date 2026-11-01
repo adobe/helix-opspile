@@ -222,6 +222,42 @@ describe('rethread', () => {
   });
 });
 
+describe('a re-threading job that fails half way', () => {
+  it('is finished by its retry, in the file too', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const keys = [];
+    for (const [i, ray] of ['a4e16b8edcc84c7a', 'b5f27c9fedd95d8b'].entries()) {
+      const at = new Date(T0 + i * 3600 * 1000).toISOString();
+      // eslint-disable-next-line no-await-in-loop
+      keys.push(await seed(env, `1.${i}`, alert(422, ray, at), at));
+    }
+    await rethread(env, keys[0]);
+
+    // R2 fails just as the match is written into the root's file.
+    const { put } = env.CHANNELS;
+    let failing = true;
+    env.CHANNELS.put = async (...args) => {
+      if (failing) {
+        failing = false;
+        throw new Error('R2 is down');
+      }
+      return put.apply(env.CHANNELS, args);
+    };
+    await assert.rejects(rethread(env, keys[1]), /R2 is down/);
+    const undecided = env.DB.rows('SELECT rethreaded_at FROM threads WHERE thread = ?', keys[1]);
+    assert.equal(undecided[0].rethreaded_at, null);
+
+    const r = await rethread(env, keys[1]);
+    assert.equal(r.result, 'rethreaded');
+    const [row] = env.DB.rows('SELECT logical_thread, rethreaded_at FROM threads WHERE thread = ?', keys[1]);
+    assert.equal(row.logical_thread, keys[0]);
+    assert.ok(row.rethreaded_at);
+    const file = await env.CHANNELS.get('channels/acme/helix/slack-C1/1.1/1.1.md');
+    assert.match(await file.text(), new RegExp(`logicalThread: ?"?${keys[0]}`));
+    assert.equal((await rethread(env, keys[1])).result, 'unchanged');
+  });
+});
+
 describe('bursts', () => {
   it('folds a second root by the same person minutes later, in any order', async () => {
     for (const order of [[0, 1], [1, 0]]) {
