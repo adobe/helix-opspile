@@ -251,6 +251,9 @@ export default {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    ctx.waitUntil(pruneOauth(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
@@ -263,9 +266,6 @@ export default {
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
-    ctx.waitUntil(pruneOauth(env)
-      .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
-      .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));
