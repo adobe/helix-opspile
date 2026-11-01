@@ -68,11 +68,22 @@ export class TeamRoom extends DurableObject {
 
   async alarm() {
     const pending = await this.ctx.storage.list({ prefix: 'read:' });
+    let newer = false;
     for (const [key, r] of pending) {
       // eslint-disable-next-line no-await-in-loop
       await advanceWatermark(this.env.DB, r.person, r.thread, r.at, 'open');
+      // D1 lets other events in: a newer read of the same thread may be waiting by now.
       // eslint-disable-next-line no-await-in-loop
-      await this.ctx.storage.delete(key);
+      const now = await this.ctx.storage.get(key);
+      if (now && now.at !== r.at) {
+        newer = true;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        await this.ctx.storage.delete(key);
+      }
+    }
+    if (newer && !(await this.ctx.storage.getAlarm())) {
+      await this.ctx.storage.setAlarm(Date.now() + FLUSH_MS);
     }
   }
 
