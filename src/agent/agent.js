@@ -252,8 +252,6 @@ export class ThreadAgent extends Agent {
     if (JSON.stringify(before || {}) === JSON.stringify(list)) {
       return;
     }
-    await this.ctx.storage.put('uploads', list);
-    this.ws = null;
     const previous = await this.ctx.storage.get('uploads-expiry');
     if (previous) {
       await this.cancelSchedule(previous).catch(() => false);
@@ -263,6 +261,10 @@ export class ThreadAgent extends Agent {
       const s = await this.schedule(new Date(list.expires), 'expireUploads');
       await this.ctx.storage.put('uploads-expiry', s.id);
     }
+    // Last: a failure above finds the list as it was and tries again, instead of finding nothing
+    // to do with no schedule left to empty the mount.
+    await this.ctx.storage.put('uploads', list);
+    this.ws = null;
   }
 
   /** Schedule callback: the oldest file of the thread is 30 days old. */
