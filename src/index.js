@@ -55,6 +55,7 @@ import { sweepVectors } from './vectors.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
+import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 
 const SCRIPTS = {
@@ -287,6 +288,9 @@ export default {
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
+    ctx.waitUntil(sweepBackfills(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', backfills: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', backfills: 'error', error: e.message }))));
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));

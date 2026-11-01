@@ -649,7 +649,9 @@ A reply whose root has never been seen (it was posted before ingestion started, 
 the bot joined) triggers one request for the thread's history: `conversations.replies` on
 Slack, the message and its `/replies` on Graph. Every message lands in pile 1 marked
 `via: backfill` and is normalized like a live event, so pile 2 cannot tell them apart. The
-`backfills` table makes the request idempotent.
+`backfills` table makes the request idempotent. An error that stays (the bot is not in the
+channel) ends a request. Any other leaves it open: the queue retries it, and the cron sends out
+what is still open after an hour, an hour apart, until the thread has been quiet for a week.
 
 ## Labels and facts
 
