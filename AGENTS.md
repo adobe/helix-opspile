@@ -50,6 +50,10 @@ code and docs, is the decision model that labels threads and channels.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
 
+- **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
+  [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
+  entry before changing one, and add one for anything new with a lifecycle.
+
 ## Debugging
 
 - **The inbox in a browser: `playwright-cli --cdp=9222`.** Chrome runs with remote debugging

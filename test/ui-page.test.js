@@ -586,6 +586,30 @@ describe('inbox page', () => {
     }
   });
 
+  it('tells what a reply box holds', () => {
+    const { boxState } = piece('/**\n * What a reply box holds', '/** The composer state of a thread', 'boxState');
+    assert.equal(boxState(undefined), 'empty');
+    assert.equal(boxState({ text: '  ', from: '', base: null }), 'empty');
+    assert.equal(boxState({ text: 'mine', from: '', base: null }), 'own');
+    assert.equal(boxState({ text: 'draft', from: 'draft', base: 'v1' }), 'draft');
+    assert.equal(boxState({ text: 'draft, edited', from: 'draft', base: 'v1' }), 'diverged');
+  });
+
+  it('tells where the file in the knowledge-base editor stands', () => {
+    const kb = SCRIPTS['kb.js'];
+    const from = kb.indexOf('/**\n * Where the open file stands');
+    const to = kb.indexOf('/** Saves a pause after the last keystroke');
+    // eslint-disable-next-line no-new-func
+    const at = (f, { dirty = true, saving = null } = {}) => new Function('state', 'edited', `${kb.slice(from, to)}\nreturn fileState;`)({ file: f, saving }, () => dirty)();
+    assert.equal(at({}, { dirty: false }), 'clean');
+    assert.equal(at({ conflict: {} }, { dirty: false }), 'clean');
+    assert.equal(at({}), 'editing');
+    assert.equal(at({}, { saving: Promise.resolve() }), 'saving');
+    assert.equal(at({ conflict: {}, problem: 'x' }), 'conflict');
+    assert.equal(at({ choosePath: true }), 'unnamed');
+    assert.equal(at({ problem: 'refused' }), 'problem');
+  });
+
   it('places a thread only bots posted in by its last message, not above every other', () => {
     const { activityOf } = piece('const lastOf', 'const favicon', 'activityOf');
     const threads = [
