@@ -2270,9 +2270,9 @@ function wireHoldMenu(key, thread) {
  * in and has not changed, or a draft it has `diverged` from. Only `draft` follows the draft.
  */
 function boxState(c) {
+  if (c?.base && c.text === c.from) return 'draft';
   if (!c || !c.text.trim()) return 'empty';
-  if (!c.base) return 'own';
-  return c.text === c.from ? 'draft' : 'diverged';
+  return c.base ? 'diverged' : 'own';
 }
 
 /** The composer state of a thread: its text, and the draft version it took in. */
