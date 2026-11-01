@@ -3898,7 +3898,6 @@ function markRead(t) {
 // reloading, because bells are checked on its reloads (checkBells).
 let reload;
 const changed = new Set();
-const STATUS_TICK_MS = 60 * 1000;
 const hidden = () => document.visibilityState === 'hidden';
 const belled = () => notifying() && (state.settings?.bells || []).some((b) => b.view === scopeKey());
 function reloadSoon(thread) {
@@ -3917,6 +3916,7 @@ async function reloadChanged() {
   await loadInbox();
   if (state.open && state.open !== early && touched(state.open)) openThread(state.open, { live: true });
 }
+const STATUS_TICK_MS = 60 * 1000;
 // A thread's status depends on the time too (waiting too long, customer silent), and nothing
 // announces that: the list is looked at again every minute while it is on screen.
 setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
