@@ -11,6 +11,7 @@
  */
 
 import { platformName } from './platforms.js';
+import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
   extract, rulesFor, techFor, techNames,
@@ -552,6 +553,9 @@ export async function sweepLabels(env, now = new Date()) {
   if (!env.AI || !env.NORMALIZE) {
     return { skipped: 'no AI binding' };
   }
+  if (!sweepsNow(now)) {
+    return { skipped: 'not this run' };
+  }
   const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
     LEFT JOIN labels l ON l.thread = t.thread
     WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ?
@@ -565,9 +569,9 @@ export async function sweepLabels(env, now = new Date()) {
       new Date(now.getTime() - 86400 * 1000).toISOString(),
       LABEL_SWEEP_LIMIT,
     ).all();
-  for (const { thread } of results || []) {
+  for (const [i, { thread }] of (results || []).entries()) {
     // eslint-disable-next-line no-await-in-loop
-    await env.NORMALIZE.send({ label: thread });
+    await env.NORMALIZE.send({ label: thread }, sweepDelay(i));
   }
   return { queued: (results || []).length };
 }

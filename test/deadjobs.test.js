@@ -134,6 +134,35 @@ describe('sweeping up after dead jobs', () => {
     assert.ok((await sweepRethreads({ DB: e.DB }, NOW)).skipped);
   });
 
+  it('sweeps once an hour, so that a job still retrying is not sent out twice', async () => {
+    const e = env(live);
+    thread(e, { key: 'died', hash: 'h' });
+    for (const minute of [20, 40]) {
+      const at = new Date(NOW.getTime() + minute * 60000);
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await sweepRethreads(e, at), { skipped: 'not this run' });
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await sweepLabels(e, at), { skipped: 'not this run' });
+    }
+    assert.equal(e.queued.length, 0);
+    assert.deepEqual(await sweepRethreads(e, NOW), { queued: 1 });
+  });
+
+  it('spreads a batch out, so that it does not run into a rate limit', async () => {
+    const sent = [];
+    const e = env({
+      ...live,
+      NORMALIZE: {
+        send: async (body, options) => sent.push([body.rethread, options.delaySeconds]),
+      },
+    });
+    thread(e, { key: 'a', hash: 'h', root: ago(3) });
+    thread(e, { key: 'b', hash: 'h', root: ago(2) });
+    thread(e, { key: 'c', hash: 'h', root: ago(1.5) });
+    await sweepRethreads(e, NOW);
+    assert.deepEqual(sent, [['a', 0], ['b', 5], ['c', 10]]);
+  });
+
   it('sends what keeps failing once a day, not with every cron run', async () => {
     const e = env(live);
     thread(e, { key: 'died', hash: 'h' });

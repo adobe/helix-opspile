@@ -1430,7 +1430,8 @@ Two new apps:
 `/diag/dead` lists and sends out again. Most jobs need nobody to do that: the cron's sweeps find
 vectors, full-text items and exports that are behind, roots whose re-threading died
 (`skeleton_hash` set, `rethreaded_at` not), recent threads with a person's message after their
-label, and open backfills. A dead `refile` does not heal by itself, since sweeping would apply
+label, and open backfills. Re-threading and labels are swept once an hour, a batch spread out over
+minutes, and a job that died within the day waits. A dead `refile` does not heal by itself, since sweeping would apply
 today's rules to every channel, and waits to be sent out again.
 
 ## Open questions

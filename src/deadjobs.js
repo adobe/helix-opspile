@@ -22,6 +22,16 @@ export const DEAD_JOB_DAYS = 30;
 const LIST = 100;
 const REDRIVE = 100;
 
+/**
+ * Whether a sweep that sends jobs out again runs at `now`: at the first cron run of the hour. A job
+ * and its retries take up to half an hour under a rate limit, and a sweep cannot see one that is
+ * under way: any more often, and the next run would send the same job out beside it.
+ */
+export const sweepsNow = (now) => now.getUTCMinutes() < 20;
+
+/** How long after the sweep its `i`th job goes out: a batch of them does not start at once. */
+export const sweepDelay = (i) => ({ delaySeconds: i * 5 });
+
 /** Records a job that failed for the last time. Quietly: it is failing already. */
 export async function recordDead(env, job, body, error) {
   try {

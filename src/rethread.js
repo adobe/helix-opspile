@@ -11,6 +11,7 @@
  */
 
 import { parse, render } from './channels.js';
+import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { CLEF } from './label.js';
 import { QUOTE_HEAD, quotesAsText } from './markdown.js';
 import { notifyRoom } from './notify.js';
@@ -553,6 +554,9 @@ export async function sweepRethreads(env, now = new Date()) {
   if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
     return { skipped: 'no VECTORS index' };
   }
+  if (!sweepsNow(now)) {
+    return { skipped: 'not this run' };
+  }
   // Not a root that is deleted or a notice by now, which the job skips, and not one that died
   // within the day: a root that always fails goes out once a day, not with every cron run.
   const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
@@ -567,9 +571,9 @@ export async function sweepRethreads(env, now = new Date()) {
       new Date(now.getTime() - 86400 * 1000).toISOString(),
       SWEEP_LIMIT,
     ).all();
-  for (const { thread } of results || []) {
+  for (const [i, { thread }] of (results || []).entries()) {
     // eslint-disable-next-line no-await-in-loop
-    await env.NORMALIZE.send({ rethread: thread });
+    await env.NORMALIZE.send({ rethread: thread }, sweepDelay(i));
   }
   return { queued: (results || []).length };
 }
