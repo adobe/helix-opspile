@@ -15,7 +15,9 @@ import {
   after, before, beforeEach, describe, it,
 } from 'node:test';
 import { AgentMcp } from '../src/agent/mcp.js';
-import { freshToken, keepOAuthAlive, KEEP_ALIVE_MS } from '../src/agent/mcpoauth.js';
+import {
+  freshToken, grantState, keepOAuthAlive, KEEP_ALIVE_MS,
+} from '../src/agent/mcpoauth.js';
 import { api, personById } from '../src/api.js';
 import { mcp } from '../src/mcp.js';
 import { oauth } from '../src/oauth.js';
@@ -199,6 +201,79 @@ describe('MCP servers that sign in with OAuth', () => {
     const agent = new AgentMcp(current, { get: async () => undefined, put: async () => {} });
     const { catalog } = await agent.refresh({ team: 'helix' });
     assert.equal((await agent.call(catalog.servers[0], 'whoami', {})).structuredContent.name, 'Ada');
+  });
+
+  /** A fetch that runs `meanwhile` once the token endpoint answered, while the refresh is out. */
+  const during = (meanwhile) => async (input, init) => {
+    const res = await worker(input, init);
+    if (new URL(String(input.url || input)).pathname === '/oauth/token') {
+      await meanwhile();
+    }
+    return res;
+  };
+
+  it('does not bring a grant back that was disconnected while it was refreshed', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    await assert.rejects(freshToken(current, server.id, {
+      fetch: during(() => call(admin, 'POST', '/api/kb/mcp/oauth/disconnect', { id: server.id })),
+    }), /not connected|connect/i);
+    const now = row(server.id);
+    assert.equal(now.oauth_by, null);
+    assert.equal(now.oauth_expires_at, null);
+    assert.equal(now.oauth_lock, null);
+    await assert.rejects(freshToken(current, server.id), /not connected|connect/i);
+    // Nothing outlives the grant: the tokens that refresh got are revoked too.
+    assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_tokens').get().n, 0);
+  });
+
+  it('keeps the sign-in made while an old refresh was out', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const replace = () => {
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = 'someone else', oauth_by = 'Bo' WHERE id = ?")
+        .run(server.id);
+    };
+    await assert.rejects(freshToken(current, server.id, { fetch: during(replace) }));
+    assert.equal(row(server.id).oauth, 'someone else');
+    assert.equal(row(server.id).oauth_by, 'Bo');
+  });
+
+  it('does not drop a grant made while an old refresh was refused', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    current.DB.sqlite.prepare("DELETE FROM oauth_tokens WHERE kind = 'refresh'").run();
+    const replace = () => {
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = 'someone else', oauth_by = 'Bo' WHERE id = ?")
+        .run(server.id);
+    };
+    await assert.rejects(quiet(() => freshToken(current, server.id, { fetch: during(replace) })));
+    assert.equal(row(server.id).oauth, 'someone else');
+    assert.equal(row(server.id).oauth_error, null);
+  });
+
+  it('gives back only its own lease', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const theirs = '2999-01-01T00:00:00.000Z';
+    const steal = () => {
+      current.DB.sqlite.prepare('UPDATE mcp_servers SET oauth_lock = ? WHERE id = ?').run(theirs, server.id);
+    };
+    await freshToken(current, server.id, { fetch: during(steal) });
+    assert.equal(row(server.id).oauth_lock, theirs);
+  });
+
+  it('says in one word where a grant stands', () => {
+    assert.equal(grantState({}), 'none');
+    assert.equal(grantState({ oauth_state: 'h' }), 'signing in');
+    assert.equal(grantState({ oauth_by: 'Ada' }), 'connected');
+    assert.equal(grantState({ oauth_by: 'Ada', oauth_lock: 'x' }), 'connected');
+    assert.equal(grantState({ oauth_by: 'Ada', oauth_error: 'gone' }), 'rejected');
+    assert.equal(grantState({ oauth_error: 'gone', oauth_state: 'h' }), 'rejected');
   });
 
   it('refreshes when the server refuses the token, and drops a grant the server no longer accepts', async () => {

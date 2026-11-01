@@ -16,7 +16,8 @@ import {
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
-  beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, openOauth, revokeGrant, serverForState,
+  beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, grantState, openOauth, revokeGrant,
+  serverForState,
 } from './agent/mcpoauth.js';
 import {
   appManifest, approveInstallation, createApp, currentApp, forgetGithub, installationsWithApprovals,
@@ -93,7 +94,7 @@ async function shown(env, row) {
     headerNames: row.header_names ? row.header_names.split(',') : [],
     auth: row.auth || 'headers',
     oauth: oauth && {
-      connected: Boolean(row.oauth_by && !row.oauth_error),
+      connected: grantState(row) === 'connected',
       by: row.oauth_by || null,
       at: row.oauth_at || null,
       expiresAt: row.oauth_expires_at || null,
@@ -276,7 +277,7 @@ async function resetOauth(env, id, sealed) {
       oauth_pending = NULL, oauth_state = NULL WHERE id = ?`).bind(sealed, Number(id)).run();
 }
 
-const connected = (row) => row.auth !== 'oauth' || Boolean(row.oauth_by && !row.oauth_error);
+const connected = (row) => row.auth !== 'oauth' || grantState(row) === 'connected';
 
 async function byId(env, id) {
   return env.DB.prepare('SELECT * FROM mcp_servers WHERE id = ?').bind(Number(id)).first();
