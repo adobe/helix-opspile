@@ -112,6 +112,20 @@ describe('shared drafts', () => {
     assert.equal(e.DB.rows('SELECT * FROM drafts').length, 1);
   });
 
+  it('does not bring back a draft that was discarded meanwhile', async () => {
+    const e = env();
+    const first = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;
+    await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: first.updated_at });
+    // A save from the draft that is gone: nothing is saved, and the answer says so.
+    const res = await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'two', base: first.updated_at });
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.deepEqual([body.conflict, body.draft], [true, null]);
+    assert.equal(e.DB.rows('SELECT * FROM drafts').length, 0);
+    // Saving it as a new draft is a decision of its own, as is Undo of a discard.
+    assert.equal((await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'two', base: null })).status, 200);
+  });
+
   it('does not overwrite a draft somebody changed meanwhile', async () => {
     const e = env();
     const first = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;

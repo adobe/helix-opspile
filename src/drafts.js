@@ -134,8 +134,8 @@ export async function getDraft(env, key, canSee) {
  * PUT /api/draft `{ thread, text, mentions?, sources?, base }`: saves the entry's draft as the
  * signed-in person. `base` is the `updated_at` of the draft the text was written from (null
  * if there was none); if the draft is no longer that version, nothing is saved and the
- * answer is 409 with the current draft. `sources` (src/sources.js) replaces the draft's; left
- * out, they stay, as when a person edits the text.
+ * answer is 409 with the current draft, or null when it is gone. `sources` (src/sources.js)
+ * replaces the draft's; left out, they stay, as when a person edits the text.
  */
 export async function saveDraft(env, me, request, inTeam) {
   const {
@@ -156,6 +156,12 @@ export async function saveDraft(env, me, request, inTeam) {
   const current = draftOf(await draftsFor(env, e.keys), e.keys);
   if (current && current.updated_at !== base) {
     return conflict(current);
+  }
+  // Written from a draft that is gone: it was discarded or sent, which is a change like any other.
+  if (!current && base) {
+    return json({
+      error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
+    }, 409);
   }
   const version = nextVersion(current && current.updated_at);
   const picked = JSON.stringify(cleanMentions(mentions));

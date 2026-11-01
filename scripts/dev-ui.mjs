@@ -1154,6 +1154,11 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'draft', thread: key });
       return json(res, { ok: true, discarded: Boolean(current), draft: current || null });
     }
+    if (!current && base) {
+      return json(res, {
+        error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
+      }, 409);
+    }
     if (!String(body || '').trim()) {
       return json(res, { error: 'write something to save (up to 8000 characters)' }, 400);
     }
