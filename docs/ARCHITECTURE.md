@@ -738,6 +738,12 @@ returns. The bubble then stays until the message comes back through ingestion (s
 seconds later: the Slack event, the normalize queue's batch, the live update), and the message
 takes its place unchanged. Replies to a thread go out one after the other, in the order they
 were written. One that failed says why, with **Retry** and **Discard**; it stays until then.
+A page that lost the answer cannot know whether the post went out, and a platform would take the
+same post twice, so a reply carries a key, the same on every retry (`post_keys`, migration 0049,
+`src/postkeys.js`; the cron deletes keys after a day). A retry that finds the first answer gets
+it, without posting. One that finds the first try unfinished says the reply may have been sent,
+and offers **Send again**, under a new key, so that sending it twice is the person's decision. A
+reply the platform refused is not kept, so its Retry posts. The MCP tools send no key.
 Leaving the page while a reply is still on its way (a reload, closing the tab) asks first,
 with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
 off.

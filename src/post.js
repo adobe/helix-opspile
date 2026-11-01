@@ -1010,6 +1010,8 @@ export async function post(env, me, request, inTeam, files = []) {
     return json({
       error: `Teams: ${(data.error && data.error.code) || res.status}`,
       connect: res.status === 401 ? 'teams' : undefined,
+      // Graph failing on its side: nobody can say whether it took the post.
+      unknown: res.status >= 500 || undefined,
     }, res.status === 413 ? 413 : 502);
   }
   return json({

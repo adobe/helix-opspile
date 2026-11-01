@@ -57,6 +57,7 @@ import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
+import { prunePostKeys } from './postkeys.js';
 
 const SCRIPTS = {
   'inbox.js': inboxJs,
@@ -294,6 +295,9 @@ export default {
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
+    ctx.waitUntil(prunePostKeys(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', postKeys: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', postKeys: 'error', error: e.message }))));
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));

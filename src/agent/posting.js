@@ -95,7 +95,8 @@ export async function postAsApp(env, key, text, options = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      return { error: `Slack: ${data.error || res.status}` };
+      // No answer from Slack itself: nobody can say whether it took the post.
+      return { error: `Slack: ${data.error || res.status}`, unknown: !data.error && res.status >= 500 };
     }
     return { ok: true, platform: 'slack', id: data.ts };
   }
@@ -127,7 +128,8 @@ export async function postAsApp(env, key, text, options = {}) {
       }
       return { ok: true, platform: 'discord', id: sent.id };
     } catch (e) {
-      return { error: `Discord: ${e.message}` };
+      // `discord <status>` is Discord refusing; anything else lost the answer.
+      return { error: `Discord: ${e.message}`, unknown: !/^discord [1-4]\d\d\b/.test(e.message) };
     }
   }
   if (t.source === 'teams') {
