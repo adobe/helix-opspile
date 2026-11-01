@@ -208,8 +208,8 @@ export async function reopenRequest(env, id) {
 }
 
 /**
- * After the admin team assigned a channel to a team directly (not from a request), or a rule
- * moved it there, the open requests for it are confirmed with it.
+ * After the admin team assigned a channel to a team directly (not from a request), the open
+ * requests for it are confirmed with it.
  */
 export async function settleRequests(env, me, { channelId, team, outcome }) {
   const [by, name, at] = stamp(me);
@@ -217,6 +217,23 @@ export async function settleRequests(env, me, { channelId, team, outcome }) {
       decided_by = ?, decided_name = ?, decided_at = ?
     WHERE channel_id = ? AND team = ? AND status = 'open'`)
     .bind(outcome, by, name, at, channelId, team).run();
+}
+
+/**
+ * After a rule moved channels (`moves`, src/refile.js), the open requests for them are confirmed:
+ * they are in those teams' inboxes now. One statement, however many channels moved.
+ */
+export async function settleMoved(env, me, moves) {
+  if (!moves.length) {
+    return;
+  }
+  const [by, name, at] = stamp(me);
+  await env.DB.prepare(`UPDATE channel_requests SET status = 'confirmed', outcome = 'moved',
+      decided_by = ?, decided_name = ?, decided_at = ?
+    WHERE status = 'open' AND channel_id || char(0) || team IN (SELECT value FROM json_each(?))`)
+    .bind(by, name, at, JSON.stringify(moves
+      .map((m) => `${m.channel.channelId}\u0000${m.to.team}`)))
+    .run();
 }
 
 /** What a manual assignment's answer (src/admin.js `assign`) did, as a request's outcome. */

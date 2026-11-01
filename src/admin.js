@@ -27,7 +27,7 @@ import { faviconProxy, findIcons, orgDomain } from './favicons.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
   recordOutcome,
-  reopenRequest, settleRequests,
+  reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
@@ -280,12 +280,12 @@ async function applyRules(env, me, { next, dryRun, write }) {
   }
   const saved = await write();
   const jobs = await enqueueMoves(env, moves);
+  // In the team's inbox now: nothing left to ask for. The rule is saved and its moves are queued,
+  // so a failure here must not answer as if it were not; the request stays open, and says so.
+  await settleMoved(env, me, moves).catch((e) => {
+    console.error(JSON.stringify({ route: 'admin', rules: 'requests not settled', error: e.message }));
+  });
   for (const m of moves) {
-    // In the team's inbox now: nothing left to ask for.
-    // eslint-disable-next-line no-await-in-loop
-    await settleRequests(env, me, {
-      channelId: m.channel.channelId, team: m.to.team, outcome: 'moved',
-    });
     // A channel filed under a new org or team gets their knowledge bases on its next move;
     // make sure a new org has one right away.
     if (m.to.org !== UNASSIGNED) {

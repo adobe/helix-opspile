@@ -353,6 +353,34 @@ describe('admin: channel assignment requests', () => {
     );
   });
 
+  it('do not fail a rule that was saved', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /UPDATE channel_requests SET status = 'confirmed', outcome = 'moved'/, () => {
+      throw new Error('D1 is down');
+    });
+    const r = await quiet(() => call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'channel_id', pattern: '^C3$', value: 'edge', priority: 20,
+    }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.moves.map((m) => m.channel.channelId), ['C3']);
+    assert.equal(e.DB.rows('SELECT status FROM channel_requests WHERE id = ?', id)[0].status, 'open');
+  });
+
+  it('leave the requests of channels and teams a rule did not move alone', async () => {
+    const e = withManagers();
+    await ask(e, cy, 'C3', 'edge');
+    await ask(e, cy, 'C1', 'edge');
+    const r = await call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'channel_id', pattern: '^C3$', value: 'edge', priority: 20,
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      e.DB.rows('SELECT channel_id, status FROM channel_requests ORDER BY channel_id').map((x) => [x.channel_id, x.status]),
+      [['C1', 'open'], ['C3', 'confirmed']],
+    );
+  });
+
   it('are answered when a rule moves the channel into the team', async () => {
     const e = withManagers();
     const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
