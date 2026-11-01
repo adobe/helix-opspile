@@ -2265,10 +2265,20 @@ function wireHoldMenu(key, thread) {
 // post. Each thread remembers what you typed in it and did not save (in this tab only). A box
 // that took the draft in (`base`, its version) and still holds it unchanged follows it as
 // colleagues change or discard it.
+/**
+ * What a reply box holds, from its `{ text, from, base }`: `empty`, `own` text, the `draft` it took
+ * in and has not changed, or a draft it has `diverged` from. Only `draft` follows the draft.
+ */
+function boxState(c) {
+  if (!c || !c.text.trim()) return 'empty';
+  if (!c.base) return 'own';
+  return c.text === c.from ? 'draft' : 'diverged';
+}
+
 /** The composer state of a thread: its text, and the draft version it took in. */
 function composerFor(key, draft) {
   let c = state.composers.get(key);
-  if (c && c.base && c.text === c.from && c.base !== draft?.updated_at) {
+  if (boxState(c) === 'draft' && c.base !== draft?.updated_at) {
     // It holds the draft unchanged, and the draft changed or went: it follows.
     if (!draft) mention.picked.delete(key);
     c = draft ? takeDraft(key, draft, '') : { text: '', from: '', base: null };
@@ -2681,7 +2691,7 @@ async function discardDraft(key) {
   }
   if (!res.ok) { toast(res.data.error || `could not discard the draft (${res.status})`); return; }
   const c = state.composers.get(key);
-  const held = Boolean(c && c.base && c.text.trim() && c.text === c.from);
+  const held = boxState(c) === 'draft';
   // An untouched composer empties with it; your own text stays.
   if (c && c.text === c.from) {
     state.composers.set(key, { text: '', from: '', base: null });

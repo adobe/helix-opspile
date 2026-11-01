@@ -1546,6 +1546,18 @@ function setNote(kind, text, actions = []) {
   }
 }
 
+/**
+ * Where the open file stands: `clean`, `editing`, `saving`, or what keeps it from being saved:
+ * `conflict` (a newer version), `unnamed` (a new file without a path) or `problem` (refused).
+ */
+function fileState(f = state.file) {
+  if (!edited()) return 'clean';
+  if (f.conflict) return 'conflict';
+  if (f.choosePath) return 'unnamed';
+  if (state.saving) return 'saving';
+  return f.problem ? 'problem' : 'editing';
+}
+
 /** Saves a pause after the last keystroke. */
 function schedule() {
   const f = state.file;
@@ -1698,7 +1710,7 @@ window.addEventListener('keydown', (e) => {
 // Leaving the page saves what is pending, without asking: keepalive lets the request finish.
 window.addEventListener('pagehide', () => {
   const f = state.file;
-  if (!edited() || f.conflict || f.choosePath) return;
+  if (['clean', 'conflict', 'unnamed'].includes(fileState(f))) return;
   fetch('/api/kb/file', {
     method: 'PUT',
     credentials: 'same-origin',
@@ -1712,8 +1724,7 @@ window.addEventListener('pagehide', () => {
 // refused, a new file without a path) or that a save in flight may not include. The switch to
 // the inbox asks in the page instead.
 window.addEventListener('beforeunload', (e) => {
-  const f = state.file;
-  if (!edited() || !(f.conflict || f.problem || f.choosePath || state.saving)) return;
+  if (['clean', 'editing'].includes(fileState())) return;
   e.preventDefault();
   e.returnValue = '';
 });
