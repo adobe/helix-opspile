@@ -175,6 +175,38 @@ export async function closeRequest(env, me, id, { status, reason = null, outcome
   return { closed: meta.changes > 0, request: await getRequest(env, id) };
 }
 
+/** What came of confirmed request `id`, once the assignment is done: the request as it is now. */
+export async function recordOutcome(env, id, outcome) {
+  await env.DB.prepare('UPDATE channel_requests SET outcome = ? WHERE id = ?')
+    .bind(outcome, Number(id)).run();
+  return getRequest(env, id);
+}
+
+/**
+ * Claims open request `id` as confirmed: whether this call did, or someone decided it first. The
+ * assignment follows; `recordOutcome` says what came of it, and `reopenRequest` that it failed.
+ */
+export async function claimRequest(env, me, id) {
+  const [by, name, at] = stamp(me);
+  const { meta } = await env.DB.prepare(`UPDATE channel_requests SET status = 'confirmed',
+      decided_by = ?, decided_name = ?, decided_at = ? WHERE id = ? AND status = 'open'`)
+    .bind(by, name, at, Number(id)).run();
+  return meta.changes > 0;
+}
+
+/**
+ * Opens request `id` again, when the assignment it was confirmed for failed. If a manager asked
+ * again meanwhile, that request stands, and this one is closed as withdrawn: it did nothing.
+ */
+export async function reopenRequest(env, id) {
+  await env.DB.prepare(`UPDATE OR IGNORE channel_requests SET status = 'open', decided_by = NULL,
+      decided_name = NULL, decided_at = NULL WHERE id = ? AND status = 'confirmed'`)
+    .bind(Number(id)).run();
+  await env.DB.prepare(`UPDATE channel_requests SET status = 'withdrawn', outcome = NULL
+    WHERE id = ? AND status = 'confirmed'`).bind(Number(id)).run();
+  return getRequest(env, id);
+}
+
 /**
  * After the admin team assigned a channel to a team directly (not from a request), the open
  * requests for it are confirmed with it.
@@ -185,6 +217,23 @@ export async function settleRequests(env, me, { channelId, team, outcome }) {
       decided_by = ?, decided_name = ?, decided_at = ?
     WHERE channel_id = ? AND team = ? AND status = 'open'`)
     .bind(outcome, by, name, at, channelId, team).run();
+}
+
+/**
+ * After a rule moved channels (`moves`, src/refile.js), the open requests for them are confirmed:
+ * they are in those teams' inboxes now. One statement, however many channels moved.
+ */
+export async function settleMoved(env, me, moves) {
+  if (!moves.length) {
+    return;
+  }
+  const [by, name, at] = stamp(me);
+  await env.DB.prepare(`UPDATE channel_requests SET status = 'confirmed', outcome = 'moved',
+      decided_by = ?, decided_name = ?, decided_at = ?
+    WHERE status = 'open' AND channel_id || char(0) || team IN (SELECT value FROM json_each(?))`)
+    .bind(by, name, at, JSON.stringify(moves
+      .map((m) => `${m.channel.channelId}\u0000${m.to.team}`)))
+    .run();
 }
 
 /** What a manual assignment's answer (src/admin.js `assign`) did, as a request's outcome. */

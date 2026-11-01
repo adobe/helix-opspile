@@ -25,7 +25,9 @@ import {
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons, orgDomain } from './favicons.js';
 import {
-  closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf, settleRequests,
+  claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
+  recordOutcome,
+  reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 
@@ -278,6 +280,11 @@ async function applyRules(env, me, { next, dryRun, write }) {
   }
   const saved = await write();
   const jobs = await enqueueMoves(env, moves);
+  // In the team's inbox now: nothing left to ask for. The rule is saved and its moves are queued,
+  // so a failure here must not answer as if it were not; the request stays open, and says so.
+  await settleMoved(env, me, moves).catch((e) => {
+    console.error(JSON.stringify({ route: 'admin', rules: 'requests not settled', error: e.message }));
+  });
   for (const m of moves) {
     // A channel filed under a new org or team gets their knowledge bases on its next move;
     // make sure a new org has one right away.
@@ -428,7 +435,7 @@ async function unshareChannel(env, me, body) {
  * channel another team holds is shared with the new team instead, and stays where it is.
  * Handing it to the admin team, or `move`, moves it all the same.
  */
-async function assign(env, me, body, remove, { settle = true } = {}) {
+async function assign(env, me, body, remove) {
   const target = clean(body.target);
   const channelId = clean(body.channelId);
   if (!['team', 'org'].includes(target) || !channelId) {
@@ -445,7 +452,7 @@ async function assign(env, me, body, remove, { settle = true } = {}) {
       const shared = await shareChannel(env, me, {
         source: source || home.source, channelId, team: value,
       }, home.team, body.dryRun);
-      if (settle && shared.ok && !body.dryRun) {
+      if (shared.ok && !body.dryRun) {
         await settleRequests(env, me, { channelId, team: value, outcome: 'shared' });
       }
       return shared;
@@ -477,7 +484,7 @@ async function assign(env, me, body, remove, { settle = true } = {}) {
     await unshare(env, { source: source || home.source, channelId, team: value });
   }
   // The open requests for it, if any, are answered with it.
-  if (target === 'team' && settle && res.ok && !body.dryRun) {
+  if (target === 'team' && res.ok && !body.dryRun) {
     const outcome = outcomeOf(await res.clone().json());
     await settleRequests(env, me, { channelId, team: value, outcome });
   }
@@ -515,6 +522,14 @@ async function openRequest(env, id) {
   return { request: r };
 }
 
+/** Whether a channel is assigned to or shared with a team, by hand. */
+async function assigned(env, { source, channelId }, slug) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM rules WHERE target = 'team'
+      AND field = 'channel_id' AND pattern = ?1 AND value = ?2
+    UNION SELECT 1 FROM channel_teams WHERE source = ?3 AND channel_id = ?4 AND team = ?2 LIMIT 1`)
+    .bind(manualPattern(channelId), slug, source, channelId).first());
+}
+
 /**
  * POST /api/admin/requests/confirm `{ id, dryRun?, move? }`: the admin team grants a request.
  * It is the manual assignment of `assign`, as if made on the team's page: `dryRun` says what
@@ -527,22 +542,48 @@ async function confirmRequest(env, me, body) {
     return error;
   }
   const { channel } = request;
-  const res = await assign(env, me, {
+  const assignment = () => assign(env, me, {
     target: 'team',
     source: channel.source,
     channelId: channel.channelId,
     value: request.team,
     move: body.move,
     dryRun: body.dryRun,
-  }, false, { settle: false });
-  const answer = await res.json();
-  if (!res.ok || body.dryRun) {
-    return json({ ...answer, request }, res.status);
+  }, false);
+  if (body.dryRun) {
+    const res = await assignment();
+    return json({ ...await res.json(), request }, res.status);
   }
-  const closed = await closeRequest(env, me, request.id, {
-    status: 'confirmed', outcome: outcomeOf(answer),
+  // Claimed first: whoever closes it decides, and a request declined or withdrawn meanwhile moves
+  // nothing. A failed assignment opens it again.
+  if (!await claimRequest(env, me, request.id)) {
+    return json({
+      error: 'decided meanwhile', closed: false, request: await getRequest(env, request.id),
+    }, 409);
+  }
+  let res;
+  try {
+    res = await assignment();
+  } catch (e) {
+    // The rule may be saved and the channel on its way, whatever failed after that.
+    if (await assigned(env, channel, request.team)) {
+      await recordOutcome(env, request.id, 'assigned');
+    } else {
+      await reopenRequest(env, request.id);
+    }
+    throw e;
+  }
+  const answer = await res.json();
+  if (!res.ok) {
+    return json({ ...answer, request: await reopenRequest(env, request.id) }, res.status);
+  }
+  const outcome = outcomeOf(answer);
+  console.log(JSON.stringify({
+    route: 'admin', request: 'confirmed', by: me.id, id: request.id, outcome, closed: true,
+  }));
+  return json({
+    ...answer, closed: true, request: await recordOutcome(env, request.id, outcome),
   });
-  return json({ ...answer, ...closed });
 }
 
 /** POST /api/admin/requests/decline `{ id, reason? }`: the admin team turns a request down. */

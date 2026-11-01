@@ -168,7 +168,9 @@ exactly as adding the channel on the team's page does, and records who confirmed
 did; **Decline** takes an optional reason. The manager sees each request on their team's page:
 pending, confirmed (moved or shared), declined with the reason, or withdrawn (they may take an
 open one back). An admin who adds a requested channel to the team directly answers the request
-with it. Nothing is sent by mail or chat.
+with it, and so does a rule that moves the channel there. Confirming closes the request first, so
+one declined or withdrawn meanwhile moves nothing, and a failed assignment opens it again. Nothing
+is sent by mail or chat.
 
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a

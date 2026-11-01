@@ -273,6 +273,126 @@ describe('admin: channel assignment requests', () => {
     team, source: 'slack', channelId, note,
   });
 
+  /** Runs `meanwhile` once, just before the first query that matches `sql` reaches D1. */
+  function before(e, sql, meanwhile) {
+    const { prepare } = e.DB;
+    let done = false;
+    e.DB.prepare = function hooked(query) {
+      if (!done && sql.test(query)) {
+        done = true;
+        meanwhile();
+      }
+      return prepare.call(this, query);
+    };
+  }
+
+  it('do not move a channel for a request declined while it was confirmed', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /UPDATE channel_requests SET status/, () => {
+      e.DB.sqlite.prepare(`UPDATE channel_requests SET status = 'declined', decided_by = 'x'
+        WHERE id = ?`).run(id);
+    });
+    const r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.closed, false);
+    assert.equal(r.body.request.status, 'declined');
+    assert.equal(e.DB.rows("SELECT * FROM rules WHERE field = 'channel_id'").length, 0);
+    assert.equal(e.queued.length, 0);
+  });
+
+  it('open again when the assignment fails', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /INSERT INTO rules/, () => {
+      throw new Error('D1 is down');
+    });
+    await assert.rejects(call(e, ADA, 'POST', '/api/admin/requests/confirm', { id }), /D1 is down/);
+    const [row] = e.DB.rows('SELECT status, decided_by, outcome FROM channel_requests');
+    assert.deepEqual({ ...row }, { status: 'open', decided_by: null, outcome: null });
+  });
+
+  it('stay confirmed when the assignment went through and something after it failed', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /DELETE FROM channel_teams/, () => {
+      throw new Error('D1 is down');
+    });
+    await assert.rejects(call(e, ADA, 'POST', '/api/admin/requests/confirm', { id }), /D1 is down/);
+    const [row] = e.DB.rows('SELECT status, outcome FROM channel_requests');
+    assert.deepEqual({ ...row }, { status: 'confirmed', outcome: 'assigned' });
+  });
+
+  it('close when the assignment failed and the manager asked again meanwhile', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /INSERT INTO rules/, () => {
+      e.DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, requested_by,
+        requested_name, requested_at) VALUES ('slack', 'C3', 'edge', 'cy@staff.example', 'Cy', 'now')`).run();
+      throw new Error('D1 is down');
+    });
+    await assert.rejects(call(e, ADA, 'POST', '/api/admin/requests/confirm', { id }));
+    assert.deepEqual(
+      e.DB.rows('SELECT status FROM channel_requests ORDER BY id').map((r) => r.status),
+      ['withdrawn', 'open'],
+    );
+  });
+
+  it('answer a second request made while the first was being confirmed', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /INSERT INTO rules/, () => {
+      e.DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, requested_by,
+        requested_name, requested_at) VALUES ('slack', 'C3', 'edge', 'cy@staff.example', 'Cy', 'now')`).run();
+    });
+    const r = await call(e, ADA, 'POST', '/api/admin/requests/confirm', { id });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      e.DB.rows('SELECT status FROM channel_requests ORDER BY id').map((x) => x.status),
+      ['confirmed', 'confirmed'],
+    );
+  });
+
+  it('do not fail a rule that was saved', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    before(e, /UPDATE channel_requests SET status = 'confirmed', outcome = 'moved'/, () => {
+      throw new Error('D1 is down');
+    });
+    const r = await quiet(() => call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'channel_id', pattern: '^C3$', value: 'edge', priority: 20,
+    }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.moves.map((m) => m.channel.channelId), ['C3']);
+    assert.equal(e.DB.rows('SELECT status FROM channel_requests WHERE id = ?', id)[0].status, 'open');
+  });
+
+  it('leave the requests of channels and teams a rule did not move alone', async () => {
+    const e = withManagers();
+    await ask(e, cy, 'C3', 'edge');
+    await ask(e, cy, 'C1', 'edge');
+    const r = await call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'channel_id', pattern: '^C3$', value: 'edge', priority: 20,
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(
+      e.DB.rows('SELECT channel_id, status FROM channel_requests ORDER BY channel_id').map((x) => [x.channel_id, x.status]),
+      [['C1', 'open'], ['C3', 'confirmed']],
+    );
+  });
+
+  it('are answered when a rule moves the channel into the team', async () => {
+    const e = withManagers();
+    const { id } = (await ask(e, cy, 'C3', 'edge')).body.request;
+    const r = await call(e, ADA, 'POST', '/api/admin/rules', {
+      target: 'team', field: 'channel_id', pattern: '^C3$', value: 'edge', priority: 20,
+    });
+    assert.equal(r.status, 200);
+    const { request } = (await call(e, ADA, 'GET', '/api/admin/requests?status=decided')).body.requests
+      .reduce((m, x) => (x.id === id ? { request: x } : m), {});
+    assert.deepEqual([request.status, request.outcome], ['confirmed', 'moved']);
+  });
+
   it('are made by a team\'s managers, for their teams only, once at a time', async () => {
     const e = withManagers();
     let r = await ask(e, cy, 'C3', 'edge', 'Our customer');
