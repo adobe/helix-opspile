@@ -553,12 +553,18 @@ export async function sweepRethreads(env, now = new Date()) {
   if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
     return { skipped: 'no VECTORS index' };
   }
-  const { results } = await env.DB.prepare(`SELECT thread FROM threads
-    WHERE skeleton_hash IS NOT NULL AND rethreaded_at IS NULL AND root_at >= ? AND root_at < ?
-    ORDER BY root_at LIMIT ?`)
+  // Not a root that is deleted or a notice by now, which the job skips, and not one that died
+  // within the day: a root that always fails goes out once a day, not with every cron run.
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    WHERE t.skeleton_hash IS NOT NULL AND t.rethreaded_at IS NULL AND t.root_at >= ? AND t.root_at < ?
+      AND m.deleted = 0 AND COALESCE(m.author_kind, '') != 'system'
+      AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'rethread:' || t.thread AND d.at > ?)
+    ORDER BY t.root_at LIMIT ?`)
     .bind(
       new Date(now.getTime() - WINDOW_DAYS * 86400 * 1000).toISOString(),
       new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(),
+      new Date(now.getTime() - 86400 * 1000).toISOString(),
       SWEEP_LIMIT,
     ).all();
   for (const { thread } of results || []) {

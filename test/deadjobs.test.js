@@ -36,12 +36,17 @@ function env(extra = {}) {
 }
 
 function thread(e, {
-  key = KEY, kind = 'channel', root = ago(2), last = ago(2), hash = null, decided = null,
+  key = KEY, kind = 'channel', root = ago(2), last = ago(2), hash = null, decided = null, deleted = 0,
+  authorKind = 'person',
 } = {}) {
   e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
     kind, path, root_at, last_at, any_at, skeleton_hash, rethreaded_at, updated_at)
     VALUES (?, 'slack', 'E1', 'C1', '1.1', 'acme', 'helix', ?, 'p/', ?, ?, ?, ?, ?, ?)`)
     .run(key, kind, root, last, last, hash, decided, last);
+  e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, counted,
+    deleted, author_kind) VALUES ('slack', 'E1', 'C1', ?, ?, ?, 1, ?, ?)`)
+    .run(`1.1-${key}`, key, root, deleted, authorKind);
+  e.DB.sqlite.prepare('UPDATE threads SET root_id = ? WHERE thread = ?').run(`1.1-${key}`, key);
 }
 
 describe('a job that used up its retries', () => {
@@ -120,9 +125,31 @@ describe('sweeping up after dead jobs', () => {
     thread(e, { key: 'decided', hash: 'h', decided: ago(1) });
     thread(e, { key: 'running', hash: 'h', root: ago(0.5) });
     thread(e, { key: 'ancient', hash: 'h', root: ago(24 * 20) });
+    thread(e, {
+      key: 'deleted', hash: 'h', deleted: 1,
+    });
+    thread(e, { key: 'notice', hash: 'h', authorKind: 'system' });
     assert.deepEqual(await sweepRethreads(e, NOW), { queued: 1 });
     assert.deepEqual(e.queued, [{ rethread: 'died' }]);
     assert.ok((await sweepRethreads({ DB: e.DB }, NOW)).skipped);
+  });
+
+  it('sends what keeps failing once a day, not with every cron run', async () => {
+    const e = env(live);
+    thread(e, { key: 'died', hash: 'h' });
+    const dead = e.DB.sqlite.prepare(`INSERT INTO dead_jobs (job, body, error, at)
+      VALUES ('rethread:died', '{}', 'down', ?)`);
+    dead.run(ago(1));
+    assert.deepEqual(await sweepRethreads(e, NOW), { queued: 0 });
+    e.DB.sqlite.prepare('DELETE FROM dead_jobs').run();
+    dead.run(ago(25));
+    assert.deepEqual(await sweepRethreads(e, NOW), { queued: 1 });
+
+    thread(e, { key: 'never' });
+    e.DB.sqlite.prepare(`INSERT INTO dead_jobs (job, body, error, at)
+      VALUES ('label:never', '{}', 'down', ?)`).run(ago(1));
+    assert.equal((await sweepLabels(e, NOW)).queued, 1, 'only the one without a recent dead job');
+    e.queued.length = 0;
   });
 
   it('labels threads whose label job died, and leaves the rest alone', async () => {
@@ -137,6 +164,7 @@ describe('sweeping up after dead jobs', () => {
     thread(e, { key: 'settling', last: ago(0.5) });
     thread(e, { key: 'old', last: ago(24 * 20) });
     thread(e, { key: 'alert', kind: 'alert' });
+    thread(e, { key: 'empty', deleted: 1 });
     assert.deepEqual(await sweepLabels(e, NOW), { queued: 2 });
     assert.deepEqual(e.queued.map((q) => q.label).sort(), ['never', 'stale']);
     assert.ok((await sweepLabels({ DB: e.DB }, NOW)).skipped);
