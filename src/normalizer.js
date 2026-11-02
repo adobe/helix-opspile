@@ -486,7 +486,6 @@ export async function processKey(env, key, cache = {}) {
   };
 }
 
-/** An export job's key for the log: its thread, or the first of the sweep's and how many more. */
 /** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
 export function jobSubject(body) {
   const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
@@ -495,6 +494,7 @@ export function jobSubject(body) {
   return typeof thread === 'string' ? { thread } : {};
 }
 
+/** An export job's key for the log: its thread, or the first of the sweep's and how many more. */
 const exportKey = (keys) => {
   const all = [].concat(keys);
   return `export:${all[0]}${all.length > 1 ? ` +${all.length - 1}` : ''}`;
