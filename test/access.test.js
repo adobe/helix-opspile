@@ -236,6 +236,60 @@ describe('personal view', () => {
     const [same] = (await inbox({ DB }, me, 'helix')).threads;
     assert.equal(same.unreadMentions, 2);
   });
+
+  it('counts unread threads the personal view does not show, for each of your teams', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    // In the personal view, and unread: I posted, then someone else did. Not "more".
+    await say(DB, {
+      thread: 'mine', channelId: 'Cmine', team: 'helix', person: 1, at: at(1),
+    });
+    await say(DB, {
+      thread: 'mine', channelId: 'Cmine', team: 'helix', at: at(2),
+    });
+    // A second channel of the personal view, so the inbox has a second page.
+    await say(DB, {
+      thread: 'mine2', channelId: 'Cmine2', team: 'admin', person: 1, at: at(9),
+    });
+    // Read, so it counts for no one.
+    await say(DB, {
+      thread: 'read', channelId: 'Cread', team: 'helix', at: at(3),
+    });
+    await advanceWatermark(DB, 1, 'read', at(3), 'open');
+    // Unread, and not a channel of the personal view.
+    await say(DB, {
+      thread: 'quiet', channelId: 'Cquiet', team: 'helix', at: at(4),
+    });
+    // Two threads of one group count once.
+    await say(DB, {
+      thread: 'g1', channelId: 'Cgroup', team: 'helix', at: at(5),
+    });
+    await say(DB, {
+      thread: 'g2', channelId: 'Cgroup', team: 'helix', at: at(6),
+    });
+    DB.sqlite.prepare("UPDATE threads SET logical_thread = 'g1' WHERE thread IN ('g1', 'g2')").run();
+    // An alert is never in the personal view.
+    await say(DB, {
+      thread: 'ping', channelId: 'Cping', team: 'admin', at: at(7), kind: 'alert',
+    });
+    // Filed under a team I am not in, and shared with Admin: Admin's inbox has it.
+    await say(DB, {
+      thread: 'shared', channelId: 'Cshare', team: 'other', at: at(8),
+    });
+    DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('slack', 'Cshare', 'admin', '2026-10-21T10:00:00Z')`).run();
+
+    const res = await inbox({ DB }, me, null, { personal: true });
+    assert.deepEqual(res.elsewhere.map((t) => [t.slug, t.members, t.unread]).sort(), [
+      ['admin', 1, 2],
+      ['helix', 2, 2],
+    ]);
+    // A team inbox does not carry the counts, and neither does a page that is not the last.
+    assert.equal((await inbox({ DB }, me, 'helix')).elsewhere, undefined);
+    const paged = await inbox({ DB }, me, null, { personal: true, limit: 1 });
+    assert.equal(paged.page.next == null, false);
+    assert.equal(paged.elsewhere, undefined);
+  });
 });
 
 describe('viewing as someone else', () => {

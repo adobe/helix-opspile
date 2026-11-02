@@ -245,6 +245,67 @@ describe('inbox page', () => {
     assert.equal(asks('?team=helix&view=personal'), true);
   });
 
+  it('names the other teams\' unread at the end, smallest first and admin last', () => {
+    const { orderElsewhere, endSentence } = piece(
+      'function orderElsewhere',
+      'function endHtml',
+      'orderElsewhere, endSentence',
+    );
+    const endCopy = (teams) => endSentence(teams);
+    const teams = [
+      {
+        slug: 'platform', name: 'Platform ops', members: 4, unread: 3,
+      },
+      {
+        slug: 'admin', name: 'Admin', members: 1, unread: 2,
+      },
+      {
+        slug: 'edge', name: 'Edge ops', members: 2, unread: 1,
+      },
+      {
+        slug: 'quiet', name: 'Quiet', members: 1, unread: 0,
+      },
+    ];
+    assert.deepEqual(orderElsewhere(teams).map((t) => t.slug), ['edge', 'platform', 'admin']);
+    assert.equal(
+      endCopy(teams),
+      "You've reached the end. But there is 1 more unread thread for your Edge ops team, "
+      + '3 more unread threads for your Platform ops team, and 2 more unread threads for your Admin team.',
+    );
+    assert.equal(
+      endCopy([{
+        slug: 'edge', name: 'Edge ops', members: 2, unread: 4,
+      }]),
+      "You've reached the end. But there are 4 more unread threads for your Edge ops team.",
+    );
+    assert.equal(
+      endCopy([
+        {
+          slug: 'edge', name: 'Edge ops', members: 2, unread: 1,
+        },
+        {
+          slug: 'platform', name: 'Platform ops', members: 4, unread: 2,
+        },
+      ]),
+      "You've reached the end. But there is 1 more unread thread for your Edge ops team "
+      + 'and 2 more unread threads for your Platform ops team.',
+    );
+    assert.equal(endCopy([]), "You've reached the end.");
+    assert.equal(endCopy(null), "You've reached the end.");
+    // The same size sorts by name. Admin stays last however large it is.
+    assert.deepEqual(orderElsewhere([
+      {
+        slug: 'zed', name: 'Zed', members: 3, unread: 1,
+      },
+      {
+        slug: 'admin', name: 'Admin', members: 9, unread: 1,
+      },
+      {
+        slug: 'amy', name: 'Amy', members: 3, unread: 4,
+      },
+    ]).map((t) => t.slug), ['amy', 'zed', 'admin']);
+  });
+
   it('shows only the viewer\'s own messages (and those being sent) as theirs', () => {
     const { message } = piece('const continues', '// ---------------------------------------------------------------- the thread agent', 'message', {
       dayLabel: () => 'Today',

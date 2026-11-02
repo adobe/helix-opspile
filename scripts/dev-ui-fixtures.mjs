@@ -392,8 +392,10 @@ function addBigInbox({
  * @param {object} [options]
  * @param {boolean} [options.big] adds prod-sized traffic (see `addBigInbox`): some 250 threads
  *   in the platform team, many of them 50 to 150 messages long, from forty invented customers
+ * @param {boolean} [options.admin] puts Dana in the admin team, the smallest one, with one
+ *   unread thread that is not in her personal view
  */
-export function createStore(now = Date.now(), { big = false } = {}) {
+export function createStore(now = Date.now(), { big = false, admin = false } = {}) {
   const people = new Map(PEOPLE.map((p) => [p.id, p]));
   const byKey = new Map(PEOPLE.map((p) => [p.key, p]));
   const threads = new Map(); // key -> { row, team, rootId, path, messages: [...] }
@@ -1058,18 +1060,36 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // With `--admin`: one unread thread filed under Admin, in a channel Dana never posted in,
+  // so the end of her personal unread list can name Admin last (it is her smallest team).
+  if (admin) {
+    seed({
+      ch: {
+        source: 'slack', channelId: 'C0ADMIN01', name: 'admin-desk', org: 'opspile', team: 'admin',
+      },
+      messages: [['lena', 12, 'This channel is still with Admin. Who should take it?']],
+      label: {
+        kind: 'request', next_actor: 'us', urgency: 0.6, resolved_p: 0.1,
+      },
+    });
+  }
+
   if (big) {
     addBigInbox({
       people, byKey, seed, threads,
     });
   }
 
+  const teams = admin
+    ? [...TEAMS, { slug: 'admin', name: 'Admin', members: [1] }]
+    : TEAMS;
+
   return {
     now,
     me: {
-      ...people.get(1), teams: TEAMS.map(({ slug, name }) => ({ slug, name })), admin: false,
+      ...people.get(1), teams: teams.map(({ slug, name }) => ({ slug, name })), admin: false,
     },
-    teams: TEAMS,
+    teams,
     klickhaus: KLICKHAUS,
     partners: PARTNERS,
     people,

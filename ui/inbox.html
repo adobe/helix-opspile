@@ -242,6 +242,10 @@
     border-radius: 7px; color: var(--mute); }
   #threads .count .unread svg { width: 15px; height: 15px; }
   #threads .rows > .older { display: block; width: calc(100% - 28px); margin: 10px 14px 18px; padding: 8px; color: var(--mute); }
+  /* The end of the personal unread list: the other teams, smallest first, Admin last. */
+  #threads .rows > .end { margin: 8px 18px 22px; padding: 12px 8px 4px; color: var(--mute);
+    font-size: 13px; line-height: 1.5; text-align: center; }
+  #threads .rows > .end .linkish { font: inherit; font-weight: 650; }
   #threads .count .unread:hover { color: var(--ink); }
   #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   /* The bell: notifications for the view on screen (its team and filters), filled while on. */

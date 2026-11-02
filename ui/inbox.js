@@ -1410,6 +1410,48 @@ function listHead(box) {
     if (e.key === 'ArrowDown' && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
   });
 }
+/** Teams that still have unread threads: fewest members first, the admin team last. */
+function orderElsewhere(teams) {
+  const admin = (t) => t.slug === 'admin';
+  return [...(teams || [])].filter((t) => t.unread > 0).sort((a, b) => {
+    if (admin(a) !== admin(b)) return admin(a) ? 1 : -1;
+    return a.members - b.members || String(a.name).localeCompare(b.name);
+  });
+}
+/** "N more unread thread(s) for your NAME team". `name` is already escaped when it is HTML. */
+function elsewhereBit(t, name) {
+  const word = t.unread === 1 ? 'thread' : 'threads';
+  return `${t.unread} more unread ${word} for your ${name} team`;
+}
+/**
+ * The line under the personal unread list once every page of it is loaded.
+ * One team names that team; several go smallest first, the admin team last.
+ */
+function endSentence(teams, nameOf = (t) => t.name) {
+  const rows = orderElsewhere(teams);
+  const lead = "You've reached the end.";
+  if (!rows.length) return lead;
+  const bits = rows.map((t) => elsewhereBit(t, nameOf(t)));
+  const verb = rows[0].unread === 1 ? 'is' : 'are';
+  const tail = bits[bits.length - 1];
+  const body = bits.length === 1 ? tail
+    : `${bits.slice(0, -1).join(', ')}${bits.length > 2 ? ',' : ''} and ${tail}`;
+  return `${lead} But there ${verb} ${body}.`;
+}
+function endHtml(teams) {
+  const name = (t) => {
+    const label = `<button type="button" class="linkish" data-view="${esc(t.slug)}">`;
+    return `${label}${esc(t.name)}</button>`;
+  };
+  return `<div class="end" role="status">${endSentence(teams, name)}</div>`;
+}
+/** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
+function endNote() {
+  if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
+  if (viewFacets().some((f) => filterCount(f.id))) return '';
+  return endHtml(state.data?.elsewhere);
+}
+
 function threadRows() {
   const box = $('threads');
   if (!state.data) return;
@@ -1472,11 +1514,19 @@ function threadRows() {
     }
   }
   const keep = new Set(nodes);
+  const note = endNote();
   if (!nodes.length) {
     for (const c of list.children) preload.unobserve(c);
-    list.innerHTML = '<div class="empty">Nothing matches these filters.</div>';
+    const empty = note || '<div class="empty">Nothing matches these filters.</div>';
+    if (list.__empty !== empty) { list.innerHTML = empty; list.__empty = empty; }
   } else {
-    [...list.children].forEach((c) => { if (!keep.has(c) && !c.classList.contains('older')) { preload.unobserve(c); c.remove(); } });
+    list.__empty = '';
+    [...list.children].forEach((c) => {
+      if (!keep.has(c) && !c.classList.contains('older') && !c.classList.contains('end')) {
+        preload.unobserve(c);
+        c.remove();
+      }
+    });
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
   }
   // The end of the list: older threads, while there are any.
@@ -1489,6 +1539,17 @@ function threadRows() {
     older.disabled = Boolean(paging);
     if (list.lastElementChild !== older) list.append(older);
   } else if (older) older.remove();
+  // The end of the personal unread list: what the other teams still have.
+  let foot = list.querySelector(':scope > .end');
+  if (note && nodes.length) {
+    if (!foot || foot.__html !== note) {
+      const next = toNode(note);
+      next.__html = note;
+      if (foot) foot.replaceWith(next);
+      foot = next;
+    }
+    if (list.lastElementChild !== foot) list.append(foot);
+  } else if (foot && !note) foot.remove();
   // Rows of threads that are no longer in the inbox are let go.
   const known = new Set(state.data.threads.map((t) => t.thread));
   for (const k of existing.keys()) if (!known.has(k)) existing.delete(k);
@@ -4118,6 +4179,8 @@ async function loadInbox(early = null) {
     first.people = { ...prev.people, ...first.people };
     // The deepest page loaded so far is where the next one starts.
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
+    // The first page is not the last one: keep the counts the last page brought.
+    if (!first.elsewhere && prev.elsewhere) first.elsewhere = prev.elsewhere;
   }
   state.data = first;
   // Personal's rooms grow once you are in a channel of another team: listen there too.
@@ -4141,6 +4204,7 @@ function addPage(p) {
   state.data.threads.push(...added);
   state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
   state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
+  if (p.elsewhere) state.data.elsewhere = p.elsewhere;
   mergeProfiles(p.profiles);
   inPass(() => { for (const t of added) state.scores.set(t.thread, smartScore(t)); });
   state.coPeople = coParticipants();

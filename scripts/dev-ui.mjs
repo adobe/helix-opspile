@@ -110,7 +110,9 @@ const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
-const store = createStore(Date.now(), { big: process.argv.includes('--big') });
+const store = createStore(Date.now(), {
+  big: process.argv.includes('--big'), admin: ADMIN,
+});
 if (NO_TEAM) {
   for (const t of store.teams) {
     t.members = t.members.filter((id) => id !== store.me.id);
@@ -398,6 +400,32 @@ function nameIds(s) {
     && names.has(token) ? `${before}#${names.get(token)}` : m));
 }
 
+/**
+ * Unread threads in Dana's team inboxes that her personal view does not show, as
+ * src/api.js's `unreadElsewhere`: alerts count, a channel she posted or was mentioned in
+ * does not. The preview files each channel under one team.
+ */
+function elsewhereCounts() {
+  const channels = myChannels();
+  const mine = store.teams.filter((t) => t.members.includes(ME));
+  const rows = [...store.threads.values()].map((e) => e.row).filter((r) => r.kind !== 'ignore');
+  const unread = (r) => {
+    const last = r.kind === 'alert' ? r.any_at : r.last_at;
+    if (!last) {
+      return false;
+    }
+    const mark = store.watermarks.get(`${ME}|${r.thread}`);
+    return !(mark && mark.read_at >= last);
+  };
+  const inPersonal = (r) => r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`);
+  return mine.map((t) => ({
+    slug: t.slug,
+    name: t.name,
+    members: t.members.length,
+    unread: rows.filter((r) => r.team === t.slug && unread(r) && !inPersonal(r)).length,
+  })).filter((t) => t.unread > 0);
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -475,6 +503,7 @@ function inbox(team, before = null, personal = false, only = null) {
     vocab: vocabNames,
     threads,
     page,
+    ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
   };
 }
 
