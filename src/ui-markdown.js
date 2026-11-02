@@ -38,10 +38,12 @@ import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
 import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
+import { slackMessageKey } from './slackurl.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
 export { suggestMentions } from './mention-match.js';
+export { slackMessageKey };
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
@@ -217,8 +219,8 @@ const galleries = (html) => html.replace(IMAGE_RUN, (run) => {
 });
 
 /**
- * A quoted message (src/markdown.js quoteMarkdown) is a card: its author's line, linked to the
- * message, with when it was posted, above its text. A quote typed by hand stays a quote.
+ * A quoted message (src/markdown.js quoteMarkdown) is a card: the author's name opens their
+ * profile, and the time opens the message. A quote typed by hand stays a quote.
  */
 const QUOTE_CARD = new RegExp(`<blockquote>\\s*<p><a href="([^"]*)" title="${QUOTE_TITLE}(?:, ([^"]*))?">([\\s\\S]*?)</a>(?:<br />)?\\s*</p>`, 'g');
 let quoteTime = null;
@@ -230,10 +232,116 @@ function quotedAt(iso) {
   quoteTime = quoteTime || new Intl.DateTimeFormat(undefined, {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
-  return ` <time datetime="${encode(d.toISOString())}">${encode(quoteTime.format(d))}</time>`;
+  return `<time datetime="${encode(d.toISOString())}">${encode(quoteTime.format(d))}</time>`;
 }
-const cards = (html) => html.replace(QUOTE_CARD, (_, href, at, name) => '<blockquote class="quote">'
-  + `<p class="quote-by"><a href="${href}" title="Open the quoted message"><b>${name}</b></a>${at ? quotedAt(at) : ''}</p>`);
+/** The name on a card: a profile (`data-p`, or `data-quote-author` until the page names one). */
+const quoteWho = (name, authorKey) => {
+  const label = String(name).replace(/<[^>]*>/g, '');
+  return authorKey
+    ? `<b data-p="${encode(authorKey)}" role="button" tabindex="0">${name}</b>`
+    : `<b data-quote-author="${label}" role="button" tabindex="0">${name}</b>`;
+};
+const quoteTimeLink = (at, href, { title, attrs = '' }) => {
+  const inner = at ? quotedAt(at) : '';
+  return inner ? ` <a href="${href}"${attrs} title="${title}">${inner}</a>` : '';
+};
+/** `${channel}:${id}` for a resolved message, else whatever the permalink itself says. */
+const hitKey = (hit, href) => (hit && hit.channel && hit.id
+  ? `${hit.channel}:${hit.id}` : slackMessageKey(href));
+/** A card for a message opspile has, from its preview (plain text, not markdown again). */
+function quoteCardFromHit(hit) {
+  const who = quoteWho(encode(hit.author || 'Message'), hit.authorKey);
+  const when = quoteTimeLink(hit.at, encode(hit.href || ''), {
+    title: 'Open in opspile', attrs: ` data-thread="${encode(hit.thread || '')}"`,
+  });
+  const preview = hit.preview ? `<p>${encode(hit.preview)}</p>` : '';
+  return `<blockquote class="quote"><p class="quote-by">${who}${when}</p>${preview}</blockquote>`;
+}
+const cards = (html, slack, quoted) => html.replace(QUOTE_CARD, (_, href, at, name) => {
+  const raw = decode(href);
+  const hit = slack ? slack(raw) : undefined;
+  const key = hitKey(hit, raw);
+  if (key) {
+    quoted.add(key);
+  }
+  const who = quoteWho(name, hit && hit.authorKey);
+  const when = hit && hit.href
+    ? quoteTimeLink(hit.at || at, encode(hit.href), {
+      title: 'Open in opspile', attrs: ` data-thread="${encode(hit.thread || '')}"`,
+    })
+    : quoteTimeLink(at, href, { title: 'Open the quoted message' });
+  return `<blockquote class="quote"><p class="quote-by">${who}${when}</p>`;
+});
+
+/**
+ * The opening `<a>` tag when a paragraph is that one link and nothing else. Words beside
+ * the link, or a second link, stay in the paragraph. The tag match must not run on to a
+ * later `</a>`, or `[report](slack) IMPORTANT [status](page)` becomes only the first card.
+ */
+const onlyLink = (para) => {
+  if ((para.match(/<a\b/g) || []).length !== 1) {
+    return null;
+  }
+  const open = /<a\b[^>]*>/.exec(para);
+  const without = para.replace(/<a\b[^>]*>[\s\S]*?<\/a>/, '');
+  return open && /^<p\b[^>]*>\s*<\/p>$/.test(without) ? open : null;
+};
+const chooserOpen = (open, hit) => open.replace('<a ', `<a data-pile="${encode(hit.href)}" data-thread="${encode(hit.thread)}" aria-haspopup="menu" title="Open in Opspile or Slack" `);
+/**
+ * Slack permalinks `slack` resolves. A paragraph that is only the link becomes one card.
+ * A link in a sentence keeps the link (a click offers Opspile or Slack) and gains a card
+ * after the paragraph, unless that message is already a card in this message.
+ */
+function embedSlack(html, slack, quoted) {
+  if (!slack) {
+    return html;
+  }
+  const retarget = (para) => para.replace(/<a\b[^>]*>/g, (open) => {
+    const href = /href="([^"]*)"/.exec(open);
+    if (!href || /data-(?:pile|thread)=/.test(open)) {
+      return open;
+    }
+    const raw = decode(href[1]);
+    const hit = slack(raw);
+    return hit && hitKey(hit, raw) ? chooserOpen(open, hit) : open;
+  });
+  return html.replace(/<p\b[^>]*>[\s\S]*?<\/p>/g, (para) => {
+    const only = onlyLink(para);
+    if (only) {
+      const href = /href="([^"]*)"/.exec(only[0]);
+      const raw = href ? decode(href[1]) : '';
+      const hit = raw ? slack(raw) : undefined;
+      const key = hitKey(hit, raw);
+      if (!hit || !key) {
+        return para;
+      }
+      if (quoted.has(key)) {
+        return retarget(para);
+      }
+      quoted.add(key);
+      return quoteCardFromHit(hit);
+    }
+    let extra = '';
+    const next = para.replace(/<a\b[^>]*>/g, (open) => {
+      const href = /href="([^"]*)"/.exec(open);
+      if (!href || /data-(?:pile|thread)=/.test(open)) {
+        return open;
+      }
+      const raw = decode(href[1]);
+      const hit = slack(raw);
+      const key = hitKey(hit, raw);
+      if (!hit || !key) {
+        return open;
+      }
+      if (!quoted.has(key)) {
+        quoted.add(key);
+        extra += quoteCardFromHit(hit);
+      }
+      return chooserOpen(open, hit);
+    });
+    return next + extra;
+  });
+}
 
 /**
  * The list of files ingestion puts at the end of a message (src/normalize.js): an
@@ -392,10 +500,14 @@ function fileCards({ links, unseen }, fileUrl) {
  * @param {(href: string, what: 'stream'|'poster') => string|undefined} [options.fileUrl]
  *   where the page loads an attached video or audio file (`stream`) and a video's still
  *   (`poster`) from: with it, they play in their cards
+ * @param {(url: string) => ({ channel: string, id: string, thread: string, href: string,
+ *   author?: string, authorKey?: string, at?: string, preview?: string }|undefined)}
+ *   [options.slack] a Slack message permalink opspile has, for the viewer: `href` opens it
+ *   here. Without a hit the link stays a link to Slack
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
-  channel = () => undefined, fileUrl = () => undefined,
+  channel = () => undefined, fileUrl = () => undefined, slack = null,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -408,7 +520,9 @@ export function render(src, {
   const files = splitAttachments(String(src || '').replaceAll(BREAK, ''));
   const body = files ? [files.text.trimEnd(), ...files.images].join('\n\n')
     : String(src || '').replaceAll(BREAK, '');
-  const html = cards(toHtml(body, '<br />\n'));
+  const quoted = new Set();
+  const lookup = typeof slack === 'function' ? slack : null;
+  const html = cards(toHtml(body, '<br />\n'), lookup, quoted);
   const channelLink = (m, before, token) => {
     const c = channel(token);
     if (!c || !c.href) {
@@ -421,7 +535,7 @@ export function render(src, {
   };
   let code = 0;
   let link = 0;
-  return galleries(html.split(/(<[^>]*>)/).map((part, i) => {
+  const built = galleries(html.split(/(<[^>]*>)/).map((part, i) => {
     if (i % 2) {
       if (/^<(code|pre)[\s>]/.test(part)) {
         code += 1;
@@ -431,6 +545,10 @@ export function render(src, {
         link -= 1;
       } else if (part.startsWith('<a ')) {
         link += 1;
+        // A thread in this inbox opens here. A Slack permalink's chooser is added later.
+        if (/\sdata-(?:inbox|thread)=/.test(part)) {
+          return part;
+        }
         return part.replace('<a ', '<a target="_blank" rel="noopener" ');
       } else if (part.startsWith('<img ')) {
         return image(part, proxy);
@@ -450,5 +568,6 @@ export function render(src, {
     return text
       .replace(MENTION, mark)
       .replace(EMOJI_CODE, (m, name, at, s) => emoji(name, emojiAlone(s, at, m.length)) || m);
-  }).join('')).trim() + (files ? fileCards(files, fileUrl) : '');
+  }).join('')).trim();
+  return embedSlack(built, lookup, quoted) + (files ? fileCards(files, fileUrl) : '');
 }

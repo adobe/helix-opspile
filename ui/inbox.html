@@ -501,9 +501,15 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 10%, transparent); }
   .bubble blockquote.quote > p.quote-by { font-size: 12.5px; margin-bottom: 3px; }
   .bubble blockquote.quote > p.quote-by + p { margin-top: 0; }
-  .bubble blockquote.quote .quote-by a { color: inherit; text-decoration: none; }
-  .bubble blockquote.quote .quote-by a:hover b { text-decoration: underline; text-underline-offset: 2px; }
-  .bubble blockquote.quote .quote-by time { opacity: .65; margin-left: 4px; }
+  .bubble blockquote.quote .quote-by b[role="button"] { cursor: default; font-weight: 600; }
+  .bubble blockquote.quote .quote-by b[role="button"]:hover { text-decoration: underline dotted; text-underline-offset: 2px; }
+  .bubble blockquote.quote .quote-by a { color: inherit; text-decoration: none; opacity: .65; margin-left: 4px; }
+  .bubble blockquote.quote .quote-by a:hover { text-decoration: underline; text-underline-offset: 2px; opacity: 1; }
+  .linkpick { position: fixed; z-index: 21; display: flex; flex-direction: column; min-width: 168px; padding: 4px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+  .linkpick[hidden] { display: none; }
+  .linkpick a { color: var(--ink); text-decoration: none; font-size: 12.5px; padding: 6px 12px; border-radius: 7px; }
+  .linkpick a:hover, .linkpick a:focus-visible { background: var(--sel); outline: none; }
   .bubble ul, .bubble ol { margin: 4px 0; padding-left: 20px; }
   .bubble img.att { display: block; max-width: 100%; max-height: 360px; border-radius: 10px; margin: 6px 0; cursor: zoom-in; }
   /* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */

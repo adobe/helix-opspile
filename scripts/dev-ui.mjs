@@ -77,7 +77,8 @@ import { statsFor } from '../src/klickhaus.js';
 import { vocab } from '../src/label.js';
 import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
-import { readState, waitingOn } from '../src/threads.js';
+import { slackMessageRefs } from '../src/slackurl.js';
+import { previewOf, readState, waitingOn } from '../src/threads.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -548,6 +549,28 @@ function editableOf(meta, source) {
   return mine && source !== 'discord' ? 'user' : null;
 }
 
+/** As src/slacklinks.js: Slack permalinks in the texts, matched to messages in the store. */
+function slackLinksFor(bodies) {
+  const index = new Map();
+  for (const entry of store.threads.values()) {
+    if (entry.ch.source === 'slack') {
+      for (const m of entry.messages.filter((msg) => !msg.deletedAt)) {
+        const person = [...store.people.values()].find((p) => p.name === m.author.name);
+        index.set(`${entry.ch.channelId}:${m.id}`, {
+          channel: entry.ch.channelId,
+          id: m.id,
+          thread: entry.key,
+          at: m.at,
+          author: m.author.name || null,
+          authorKey: m.author.kind === 'system' ? null : keyOf(person, entry.ch.source),
+          preview: previewOf(m.body || ''),
+        });
+      }
+    }
+  }
+  return slackMessageRefs(bodies).map((r) => index.get(`${r.channel}:${r.id}`)).filter(Boolean);
+}
+
 /** As src/channelrefs.js: the channels the texts name, and where the viewer finds them. */
 function channelRefs(source, texts) {
   const { ids, names } = channelTokens(texts);
@@ -593,6 +616,7 @@ function thread(key) {
       reactions: reactionsOn(key, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const links = slackLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body));
   const watermarks = [...store.watermarks.values()]
     .filter((w) => w.thread === key && teamIds.has(w.person))
     .map(({ person, read_at: readAt, via }) => ({
@@ -604,7 +628,7 @@ function thread(key) {
       thread: key, root_at: entry.row.root_at, last_at: entry.row.last_at, any_at: entry.row.any_at,
     }],
     messages,
-    profiles: profiles(messages.map((m) => m.authorKey)),
+    profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
     // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
     // the platform's accounts (a channel member who never posted) alike.
     mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
@@ -613,6 +637,7 @@ function thread(key) {
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
+    links,
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
