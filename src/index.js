@@ -13,16 +13,20 @@
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
+import cogsHtml from '../ui/cogs.html';
 // The pages' scripts, as text (src/page.js inlines them).
 import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
 import kbJs from '../ui/kb.js' with { type: 'text' };
+import cogsJs from '../ui/cogs.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
 import headerCss from '../ui/header.css' with { type: 'text' };
 import { accessEmail } from './access.js';
+import { followed, Meter } from './cogs/meter.js';
+import { rollupCogs } from './cogs/rollup.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
@@ -63,6 +67,7 @@ const SCRIPTS = {
   'inbox.js': inboxJs,
   'admin.js': adminJs,
   'kb.js': kbJs,
+  'cogs.js': cogsJs,
   'app.js': appJs,
   'header.js': headerJs,
   'rank.js': rankJs,
@@ -72,6 +77,7 @@ const SCRIPTS = {
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
 const KB_PAGE = page(kbHtml, SCRIPTS);
+const COGS_PAGE = page(cogsHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -95,7 +101,8 @@ function icon(pathname) {
   });
 }
 
-export default {
+/** The Worker's handlers, with `env` counted for COGS (the default export, below). */
+const handlers = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
@@ -189,6 +196,12 @@ export default {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
+    if (pathname === '/inbox/cogs') {
+      // What the inbox costs (admin team; the API checks), under /inbox like the others.
+      return new Response(COGS_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
     if (pathname === '/inbox') {
       return new Response(INBOX_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
@@ -217,11 +230,6 @@ export default {
     return text('not found\n', 404);
   },
 
-  /** NORMALIZE queue: pile 1 → pile 2 (#6). */
-  async queue(batch, env) {
-    await consume(batch, env);
-  },
-
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
  * entries of the knowledge bases not counted yet, keep the
@@ -231,9 +239,13 @@ export default {
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
  * behind, fill in the latest message's text of threads indexed before it was kept, delete
  * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js), and enqueue the
- * threads whose klickhaus rows are behind.
+ * threads whose klickhaus rows are behind; and roll up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
+    // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
+    ctx.waitUntil(rollupCogs(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', cogs: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', cogs: 'error', error: e.message }))));
     ctx.waitUntil(ensureSubscription(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cron: controller.cron, ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', error: e.message }))));
@@ -305,6 +317,44 @@ export default {
     ctx.waitUntil(sweepExports(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', exports: 'error', error: e.message }))));
+  },
+};
+
+/**
+ * COGS (src/cogs/meter.js): every request, its work after the answer (`waitUntil`) included, is
+ * counted for the thread it names, if it names one; every queue job for its thread; a cron run as
+ * shared work. Each is one Workers request.
+ */
+export default {
+  async fetch(request, rawEnv, rawCtx) {
+    const meter = new Meter(rawEnv, { via: 'fetch' });
+    const env = meter.env({ thread: new URL(request.url).searchParams.get('thread') || null });
+    env.meter?.add('workers', 'requests', '', 1);
+    const ctx = followed(rawCtx);
+    try {
+      return await handlers.fetch(request, env, ctx);
+    } finally {
+      rawCtx?.waitUntil(ctx.settled().then(() => meter.flush()).catch(() => {}));
+    }
+  },
+
+  /** NORMALIZE queue: pile 1 → pile 2 (#6). */
+  async queue(batch, env) {
+    const meter = new Meter(env, { via: 'queue' });
+    try {
+      await consume(batch, env, meter);
+    } finally {
+      await meter.flush();
+    }
+  },
+
+  async scheduled(controller, rawEnv, rawCtx) {
+    const meter = new Meter(rawEnv, { via: 'cron' });
+    const env = meter.env({});
+    env.meter?.add('workers', 'requests', '', 1);
+    const ctx = followed(rawCtx);
+    await handlers.scheduled(controller, env, ctx);
+    rawCtx?.waitUntil(ctx.settled().then(() => meter.flush()).catch(() => {}));
   },
 };
 

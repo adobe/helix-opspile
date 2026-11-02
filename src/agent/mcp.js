@@ -350,6 +350,11 @@ export class AgentMcp {
 
   /** Keeps a call for the trace; a failure to keep it never fails the call. */
   async record(server, name, args, started, status, error = null) {
+    // The global browser server's time is Browser Run's (COGS, src/cogs/meter.js): a call
+    // holds a browser at most as long as it takes.
+    if (server.id === 'global:browser') {
+      this.env.meter?.add('browser_run', 'browser_ms', '', Date.now() - started);
+    }
     try {
       const json = JSON.stringify(args ?? {});
       const call = {

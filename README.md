@@ -36,6 +36,8 @@ still answer.
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
 | `GET /inbox/admin` | Teams, members, rules and manual assignments; customers, partners and vendors (name, icon, type, manual assignments). One static page, for the admin team; team managers see their teams' members there (add, remove, promote, demote). |
 | `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign` (POST `{ target, source, channelId, value, move? }`: a team added to a channel the admin team or nobody holds gets it filed under it; added to a channel another team holds, it is shared with it instead, answered as `shared`, and nothing moves; `move: true`, or the admin team, moves it), `share` (DELETE `{ source, channelId, team }`: the team stops following a channel shared with it), `channels?q=` (every word in the channel's name, Teams team name, org slug or name, or id; the answer says which `match`ed), `orgs` (each with `domain`, its usual mail domain), `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies), `org-icons?slug=[&fresh=1]` (icons for an org, ranked by Clef, `src/favicons.js`), `favicon?domain=` (Google's favicon of a domain, 404 when it has none), and `classify` (POST `{ limit? }`: Clef classifies up to 25 of the admin team's channels now). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. For the admin team, `team?slug=` also answers with `suggestions`: the admin team's channels where the team's members post, react or are members, and the ones Clef gives the team (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-channel-folders)). |
+| `GET /inbox/cogs` | **COGS**: what the inbox costs at list prices, for the admin team. One static page over `GET /api/admin/cogs`; see "COGS" below. |
+| `GET /api/admin/cogs?from=&to=&service=&org=&team=&allocate=` | The dashboard's numbers, for the admin team (`src/cogs/report.js`): the days `from` to `to` (`YYYY-MM-DD`, both included; the last 30 by default, at most 400), in the services, customers (org slugs, `''` for shared) and teams given (comma-separated; all by default). Flow (what was used) in dollars, per message and per new thread, per service and metric, per day, per customer and per team; stock (what is kept) in dollars a month; the list prices (`prices`), where the data starts (`since`) and what was counted without a price (`unpriced`). Costs shared by no customer in particular are shared out by the customers' messages, unless `allocate=none`. `POST /api/admin/cogs/rollup` rolls up today and yesterday now, as the cron does. |
 | `GET /inbox/kb` | The knowledge-base editor (one static page), for the admin team, and team managers for their teams' knowledge bases: list the knowledge bases and their files, edit concepts and the agents' `systemprompt.md` (saved as you type), see the history. |
 | `GET /api/kb`, `GET /api/kb/files?repo=`, `GET /api/kb/log?repo=`, `GET`/`PUT`/`DELETE /api/kb/file` | The editor's API, for the admin team (team managers: their teams' knowledge bases; the other members of a team: its knowledge base, and every `GET /api/kb*` of it, read-only; `may` on each knowledge base says whether you change it): knowledge bases, files, commits, and one file (`?repo=&path=`); `PUT { repo, path, content, base?, message? }` commits it as the signed-in person (`base`: the blob it was written from; without one the file must not exist yet), `DELETE { repo, path, base }` removes it. `409` with the current file when it changed meanwhile. |
 | `GET`/`POST`/`PUT`/`DELETE /api/kb/mcp`, `POST /api/kb/mcp/check` | The agents' MCP servers of a knowledge base's team or customer (`?repo=`, or `{ repo, name, url, description?, auth?, headers?, oauth?, allow?, enabled? }`; `PUT`/`DELETE`/`check` by `id`), for whoever may edit it. The members of a team `GET` its servers read-only (`may: false`), their URLs without user info, query or fragment, which may carry a credential. `auth` is `headers` (default) or `oauth`, with `oauth: { clientId?, clientSecret?, scope? }` for a client registered at the server. Header values, tokens and client secrets are never returned, only header names and whether and by whom an OAuth server is connected; adding or changing a server connects to it and lists its tools. The answer also lists the **global** servers (`globals`): whether each is set up, its tools, and its switches for the knowledge base's team and channels. |
@@ -79,7 +81,7 @@ still answer.
 | `GET`, `POST /diag/discord` | The Discord poller, guarded by `x-opspile-diag`: `GET` says when it polls next and how the last poll went (an error, e.g. a missing permission, included); `POST` polls now, and reads the last day again for edits, deletions and reactions. |
 | `GET /diag/teams` | Self-test of the Microsoft side, guarded by the `x-opspile-diag` header. Returns the token's granted roles and the number of visible teams; `?sub=1` also creates and immediately deletes a `/teams/getAllMessages` probe subscription; `?ensure=1` runs the cron's renewal now. Never returns a token. |
 | queue `helix-opspile-normalize` | Also carries thread backfill requests, label and vector jobs, thread-agent pokes and re-filing after a rule change (see ARCHITECTURE). Pile 1 → pile 2: reads the raw object, looks up the channel and author (cached in D1), applies the rules, and writes `channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md`. Five retries, then `helix-opspile-normalize-dlq`. |
-| cron `*/20 * * * *` | Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Checks the global MCP servers once a day and keeps the tools they list for the agents. Refreshes the OAuth grants of the agents' MCP servers that were not refreshed for a week. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord poller, which keeps polling on its own alarm. Enqueues the 50 most recently active channel threads whose message and thread vectors (`CONTENT`), or full-text items (`SEARCH`), are older than their latest message, so the first runs after a deploy vectorize and index what was there before. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
+| cron `*/20 * * * *` | Rolls up what today and yesterday used, for the COGS dashboard (and up to three of the last 30 days not rolled up yet; see "COGS"). Creates missing team knowledge bases (pile 3), and imports or refreshes the Artifacts mirrors of the GitHub repositories agents may read. Checks the global MCP servers once a day and keeps the tools they list for the agents. Refreshes the OAuth grants of the agents' MCP servers that were not refreshed for a week. Classifies 20 of the admin team's channels with Clef (the unclassified first, then those with new activity or a week-old label), listing their members on Slack or Teams first when that is a week old. Pokes the Discord poller, which keeps polling on its own alarm. Enqueues the 50 most recently active channel threads whose message and thread vectors (`CONTENT`), or full-text items (`SEARCH`), are older than their latest message, so the first runs after a deploy vectorize and index what was there before. Keeps exactly one `/teams/getAllMessages` subscription (`created,updated,deleted`, no resource data) pointed at `/teams/notify`: renews it to 55 minutes, deletes duplicates, creates it if missing. Graph allows one per app and tenant, so one on a retired origin (or with its lifecycle URL elsewhere) is deleted and recreated; whenever a subscription is created, a **catch-up** reads every known Teams channel's changes since the gap (`messages/delta`) and the replies of the threads active in the three days before, and stores them like a backfill (`via: catchup`). Graph's subscription list is the record; nothing else is stored. |
 
 ### Bindings
 
@@ -148,6 +150,9 @@ Nothing below is committed; set it on the Worker.
 | `SEARCH` | AI Search | `helix-opspile-messages` (`-stage`): full-text search, one item per message of a channel thread, people's and bots' (`src/fulltext.js`), queried with BM25 (`retrieval_type: keyword`, every word, the recent boosted by `at`). Create it by hand before the first deploy that has it (the binding needs it), with its metadata schema: `npx wrangler ai-search create helix-opspile-messages --type builtin --hybrid-search --custom-metadata team:text --custom-metadata channel:text --custom-metadata message:text --custom-metadata at:datetime`. Then `node scripts/replay.mjs --index` fills it (the cron does too, fifty threads a run). |
 | `ARTIFACTS` | Artifacts | Pile 3: namespace `helix-opspile` (`-stage`), one repo per org (`kb-org-<slug>`) and per team (`kb-team-<slug>`), created when a channel is discovered and by the cron for every team; and read-only mirrors of GitHub repositories for the agents (`gh-<owner>-<name>-<time>`) |
 | `NORMALIZE` | queue | Keys of new pile-1 objects for #6: `helix-opspile-normalize` (`-stage`) |
+| `USAGE` | Analytics Engine | `helix-opspile-usage` (`-stage`): what the Worker uses, counted where it happens, per customer, team, service and metric (`src/cogs/meter.js`). Created by its first write. Without it nothing is counted |
+| `ANALYTICS` | Analytics SQL | Cloudflare's analytics of the account, and `USAGE`, read by the COGS rollup (`src/cogs/rollup.js`) without an API token |
+| `COGS_RESOURCES` | var | Written by `cloudflare.config.ts`, not set by hand: the names of the Worker, its `USAGE` dataset, buckets, Vectorize indexes and Artifacts namespace, which the rollup asks Cloudflare's analytics about |
 
 `cf deploy` creates the buckets and queues when they are missing. The D1 schema is in
 `migrations/`; apply it with `cf d1 migrations apply <database id>` **before** the first
@@ -423,6 +428,49 @@ day, so opspile polls instead: when nothing happened, a poll is two requests and
 milliseconds of the object's time. New messages show within a minute, edits, deletions and
 reactions within about five.
 
+### COGS
+
+`/inbox/cogs` (**COGS** in the header, for the admin team) shows what the inbox costs at the
+providers' list prices (`src/cogs/prices.js`, with the date they were read and a link to each
+price page; the page lists them under **List prices**), filtered by period, service, customer
+and team:
+
+- **Flow**: what the period's work used (requests, CPU time, rows, operations, tokens, queries),
+  in dollars, per day and service, and **per message** and **per thread**: divided by the
+  messages and the threads started in the period, in what is selected.
+- **Stock**: what keeping it costs a month (R2, D1, Vectorize, AI Search, the agents' Durable
+  Object storage, the Workers Paid plan): each day's measurement averaged over the period.
+- **Customers** and **teams**, with their messages, threads, flow, cost per message and thread,
+  and stock. Work for no customer in particular (the inbox's lists, the cron, the team rooms,
+  the buckets) is shared out by each customer's messages (a team's by its customers'), unless
+  **Share out common costs** is off; then it is a line of its own, **Shared**.
+
+Costs are list prices at the margin: what a plan includes (10M Workers requests a month, 10,000
+neurons a day, …) is listed, not taken off, so a customer's cost is what their work adds, and it
+does not depend on who came first in the month.
+
+Where the numbers come from (`docs/ARCHITECTURE.md`, "COGS"):
+
+- **The Worker counts** what it uses where it uses it (`src/cogs/meter.js`): every request, queue
+  job, cron run and Durable Object gets its bindings counted (D1 rows, R2 operations, queue
+  operations, Workers AI tokens per model, Vectorize dimensions, AI Search queries and uploads),
+  the agents add their Bedrock tokens (from pi's ledger of the session) and the time their
+  browser calls take, and each piece of work names the customer and team it was for (a thread's,
+  or its channel's once it is filed). That goes to Analytics Engine (`USAGE`).
+- **Cloudflare's analytics** (`ANALYTICS`) give what the Worker cannot see: the Durable Objects'
+  requests and duration per object (an agent's are its thread's customer's), the Worker's CPU
+  time and log events, Artifacts operations per knowledge base, and what the buckets and indexes
+  hold.
+- **D1** gives the messages and threads per day, customer and team, and, once a day, its own size,
+  the agents' storage and the full-text items.
+
+The cron rolls all three up into `cogs_usage` (migration 0051) every 20 minutes, today and
+yesterday, and fills in up to three of the last 30 days a run from what Cloudflare's analytics
+and D1 still have (the Worker's own counts start at the deploy that brought them). Nothing needs
+setting up: the dataset is created by its first write, and the Analytics SQL binding needs no
+token. A model or metric that is counted but not in the price list is listed under the page,
+and costs nothing until it is priced.
+
 ### Iterate on the inbox UI
 
 `npm run ui:dev` serves the inbox at <http://localhost:8787/inbox> with fake data and live
@@ -440,7 +488,9 @@ No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 The admin pages are at <http://localhost:8787/inbox/admin>: the real `src/admin.js` over an
 in-memory D1 with the migrations, seeded from the fake inbox
 ([scripts/dev-ui-admin.mjs](scripts/dev-ui-admin.mjs)); the fake inbox itself does not see
-their changes. On both, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
+their changes. The COGS dashboard is at <http://localhost:8787/inbox/cogs>, over 120 days
+of made-up usage in the same D1 ([scripts/dev-ui-cogs.mjs](scripts/dev-ui-cogs.mjs)). On all
+three, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
 makes her one in the inbox too, with what admins see there: the switch to the editor and the
 admin pages, "View as" (read-only) and label review. `npm run ui:dev -- --manager` signs her in as
 the manager of Edge ops instead, in no admin team: what a team manager sees. `--member` signs her

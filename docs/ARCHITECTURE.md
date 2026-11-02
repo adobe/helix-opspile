@@ -404,7 +404,8 @@ filter when there are many; in a customer's they are all there is, so they are s
 Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**
 and **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and
 instructions) for every member of a team, **Teams** too for team managers, and for the admin
-team **Orgs** and **Requests** too, the sections of `/inbox/admin`. Each opens as it was left in that
+team **Orgs** and **Requests** too, the sections of `/inbox/admin`, and **COGS** (`/inbox/cogs`,
+[below](#cogs)). Each opens as it was left in that
 browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
 **Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
 **Agents** with its knowledge base and file, and each admin section with what was picked in it.
@@ -1348,6 +1349,80 @@ Neither says that nobody outside is in the channel (guests are not recorded), so
 alone does not turn it on. The prompt asks the agent to keep other customers' details out of the
 knowledge bases and out of what it posts; that and the channel's other tools are not restricted
 by code: what it read can reach them, `bash` and the `browser` server included.
+
+## COGS
+
+What the inbox costs, at list prices, for the admin team (`/inbox/cogs`, `GET /api/admin/cogs`):
+per service, per message and thread, per customer and team, per day, and per month for what is
+kept. Three sources are rolled up into one table, `cogs_usage`: a row per day, source, service,
+metric, detail (a model, a bucket, an index), customer and team, with a quantity. Prices are not
+stored: the dashboard prices the quantities with `src/cogs/prices.js`, so a corrected price applies
+to the past too, and a quantity without a price (a model added since) is listed and costs nothing.
+
+**The meter** (`src/cogs/meter.js`). Every invocation has a `Meter`: a request, a queue batch
+(a scope per job), a cron run, and each Durable Object (an agent, a team's room, the Discord
+poller). A scope is an environment with the same bindings, counted as they answer: D1 rows read and
+written (`meta`; a `first()` counts one row read, since D1 does not say), R2 Class A and B
+operations per bucket, queue operations (three per 64 KB of a message: write, read, delete), Workers
+AI tokens per model (the model's `usage`, else a quarter of the characters it was given),
+Vectorize dimensions queried and written, AI Search queries (full-text or semantic) and the tokens
+it ingests; and one Workers request per invocation (a queue batch's shared by its jobs). Code adds
+what no binding shows: an agent's Bedrock tokens and the time its global browser server's calls
+take. Whom the work was for is the scope's subject: a request's `thread` parameter, a queue job's
+thread, a raw event's channel once it is filed (`processKey` names the customer and team its rules
+gave), an agent's thread (or `kb:<team>:<org>`), a room's team; else nobody, *shared*. At the end
+of the invocation (a request's after its `waitUntil` work too; a Durable Object's 15 seconds after
+it counted, or a room's at the end of each broadcast and flush, so it can hibernate) the subjects
+are resolved (a thread's customer and team from D1, once per invocation) and written to Analytics
+Engine (`USAGE`), one data point per customer, team, service, metric and detail, never more than
+the 250 an invocation may write (details fold into their metric first). Counting never fails the
+work: a binding's answer is returned as it came. Without `USAGE` (tests, the preview) the
+environment is the plain one.
+
+**An agent's tokens.** pi keeps a ledger of what each session's model requests used (`usage()`,
+per model and tool, cumulative). The agent reads it after each model round (a hook on pi's
+generation task) and before it is told something, and counts the difference since the last time
+(kept in its storage, `cogs:usage`) as Bedrock input, output, cache read and cache write tokens
+(five-minute and one-hour writes apart, as Bedrock prices them), and what pi's catalog says they
+cost, which prices a model the list does not know. An agent that was never metered starts from
+its ledger as it is: what it used before is not counted on the day COGS started. Once a day it
+writes the size of its SQLite (`cogs_objects`), for the agents' storage.
+
+**Cloudflare's analytics** (`src/cogs/rollup.js`, the Analytics SQL binding `ANALYTICS`, no
+token) for what the Worker cannot see, about opspile's own resources only, by name
+(`COGS_RESOURCES`, written by the deploy config; the account has other projects):
+
+- Durable Objects (`events.durableObjectsInvocations`): requests and wall time per object of the
+  Worker's script, as GB-seconds of 128 MB. An agent's object is named by its thread, so its
+  duration is its customer's. A team room's WebSocket connections hibernate, so its `http`
+  invocations (the connections) count as requests and not as duration. Invocations that overlap
+  are billed once; the wall times are added up, so this is an upper bound.
+- The Worker's CPU time and log events (`logs.workersLogs`): CPU from the invocations' own
+  events (fetch, queue, scheduled), shared.
+- Artifacts operations per repository (`events.artifactsEventsByNamespaceAccount`, without token
+  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), the mirrors shared.
+- What the buckets (`states.r2CombinedStorage`) and indexes (`states.vectorizeStorage`, times 768
+  dimensions) hold, per day.
+
+A query that fails leaves the day's rows of its services as they were, and the others are written.
+
+**D1**: the day's messages and the threads started, per customer and team (`volume`), and, once a
+day, what only D1 knows is kept: its own size (`meta.size_after`), the agents' storage
+(`cogs_objects`), the full-text items (their number times the average upload of the last 30 days)
+and the Workers Paid plan.
+
+**The rollup.** The cron rolls up today and yesterday every run, and up to three of the last 30 days
+that have no rows of a source yet (backfilling what Cloudflare's analytics and D1 still have; the
+meter's counts start with it). A day of a source is replaced whole, writing only the rows that
+changed and deleting the ones that are gone, so a run that changed nothing writes nothing.
+
+**The report** (`src/cogs/report.js`). Flow costs what the period used; per message and per thread
+it is divided by the period's messages and new threads of what is selected. Stock costs a month:
+each series at its average over the days it was measured. Shared rows are shared out by the
+period's messages: a team's (a room's) over that team's customers, nobody's over everyone; then the
+filters apply, so a customer's cost includes its share. Where Cloudflare's analytics and the meter
+count the same metric on the same day, Cloudflare's count is used. Costs are at the margin: the
+allowances of a plan are listed with the prices, not subtracted.
 
 ## People
 

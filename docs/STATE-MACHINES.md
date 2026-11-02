@@ -184,6 +184,18 @@ channel has activity, the ops teams change, or the label is a week old.
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A
 repository taken off `agent_repos` keeps its mirror.
 
+**COGS day.** missing → rolled up → rolled up again while it is today or yesterday
+(`cogs_usage`, `src/cogs/rollup.js`). Each source of a day is replaced whole, but only for the
+services whose queries answered: a failed query keeps what it counted before, and is not "nothing
+used". A day counts as rolled up for the backfill once a source has any row for it, so each source
+writes a marker row (`volume/days`, `analytics_engine/queries`) even on a quiet day. Storage is
+measured once a day, the first run of the day (`workers/subscription` is the marker).
+
+**Agent token meter.** never metered → metered up to the ledger (`cogs:usage` in the agent's
+storage, `modelUsage` in `src/cogs/meter.js`). The first reading only sets the start: what the ledger
+held before is not counted on one day. Readings are one at a time, so a round is counted once; a
+ledger that went back (a new session) counts from nothing.
+
 ## In the page
 
 **Socket.** connecting → open → reconnecting → banner (`listen`, `ui/inbox.js`). A socket that comes

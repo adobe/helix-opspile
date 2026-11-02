@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { cogsReport } from './cogs/report.js';
+import { rollupCogs } from './cogs/rollup.js';
 import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { ensureKnowledgeBase } from './kb.js';
@@ -1034,6 +1036,8 @@ export async function admin(request, env, url, me) {
     case 'GET org': return org(env, q('slug'));
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
     case 'GET favicon': return faviconProxy(q('domain'));
+    case 'GET cogs': return json(await cogsReport(env, url));
+    case 'POST cogs/rollup': return json(await rollupCogs(env));
     default: return json({ error: 'not found' }, 404);
   }
 }

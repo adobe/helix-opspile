@@ -137,7 +137,26 @@ function resources(mode: string | undefined) {
     // Pile 3: one knowledge-base repo per org and per team (#12). Artifacts creates the
     // namespace with its first repo.
     ARTIFACTS: bindings.artifacts({ namespace: `helix-opspile${suffix}` }),
+    // COGS (src/cogs/): what the Worker uses, counted where it happens, per customer and team.
+    USAGE: bindings.analyticsEngineDataset({ name: `helix-opspile-usage${suffix}` }),
+    // Cloudflare's analytics of the account, read by the COGS rollup without an API token.
+    ANALYTICS: bindings.analytics(),
   };
+}
+
+/**
+ * The names of the resources the COGS rollup asks Cloudflare's analytics about (names, not
+ * ids): the Worker's script, its Analytics Engine dataset, buckets, indexes and Artifacts namespace.
+ */
+function cogsResources(mode: string | undefined, worker: string) {
+  const suffix = mode === 'prod' ? '' : `-${mode || 'dev'}`;
+  return JSON.stringify({
+    worker,
+    dataset: `helix-opspile-usage${suffix}`,
+    artifacts: `helix-opspile${suffix}`,
+    buckets: ['raw', 'channels', 'files'].map((b) => `helix-opspile-${b}${suffix}`),
+    indexes: ['roots', 'content'].map((i) => `helix-opspile-${i}${suffix}`),
+  });
 }
 
 function consumers(mode: string | undefined) {
@@ -208,6 +227,7 @@ export default defineConfig(({ mode }) => {
       env: {
         ...vars(deployed),
         ...resources(mode),
+        COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
         // One Durable Object per inbox entry: its thread agent.

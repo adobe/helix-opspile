@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Enterprise Support · COGS</title>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f1114" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Support">
+<link rel="stylesheet" href="header.css">
+<style>
+  :root {
+    --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
+    --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
+    --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
+    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
+    --code: #0b0d10;
+    font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
+      -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--ink);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
+      --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
+      --sel: #dde9fb; --purple: #8250df; --code: #f3f4f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: var(--app-height, 100%); overflow: hidden; }
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+  body { padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  :root.keyboard { --safe-bottom: 0px; }
+  body { translate: 0 var(--app-top, 0px); }
+  body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
+  button, input, select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 9px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.link { border: 0; background: none; color: var(--link); padding: 0 4px; }
+  a { color: var(--link); }
+  input[type="date"] { padding: 2px 6px; color-scheme: light dark; }
+  /* The header is every page's (ui/header.css). */
+  main { flex: 1; overflow: auto; min-height: 0; padding: 0 22px calc(40px + var(--safe-bottom)); }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); margin: 0 0 10px;
+    display: flex; align-items: baseline; gap: 10px; }
+  h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .sub { color: var(--faint); font-size: 12px; }
+  .hint { color: var(--mute); font-size: 13px; margin: 6px 0 0; }
+  .empty { color: var(--mute); padding: 20px 4px; }
+  .err { color: var(--red); }
+  #body { transition: opacity .15s; }
+  #body.busy { opacity: .55; }
+
+  /* The filters: the period, what is counted, for whom. They stay at the top while the page scrolls. */
+  .bar { position: sticky; top: 0; z-index: 4; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+    margin: 0 -22px 14px; padding: 10px 22px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .bar .group { display: flex; gap: 6px; align-items: center; }
+  .bar label.lbl { color: var(--mute); font-size: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 3px 10px; background: var(--card); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 9px; border-radius: 12px;
+    background: var(--sel); border: 1px solid var(--accent); font-size: 13px; }
+  .chip button { border: 0; background: none; padding: 0 4px; color: var(--mute); line-height: 1; }
+  .chip button:hover { color: var(--ink); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; flex: none; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--mute); font-size: 13px; cursor: pointer; }
+  .bar input.search { width: 190px; }
+  .bar select { max-width: 180px; }
+  /* The service picker: a menu of checkboxes. */
+  #servicesMenu { margin: 0; padding: 6px; min-width: 240px; color: var(--ink); background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.25); }
+  #servicesMenu label { display: flex; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+  #servicesMenu label:hover { background: var(--hover); }
+  #servicesMenu .actions { display: flex; justify-content: space-between; padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+  .kpi .k { color: var(--mute); font-size: 12px; }
+  .kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+  .kpi .s { color: var(--faint); font-size: 12px; margin-top: 2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; min-width: 0; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; }
+  .cols > .card { margin-bottom: 14px; }
+
+  /* The chart: a stacked bar per day, a colour per service. */
+  .chart { position: relative; }
+  .chart { min-height: 220px; }
+  .chart svg { display: block; overflow: visible; }
+  .chart .axis text { fill: var(--faint); font-size: 11px; }
+  .chart .grid line { stroke: var(--line); }
+  .chart .hover { fill: var(--hover); opacity: 0; }
+  .chart g.col:hover .hover { opacity: .6; }
+  .tip { position: absolute; z-index: 5; pointer-events: none; min-width: 180px; padding: 8px 10px; font-size: 12px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+  .tip .row { display: flex; gap: 8px; align-items: center; }
+  .tip .row span:nth-child(2) { flex: 1; }
+  .tip .row span:last-child { font-variant-numeric: tabular-nums; }
+  .tip .t { font-weight: 600; margin-bottom: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; }
+  .legend button { display: inline-flex; gap: 6px; align-items: center; border: 0; background: none; padding: 2px 4px; color: var(--mute); }
+  .legend button:hover { color: var(--ink); }
+  .legend button[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--mute); padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th.n, td.n { text-align: right; }
+  th button.sort { border: 0; background: none; padding: 0; color: inherit; font-weight: inherit; font-size: inherit; }
+  th button.sort[data-on]::after { content: " ↓"; }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n { white-space: nowrap; }
+  td.m { color: var(--mute); }
+  tr:last-child td { border-bottom: 0; }
+  tr.pick { cursor: pointer; }
+  tr.pick:hover td { background: var(--hover); }
+  tr.on td { background: var(--sel); }
+  tr.metric td { font-size: 12.5px; color: var(--mute); padding-top: 2px; padding-bottom: 2px; border-bottom: 0; }
+  tr.metric td:first-child { padding-left: 26px; }
+  tr.total td { font-weight: 600; border-top: 1px solid var(--line); }
+  .twist { display: inline-block; width: 14px; color: var(--faint); }
+  .name { display: flex; gap: 7px; align-items: center; min-width: 0; }
+  .name > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--mute); white-space: nowrap; }
+  .bar-in { height: 4px; border-radius: 2px; background: var(--accent); opacity: .55; margin-top: 3px; }
+  details.card > summary { cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); }
+  details.card[open] > summary { margin-bottom: 10px; }
+  .prices td { font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  .more { margin-top: 8px; }
+
+  @media (hover: none) and (pointer: coarse) {
+    input, select, textarea { font-size: 16px; }
+  }
+  @media (max-width: 1099px) {
+    .cols { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 699px) {
+    main { padding: 0 12px calc(32px + var(--safe-bottom)); }
+    .bar { margin: 0 -12px 12px; padding: 8px 12px; position: static; }
+    .kpi .v { font-size: 19px; }
+    .card { padding: 10px 12px; }
+    .scroll table { min-width: 560px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><a data-page="inbox" href="/inbox"><img src="/icon.svg" alt="Adobe"><span>Enterprise Support</span></a></h1>
+  <nav class="pages" id="pages" hidden aria-label="Pages"></nav>
+  <span class="spacer"></span>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="userSub"></span></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
+</header>
+<script src="header.js"></script>
+<main id="main">
+  <div class="bar" id="bar" hidden>
+    <div class="group" role="group" aria-label="Period">
+      <div class="seg" id="ranges"></div>
+      <input type="date" id="from" aria-label="From">
+      <span class="sub">–</span>
+      <input type="date" id="to" aria-label="To">
+    </div>
+    <div class="group">
+      <button id="servicesBtn" popovertarget="servicesMenu" aria-haspopup="true">All services ▾</button>
+      <div id="servicesMenu" popover></div>
+    </div>
+    <div class="group">
+      <input class="search" id="orgSearch" list="orgList" placeholder="Customer…" aria-label="Customer" autocomplete="off">
+      <datalist id="orgList"></datalist>
+      <select id="team" aria-label="Team"></select>
+    </div>
+    <div class="chips" id="chips"></div>
+    <label class="check" title="Work for no customer in particular (the inbox's lists, the cron, storage) shared out by each customer's messages"><input type="checkbox" id="allocate" checked> Share out common costs</label>
+  </div>
+  <div id="body"><div class="empty">Loading…</div></div>
+</main>
+<script type="module" src="cogs.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
