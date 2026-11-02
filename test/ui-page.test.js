@@ -306,6 +306,55 @@ describe('inbox page', () => {
     ]).map((t) => t.slug), ['amy', 'zed', 'admin']);
   });
 
+  it('forgets the empty list when a search paints it, and a team name there drops the type filter', () => {
+    const state = {
+      search: {
+        data: { hits: [{ thread: 'waf' }] }, loading: false, error: null, q: 'WAF',
+      },
+      unread: true,
+      hitNodes: null,
+      order: [],
+      sel: { type: new Set(['conversation']) },
+      not: { type: new Set(['alert']) },
+    };
+    const remembered = '__empty';
+    const list = {
+      children: [],
+      innerHTML: '<div class="empty">Nothing matches these filters.</div>',
+      classList: { toggle() {} },
+    };
+    list[remembered] = list.innerHTML;
+    const head = { innerHTML: '', __html: '' };
+    const { searchRows } = piece('function searchRows', 'function openHit', 'searchRows', {
+      state,
+      searchEntry: () => null,
+      passes: () => false,
+      viewFacets: () => [],
+      filterCount: () => 0,
+      SLIDERS: '',
+      esc: (s) => s,
+      viewSwitch: () => '',
+      toNode: () => ({}),
+      row: () => '',
+      preload: { observe() {}, unobserve() {} },
+      cardGone: () => {},
+    });
+    searchRows({
+      querySelector(sel) { return sel === '.rows' ? list : head; },
+    });
+    // Clear would otherwise see the old empty message and leave the search's text up.
+    assert.equal(list[remembered], '');
+    assert.match(list.innerHTML, /hidden by the filters/);
+
+    const { endTeam } = piece('function endTeam', 'function endNote', 'endTeam', { state });
+    endTeam({ closest: (sel) => (sel === '.end' ? {} : null) });
+    assert.equal(state.sel.type, undefined);
+    assert.equal(state.not.type, undefined);
+    state.sel.type = new Set(['conversation']);
+    endTeam({ closest: () => null });
+    assert.equal([...state.sel.type].join(), 'conversation');
+  });
+
   it('shows only the viewer\'s own messages (and those being sent) as theirs', () => {
     const { message } = piece('const continues', '// ---------------------------------------------------------------- the thread agent', 'message', {
       dayLabel: () => 'Today',

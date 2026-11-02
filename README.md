@@ -179,7 +179,7 @@ threads of the channels of one's personal view (`recipients` in `src/shares.js`)
 At the end of that view's unread list, once every page is loaded and no customer or platform
 filter is narrowing it, the page names the teams that still have unread threads the view does
 not already show. Fewer members come first, and the admin team last. A team's name opens its
-inbox, with unread still on.
+inbox with unread still on, and without the type filter, so an alert in the count is on screen.
 
 Access returns to the requested path after a Slack or Microsoft login, but without its query
 string; pages that need parameters across a sign-in carry them in the path (see the OAuth

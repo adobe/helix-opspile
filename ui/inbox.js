@@ -1176,6 +1176,9 @@ function searchRows(box) {
   const head = box.querySelector('.ctl');
   if (head.__html !== ctl) { head.innerHTML = ctl; head.__html = ctl; }
   const list = box.querySelector('.rows');
+  // The inbox skips rewriting an empty list when the message matches. A search paints this
+  // same list, so that memory no longer describes what is on screen.
+  list.__empty = '';
   const made = state.hitNodes || (state.hitNodes = new Map());
   const nodes = hits.map((h) => {
     const html = row(searchEntry(h.thread), h).trim();
@@ -1444,6 +1447,15 @@ function endHtml(teams) {
     return `${label}${esc(t.name)}</button>`;
   };
   return `<div class="end" role="status">${endSentence(teams, name)}</div>`;
+}
+/**
+ * The end line counts every unread thread, alerts included. A team's type filter would hide
+ * those alerts, so following a team name there opens the team without it.
+ */
+function endTeam(view) {
+  if (!view.closest('.end')) return;
+  delete state.sel.type;
+  delete state.not.type;
 }
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
 function endNote() {
@@ -5000,7 +5012,12 @@ async function start() {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
     const view = e.target.closest('[data-view]');
     // A click on the view already shown sorts it afresh, without the threads unread only kept.
-    if (view) { if (view.getAttribute('aria-checked') === 'true') state.list.key = null; switchView(view.dataset.view || null); return; }
+    if (view) {
+      if (view.getAttribute('aria-checked') === 'true') state.list.key = null;
+      endTeam(view);
+      switchView(view.dataset.view || null);
+      return;
+    }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
