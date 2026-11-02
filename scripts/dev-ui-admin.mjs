@@ -412,14 +412,20 @@ function seedAdminChannels(DB) {
 }
 
 export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
+  const teamRows = store.teams.some((t) => t.slug === 'admin')
+    ? store.teams.map(({ slug, name }) => ({ slug, name }))
+    : [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))];
   const DB = d1({
-    teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
+    teams: teamRows,
     people: [...store.people.values()].map((p) => ({
       id: p.id,
       email: p.email,
       name: p.name,
       staff: p.staff ? 1 : 0,
-      teams: [...store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.slug), ...(p.id === 1 ? ['admin'] : [])],
+      teams: [...new Set([
+        ...store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.slug),
+        ...(p.id === 1 ? ['admin'] : []),
+      ])],
     })),
     rules: [
       {
@@ -596,7 +602,10 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   if (manager) {
     DB.sqlite.exec("UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
   }
-  let me = { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
+  const withAdmin = store.me.teams.some((t) => t.slug === 'admin')
+    ? store.me.teams
+    : [...store.me.teams, { slug: 'admin', name: 'Admin' }];
+  let me = { ...store.me, admin: true, teams: withAdmin };
   if (manager || member) {
     me = {
       ...store.me,

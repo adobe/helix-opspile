@@ -325,6 +325,40 @@ export function fold(threads) {
 }
 
 /**
+ * Unread threads in the viewer's team inboxes that the personal view does not already show
+ * (a channel they posted or were mentioned in; alerts are never in it). One count per team,
+ * of inbox entries: a re-threaded group counts once, and a shared channel counts for every
+ * team whose inbox has it. `members` is the size of the team, for ordering the smallest first.
+ * Teams with nothing left are left out. The admin team is not special here; the page lists it
+ * last.
+ */
+async function unreadElsewhere(env, me) {
+  const outside = `NOT (t.kind != 'alert' AND ${inPersonalView('t', '?1')})`;
+  const { results } = await env.DB.prepare(`WITH mine AS (
+      SELECT m.team, t.name,
+        (SELECT COUNT(*) FROM team_members c WHERE c.team = m.team) AS members
+      FROM team_members m JOIN teams t ON t.slug = m.team WHERE m.person = ?1
+    ), unread AS (
+      SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id
+      FROM threads t LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
+      WHERE t.kind != 'ignore'
+        AND CASE WHEN t.kind = 'alert' THEN t.any_at ELSE t.last_at END IS NOT NULL
+        AND (w.read_at IS NULL OR w.read_at < CASE WHEN t.kind = 'alert' THEN t.any_at
+          ELSE t.last_at END)
+        AND ${outside}
+    )
+    SELECT m.team AS slug, m.name, m.members, (
+      SELECT COUNT(DISTINCT u.g) FROM unread u
+      WHERE u.filed = m.team OR (u.source, u.channel_id) IN (
+        SELECT c.source, c.channel_id FROM channel_teams c WHERE c.team = m.team)
+    ) AS unread
+    FROM mine m`).bind(me.id).all();
+  return (results || []).filter((r) => r.unread > 0).map((r) => ({
+    slug: r.slug, name: r.name, members: r.members, unread: r.unread,
+  }));
+}
+
+/**
  * A page of a team's inbox, or with `personal` (and no team) of the viewer's personal view.
  * `before` is the `next` cursor of the previous page (`<latest>|<group>`): the groups whose
  * latest activity comes after it in the newest-first order. With `groups` (inbox entry keys,
@@ -400,6 +434,8 @@ export async function inbox(env, me, team, {
       threads: [],
       page,
       ...(personal ? { rooms: await roomsP } : {}),
+      // The last page of the personal view says what other teams still have unread.
+      ...(personal && !only && !more ? { elsewhere: await unreadElsewhere(env, me) } : {}),
     };
   }
   const threadKeys = threads.map((t) => t.thread);
@@ -408,7 +444,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, techVocab,
+    { results: techRows }, techVocab, elsewhere,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -467,6 +503,8 @@ export async function inbox(env, me, team, {
       .bind(keys, TECH_MIN).all(),
     // The team's names for its technologies (the personal view, across teams: the admin team's).
     vocab(env, personal ? null : team),
+    // Only once the personal view has been loaded to the end: the list says so then.
+    personal && !only && !more ? unreadElsewhere(env, me) : null,
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -514,6 +552,7 @@ export async function inbox(env, me, team, {
     teams: myTeams,
     members: teamMembers,
     vocab: techVocab,
+    ...(elsewhere ? { elsewhere } : {}),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
     threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
       .map((t) => {
