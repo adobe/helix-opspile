@@ -41,11 +41,13 @@ have arrived.
 (`threads.logical_*`, `src/rethread.js`). `skeleton_hash` is written before the work that can fail,
 and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
-hash.
+hash. One that is skipped after a job died on it (its file is gone, or an edit emptied it) gets
+`rethreaded_at`, since asking again finds the same.
 
 **Thread label.** unlabeled → current → stale (`labels.labeled_through`, `src/label.js`). Labeling
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
-after their label.
+after their label. `labeled_through` means that Clef read the thread, so nothing else writes it: a
+thread whose files are missing is recorded in `dead_jobs`, and the sweep leaves it for a day.
 
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).

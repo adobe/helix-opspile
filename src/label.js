@@ -11,7 +11,7 @@
  */
 
 import { platformName } from './platforms.js';
-import { sweepDelay, sweepsNow } from './deadjobs.js';
+import { recordDead, sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
   extract, rulesFor, techFor, techNames,
@@ -483,6 +483,10 @@ export async function labelThread(env, key, now = new Date()) {
   }
   const messages = await threadMessages(env, thread);
   if (!messages.length) {
+    // Even a deleted message leaves a file, so these are missing. Not a label: `labeled_through`
+    // says that Clef has read the thread (src/resolve.js, src/review.js). As a dead job it shows in
+    // `/diag/dead`, and the sweep leaves the thread alone for a day.
+    await recordDead(env, `label:${key}`, { label: key }, 'no messages');
     return { result: 'skip', reason: 'no messages' };
   }
 
