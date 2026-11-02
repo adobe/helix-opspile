@@ -22,7 +22,6 @@
     --them: #2b3037; --them-ink: #e8eaed; --them-code: rgba(0,0,0,.25);
     --pane: #0f1114;
     --mention-adobe: #ff8a80;
-    --code: #0b0d10;
     --head: 50px;
     font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
       -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -32,7 +31,7 @@
     :root {
       --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
       --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
-      --sel: #dde9fb; --purple: #8250df; --them: #e1e5ea; --them-ink: #1d2025; --code: #f3f4f6;
+      --sel: #dde9fb; --purple: #8250df; --them: #e1e5ea; --them-ink: #1d2025;
       /* A white pane, so customer bubbles stand out (1.27:1) as Adobe's blue ones do. */
       --pane: #fff; --them-code: rgba(0,0,0,.08); --them-link: #0a4fa8;
       --mention-adobe: #b30b00;
@@ -480,9 +479,13 @@
   .bubble p + p { margin-top: 8px; }
   .bubble code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--them-code); padding: 1px 4px; border-radius: 4px; }
   .msg.mine .bubble code { background: rgba(0,0,0,.25); }
-  .bubble pre { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); color: var(--ink);
+  /* A code block is not an inline chip, and it has no fill: the border marks it. The chip
+     rules above (and the agent's) are more specific than `.bubble pre code` alone. */
+  .bubble pre { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; overflow: auto; margin: 6px 0; white-space: pre-wrap; }
-  .bubble pre code { font: inherit; background: none; padding: 0; border-radius: 0; }
+  .bubble pre code,
+  .msg.mine .bubble pre code,
+  .msg.agent .bubble pre code { font: inherit; background: none; padding: 0; border-radius: 0; color: inherit; }
   .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { font-size: 1em; font-weight: 700; margin: 8px 0 2px; }
   .bubble > :first-child { margin-top: 0; }
   .bubble > :last-child { margin-bottom: 0; }
