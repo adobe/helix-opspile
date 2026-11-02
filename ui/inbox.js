@@ -454,6 +454,56 @@ function setChannelRefs(list) {
   channelSet = channelSets.get(source);
 }
 const channelOf = (token) => channelRefs.get(token) || channelRefs.get(token.toLowerCase());
+// Slack message permalinks the open thread names (src/slacklinks.js): a card, and a way to
+// open the thread here. Keyed by `channel:id`, so the workspace host does not matter.
+let slackLinks = new Map();
+let slackSet = '';
+const slackSets = new Map();
+function pileHref(thread) {
+  const q = new URLSearchParams(location.search);
+  q.set('t', thread);
+  q.delete('compose');
+  return `${location.pathname}?${q}`;
+}
+function setSlackLinks(list) {
+  slackLinks = new Map();
+  for (const link of list || []) slackLinks.set(`${link.channel}:${link.id}`, link);
+  const source = JSON.stringify(list || []);
+  if (!slackSets.has(source)) slackSets.set(source, String(slackSets.size));
+  slackSet = slackSets.get(source);
+}
+const attrText = (s) => String(s).replace(/&(amp|lt|gt|quot|#39|#x27);/g, (_, e) => ({
+  amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#x27': "'",
+}[e]));
+function slackOf(url) {
+  const key = Markdown.slackMessageKey(url);
+  const hit = key && slackLinks.get(key);
+  if (!hit) return undefined;
+  const authorKey = hit.authorKey || (hit.author ? profileKey(null, { name: hit.author, platform: 'slack' }) : '');
+  return { ...hit, authorKey, href: pileHref(hit.thread) };
+}
+const slackMenu = { el: null };
+function closeSlackChoice() { if (slackMenu.el) slackMenu.el.hidden = true; }
+/** A Slack permalink the inbox knows: offer this thread, or Slack. */
+function openSlackChoice(a) {
+  if (!slackMenu.el) {
+    const el = document.createElement('div');
+    el.className = 'linkpick';
+    el.setAttribute('role', 'menu');
+    el.hidden = true;
+    document.body.append(el);
+    slackMenu.el = el;
+  }
+  const el = slackMenu.el;
+  el.innerHTML = `<a role="menuitem" href="${esc(a.dataset.pile)}" data-thread="${esc(a.dataset.thread)}">Open in Opspile</a>`
+    + `<a role="menuitem" href="${esc(a.getAttribute('href'))}" target="_blank" rel="noopener">Open in Slack</a>`;
+  el.hidden = false;
+  const r = a.getBoundingClientRect();
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  el.style.top = `${Math.max(8, Math.min(r.bottom + 6, window.innerHeight - h - 8))}px`;
+  el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+}
 /** A title with the channel ids in it (`#C…`) as the channels' names. */
 const channelNames = (s) => String(s || '').replace(Markdown.CHANNEL_REF, (m, before, token) => {
   const c = channelRefs.get(token);
@@ -476,14 +526,17 @@ const rendered = new Map();
 const RENDERED_MAX = 4000;
 // `thread`: the message's own, for its images.
 function md(src, thread = '') {
-  const k = `${ownEmoji.version}\u0000${mentionSet}\u0000${channelSet}\u0000${thread}\u0000${src}`;
+  const k = `${ownEmoji.version}\u0000${mentionSet}\u0000${channelSet}\u0000${slackSet}\u0000${thread}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
     // A message's video and audio files play in the page, through the Worker (src/fileview.js).
     const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl,
+      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl, slack: slackOf,
+    }).replace(/data-quote-author="([^"]*)"/g, (_, name) => {
+      const key = profileKey(null, { name: attrText(name), platform: 'slack' });
+      return `data-p="${esc(key)}"`;
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -2109,6 +2162,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   for (const p of mention.picked.get(key)?.values() || []) known(p.name, pickedKind(p));
   for (const p of sending) for (const [name, kind] of Object.entries(p.kinds || {})) known(name, kind);
   setChannelRefs(data.channels);
+  setSlackLinks(data.links);
   setMentionNames([
     ...shown.map((m) => m.author?.name),
     ...Object.values(state.data?.people || {}).map((p) => p.name),
@@ -4902,6 +4956,11 @@ async function start() {
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
+    const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button;
+    const choice = e.target.closest('a[data-pile]');
+    if (choice && !modified) { e.preventDefault(); openSlackChoice(choice); return; }
+    const jump = e.target.closest('a[data-thread]');
+    if (jump && !modified) { e.preventDefault(); closeSlackChoice(); openThread(jump.dataset.thread); return; }
     const inbox = e.target.closest('a[data-inbox]');
     if (inbox && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)) { e.preventDefault(); openInbox(inbox.getAttribute('href')); return; }
     const retry = e.target.closest('[data-retry]');
@@ -4950,7 +5009,22 @@ async function start() {
     toast(`Saved ${Object.keys(answers).length} answer(s).`);
     openThread(state.open, { live: true });
   };
+  document.addEventListener('click', (e) => {
+    const item = e.target.closest?.('.linkpick a[data-thread]');
+    if (item) {
+      if (!(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)) {
+        e.preventDefault();
+        const thread = item.dataset.thread;
+        closeSlackChoice();
+        openThread(thread);
+      } else closeSlackChoice();
+      return;
+    }
+    if (e.target.closest?.('.linkpick a')) { closeSlackChoice(); return; }
+    if (!e.target.closest?.('a[data-pile]')) closeSlackChoice();
+  });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { closeSlackChoice(); return; }
     if (e.key === 'Escape' && state.filtering) { setFiltering(false); return; }
     if (e.key === 'Escape' && document.querySelector('.picker')) {
       const button = document.querySelector('.picker').closest('.col')?.querySelector('[data-picker]');

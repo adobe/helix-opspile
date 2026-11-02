@@ -562,8 +562,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
 
   /**
    * Seeds a thread. `messages` are `[who, minutesAgo, body, extra?]` in chronological order;
-   * `who` is a person key, 'bot' or 'app'. `extra`: `{ subject, editedAgo, deleted, predates,
- * appBy }`; `appBy: 'dana'` says the viewer posted an 'app' message as the opspile app.
+   * `who` is a person key, 'bot' or 'app'. `body` may be a function of
+   * `{ ids, ch, rootId, i }`, so a message can name one seeded before it.
+   * `extra`: `{ subject, editedAgo, deleted, predates, appBy }`.
+   * `appBy: 'dana'` says the viewer posted an 'app' message as the opspile app.
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
@@ -591,12 +593,15 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       if (i === 0 && extra.predates) {
         return;
       }
+      const text = typeof body === 'function' ? body({
+        ids, ch, rootId, i,
+      }) : body;
       const at = new Date(now - ago * MIN).toISOString();
       put(entry, {
         id: ids[i],
         at,
         author: author(who),
-        body,
+        body: text,
         subject: extra.subject,
         editedAt: extra.editedAgo ? new Date(now - extra.editedAgo * MIN).toISOString() : undefined,
         deletedAt: extra.deleted ? at : undefined,
@@ -659,6 +664,19 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['priya', 300, '@Lena Berg can you check the flush job? cc @Tom Okafor'],
       ['ravi', 20, 'We implement this site for them; happy to share the deploy logs with @Priya Nair.'],
       ['sam', 12, 'Can someone take a look? We are blocked on it. cc @Ravi Kumar'],
+      // A pasted permalink, an inline one, a quote card, and both kinds of code.
+      ['lena', 6, ({ ids, ch, rootId }) => {
+        const link = (id) => {
+          const base = `https://acme.slack.com/archives/${ch.channelId}/p${String(id).replace('.', '')}`;
+          return id === rootId ? base : `${base}?thread_ts=${rootId}&cid=${ch.channelId}`;
+        };
+        return `${link(ids[0])}\n\nSee ${link(ids[3])} too.\n\n${quoteMarkdown({
+          author: 'Priya Nair',
+          url: link(ids[1]),
+          at: '2026-10-21T11:43:20.000Z',
+          text: 'Thanks for flagging. Which paths are affected?',
+        })}\n\nThe header is \`x-request-id\`.\n\n\`\`\`\nGET /en/index.html\n\`\`\``;
+      }],
     ],
     reads: { priya: 332 },
     label: {

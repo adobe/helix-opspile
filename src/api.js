@@ -40,6 +40,7 @@ import { filePoster, streamFile, threadFile } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { channelRefs, nameChannelIds } from './channelrefs.js';
+import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
 import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
@@ -709,8 +710,14 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const label = effectiveLabel(model, model ? reviewed : []);
   const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
-  const [cards, mentioned, channels] = await Promise.all([
-    profiles(env, messages.map((m) => m.authorKey)),
+  // Slack permalinks the messages name. Profiles wait for the authors those links add;
+  // the mention and channel lookups run alongside the link lookup.
+  const linksP = slackMessageLinks(env, me, bodies);
+  const [cards, mentioned, channels, links] = await Promise.all([
+    linksP.then((linked) => profiles(env, [
+      ...messages.map((m) => m.authorKey),
+      ...linked.map((l) => l.authorKey),
+    ])),
     // Who the people the messages mention are: Adobe, a partner or the customer.
     mentionKinds(env, {
       source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
@@ -718,6 +725,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // The channels the messages name (`#name`, `#C…`): their names, and where they are.
     channelRefs(env, row, [...bodies, row.title, anchorLabel && anchorLabel.title,
       label && label.title], me),
+    linksP,
   ]);
   return {
     thread: {
@@ -741,6 +749,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     profiles: cards,
     mentioned,
     channels,
+    links,
     watermarks: marks || [],
     label,
     model,
