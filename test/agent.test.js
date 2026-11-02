@@ -1270,4 +1270,10 @@ describe('the ThreadAgent class', () => {
     const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
     assert.doesNotMatch(src, /this\.mcp\s*=|this\.mcp\./);
   });
+
+  it('asks Bedrock for the one-hour prompt cache', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    assert.match(src, /stream:\s*\{\s*cacheRetention:\s*'long'\s*\}/);
+  });
 });

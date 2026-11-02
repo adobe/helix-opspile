@@ -104,6 +104,11 @@ export class ThreadAgent extends Agent {
           settings: {
             retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000 },
             afterFailedRun: 'continue',
+            // One-hour prompt cache. Turns on one thread are often minutes apart, past
+            // pi's five-minute default, so that cache was rewritten on almost every
+            // request. Bedrock bills a 1h write higher and a later hit as a read.
+            // Compaction requests ask for none.
+            stream: { cacheRetention: 'long' },
           },
         }, context);
       },
