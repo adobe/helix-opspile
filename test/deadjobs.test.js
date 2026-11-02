@@ -15,11 +15,11 @@ import assert from 'node:assert/strict';
 import {
   listDead, pruneDead, recordDead, redrive,
 } from '../src/deadjobs.js';
-import { sweepLabels } from '../src/label.js';
+import { labelThread, sweepLabels } from '../src/label.js';
 import { consume } from '../src/normalizer.js';
-import { sweepRethreads } from '../src/rethread.js';
+import { rethread, sweepRethreads } from '../src/rethread.js';
 import { d1 } from './d1.js';
-import { quiet } from './fakes.js';
+import { fakeBucket, quiet } from './fakes.js';
 
 const KEY = 'slack:E1:C1:1.1';
 const NOW = new Date('2026-11-01T12:00:00.000Z');
@@ -197,5 +197,41 @@ describe('sweeping up after dead jobs', () => {
     assert.deepEqual(await sweepLabels(e, NOW), { queued: 2 });
     assert.deepEqual(e.queued.map((q) => q.label).sort(), ['never', 'stale']);
     assert.ok((await sweepLabels({ DB: e.DB }, NOW)).skipped);
+  });
+
+  it('settles a root that a job died on and that is skipped now', async () => {
+    const e = env({ ...live, CHANNELS: fakeBucket() });
+    thread(e, { key: 'gone', hash: 'h' });
+    thread(e, { key: 'never' });
+    assert.equal((await rethread(e, 'gone')).result, 'skip');
+    assert.equal((await rethread(e, 'never')).result, 'skip');
+    const decided = (key) => e.DB.rows('SELECT rethreaded_at FROM threads WHERE thread = ?', key)[0]
+      .rethreaded_at;
+    assert.ok(decided('gone'));
+    assert.equal(decided('never'), null, 'no job died on it: nothing to settle');
+    assert.deepEqual(await sweepRethreads(e, NOW), { queued: 0 });
+  });
+
+  it('leaves a thread whose files are missing for a day, and its label as it was', async () => {
+    const e = env({ ...live, CHANNELS: fakeBucket() });
+    thread(e, { key: 'gone' });
+    e.DB.sqlite.prepare(`INSERT INTO labels (thread, resolved_p, labeled_through, model, labeled_at)
+      VALUES ('gone', 0.9, ?, 'clef', ?)`).run(ago(3), ago(3));
+    assert.deepEqual(await sweepLabels(e, NOW), { queued: 1 });
+    assert.deepEqual(
+      await labelThread(e, 'gone', NOW),
+      { result: 'skip', reason: 'no messages' },
+    );
+    const [dead] = e.DB.rows('SELECT job, body, error FROM dead_jobs');
+    assert.deepEqual(dead, {
+      job: 'label:gone', body: '{"label":"gone"}', error: 'no messages',
+    });
+    e.DB.sqlite.prepare('UPDATE dead_jobs SET at = ?').run(ago(1));
+    assert.deepEqual(await sweepLabels(e, NOW), { queued: 0 });
+    assert.equal(
+      e.DB.rows('SELECT labeled_through FROM labels')[0].labeled_through,
+      ago(3),
+      'a reopened thread stays open: Clef has not read it',
+    );
   });
 });

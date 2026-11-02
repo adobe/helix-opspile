@@ -323,16 +323,25 @@ export async function rethread(env, key, { force = false } = {}) {
   if (thread.rethreaded_at && !force) {
     return { result: 'unchanged', logical: thread.logical_thread };
   }
+  // A skip is final: asking again finds the same. A hash means that an earlier job got further and
+  // died, and the sweep sends a root out for as long as it has one without a decision.
+  const skip = async (reason) => {
+    if (thread.skeleton_hash && !thread.rethreaded_at) {
+      await env.DB.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread = ?')
+        .bind(new Date().toISOString(), key).run();
+    }
+    return { result: 'skip', reason };
+  };
   const root = await rootBody(env, thread);
   if (!root || root.parsed.meta.deletedAt) {
-    return { result: 'skip', reason: 'root missing or deleted' };
+    return skip('root missing or deleted');
   }
   if (thread.kind === 'channel' && isSystem(root.parsed)) {
-    return { result: 'skip', reason: 'system message' };
+    return skip('system message');
   }
   const text = skeleton(root.parsed.body || thread.title);
   if (!text) {
-    return { result: 'skip', reason: 'empty' };
+    return skip('empty');
   }
 
   const at = Math.floor(Date.parse(thread.root_at) / 1000);
@@ -553,7 +562,8 @@ export async function rethread(env, key, { force = false } = {}) {
 /**
  * Cron: the roots whose job died (their hash is written before the work that can fail, and
  * `rethreaded_at` after it) go out again, within the window re-threading looks back. A root that
- * was skipped on purpose (a system notice, an empty one) has no hash.
+ * was skipped on purpose (a system notice, an empty one) has no hash, or, when a job had died on
+ * it before, a decision.
  */
 export async function sweepRethreads(env, now = new Date()) {
   if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
