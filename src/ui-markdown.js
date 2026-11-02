@@ -273,8 +273,19 @@ const cards = (html, slack, quoted) => html.replace(QUOTE_CARD, (_, href, at, na
   return `<blockquote class="quote"><p class="quote-by">${who}${when}</p>`;
 });
 
-/** A paragraph whose only content is one link. */
-const ONLY_LINK = /^<p>\s*(<a\b[^>]*>)[\s\S]*?<\/a>\s*<\/p>$/;
+/**
+ * The opening `<a>` tag when a paragraph is that one link and nothing else. Words beside
+ * the link, or a second link, stay in the paragraph. The tag match must not run on to a
+ * later `</a>`, or `[report](slack) IMPORTANT [status](page)` becomes only the first card.
+ */
+const onlyLink = (para) => {
+  if ((para.match(/<a\b/g) || []).length !== 1) {
+    return null;
+  }
+  const open = /<a\b[^>]*>/.exec(para);
+  const without = para.replace(/<a\b[^>]*>[\s\S]*?<\/a>/, '');
+  return open && /^<p\b[^>]*>\s*<\/p>$/.test(without) ? open : null;
+};
 const chooserOpen = (open, hit) => open.replace('<a ', `<a data-pile="${encode(hit.href)}" data-thread="${encode(hit.thread)}" aria-haspopup="menu" title="Open in Opspile or Slack" `);
 /**
  * Slack permalinks `slack` resolves. A paragraph that is only the link becomes one card.
@@ -295,9 +306,9 @@ function embedSlack(html, slack, quoted) {
     return hit && hitKey(hit, raw) ? chooserOpen(open, hit) : open;
   });
   return html.replace(/<p\b[^>]*>[\s\S]*?<\/p>/g, (para) => {
-    const only = ONLY_LINK.exec(para);
+    const only = onlyLink(para);
     if (only) {
-      const href = /href="([^"]*)"/.exec(only[1]);
+      const href = /href="([^"]*)"/.exec(only[0]);
       const raw = href ? decode(href[1]) : '';
       const hit = raw ? slack(raw) : undefined;
       const key = hitKey(hit, raw);

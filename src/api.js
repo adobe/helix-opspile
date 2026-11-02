@@ -710,9 +710,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const label = effectiveLabel(model, model ? reviewed : []);
   const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
-  // Slack permalinks the messages name. Profiles wait for the authors those links add;
-  // the mention and channel lookups run alongside the link lookup.
-  const linksP = slackMessageLinks(env, me, bodies);
+  // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
+  // authors those links add; the mention and channel lookups run alongside the link lookup.
+  const linksP = slackMessageLinks(env, me, bodies, row.tenant);
   const [cards, mentioned, channels, links] = await Promise.all([
     linksP.then((linked) => profiles(env, [
       ...messages.map((m) => m.authorKey),

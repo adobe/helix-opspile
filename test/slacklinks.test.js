@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { slackMessageLinks } from '../src/slacklinks.js';
+import { slackMessageLinks, slackMessageLookupSql } from '../src/slacklinks.js';
 import { slackMessageId, slackMessageKey, slackMessageRefs } from '../src/slackurl.js';
 import { d1 } from './d1.js';
 
@@ -80,7 +80,7 @@ describe('slack message lookup', () => {
       url('C0BBBBBBBB2', '1700000000.000002'),
       url('C0AAAAAAAA1', '1700000000.000003'),
       `code \`${url('C0AAAAAAAA1', '1700000000.000001')}\``,
-    ]);
+    ], 'E1');
     assert.deepEqual(found, [{
       channel: 'C0AAAAAAAA1',
       id: '1700000000.000001',
@@ -97,7 +97,7 @@ describe('slack message lookup', () => {
     const found = await slackMessageLinks({ DB }, me, [
       url('C0AAAAAAAA1', '1700000000.000002'),
       url('C0BBBBBBBB2', '1700000000.000001'),
-    ]);
+    ], 'E1');
     assert.deepEqual(found, []);
   });
 
@@ -105,19 +105,44 @@ describe('slack message lookup', () => {
     const DB = fresh();
     DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
       VALUES ('slack', 'C0BBBBBBBB2', 'ops', '2026-10-03')`).run();
-    const shared = await slackMessageLinks({ DB }, me, [url('C0BBBBBBBB2', '1700000000.000002')]);
+    const shared = await slackMessageLinks({ DB }, me, [url('C0BBBBBBBB2', '1700000000.000002')], 'E1');
     assert.equal(shared[0]?.preview, 'secret text');
     DB.sqlite.prepare('DELETE FROM channel_teams').run();
     DB.sqlite.prepare(`UPDATE messages SET person = 1
       WHERE channel_id = 'C0BBBBBBBB2' AND id = '1700000000.000002'`).run();
-    const personal = await slackMessageLinks({ DB }, me, [url('C0BBBBBBBB2', '1700000000.000002')]);
+    const personal = await slackMessageLinks({ DB }, me, [url('C0BBBBBBBB2', '1700000000.000002')], 'E1');
     assert.equal(personal.length, 1);
     DB.sqlite.prepare(`UPDATE messages SET person = NULL
       WHERE channel_id = 'C0BBBBBBBB2'`).run();
     const admin = await slackMessageLinks({ DB }, { id: 2, teams: [{ slug: 'admin' }] }, [
       url('C0BBBBBBBB2', '1700000000.000002'),
-    ]);
+    ], 'E1');
     assert.equal(admin.length, 1);
-    assert.deepEqual(await slackMessageLinks({ DB }, me, ['no links']), []);
+    assert.deepEqual(await slackMessageLinks({ DB }, me, ['no links'], 'E1'), []);
+    assert.deepEqual(await slackMessageLinks({ DB }, me, [
+      url('C0AAAAAAAA1', '1700000000.000001'),
+    ]), []);
+  });
+
+  it('stays inside the open thread\'s workspace, on the messages primary key', async () => {
+    const DB = fresh();
+    DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, any_at, updated_at)
+      VALUES ('slack:E2:C0AAAAAAAA1:1700000000.000001', 'slack', 'E2', 'C0AAAAAAAA1',
+        '1700000000.000001', 'acme', 'ops', 'p', '2026-10-02', '2026-10-02')`).run();
+    DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key, preview)
+      VALUES ('slack', 'E2', 'C0AAAAAAAA1', '1700000000.000001',
+        'slack:E2:C0AAAAAAAA1:1700000000.000001', '2026-10-21T11:43:20.000Z', 'Other',
+        'slack:E2:U2', 'other grid')`).run();
+    const found = await slackMessageLinks({ DB }, me, [
+      url('C0AAAAAAAA1', '1700000000.000001'),
+    ], 'E1');
+    assert.equal(found.length, 1);
+    assert.equal(found[0].author, 'Sam');
+    assert.equal(found[0].preview, 'Preview is down.');
+    const plan = DB.sqlite.prepare(`EXPLAIN QUERY PLAN ${slackMessageLookupSql}`).all()
+      .map((row) => row.detail).join('\n');
+    assert.match(plan, /source=\? AND tenant=\? AND channel_id=\? AND id=\?/);
   });
 });

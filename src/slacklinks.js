@@ -23,29 +23,39 @@ import { slackMessageRefs } from './slackurl.js';
 export { slackMessageKey, slackMessageRef, slackMessageRefs } from './slackurl.js';
 
 /**
+ * Channel and message id are unique only inside one Slack workspace, and they sit after
+ * `tenant` in the messages primary key `(source, tenant, channel_id, id)`. Binding the
+ * open thread's tenant makes this a primary-key lookup. Without it, SQLite can seek only
+ * `source` and then read every Slack message.
+ */
+export const slackMessageLookupSql = `SELECT m.channel_id, m.id, m.thread, m.at, m.author,
+    m.author_key, m.preview, t.team
+  FROM messages m JOIN threads t ON t.thread = m.thread
+  WHERE m.source = 'slack' AND m.tenant = ?3 AND m.deleted = 0
+    AND m.channel_id IN (SELECT value FROM json_each(?1))
+    AND m.id IN (SELECT value FROM json_each(?2))`;
+
+/**
  * Messages the texts link to, that `me` may open: `[{ channel, id, thread, at, author,
  * authorKey, preview }]`. `preview` is the message's plain preview (it may be empty).
  * `thread` is the message's thread key, the root when the link points at a reply.
+ * `tenant` is the open thread's workspace. A link into some other workspace is left out.
  *
  * @param {object} env bindings
  * @param {object} me the viewer
  * @param {string[]} texts the messages' markdown
+ * @param {string} tenant the open thread's workspace
  */
-export async function slackMessageLinks(env, me, texts) {
+export async function slackMessageLinks(env, me, texts, tenant) {
   const refs = slackMessageRefs(texts);
-  if (!env.DB || !me || !refs.length) {
+  if (!env.DB || !me || !tenant || !refs.length) {
     return [];
   }
   const wanted = new Set(refs.map((r) => `${r.channel}:${r.id}`));
   const channels = [...new Set(refs.map((r) => r.channel))];
   const ids = [...new Set(refs.map((r) => r.id))];
-  const { results } = await env.DB.prepare(`SELECT m.channel_id, m.id, m.thread, m.at, m.author,
-      m.author_key, m.preview, t.team
-    FROM messages m JOIN threads t ON t.thread = m.thread
-    WHERE m.source = 'slack' AND m.deleted = 0
-      AND m.channel_id IN (SELECT value FROM json_each(?1))
-      AND m.id IN (SELECT value FROM json_each(?2))`)
-    .bind(JSON.stringify(channels), JSON.stringify(ids)).all();
+  const { results } = await env.DB.prepare(slackMessageLookupSql)
+    .bind(JSON.stringify(channels), JSON.stringify(ids), String(tenant)).all();
   const rows = (results || []).filter((r) => wanted.has(`${r.channel_id}:${r.id}`));
   const threads = [...new Set(rows.map((r) => r.thread))];
   const allowed = new Map(await Promise.all(threads.map(async (thread) => {

@@ -304,6 +304,23 @@ describe('quoted messages', () => {
     assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 2);
   });
 
+  it('keeps the other words when a paragraph has more than one link', () => {
+    const report = SLACK.split('?')[0];
+    const status = 'https://status.example.com/incidents/1';
+    const html = slackMd(
+      `[Original report](${report}) IMPORTANT: compare this with [the status page](${status})`,
+      (link) => (link === report ? KNOWN : undefined),
+    );
+    assert.match(html, /<p><a data-pile="[^"]*" data-thread="slack:E1:C0ACMEAEM:1700000000\.000001" aria-haspopup="menu" title="Open in Opspile or Slack" target="_blank" rel="noopener" href="https:\/\/acme\.slack\.com\/archives\/C0ACMEAEM\/p1700000000000001">Original report<\/a> IMPORTANT: compare this with <a target="_blank" rel="noopener" href="https:\/\/status\.example\.com\/incidents\/1">the status page<\/a><\/p><blockquote class="quote">/);
+    assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 1);
+  });
+
+  it('embeds a paragraph that is one formatted link', () => {
+    const html = slackMd(`[*Original report*](${SLACK.split('?')[0]})`);
+    assert.equal(html.startsWith('<blockquote class="quote">'), true);
+    assert.equal(html.includes('Original report'), false);
+  });
+
   it('does not embed a second card when the quote is the same message', () => {
     const html = slackMd(`${SLACK.split('?')[0]}\n\n${quoteMarkdown({
       author: 'Sam Reyes', url: SLACK, at: '2026-10-21T11:43:20.000Z', text: 'hello',
