@@ -11,7 +11,10 @@
  */
 
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createRegistry, Harness } from '@earendil-works/pi-durable';
+import {
+  createRegistry, defineExtension, GenerationTask, Harness, hook,
+} from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { Agent } from 'agents';
 import { PiHarness, ROOT_SESSION } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
@@ -19,6 +22,7 @@ import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
+import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
 import { toolsFor } from './agenttools.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
@@ -67,9 +71,42 @@ const SCRIPT_INTERRUPT_BUDGET = 50_000;
 // The platform ids of the agent's latest posts: they come back as messages, which it is not told.
 const MAX_POSTED = 50;
 
+// The model's tokens, from pi's ledger, a little after each model round (the round's commit
+// lands after its hooks), and at most this often for the object's storage.
+const METER_DELAY_MS = 2000;
+const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
+
+/** Meters the agent's model use after each round of tools and each answer. */
+const cogsExtension = (agent) => defineExtension({
+  name: 'opspile-cogs',
+  hooks: [hook(GenerationTask, {
+    afterTools: () => { agent.meterSoon(); },
+    onYield: () => {
+      agent.meterSoon();
+      return undefined;
+    },
+  })],
+});
+
 export class ThreadAgent extends Agent {
-  constructor(ctx, env) {
+  constructor(ctx, rawEnv) {
+    // Its work is counted for COGS as its thread's (src/cogs/meter.js): the bindings, and the
+    // model's tokens (`meterModel`).
+    const self = {};
+    const cogs = objectMeter(rawEnv, {
+      via: 'agent',
+      subject: () => {
+        try {
+          return agentSubject(self.agent && self.agent.name);
+        } catch {
+          return {};
+        }
+      },
+    });
+    const { env } = cogs;
     super(ctx, env);
+    self.agent = this;
+    this.cogs = cogs;
     this.registry = createRegistry();
     // Not `this.mcp`: the Agents SDK's own MCP client manager lives there, and the SDK calls it
     // (listPrompts, listTools) when the agent starts.
@@ -94,6 +131,7 @@ export class ThreadAgent extends Agent {
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
+        this.registry.install(cogsExtension(this));
         this.mcpInstalled = true;
         return Harness.open(storage, {
           models,
@@ -338,11 +376,13 @@ export class ThreadAgent extends Agent {
 
   /** Tells the agent about the messages it has not seen (src/agent/delivery.js). */
   async deliver(options) {
+    this.meterModel();
     return deliver(this, options);
   }
 
   /** Schedule callback: a day without messages. */
   async idle(payload) {
+    this.meterModel();
     return idle(this, payload);
   }
 
@@ -371,8 +411,64 @@ export class ThreadAgent extends Agent {
     return { status: await this.status(), ...traceSteps(entries, { ...options, calls }) };
   }
 
+  /** `meterModel`, shortly: the ledger has the round once its commit lands. */
+  meterSoon() {
+    if (this.meterTimer) {
+      return;
+    }
+    this.meterTimer = setTimeout(() => {
+      this.meterTimer = null;
+      this.meterModel().catch(() => {});
+    }, METER_DELAY_MS);
+  }
+
+  /**
+   * What the model used since the last time, from pi's ledger of the session (`usage`), as
+   * Bedrock tokens for COGS; and, once a day, what the object keeps in its SQLite. One at a
+   * time, so a round is counted once.
+   */
+  meterModel() {
+    this.metering = (this.metering || Promise.resolve()).then(() => this.meterModelNow())
+      .catch(() => {});
+    return this.metering;
+  }
+
+  async meterModelNow() {
+    const { scope } = this.cogs;
+    if (!scope || !this.cogs.meter.enabled) {
+      return;
+    }
+    const pi = await this.harness.pi();
+    const ledger = await pi.usage(BACKGROUND_CONTEXT);
+    const { now, adds } = modelUsage(
+      await this.ctx.storage.get('cogs:usage'),
+      ledger,
+      this.env.AGENT_MODEL,
+    );
+    for (const [metric, model, q] of adds) {
+      scope.add('bedrock', metric, model, q);
+    }
+    await this.ctx.storage.put('cogs:usage', now);
+    const sizedAt = (await this.ctx.storage.get('cogs:sized')) || 0;
+    if (Date.now() - sizedAt > SIZE_EVERY_MS && this.ctx.storage.sql) {
+      const t = await this.target();
+      await this.env.DB.prepare(`INSERT INTO cogs_objects (name, org, team, bytes, at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET org = excluded.org,
+        team = excluded.team, bytes = excluded.bytes, at = excluded.at`)
+        .bind(
+          this.name,
+          t.org || '',
+          t.team || '',
+          Number(this.ctx.storage.sql.databaseSize) || 0,
+          new Date().toISOString(),
+        ).run();
+      await this.ctx.storage.put('cogs:sized', Date.now());
+    }
+  }
+
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
+    this.meterModel();
     const catalog = await this.servers.current();
     const pending = await this.harness.pending();
     // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.

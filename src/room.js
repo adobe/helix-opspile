@@ -11,6 +11,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import { objectMeter } from './cogs/meter.js';
 import { recipients } from './shares.js';
 import { advanceWatermark } from './threads.js';
 
@@ -31,10 +32,21 @@ export class TeamRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
-    this.env = env;
+    // Counted for COGS as the team's (src/cogs/meter.js), and written when a broadcast or a
+    // flush is done: a timer would keep the room from hibernating.
+    this.cogs = objectMeter(env, { via: 'room', subject: () => ({ team: ctx.id.name || '' }), delay: 0 });
+    this.env = this.cogs.env;
   }
 
   async broadcast(event) {
+    try {
+      await this.send(event);
+    } finally {
+      await this.cogs.meter.flush();
+    }
+  }
+
+  async send(event) {
     const data = JSON.stringify(event);
     const sockets = this.ctx.getWebSockets().map((ws) => {
       const [person, , scope] = this.ctx.getTags(ws);
@@ -85,6 +97,7 @@ export class TeamRoom extends DurableObject {
     if (newer && !(await this.ctx.storage.getAlarm())) {
       await this.ctx.storage.setAlarm(Date.now() + FLUSH_MS);
     }
+    await this.cogs.meter.flush();
   }
 
   async fetch(request) {

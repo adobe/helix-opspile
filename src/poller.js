@@ -11,6 +11,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import { objectMeter } from './cogs/meter.js';
 import {
   discordApi, discordEnabled, guildsOf, hasMessages, hasThreads, isThread, messagesAfter,
   newer, putDiscord, reactionsOf, snowflakeAt, snowflakeMs, threadInfo,
@@ -66,7 +67,9 @@ export class DiscordPoller extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
-    this.env = env;
+    // Counted for COGS as shared work (src/cogs/meter.js), written after each poll.
+    this.cogs = objectMeter(env, { via: 'poller', delay: 0 });
+    this.env = this.cogs.env;
     this.running = null;
     this.channels = new Map();
   }
@@ -122,6 +125,7 @@ export class DiscordPoller extends DurableObject {
   poll({ recheck = false } = {}) {
     this.running = this.running || this.run(recheck).finally(() => {
       this.running = null;
+      return this.cogs.meter.flush();
     });
     return this.running;
   }

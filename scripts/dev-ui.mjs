@@ -889,10 +889,10 @@ async function api(req, res, url) {
     const {
       id, name, email, teams,
     } = store.me;
-    // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
-    // be tried.
+    // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
+    // they can be tried.
     const admin = !MANAGER && !MEMBER
-      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
+      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
@@ -1780,8 +1780,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { location: '/inbox' }).end();
       return;
     }
-    if (url.pathname === '/inbox/kb' || url.pathname === '/inbox/admin') {
-      const html = await uiPage(url.pathname === '/inbox/kb' ? 'kb.html' : 'admin.html');
+    if (['/inbox/kb', '/inbox/admin', '/inbox/cogs'].includes(url.pathname)) {
+      const html = await uiPage(`${{ '/inbox/kb': 'kb', '/inbox/admin': 'admin', '/inbox/cogs': 'cogs' }[url.pathname]}.html`);
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html);
       return;

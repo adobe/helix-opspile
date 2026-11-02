@@ -347,6 +347,7 @@ export async function processKey(env, key, cache = {}) {
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
   const cls = classify(cache.rules, channel);
+  env.meter?.attribute({ org: cls.org, team: cls.team });
   if (cls.kind === 'ignore') {
     return { key, result: 'ignored' };
   }
@@ -485,6 +486,14 @@ export async function processKey(env, key, cache = {}) {
   };
 }
 
+/** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
+export function jobSubject(body) {
+  const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
+    || (body.backfill && body.backfill.thread)
+    || (body.export && [].concat(body.export).length === 1 && [].concat(body.export)[0]);
+  return typeof thread === 'string' ? { thread } : {};
+}
+
 /** An export job's key for the log: its thread, or the first of the sweep's and how many more. */
 const exportKey = (keys) => {
   const all = [].concat(keys);
@@ -498,10 +507,15 @@ const LAST_ATTEMPT = 6;
  * Queue consumer for NORMALIZE. Each message is acknowledged on its own; a failure is
  * retried by the queue, and after the last retry it goes to the dead-letter queue.
  */
-export async function consume(batch, env) {
+export async function consume(batch, baseEnv, meter = null) {
   const cache = {};
+  const share = 1 / Math.max(1, batch.messages.length);
   for (const msg of batch.messages) {
     const body = msg.body || {};
+    // Counted for the job's thread (src/cogs/meter.js); a raw event names its customer once it
+    // is filed (processKey). One invocation is one Workers request, shared by its messages.
+    const env = meter ? meter.env(jobSubject(body)) : baseEnv;
+    env.meter?.add('workers', 'requests', '', share);
     const key = body.key
       || (body.label && `label:${body.label}`)
       || (body.vectorize && `vectorize:${body.vectorize}`)
