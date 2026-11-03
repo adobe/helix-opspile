@@ -19,9 +19,11 @@ import {
 import {
   bedrockModel, costOf, isStock, priceList, unitPrice,
 } from '../src/cogs/prices.js';
-import { allocate, cogsReport, period } from '../src/cogs/report.js';
 import {
-  accountRows, meterRows, replaceDay, resources, rollupCogs, volumeRows,
+  allocate, chartUnit, cogsReport, columns, period,
+} from '../src/cogs/report.js';
+import {
+  accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, volumeRows,
 } from '../src/cogs/rollup.js';
 import { jobSubject } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -71,7 +73,22 @@ function message(DB, key, id, at, item = null) {
   DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, counted, search_item)
     VALUES ('slack', 'E1', 'C1', ?, ?, ?, 1, ?)`).run(id, key, at, item);
 }
+/** A row of `cogs_usage`, and with `hour`, the same of `cogs_hours` too. */
 function usageRow(DB, row) {
+  if (row.hour !== undefined) {
+    DB.sqlite.prepare(`INSERT INTO cogs_hours (day, hour, source, service, metric, detail, org, team,
+        quantity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-11-01T00:00:00Z')`).run(
+      row.day,
+      row.hour,
+      row.source || 'meter',
+      row.service,
+      row.metric,
+      row.detail || '',
+      row.org || '',
+      row.team || '',
+      row.quantity,
+    );
+  }
   DB.sqlite.prepare(`INSERT INTO cogs_usage (day, source, service, metric, detail, org, team, quantity, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-11-01T00:00:00Z')`).run(
     row.day,
@@ -420,6 +437,69 @@ describe('cogs: rollup', () => {
     assert.equal(again['stored 2026-11-02'], undefined, 'storage is measured once a day');
   });
 
+  it('rolls up the flow by the hour too, for a week, and lets older hours go', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix ops' }] });
+    thread(DB, 'slack:E1:C1:1.1', 'acme', 'helix', '2026-11-02T09:00:00Z');
+    const ANALYTICS = analytics({
+      'events.analyticsEngine."ops-usage"': [
+        {
+          day: '2026-11-02', hour: 9, service: 'workers', metric: 'requests', detail: '', org: 'acme', team: 'helix', quantity: 30,
+        },
+        {
+          day: '2026-11-02', hour: '10', service: 'workers', metric: 'requests', detail: '', org: 'acme', team: 'helix', quantity: 10,
+        },
+      ],
+      'events.durableObjectsInvocations': [
+        {
+          hour: 9, name: 'slack:E1:C1:1.1', type: 'alarm', requests: 3, wall: 8e6,
+        },
+      ],
+      'logs.workersLogs': [
+        {
+          hour: 11, log: 'cf-worker-event', type: 'fetch', events: 10, cpu: 250,
+        },
+      ],
+      'events.artifactsEventsByNamespaceAccount': [{ hour: 9, repo: 'gh-x', n: 3 }],
+      'states.r2CombinedStorage': [{ bucket: 'ops-raw', payload: 1e9, meta: 1e6 }],
+      'states.vectorizeStorage': [{ idx: 'ops-roots', vectors: 1000 }],
+    });
+    usageRow(DB, {
+      day: '2026-10-20', hour: 3, service: 'workers', metric: 'requests', quantity: 1,
+    });
+    const env = { DB, ANALYTICS, COGS_RESOURCES: RESOURCES };
+    const now = Date.parse('2026-11-02T12:00:00Z');
+    const out = await rollupCogs(env, { now });
+    assert.ok(Object.values(out).every((v) => typeof v === 'number'), JSON.stringify(out));
+    const hours = (day) => DB.sqlite.prepare(`SELECT hour, source, service, metric, org, quantity
+      FROM cogs_hours WHERE day = ? ORDER BY hour, source, service, metric`).all(day)
+      .map((r) => [r.hour, r.source, `${r.service}/${r.metric}`, r.org, r.quantity]);
+    assert.deepEqual(hours('2026-11-02'), [
+      [0, 'account', 'analytics_engine/queries', '', 4],
+      [9, 'account', 'artifacts/operations', '', 3],
+      [9, 'account', 'durable_objects/gb_s', 'acme', 8 * 0.128],
+      [9, 'account', 'durable_objects/requests', 'acme', 3],
+      [9, 'meter', 'workers/requests', 'acme', 30],
+      [10, 'meter', 'workers/requests', 'acme', 10],
+      [11, 'account', 'workers/cpu_ms', '', 250],
+      [11, 'account', 'workers_logs/events', '', 10],
+    ]);
+    // The days added up are as before: the hours are the chart's only.
+    assert.equal(DB.sqlite.prepare(`SELECT quantity FROM cogs_usage WHERE day = '2026-11-02'
+      AND source = 'meter' AND service = 'workers'`).get().quantity, 40);
+    assert.equal(ANALYTICS.asked.filter((q) => q.includes('r2CombinedStorage')).length, 2 + 3, 'storage by the day only');
+    // Yesterday, and three of the days before it; the hours of before the week are gone.
+    const days = DB.sqlite.prepare(`SELECT DISTINCT day FROM cogs_hours WHERE source = 'account'
+      ORDER BY day DESC`).all().map((r) => r.day);
+    assert.deepEqual(days, ['2026-11-02', '2026-11-01', '2026-10-31', '2026-10-30', '2026-10-29']);
+    assert.equal(out['hours deleted'], 1);
+    const again = await rollupCogs(env, { now });
+    assert.equal(again['meter hours 2026-11-02'], 0);
+    assert.equal(again['account hours 2026-11-02'], 0);
+    assert.ok(again['account hours 2026-10-26'] > 0);
+    assert.equal(again['account hours 2026-10-25'], undefined, 'a week back, no more');
+    assert.equal(await replaceHours(env, '2026-11-02', 'meter', [], null, now), 2);
+  });
+
   it('keeps what a failing query of Cloudflare\'s counts as it was, and writes the rest', async () => {
     const DB = d1();
     const env = {
@@ -505,10 +585,10 @@ describe('cogs: report', () => {
       });
       // $4 of Opus input for acme, $1 of shared Workers requests (allocated 3:1).
       usageRow(DB, {
-        day, service: 'bedrock', metric: 'input_tokens', detail: 'us.anthropic.claude-opus-5-5', org: 'acme', team: 'helix', quantity: 1e6,
+        day, hour: 9, service: 'bedrock', metric: 'input_tokens', detail: 'us.anthropic.claude-opus-5-5', org: 'acme', team: 'helix', quantity: 1e6,
       });
       usageRow(DB, {
-        day, service: 'workers', metric: 'requests', quantity: 1e6 / 0.3,
+        day, hour: 9, service: 'workers', metric: 'requests', quantity: 1e6 / 0.3,
       });
     }
     // Stock: 2 GB on one day, 4 GB on the other: 3 GB on average, $0.045 a month.
@@ -525,6 +605,21 @@ describe('cogs: report', () => {
   }
   const url = (q) => new URL(`https://opspile.example/api/admin/cogs?${q}`);
   const NOW = Date.parse('2026-11-02T12:00:00Z');
+  /** The chart's columns by the day (hours added up), whatever its unit. */
+  const daily = (r) => {
+    const by = new Map();
+    for (const c of r.chart.columns) {
+      const day = c.at.slice(0, 10);
+      if (!by.has(day)) {
+        by.set(day, { services: {} });
+      }
+      const d = by.get(day);
+      for (const [id, v] of Object.entries(c.services)) {
+        d.services[id] = (d.services[id] || 0) + v;
+      }
+    }
+    return [...by.values()];
+  };
 
   it('reads a period, the last 30 days by default, at most 400', () => {
     assert.deepEqual(period(url(''), NOW), { from: '2026-10-04', to: '2026-11-02', days: 30 });
@@ -550,8 +645,13 @@ describe('cogs: report', () => {
     close(acme.perThread, 9.5 / 6);
     assert.equal(r.orgs.find((o) => o.org === 'globex').type, 'vendor');
     assert.ok(!r.orgs.some((o) => o.org === '' && o.flow > 1e-9), 'nothing left shared');
-    assert.deepEqual(r.daily.map((d) => d.day), ['2026-11-01', '2026-11-02']);
-    close(r.daily[1].services.workers, 1);
+    // A short period by the hour, from `cogs_hours` (none here), up to the hour of `now`.
+    assert.equal(r.chart.unit, 'hour');
+    assert.equal(r.chart.columns.length, 24 + 13);
+    assert.equal(r.chart.columns[36].at, '2026-11-02T12:00:00Z');
+    assert.equal(r.chart.columns[9].at, '2026-11-01T09:00:00Z');
+    close(r.chart.columns[9].services.workers, 1);
+    assert.deepEqual(r.chart.columns[10].services, {});
     assert.deepEqual(r.unpriced, ['workers_ai/input_tokens (@cf/someone/new)']);
     assert.deepEqual(r.since, { account: '2026-11-01', d1: '2026-11-01', meter: '2026-11-01' });
   });
@@ -562,8 +662,8 @@ describe('cogs: report', () => {
     close(r.totals.flow, 0.5);
     assert.equal(r.totals.messages, 20);
     // The chart is the customer's too: its share of the shared Workers requests.
-    close(r.daily[0].services.workers, 0.25);
-    assert.equal(r.daily[0].services.bedrock, undefined);
+    close(daily(r)[0].services.workers, 0.25);
+    assert.equal(daily(r)[0].services.bedrock, undefined);
     close(r.totals.perMessage, 0.5 / 20);
     // The customer list stays whole, to pick another.
     assert.deepEqual(r.orgs.map((o) => o.org).sort(), ['acme', 'globex']);
@@ -574,14 +674,44 @@ describe('cogs: report', () => {
     close(r.orgs.find((o) => o.org === '').flow, 2);
     close(r.orgs.find((o) => o.org === 'acme').flow, 8);
     r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&allocate=none&org=acme'), { now: NOW });
-    close(r.daily[1].services.bedrock, 4);
-    assert.equal(r.daily[1].services.workers, undefined);
+    close(daily(r)[1].services.bedrock, 4);
+    assert.equal(daily(r)[1].services.workers, undefined);
     r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&team=helix'), { now: NOW });
     close(r.totals.flow, 10);
-    close(r.daily[1].services.workers, 1);
+    close(daily(r)[1].services.workers, 1);
     r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&team=edge'), { now: NOW });
     assert.equal(r.totals.flow, 0);
     assert.equal(r.totals.perMessage, null);
+  });
+
+  it('charts about as many columns whatever the period: by the hour, the day or the week', async () => {
+    const at = (from, days) => chartUnit({ from, days }, NOW);
+    assert.equal(at('2026-10-27', 7), 'hour');
+    assert.equal(at('2026-10-26', 7), 'hour');
+    assert.equal(at('2026-10-25', 7), 'day', 'older than the hours kept');
+    assert.equal(at('2026-10-04', 30), 'day');
+    assert.equal(at('2026-08-05', 90), 'week');
+    const costs = new Map([['2026-10-31', { workers: 1 }], ['2026-11-01', { workers: 2, d1: 1 }], ['2026-11-02', { d1: 4 }]]);
+    // Weeks from Monday, cut to the period.
+    assert.deepEqual(columns('week', '2026-10-29', '2026-11-10', costs, NOW), [
+      { at: '2026-10-29', until: '2026-11-01', services: { workers: 3, d1: 1 } },
+      { at: '2026-11-02', until: '2026-11-08', services: { d1: 4 } },
+      { at: '2026-11-09', until: '2026-11-10', services: {} },
+    ]);
+    const env = seeded();
+    // The same days a month later: their hours are gone, so by the day.
+    let r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW + 30 * 86400000 });
+    assert.equal(r.chart.unit, 'day');
+    assert.deepEqual(r.chart.columns.map((c) => c.at), ['2026-11-01', '2026-11-02']);
+    close(r.chart.columns[1].services.workers, 1);
+    close(r.chart.columns[1].services.bedrock, 4);
+    r = await cogsReport(env, url('from=2026-08-01&to=2026-11-02'), { now: NOW });
+    assert.equal(r.chart.unit, 'week');
+    assert.equal(r.chart.columns.length, 15);
+    assert.equal(r.chart.columns.at(-2).at, '2026-10-26');
+    close(r.chart.columns.at(-2).services.bedrock, 4);
+    close(r.chart.columns.at(-1).services.workers, 1);
+    close(r.chart.columns.reduce((n, c) => n + (c.services.workers || 0), 0), 2);
   });
 
   it('shares a team\'s costs over its customers, and nobody\'s over everyone', () => {

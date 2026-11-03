@@ -1416,11 +1416,22 @@ that have no rows of a source yet (backfilling what Cloudflare's analytics and D
 meter's counts start with it). A day of a source is replaced whole, writing only the rows that
 changed and deleting the ones that are gone, so a run that changed nothing writes nothing.
 
+**By the hour.** For the chart of a short period, the flow of the meter and of Cloudflare's
+analytics is rolled up by the UTC hour too (`toHour(timestamp)`), into `cogs_hours`: the same
+queries grouped by the hour as well, without what the buckets and indexes hold (stock), and
+without D1's messages and storage. Separate queries, so a day with many objects active in many
+hours cannot truncate the daily rows the totals come from. The same days, replaced the same way,
+and up to three of the last seven before yesterday without hours yet; hours older than eight
+days are deleted.
+
 **The report** (`src/cogs/report.js`). Flow costs what the period used; per message and per thread
 it is divided by the period's messages and new threads of what is selected. Stock costs a month:
 each series at its average over the days it was measured. Shared rows are shared out by the
 period's messages: a team's (a room's) over that team's customers, nobody's over everyone; then the
-filters apply, so a customer's cost includes its share. Where Cloudflare's analytics and the meter
+filters apply, so a customer's cost includes its share. The chart has about as many columns
+whatever the period: by the hour for a week or less (from `cogs_hours`, while it has them, up to
+the current hour), by the day up to 45 days, by the week (from Monday, cut to the period) for
+longer; the totals and tables always come from the days. Where Cloudflare's analytics and the meter
 count the same metric on the same day, Cloudflare's count is used. Costs are at the margin: the
 allowances of a plan are listed with the prices, not subtracted.
 

@@ -13,7 +13,7 @@
 import {
   costOf, isStock, metricOf, priceList, serviceOf, SERVICES, unitPrice, VOLUME,
 } from './prices.js';
-import { dayOf } from './rollup.js';
+import { dayOf, HOUR_DAYS } from './rollup.js';
 
 /*
  * The COGS dashboard's numbers (`GET /api/admin/cogs`, the admin team): what the days from `from`
@@ -29,14 +29,22 @@ import { dayOf } from './rollup.js';
  * default; `allocate=none` keeps them as "Shared"), a team's own shared costs over its customers.
  * Filters (customer, team, service) apply after that, so a customer's cost includes its share.
  *
- * D1 adds the days up (a row per series for the period, however long), and the chart's days
+ * D1 adds the days up (a row per series for the period, however long), and the chart's columns
  * without the customers (but for those picked, and the shared rows by team), so the answer stays
  * small for a long period too. The three sources count different metrics, so they add up.
+ *
+ * The chart has about as many columns whatever the period (`chartUnit`): an hour each for a week
+ * or less (from `cogs_hours`, while it has the hours), a day each up to DAILY_DAYS, a week (from
+ * Monday, UTC) each for longer.
  */
 
 const MAX_DAYS = 400;
 const DEFAULT_DAYS = 30;
+/** The longest period charted by the hour, and by the day. */
+const HOURLY_DAYS = 7;
+const DAILY_DAYS = 45;
 const DAY_MS = 86400000;
+const HOUR_MS = 3600000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SHARED = '';
 
@@ -59,6 +67,55 @@ export function period(url, now = Date.now()) {
     return { from: dayOf(ms(to) - (MAX_DAYS - 1) * DAY_MS), to, days: MAX_DAYS };
   }
   return { from, to, days };
+}
+
+/**
+ * How long the chart's columns are for the period: `hour`, `day` or `week`. By the hour only while
+ * `cogs_hours` has the period's hours (the rollup keeps them for HOUR_DAYS, backfills one less).
+ */
+export function chartUnit({ from, days }, now = Date.now()) {
+  if (days <= HOURLY_DAYS && from >= dayOf(now - (HOUR_DAYS - 1) * DAY_MS)) {
+    return 'hour';
+  }
+  return days <= DAILY_DAYS ? 'day' : 'week';
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+/** The Monday of `day`'s week (UTC). */
+const mondayOf = (day) => dayOf(ms(day) - ((new Date(ms(day)).getUTCDay() + 6) % 7) * DAY_MS);
+
+/**
+ * The chart's columns, `{ at, services }` (and `until`, a week's last day): an hour's `at` is
+ * `YYYY-MM-DDTHH:00:00Z`, up to the hour of `now`; a day's and a week's `YYYY-MM-DD`, a week cut
+ * to the period. `costs` maps a day (and hour, `YYYY-MM-DD HH`) to its costs per service.
+ */
+export function columns(unit, from, to, costs, now = Date.now()) {
+  const out = [];
+  const take = (key) => costs.get(key) || {};
+  if (unit === 'hour') {
+    for (let d = from; d <= to; d = dayOf(ms(d) + DAY_MS)) {
+      for (let h = 0; h < 24 && ms(d) + h * HOUR_MS <= now; h += 1) {
+        out.push({ at: `${d}T${pad(h)}:00:00Z`, services: take(`${d} ${pad(h)}`) });
+      }
+    }
+    return out;
+  }
+  for (let d = from; d <= to; d = dayOf(ms(d) + DAY_MS)) {
+    if (unit === 'day') {
+      out.push({ at: d, services: take(d) });
+    } else {
+      const last = out[out.length - 1];
+      if (!last || mondayOf(d) !== mondayOf(last.at)) {
+        out.push({ at: d, until: d, services: {} });
+      }
+      const col = out[out.length - 1];
+      col.until = d;
+      for (const [id, v] of Object.entries(take(d))) {
+        col.services[id] = (col.services[id] || 0) + v;
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -121,30 +178,32 @@ async function seriesOf(env, from, to) {
 }
 
 /**
- * The flow per day and service, of what is selected: the rows of the customers picked (all, when
- * none are), and the shared ones by team, to be shared out.
+ * The flow per day (`hourly`: and hour) and service, of what is selected: the rows of the
+ * customers picked (all, when none are), and the shared ones by team, to be shared out.
  */
-async function daysOf(env, from, to, orgs, teams) {
+async function chartRows(env, from, to, orgs, teams, hourly) {
   const filters = [];
   const binds = [from, to, ...STOCKS];
   if (orgs.length) {
     filters.push(`(org = '' OR org IN (${orgs.map(() => '?').join(', ')}))`);
     binds.push(...orgs);
   }
-  const { results } = await env.DB.prepare(`SELECT day, service, metric, detail,
+  const { results } = await env.DB.prepare(`SELECT day, ${hourly ? 'hour' : '0'} AS hour,
+      service, metric, detail,
       CASE WHEN org = '' THEN '' ELSE '*' END AS who, CASE WHEN org = '' THEN team ELSE '' END AS pool,
       ${orgs.length ? "CASE WHEN org = '' THEN '' ELSE org END" : "''"} AS org,
       ${teams.length ? 'team' : "''"} AS team, SUM(quantity) AS quantity
-    FROM cogs_usage WHERE day >= ? AND day <= ? AND service != 'volume'
+    FROM ${hourly ? 'cogs_hours' : 'cogs_usage'} WHERE day >= ? AND day <= ? AND service != 'volume'
       AND service || '/' || metric NOT IN (${STOCKS.map(() => '?').join(', ')})
       ${filters.length ? `AND ${filters.join(' AND ')}` : ''}
-    GROUP BY day, service, metric, detail, who, pool, 7, 8`).bind(...binds).all();
+    GROUP BY day, 2, service, metric, detail, who, pool, 8, 9`).bind(...binds).all();
   return results || [];
 }
 
 /** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate. */
 export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const { from, to, days } = period(url, now);
+  const unit = chartUnit({ from, days }, now);
   const services = csv(url.searchParams.get('service'));
   const orgs = csv(url.searchParams.get('org'));
   const teams = csv(url.searchParams.get('team'));
@@ -152,7 +211,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
 
   const [rows, dayRows] = await Promise.all([
     seriesOf(env, from, to),
-    daysOf(env, from, to, orgs, teams),
+    chartRows(env, from, to, orgs, teams, unit === 'hour'),
   ]);
 
   const volume = rows.filter((r) => r.service === VOLUME);
@@ -234,7 +293,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     }
     return part.get(pool);
   };
-  const dailyMap = new Map();
+  const costs = new Map();
   for (const r of dayRows) {
     if (!known(r) || !inServices(r)) {
       // eslint-disable-next-line no-continue
@@ -243,14 +302,11 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     const f = r.who === SHARED ? shareOf(r.pool) : Number(pick(r));
     const usd = f ? costOf(r.service, r.metric, r.detail, r.quantity) * f : 0;
     if (usd) {
-      const d = dailyMap.get(r.day) || {};
+      const key = unit === 'hour' ? `${r.day} ${pad(r.hour)}` : r.day;
+      const d = costs.get(key) || {};
       d[r.service] = (d[r.service] || 0) + usd;
-      dailyMap.set(r.day, d);
+      costs.set(key, d);
     }
-  }
-  const daily = [];
-  for (let d = from; d <= to; d = dayOf(ms(d) + DAY_MS)) {
-    daily.push({ day: d, services: dailyMap.get(d) || {} });
   }
 
   // Customers and teams: what they cost, of what is selected (but every customer, or team).
@@ -305,7 +361,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       perThread: per(flowUsd, threads),
     },
     services: byService,
-    daily,
+    chart: { unit, columns: columns(unit, from, to, costs, now) },
     orgs: group('org').map((g) => ({
       ...g,
       org: g.key,
