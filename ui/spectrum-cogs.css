@@ -220,28 +220,28 @@
 /*
  * The services in Spectrum 2's categorical palette, s2Categorical16 (as React Spectrum Charts
  * S2 has it: A is categorical-100, indigo-1100, and so on), in the order ui/cogs.js lists them,
- * the same in both schemes' values. ui/cogs.js gives each its color as an attribute or in the
- * style attribute, so these find it there: Amazon Bedrock (#d97757) is A, Workers AI (#f2b93b)
- * B, AI Search (#a371f7) C, Durable Objects (#2f9e8f) D, Workers (#4c8dff) E, Workers Logs and
- * any other (#8b929b) F, R2 (#9bd35a) G, D1 (#3fb950) H, Vectorize (#e36fb4) I, Queues (#56d4dd)
- * J, Artifacts (#c9a2ff) K, Browser Run (#e5534b) L, Workers Analytics Engine (#b9c7d8) M.
+ * the same in both schemes' values. ui/cogs.js names the service of every dot and column
+ * (`data-series`): Amazon Bedrock A, Workers AI B, AI Search C, Durable Objects D, Workers E,
+ * Workers Logs F, R2 G, D1 H, Vectorize I, Queues J, Artifacts K, Browser Run L, Workers
+ * Analytics Engine M; any other service is F, as Workers Logs.
  */
-.spectrum [style*="#d97757"], .spectrum rect[fill="#d97757"] { --s2-series: var(--spectrum-indigo-1100); }
-.spectrum [style*="#f2b93b"], .spectrum rect[fill="#f2b93b"] { --s2-series: var(--spectrum-magenta-900); }
-.spectrum [style*="#a371f7"], .spectrum rect[fill="#a371f7"] { --s2-series: var(--spectrum-orange-700); }
-.spectrum [style*="#2f9e8f"], .spectrum rect[fill="#2f9e8f"] { --s2-series: var(--spectrum-blue-700); }
-.spectrum [style*="#4c8dff"], .spectrum rect[fill="#4c8dff"] { --s2-series: var(--spectrum-purple-900); }
-.spectrum [style*="#8b929b"], .spectrum rect[fill="#8b929b"] { --s2-series: var(--spectrum-pink-700); }
-.spectrum [style*="#9bd35a"], .spectrum rect[fill="#9bd35a"] { --s2-series: var(--spectrum-seafoam-700); }
-.spectrum [style*="#3fb950"], .spectrum rect[fill="#3fb950"] { --s2-series: var(--spectrum-fuchsia-1000); }
-.spectrum [style*="#e36fb4"], .spectrum rect[fill="#e36fb4"] { --s2-series: var(--spectrum-green-1000); }
-.spectrum [style*="#56d4dd"], .spectrum rect[fill="#56d4dd"] { --s2-series: var(--spectrum-celery-700); }
-.spectrum [style*="#c9a2ff"], .spectrum rect[fill="#c9a2ff"] { --s2-series: var(--spectrum-red-700); }
-.spectrum [style*="#e5534b"], .spectrum rect[fill="#e5534b"] { --s2-series: var(--spectrum-cyan-1000); }
-.spectrum [style*="#b9c7d8"], .spectrum rect[fill="#b9c7d8"] { --s2-series: var(--spectrum-silver-1200); }
+.spectrum [data-series] { --s2-series: var(--spectrum-pink-700); }
+.spectrum [data-series="bedrock"] { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum [data-series="workers_ai"] { --s2-series: var(--spectrum-magenta-900); }
+.spectrum [data-series="ai_search"] { --s2-series: var(--spectrum-orange-700); }
+.spectrum [data-series="durable_objects"] { --s2-series: var(--spectrum-blue-700); }
+.spectrum [data-series="workers"] { --s2-series: var(--spectrum-purple-900); }
+.spectrum [data-series="workers_logs"] { --s2-series: var(--spectrum-pink-700); }
+.spectrum [data-series="r2"] { --s2-series: var(--spectrum-seafoam-700); }
+.spectrum [data-series="d1"] { --s2-series: var(--spectrum-fuchsia-1000); }
+.spectrum [data-series="vectorize"] { --s2-series: var(--spectrum-green-1000); }
+.spectrum [data-series="queues"] { --s2-series: var(--spectrum-celery-700); }
+.spectrum [data-series="artifacts"] { --s2-series: var(--spectrum-red-700); }
+.spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
+.spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
 /* Over the style attribute, which only !important does. */
-.spectrum .dot[style] { background: var(--s2-series) !important; }
-.spectrum .chart g.col rect[fill]:not(.hover) { fill: var(--s2-series); }
+.spectrum .dot[data-series] { background: var(--s2-series) !important; }
+.spectrum .chart g.col rect[data-series]:not(.hover) { fill: var(--s2-series); }
 
 /* ---- TableView, compact ------------------------------------------------------------------ */
 

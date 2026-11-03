@@ -33,7 +33,8 @@ const RANGES = [
   { id: 'mtd', label: 'This month', title: 'Since the first of this month (UTC)' },
   { id: 'last', label: 'Last month', title: 'The whole of last month (UTC)' },
 ];
-// A colour per service, the same in the chart, the legend and the tables.
+// A colour per service, the same in the chart, the legend and the tables. What shows one also
+// names it (`data-series`), for the Spectrum 2 look's palette (ui/spectrum-cogs.css).
 const COLORS = {
   bedrock: '#d97757',
   workers_ai: '#f2b93b',
@@ -233,7 +234,7 @@ function renderBar() {
   $('allocate').checked = q.allocate;
   const services = state.data?.prices.services || [];
   $('servicesBtn').textContent = `${q.service.length ? (q.service.length === 1 ? serviceName(q.service[0]) : `${q.service.length} services`) : 'All services'} ▾`;
-  $('servicesMenu').innerHTML = `${services.map((s) => `<label><input type="checkbox" value="${esc(s.id)}"${q.service.includes(s.id) ? ' checked' : ''}><span class="dot" style="background:${color(s.id)}"></span>${esc(s.name)}</label>`).join('')}
+  $('servicesMenu').innerHTML = `${services.map((s) => `<label><input type="checkbox" value="${esc(s.id)}"${q.service.includes(s.id) ? ' checked' : ''}><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span>${esc(s.name)}</label>`).join('')}
     <div class="actions"><button type="button" class="link" data-services="all">All</button><button type="button" class="link" data-services="none">None picked</button></div>`;
   const orgs = (state.data?.orgs || []).filter((o) => o.org !== '');
   $('orgList').innerHTML = orgs.map((o) => `<option value="${esc(o.name)}">${esc(o.org)}</option>`).join('');
@@ -247,7 +248,7 @@ function renderBar() {
     ...q.team.map((t) => ({ k: 'team', v: t, label: teamName(t) })),
     ...q.service.map((s) => ({ k: 'service', v: s, label: serviceName(s), dot: color(s) })),
   ];
-  $('chips').innerHTML = chips.map((c) => `<span class="chip">${c.dot ? `<span class="dot" style="background:${c.dot}"></span>` : ''}${esc(c.label)}<button type="button" data-drop="${c.k}" data-value="${esc(c.v)}" aria-label="Remove ${esc(c.label)}">×</button></span>`).join('')
+  $('chips').innerHTML = chips.map((c) => `<span class="chip">${c.dot ? `<span class="dot" data-series="${esc(c.v)}" style="background:${c.dot}"></span>` : ''}${esc(c.label)}<button type="button" data-drop="${c.k}" data-value="${esc(c.v)}" aria-label="Remove ${esc(c.label)}">×</button></span>`).join('')
     + (chips.length > 1 ? '<button type="button" class="link" data-drop="all">Clear</button>' : '');
 }
 
@@ -337,7 +338,7 @@ function chart(d, width) {
       const v = x.services[id] || 0;
       if (!v) return '';
       const t = y(acc + v);
-      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${color(id)}"/>`;
+      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${color(id)}" data-series="${esc(id)}"/>`;
       acc += v;
       return r;
     }).join('');
@@ -345,7 +346,7 @@ function chart(d, width) {
     const tick = text ? `<text x="${x0 + bw / 2}" y="${H - 5}" text-anchor="middle">${text}</text>` : '';
     return `<g class="col" data-i="${i}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${tick}</g></g>`;
   }).join('');
-  const legend = order.map((id) => `<button type="button" data-service="${esc(id)}" aria-pressed="${state.q.service.includes(id)}" title="Only ${esc(serviceName(id))} (again: all)"><span class="dot" style="background:${color(id)}"></span>${esc(serviceName(id))}</button>`).join('');
+  const legend = order.map((id) => `<button type="button" data-service="${esc(id)}" aria-pressed="${state.q.service.includes(id)}" title="Only ${esc(serviceName(id))} (again: all)"><span class="dot" data-series="${esc(id)}" style="background:${color(id)}"></span>${esc(serviceName(id))}</button>`).join('');
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Flow cost per ${UNITS[unit]}, by service">
     <g class="grid">${grid}${days}</g><g class="axis">${ticks}</g>${cols}</svg><div class="tip" id="tip" hidden></div>
     <div class="legend">${legend}</div>`;
@@ -494,7 +495,7 @@ function servicesTable(d) {
       <td class="n" colspan="2">${quantity(m.quantity, m.unit)}${m.stock ? ' <span class="sub">on average</span>' : ''}</td>
       <td class="n m">${price(m.price, m.per, m.unit)}${m.stock ? ' a month' : ''}</td>
       <td class="n">${m.stock ? '' : usd(m.usd)}</td><td class="n">${m.stock ? usd(m.usd) : ''}</td></tr>`).join('') : '';
-    return `<tr class="pick" data-open="${esc(s.id)}" aria-expanded="${open}"><td><span class="name"><span class="twist">${open ? '▾' : '▸'}</span><span class="dot" style="background:${color(s.id)}"></span><span>${esc(s.name)}</span></span></td>
+    return `<tr class="pick" data-open="${esc(s.id)}" aria-expanded="${open}"><td><span class="name"><span class="twist">${open ? '▾' : '▸'}</span><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><span>${esc(s.name)}</span></span></td>
       <td class="n">${usd(s.perMessage)}</td><td class="n">${usd(s.perThread)}</td><td></td>
       <td class="n">${usd(s.flow)}</td><td class="n">${usd(s.stock)}</td></tr>${metrics}`;
   }).join('');
@@ -551,7 +552,7 @@ function prices(d) {
       }
       return `<tr><td>${esc(m.label)}${m.stock ? ' <span class="sub">a month</span>' : ''}</td><td>${what}</td><td class="m">${esc(m.included || '')}</td></tr>`;
     }).join('');
-    return `<tr><td colspan="3"><span class="name"><span class="dot" style="background:${color(s.id)}"></span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.about ? ` <span class="sub">${esc(s.about)}</span>` : ''}${s.included ? ` <span class="sub">· included: ${esc(s.included)}</span>` : ''}</span></td></tr>${metrics}`;
+    return `<tr><td colspan="3"><span class="name"><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.about ? ` <span class="sub">${esc(s.about)}</span>` : ''}${s.included ? ` <span class="sub">· included: ${esc(s.included)}</span>` : ''}</span></td></tr>${metrics}`;
   }).join('');
   return `<details class="card prices"><summary>List prices, as of ${esc(p.asOf)}</summary>
     <p class="hint">Costs are list prices at the margin: what a plan includes is listed, not taken off, so a customer's cost does not depend on who came first in the month.</p>
@@ -621,7 +622,7 @@ function tooltip(e) {
   const x = columns[Number(g.dataset.i)];
   const items = Object.entries(x.services).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const total = items.reduce((n, [, v]) => n + v, 0);
-  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map(([id, v]) => `<div class="row"><span class="dot" style="background:${color(id)}"></span><span>${esc(serviceName(id))}</span><span>${usd(v)}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
+  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map(([id, v]) => `<div class="row"><span class="dot" data-series="${esc(id)}" style="background:${color(id)}"></span><span>${esc(serviceName(id))}</span><span>${usd(v)}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
   tip.hidden = false;
   const box = $('chart').getBoundingClientRect();
   const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);

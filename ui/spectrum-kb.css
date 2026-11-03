@@ -580,8 +580,33 @@
 .spectrum .mcpform .apply button:not(.primary, .danger):hover:not(:disabled) { background: var(--spectrum-gray-100); }
 .spectrum .mcpform .apply button:not(.primary, .danger):active:not(:disabled) { background: var(--spectrum-gray-200); }
 
+/* Switch (`.switch`, a button with role=switch; only this page has them): a track with a
+   handle. */
+.spectrum .switch {
+  width: var(--spectrum-switch-control-width-medium);
+  height: var(--spectrum-switch-control-height-medium);
+  padding: 0;
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-600);
+  border-radius: calc(var(--spectrum-switch-control-height-medium) / 2);
+}
+.spectrum .switch:hover:not(:disabled) { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-700); }
+.spectrum .switch::after {
+  background: var(--spectrum-gray-600);
+  transition: transform var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum .switch[aria-checked="true"] {
+  background: var(--spectrum-accent-background-color-default);
+  border-color: var(--spectrum-accent-background-color-default);
+}
+.spectrum .switch[aria-checked="true"]:hover:not(:disabled) {
+  background: var(--spectrum-accent-background-color-hover);
+  border-color: var(--spectrum-accent-background-color-hover);
+}
+.spectrum .switch[aria-checked="true"]::after { background: var(--spectrum-gray-25); }
+
 /* ---- the Switch -----------------------------------------------------------------------------
-   ui/spectrum.css draws its track; here its handle, as React Spectrum's: the track's inner
+   Above, its track; here its handle, as React Spectrum's: the track's inner
    height less a border on each side, a step larger once on, at the end of the track (scaled
    by perspective, so it moves on the compositor). Disabled where you only look. */
 .spectrum .switch {

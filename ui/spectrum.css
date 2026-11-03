@@ -2,7 +2,7 @@
  * Spectrum 2's look, on every page under /spectrum (src/page.js `spectrumPage`): the same pages
  * and scripts as /inbox, restyled after their own stylesheets. This file holds what every page
  * shares: the type, the colors each page names (--bg, --ink, …) as Spectrum 2's semantic
- * tokens, the controls (Button, ActionButton, TextField, Picker, Switch, Menu, Popover,
+ * tokens, the controls (Button, ActionButton, TextField, Picker, Menu, Popover,
  * Tooltip, Badge) and the header (ui/header.css). ui/spectrum-<page>.css holds the page's own.
  *
  * Only Spectrum 2 tokens (`var(--spectrum-…)`, @spectrum-css/tokens) set a color, size, space,
@@ -25,7 +25,8 @@
   --pane: var(--spectrum-background-base-color);
   --line: var(--spectrum-gray-200);
   --hover: var(--spectrum-gray-100);
-  --sel: var(--spectrum-accent-subtle-background-color-default);
+  /* A picked row: ListView and TableView's selection, the informative color faintly. */
+  --sel: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity));
   /* Content: text, subdued text, and the least of it. */
   --ink: var(--spectrum-neutral-content-color-default);
   --mute: var(--spectrum-neutral-subdued-content-color-default);
@@ -69,8 +70,13 @@
 :where(.spectrum) :focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 :where(.spectrum) ::selection { background: var(--spectrum-accent-subtle-background-color-default); }
 :where(.spectrum) mark { color: inherit; background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
-/* Headings in sections: Spectrum 2's Detail style (uppercase is a Detail, small and spaced). */
-:where(.spectrum) h2, :where(.spectrum) h3, :where(.spectrum) h4 { color: var(--spectrum-heading-color); }
+/* Headings: Spectrum 2's, in the heading color and sentence case, as written (the classic
+   pages set some in capitals). */
+:where(.spectrum) h2, :where(.spectrum) h3, :where(.spectrum) h4 {
+  color: var(--spectrum-heading-color);
+  text-transform: none;
+  letter-spacing: normal;
+}
 
 /* ActionButton: every button the page does not mark otherwise. A gray fill, no border, a
    medium-rounded corner; quieter where the page has none (border: 0; background: none). */
@@ -147,8 +153,11 @@
 :where(.spectrum) textarea:where(:hover), :where(.spectrum) select:where(:hover) { border-color: var(--spectrum-gray-400); }
 :where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus),
 :where(.spectrum) textarea:where(:focus), :where(.spectrum) select:where(:focus) { border-color: var(--spectrum-gray-800); outline: none; }
+/* A text field shows its focus by the border alone (the browser's :focus-visible matches it on
+   a click too); a Picker by the ring, as the keyboard reaches it. */
 :where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus-visible),
-:where(.spectrum) textarea:where(:focus-visible), :where(.spectrum) select:where(:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+:where(.spectrum) textarea:where(:focus-visible) { outline: none; }
+:where(.spectrum) select:where(:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 :where(.spectrum) input::placeholder, :where(.spectrum) textarea::placeholder { color: var(--spectrum-gray-600); opacity: 1; }
 :where(.spectrum) input:where(:disabled), :where(.spectrum) textarea:where(:disabled), :where(.spectrum) select:where(:disabled) {
   color: var(--spectrum-disabled-content-color);
@@ -156,32 +165,8 @@
 }
 :where(.spectrum) select { cursor: pointer; }
 :where(.spectrum) select:where(:hover:not(:disabled)) { background-color: var(--spectrum-gray-25); }
-/* Checkbox, Radio and Switch in the browser's own drawing, in the accent color. */
+/* Checkbox and Radio in the browser's own drawing, in the accent color. */
 :where(.spectrum) input:where([type="checkbox"], [type="radio"], [type="range"]) { accent-color: var(--spectrum-accent-background-color-default); }
-
-/* Switch (the pages' `.switch` button with role=switch): a track with a handle. */
-.spectrum .switch {
-  width: var(--spectrum-switch-control-width-medium);
-  height: var(--spectrum-switch-control-height-medium);
-  padding: 0;
-  background: var(--spectrum-gray-25);
-  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-600);
-  border-radius: calc(var(--spectrum-switch-control-height-medium) / 2);
-}
-.spectrum .switch:hover:not(:disabled) { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-700); }
-.spectrum .switch::after {
-  background: var(--spectrum-gray-600);
-  transition: transform var(--s2-ease), background-color var(--s2-ease);
-}
-.spectrum .switch[aria-checked="true"] {
-  background: var(--spectrum-accent-background-color-default);
-  border-color: var(--spectrum-accent-background-color-default);
-}
-.spectrum .switch[aria-checked="true"]:hover:not(:disabled) {
-  background: var(--spectrum-accent-background-color-hover);
-  border-color: var(--spectrum-accent-background-color-hover);
-}
-.spectrum .switch[aria-checked="true"]::after { background: var(--spectrum-gray-25); }
 
 /* SegmentedControl (the pages' `.seg`): a gray track, the picked segment raised on it. */
 .spectrum .seg {
@@ -232,7 +217,7 @@
   border-radius: var(--spectrum-corner-radius-extra-large-default);
   box-shadow: var(--s2-elevated);
 }
-:where(.spectrum) dialog::backdrop {
+.spectrum dialog::backdrop {
   background: var(--spectrum-overlay-color);
   opacity: var(--spectrum-overlay-opacity);
 }
