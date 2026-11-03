@@ -284,8 +284,9 @@ conversations before it, so re-threading a channel again goes oldest root first
 one entry: the first thread's title, the latest activity, the most pressing attention of any
 member, and all members' messages in order. A root is re-threaded 30 seconds after it arrives,
 so it can be in the inbox on its own until then: a match tells the open inboxes which threads
-it folded, one that has a folded thread open shows its group instead, and opening a member's
-key (a link, a tab) opens its group too.
+it folded, which take those threads' own entries off the list (as does a reload of the first
+page that has them in a group, should the announcement be missed), one that has a folded thread
+open shows its group instead, and opening a member's key (a link, a tab) opens its group too.
 
 Vector search uses Workers AI embeddings in Vectorize, written at ingestion time so that a
 message can be matched seconds after it arrives.
