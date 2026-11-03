@@ -77,7 +77,7 @@ self.addEventListener('notificationclick', (e) => {
   if (url.origin !== self.location.origin) return;
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const inboxes = all.filter((c) => new URL(c.url).pathname === '/inbox');
+    const inboxes = all.filter((c) => new URL(c.url).pathname === url.pathname);
     const win = inboxes.find((c) => c.focused) || inboxes[0];
     if (win) {
       await win.focus();
