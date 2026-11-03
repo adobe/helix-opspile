@@ -13,34 +13,45 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  inboxPage, page, spectrumColor, spectrumPage, spectrumTokens,
+  fromPreview, inboxPage, page, spectrumColor, spectrumTokens,
 } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
 const NAMES = ['inbox', 'admin', 'kb', 'cogs'];
-const served = (name) => spectrumPage(
-  (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS),
-  name,
-  SCRIPTS,
-);
+const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS);
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 
-describe('Spectrum 2 look (/spectrum)', () => {
-  it('serves every page with the stylesheets after its own, and the root marked', () => {
+describe('Spectrum 2', () => {
+  it('is every page\'s look: its stylesheets after the page\'s own, with their tokens', () => {
     for (const name of NAMES) {
       const html = served(name);
       assert.match(html, /^<!doctype html>\n<html lang="en" class="spectrum">/, name);
-      const own = html.lastIndexOf(SCRIPTS['header.css']);
+      const own = html.indexOf('</style>');
+      const fonts = html.indexOf(SCRIPTS['spectrum-fonts.css']);
       const shared = html.indexOf(SCRIPTS['spectrum.css']);
       const its = html.indexOf(SCRIPTS[`spectrum-${name}.css`]);
-      assert.ok(own > 0 && shared > own && its > shared, name);
-      assert.ok(html.indexOf(SCRIPTS['spectrum-fonts.css']) < shared, name);
-      assert.ok(shared < html.indexOf('</head>'), name);
+      assert.ok(own > 0 && fonts > own && shared > fonts && its > shared, name);
+      assert.ok(its < html.indexOf('</head>'), name);
+      // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
+      const tokens = spectrumTokens(`${SCRIPTS['header.css']}\n${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      const at = html.indexOf(tokens);
+      assert.ok(at > fonts && at < shared, name);
+      assert.match(tokens, /--spectrum-background-base-color:/, name);
       // The browser's chrome: Spectrum 2's base background, light and dark.
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark')}" media="(prefers-color-scheme: dark)">`), name);
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light')}" media="(prefers-color-scheme: light)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
     }
-    assert.throws(() => spectrumPage('<html></html>', 'inbox', SCRIPTS), /no <\/head>/);
+  });
+
+  it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {
+    assert.equal(fromPreview('/spectrum', '?team=t&t=th1'), '/inbox?team=t&t=th1');
+    assert.equal(fromPreview('/spectrum/'), '/inbox');
+    assert.equal(fromPreview('/spectrum/kb', '?repo=r'), '/inbox/kb?repo=r');
+    assert.equal(fromPreview('/spectrum/admin', '?tab=orgs'), '/inbox/admin?tab=orgs');
+    assert.equal(fromPreview('/spectrum/cogs'), '/inbox/cogs');
+    assert.equal(fromPreview('/spectrumx'), null);
+    assert.equal(fromPreview('/spectrum/nope'), null);
+    assert.equal(fromPreview('/inbox'), null);
   });
 
   it('puts in the tokens the stylesheets use and what they are made of, in both schemes and scales', () => {

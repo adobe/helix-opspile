@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="spectrum">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -7,36 +7,12 @@
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0f1114" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="rgb(17, 17, 17)" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="rgb(255, 255, 255)" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Support">
 <link rel="stylesheet" href="header.css">
 <style>
-  :root {
-    --bg: #0f1114; --col: #15181c; --card: #1a1e23; --line: #2a2f36; --hover: #20252b;
-    --ink: #e8eaed; --mute: #8b929b; --faint: #5d646d;
-    --accent: #5aa2ff; --link: #7cc0ff; --sel: #1f2a38;
-    --red: #e5534b; --yellow: #d4a72c; --green: #57ab5a; --purple: #a371f7;
-    --me: #2f7cf6; --me-ink: #fff; --me-link: #fff;
-    --them: #2b3037; --them-ink: #e8eaed; --them-code: rgba(0,0,0,.25);
-    --pane: #0f1114;
-    --mention-adobe: #ff8a80;
-    --head: 50px;
-    font: 14px/1.45 "Adobe Clean", adobe-clean, "Source Sans 3", "Source Sans Pro",
-      -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: var(--ink);
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #eceef1; --col: #f6f7f9; --card: #fff; --line: #dfe2e6; --hover: #eef1f5;
-      --ink: #1d2025; --mute: #616a75; --faint: #9aa1aa; --accent: #1f6feb; --link: #0b5cc4;
-      --sel: #dde9fb; --purple: #8250df; --them: #e1e5ea; --them-ink: #1d2025;
-      /* A white pane, so customer bubbles stand out (1.27:1) as Adobe's blue ones do. */
-      --pane: #fff; --them-code: rgba(0,0,0,.08); --them-link: #0a4fa8;
-      --mention-adobe: #b30b00;
-    }
-  }
   * { box-sizing: border-box; }
   html, body { height: var(--app-height, 100%); overflow: hidden; overscroll-behavior: none; }
   body { margin: 0; background: var(--bg); display: flex; flex-direction: column; }
@@ -141,12 +117,6 @@
    * card groups orgs the same way). Platforms in their brand colours; urgency and kind in
    * the colours of their emoji.
    */
-  :root { --orange: #f0883e; --pink: #db61a2; --cyan: #39c5cf; --slate: #8f9bb3; --lime: #8ddb8c;
-    --gold: #e3b341; --brown: #b08259; --crimson: #f47067; --teams: #7f85f5; }
-  @media (prefers-color-scheme: light) {
-    :root { --orange: #d1661a; --pink: #bf3989; --cyan: #1b9aaa; --slate: #6e7b91; --lime: #4ac26b;
-      --gold: #bf8700; --brown: #8a5a2b; --crimson: #cf222e; --teams: #5b5fc7; }
-  }
   .c-me, .c-blue { background: var(--accent) !important; } .c-member { background: var(--lime) !important; }
   .c-adobe { background: var(--slate) !important; } .c-customer, .c-orange { background: var(--orange) !important; }
   .c-partner, .c-pink { background: var(--pink) !important; } .c-vendor { background: var(--cyan) !important; }
@@ -279,13 +249,7 @@
    * the list's heading and the open thread's header, and the list shows no scrollbar for it
    * to cover.
    */
-  :root { --r: 14px; --fg: 48px;
-    --card-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.7);
-    --lift-shadow: 0 0 0 1px rgba(0,0,0,.4), 8px 6px 24px 2px rgba(0,0,0,.8); }
-  @media (prefers-color-scheme: light) {
-    :root { --card-shadow: 0 1px 3px rgba(20,30,50,.10), 0 8px 22px rgba(20,30,50,.16);
-      --lift-shadow: 0 2px 4px rgba(20,30,50,.12), 8px 6px 22px 2px rgba(20,30,50,.24); }
-  }
+  :root { --fg: 48px; }
   main { position: relative; background: var(--col); }
   #filters { position: relative; z-index: 3; background: transparent; pointer-events: none;
     margin-right: calc(-1 * var(--fg)); padding: 12px calc(var(--fg) - var(--r) / 3) 12px 0;
@@ -923,10 +887,6 @@
   /* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
   .t .ok { flex: none; width: 9px; display: flex; justify-content: center;
     color: var(--green); font-weight: 700; }
-  :root { --row-read: #121519; --row-unread: #1f242b; }
-  @media (prefers-color-scheme: light) {
-    :root { --row-read: #eff1f4; --row-unread: #fff; }
-  }
   #threads { background: var(--row-read); }
   .t { --row-bg: var(--row-read); background: var(--row-bg); }
   .t.unread { --row-bg: var(--row-unread); }
@@ -1064,6 +1024,12 @@
   /* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
   main.instant #threads, main.instant #pane, main.instant.reading #pane { transition: none; }
 </style>
+<!-- Spectrum 2 (README, "Spectrum 2"): its typefaces, the tokens the stylesheets use, what every
+     page shares, and this page's own, after the styles above, which they override. -->
+<link rel="stylesheet" href="spectrum-fonts.css">
+<link rel="stylesheet" href="spectrum-tokens.css">
+<link rel="stylesheet" href="spectrum.css">
+<link rel="stylesheet" href="spectrum-inbox.css">
 </head>
 <body>
 <header>

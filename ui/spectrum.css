@@ -1,7 +1,6 @@
 /*
- * Spectrum 2's look, on every page under /spectrum (src/page.js `spectrumPage`): the same pages
- * and scripts as /inbox, restyled after their own stylesheets. This file holds what every page
- * shares: the type, the colors each page names (--bg, --ink, …) as Spectrum 2's semantic
+ * Spectrum 2's look, on every page (README, "Spectrum 2"), linked after the page's own styles
+ * (its layout), which it restyles. This file holds what every page shares: the type, the colors each page names (--bg, --ink, …) as Spectrum 2's semantic
  * tokens, the controls (Button, ActionButton, TextField, Picker, Menu, Popover,
  * Tooltip, Badge) and the header (ui/header.css). ui/spectrum-<page>.css holds the page's own.
  *
@@ -12,8 +11,8 @@
  * each state. https://s2.spectrum.adobe.com, https://opensource.adobe.com/spectrum-css/
  */
 
-/* Foundations: the type and the color scheme. The pages name their colors once (--bg, --ink,
-   …, in their own :root); here those names are Spectrum 2's, so what uses them follows. */
+/* Foundations: the type and the color scheme. The pages' styles use their colors by name
+   (--bg, --ink, …); here those names are Spectrum 2's semantic tokens. */
 :root.spectrum {
   color-scheme: light dark;
   --s2-font: adobe-clean-spectrum-vf, var(--spectrum-sans-font-family-stack);
@@ -74,8 +73,8 @@
 :where(.spectrum) :focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 :where(.spectrum) ::selection { background: var(--spectrum-accent-subtle-background-color-default); }
 :where(.spectrum) mark { color: inherit; background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
-/* Headings: Spectrum 2's, in the heading color and sentence case, as written (the classic
-   pages set some in capitals). */
+/* Headings: Spectrum 2's, in the heading color and sentence case, as written (some of the
+   pages' own styles set them in capitals). */
 :where(.spectrum) h2, :where(.spectrum) h3, :where(.spectrum) h4 {
   color: var(--spectrum-heading-color);
   text-transform: none;

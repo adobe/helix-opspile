@@ -37,11 +37,10 @@ code and docs, is the decision model that labels threads and channels.
   inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
   which keeps where each page was left in the browser tab, and you with your menu. Change it
   there, not in a page.
-- `/spectrum…` serves every page in Spectrum 2's look (README, "Spectrum 2 look"): the same
-  HTML and scripts, with `ui/spectrum.css` and `ui/spectrum-<page>.css` after the page's own
-  styles. A UI change shows in both looks; check it under `/spectrum` too. Those stylesheets
-  bind Spectrum 2 tokens (`var(--spectrum-…)`) only, no raw colors or lengths. Links between
-  pages go through `Header.path()`, so they stay in the look they are in.
+- **The look is Spectrum 2** (README, "Spectrum 2"): each page's own `<style>` holds its layout,
+  and `ui/spectrum.css` (every page's) and `ui/spectrum-<page>.css`, linked after it, its look.
+  Style a change there, with Spectrum 2 tokens (`var(--spectrum-…)`) only, no raw colors or
+  lengths (`test/ui-spectrum.test.js`); `spectrum-tokens.css` is built from what they use.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
   `src/ui-markdown.bundle.js` and `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
   editor's text field; both from `scripts/ui-markdown.mjs`, not committed), and

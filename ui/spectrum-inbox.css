@@ -1,5 +1,5 @@
 /*
- * The inbox (ui/inbox.html, ui/inbox.js, ui/table.js) in Spectrum 2's look under /spectrum:
+ * The inbox (ui/inbox.html, ui/inbox.js, ui/table.js) in Spectrum 2's look:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css). The layout, the sizes that set it (rows, rail, columns) and the
  * behavior stay the page's; this file sets what each component looks like in S2's anatomy.
@@ -317,7 +317,7 @@
 
 /* Messages. S2 has no chat bubble outside its AI toolkit (UserMessage): composed from a layer
    fill, S2's extra-large radius (the tail's corner small) and the body type. Customers and
-   colleagues on gray, your own on the accent, as the classic page does. */
+   colleagues on gray, your own on the accent. */
 .spectrum .msg .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .msg .who b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .msg .meta { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }

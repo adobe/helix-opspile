@@ -439,8 +439,8 @@ function channelLink(c) {
   const inPersonal = c.personal && (personal() || !c.teams.length);
   const team = !inPersonal && (c.teams.includes(state.team) ? state.team : c.teams[0]);
   const where = c.org ? `${customerName(c.org)} in ` : '';
-  if (inPersonal) return { name: c.name, href: Header.path(`/inbox?view=personal&filters=1${customer}`), inbox: true, title: `${name}: ${where}Personal` };
-  if (team) return { name: c.name, href: Header.path(`/inbox?team=${encodeURIComponent(team)}&filters=1${customer}`), inbox: true, title: `${name}: ${where}${viewName(team)}` };
+  if (inPersonal) return { name: c.name, href: `/inbox?view=personal&filters=1${customer}`, inbox: true, title: `${name}: ${where}Personal` };
+  if (team) return { name: c.name, href: `/inbox?team=${encodeURIComponent(team)}&filters=1${customer}`, inbox: true, title: `${name}: ${where}${viewName(team)}` };
   return c.url ? { name: c.name, href: c.url, title: `${name} is not in your inbox: open it in ${platform(c)}` } : undefined;
 }
 function setChannelRefs(list) {
@@ -1773,7 +1773,7 @@ function agentHref(key) {
   if (!team) return null;
   const q = new URLSearchParams({ team, view: 'agents' });
   if (t?.channel_id) q.set('channel', t.channel_id);
-  return Header.path(`/inbox/kb?${q}`);
+  return `/inbox/kb?${q}`;
 }
 
 function agentItem(key) {
@@ -4435,7 +4435,7 @@ function bellHref(b) {
   q.set('filters', '1');
   for (const [id, vs] of Object.entries(b.sel)) q.set(`f.${id}`, vs.join('|'));
   for (const [id, vs] of Object.entries(b.not)) q.set(`not.${id}`, vs.join('|'));
-  return Header.path(`/inbox?${q}`);
+  return `/inbox?${q}`;
 }
 
 /**
@@ -4605,7 +4605,7 @@ function notifyTeams() {
 const noteUrl = (scope, thread) => {
   const q = new URLSearchParams(scope === PERSONAL_VIEW ? { view: 'personal' } : { team: scope });
   q.set('t', thread);
-  return Header.path(`/inbox?${q}`);
+  return `/inbox?${q}`;
 };
 /** Shows one, unless the thread is on screen in a focused window or this message was shown. */
 async function showNote({
@@ -4778,7 +4778,7 @@ function kbHref() {
   const org = customerOnScreen();
   if (org) q.set('org', org);
   if (state.team && !personal()) q.set('team', state.team);
-  return Header.path(`/inbox/kb${q.size ? `?${q}` : ''}`);
+  return `/inbox/kb${q.size ? `?${q}` : ''}`;
 }
 /**
  * Whether an address asks for the personal view: it is the default, so any address without a
