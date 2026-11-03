@@ -268,13 +268,46 @@ function niceMax(v) {
   return [1, 2, 2.5, 5, 10].map((f) => f * p).find((x) => x >= v);
 }
 
+/** What a column of the chart is, per its unit: "hour", "day" or "week". */
+const UNITS = { hour: 'hour', day: 'day', week: 'week' };
+
+/** A column's time, for its tooltip: an hour, a day, or a week's first and last day (UTC). */
+function when(unit, x) {
+  if (unit === 'hour') {
+    const h = Number(x.at.slice(11, 13));
+    return `${x.at.slice(0, 10)} ${String(h).padStart(2, '0')}:00–${String(h + 1).padStart(2, '0')}:00 UTC`;
+  }
+  if (unit === 'week') return x.until && x.until !== x.at ? `${x.at} – ${x.until}` : x.at;
+  return x.at;
+}
+
 /**
- * Stacked bars, a day each, a colour per service, biggest at the bottom; drawn at the width it
- * has (`width`, in CSS pixels), so the text is not stretched.
+ * Which columns have a label under them, at `bw` pixels a column: by the hour, every few hours
+ * (the date at midnight); else every few columns.
+ */
+function labelled(unit, cols, bw) {
+  const fits = (k) => k * bw >= 48;
+  if (unit === 'hour') {
+    const step = [1, 2, 3, 6, 12, 24].find(fits) || 24;
+    return (x) => {
+      const h = Number(x.at.slice(11, 13));
+      if (h % step) return '';
+      return h ? `${x.at.slice(11, 13)}:00` : x.at.slice(5, 10);
+    };
+  }
+  const every = Math.max(1, Math.ceil(cols.length / Math.max(2, Math.floor((bw * cols.length) / 60))));
+  return (x, i) => (i % every === 0 ? x.at.slice(5, 10) : '');
+}
+
+/**
+ * Stacked bars, an hour, a day or a week each (as many columns, roughly, whatever the period), a
+ * colour per service, biggest at the bottom; drawn at the width it has (`width`, in CSS pixels),
+ * so the text is not stretched.
  */
 function chart(d, width) {
   const order = d.services.filter((s) => s.flow > 0).map((s) => s.id);
-  const totals = d.daily.map((x) => order.reduce((n, id) => n + (x.services[id] || 0), 0));
+  const { unit, columns } = d.chart;
+  const totals = columns.map((x) => order.reduce((n, id) => n + (x.services[id] || 0), 0));
   const top = Math.max(...totals, 0);
   if (!top) return '<div class="empty">Nothing counted in this period yet.</div>';
   const max = niceMax(top);
@@ -282,7 +315,7 @@ function chart(d, width) {
   const H = 220;
   const L = 56;
   const B = 20;
-  const n = d.daily.length;
+  const n = columns.length;
   const bw = (W - L) / n;
   const gap = Math.max(Math.min(4, bw * 0.2), bw - 56);
   const y = (v) => H - B - (v / max) * (H - B - 8);
@@ -290,8 +323,10 @@ function chart(d, width) {
   const grid = steps.map((f) => `<line x1="${L}" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}"/>`).join('');
   // Labels on the halves: a quarter of 2.5 or 5 is not a round number.
   const ticks = [0, 0.5, 1].map((f) => `<text x="${L - 8}" y="${y(max * f) + 4}" text-anchor="end">${usd(max * f)}</text>`).join('');
-  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - L) / 60))));
-  const cols = d.daily.map((x, i) => {
+  const label = labelled(unit, columns, bw);
+  // By the hour, a line at each midnight.
+  const days = unit === 'hour' ? columns.map((x, i) => (i && x.at.slice(11, 13) === '00' ? `<line x1="${L + i * bw}" x2="${L + i * bw}" y1="8" y2="${H - B}"/>` : '')).join('') : '';
+  const cols = columns.map((x, i) => {
     const x0 = L + i * bw;
     let acc = 0;
     const rects = order.map((id) => {
@@ -302,12 +337,13 @@ function chart(d, width) {
       acc += v;
       return r;
     }).join('');
-    const label = i % every === 0 ? `<text x="${x0 + bw / 2}" y="${H - 5}" text-anchor="middle">${x.day.slice(5)}</text>` : '';
-    return `<g class="col" data-i="${i}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${label}</g></g>`;
+    const text = label(x, i);
+    const tick = text ? `<text x="${x0 + bw / 2}" y="${H - 5}" text-anchor="middle">${text}</text>` : '';
+    return `<g class="col" data-i="${i}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${tick}</g></g>`;
   }).join('');
   const legend = order.map((id) => `<button type="button" data-service="${esc(id)}" aria-pressed="${state.q.service.includes(id)}" title="Only ${esc(serviceName(id))} (again: all)"><span class="dot" style="background:${color(id)}"></span>${esc(serviceName(id))}</button>`).join('');
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Flow cost per day, by service">
-    <g class="grid">${grid}</g><g class="axis">${ticks}</g>${cols}</svg><div class="tip" id="tip" hidden></div>
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Flow cost per ${UNITS[unit]}, by service">
+    <g class="grid">${grid}${days}</g><g class="axis">${ticks}</g>${cols}</svg><div class="tip" id="tip" hidden></div>
     <div class="legend">${legend}</div>`;
 }
 
@@ -410,7 +446,7 @@ function render() {
   if (!d) return;
   $('body').innerHTML = `${state.error ? `<p class="hint err">${esc(state.error)}</p>` : ''}
     ${kpis(d)}
-    <div class="card"><h2>Flow per day <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
+    <div class="card"><h2>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
     <div class="cols">
       <div class="card"><h2>Services</h2>${servicesTable(d)}</div>
       <div class="card"><h2>Customers</h2>${whoTable('orgs', d.orgs)}</div>
@@ -428,10 +464,11 @@ function tooltip(e) {
   const tip = $('tip');
   if (!tip) return;
   if (!g || !state.data) { tip.hidden = true; return; }
-  const x = state.data.daily[Number(g.dataset.i)];
+  const { unit, columns } = state.data.chart;
+  const x = columns[Number(g.dataset.i)];
   const items = Object.entries(x.services).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const total = items.reduce((n, [, v]) => n + v, 0);
-  tip.innerHTML = `<div class="t">${esc(x.day)} · ${usd(total)}</div>${items.map(([id, v]) => `<div class="row"><span class="dot" style="background:${color(id)}"></span><span>${esc(serviceName(id))}</span><span>${usd(v)}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
+  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map(([id, v]) => `<div class="row"><span class="dot" style="background:${color(id)}"></span><span>${esc(serviceName(id))}</span><span>${usd(v)}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
   tip.hidden = false;
   const box = $('chart').getBoundingClientRect();
   const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);

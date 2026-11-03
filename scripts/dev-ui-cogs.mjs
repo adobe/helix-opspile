@@ -10,15 +10,17 @@
  * governing permissions and limitations under the License.
  */
 
-import { DIMENSIONS, DO_GB } from '../src/cogs/prices.js';
+import { DIMENSIONS, DO_GB, isStock } from '../src/cogs/prices.js';
+import { HOUR_DAYS } from '../src/cogs/rollup.js';
 
 /**
  * The COGS dashboard's made-up usage for `npm run ui:dev` (`/inbox/cogs`): 120 days of what the
  * rollup (src/cogs/rollup.js) would have written into `cogs_usage`, for the fake inbox's
  * customers and teams, from all three sources, so the dashboard shows what production would:
  * the agents' customers cost the most (Bedrock), the inbox's lists and the cron are shared, a
- * quiet weekend, storage that grows, and one model without a price. Seeded, so every start
- * shows the same numbers. Made-up data only.
+ * quiet weekend, storage that grows, and one model without a price. The last HOUR_DAYS days'
+ * flow is in `cogs_hours` too, busiest in the European and American working hours, for the chart
+ * of a week. Seeded, so every start shows the same numbers. Made-up data only.
  */
 
 const DAYS = 120;
@@ -32,6 +34,42 @@ function random(seed) {
     a = (a * 16807) % 2147483647;
     return (a - 1) / 2147483646;
   };
+}
+
+/** The flow of the last HOUR_DAYS days and today by the hour, up to the hour of `now`. */
+function seedHours(DB, rnd, now, at) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const since = new Date(now - HOUR_DAYS * DAY_MS).toISOString().slice(0, 10);
+  const rows = DB.sqlite.prepare(`SELECT * FROM cogs_usage
+    WHERE day >= ? AND source IN ('meter', 'account') AND service != 'volume'`).all(since)
+    .filter((r) => !isStock(r.service, r.metric));
+  const insert = DB.sqlite.prepare(`INSERT INTO cogs_hours (day, hour, source, service, metric, detail,
+      org, team, quantity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const shapes = new Map();
+  const shape = (day) => {
+    if (!shapes.has(day)) {
+      const hours = day === today ? new Date(now).getUTCHours() + 1 : 24;
+      const w = Array.from({ length: hours }, (_, h) => 0.15 + (h >= 7 && h <= 22 ? 1 : 0)
+        + (h >= 13 && h <= 17 ? 0.6 : 0) + 0.3 * rnd());
+      const sum = w.reduce((n, x) => n + x, 0);
+      shapes.set(day, w.map((x) => x / sum));
+    }
+    return shapes.get(day);
+  };
+  for (const r of rows) {
+    shape(r.day).forEach((part, hour) => insert.run(
+      r.day,
+      hour,
+      r.source,
+      r.service,
+      r.metric,
+      r.detail,
+      r.org,
+      r.team,
+      r.quantity * part,
+      at,
+    ));
+  }
 }
 
 export function seedCogs(DB, now = Date.now()) {
@@ -135,5 +173,6 @@ export function seedCogs(DB, now = Date.now()) {
       }
     }
   }
+  seedHours(DB, rnd, now, at);
   DB.sqlite.exec('COMMIT');
 }
