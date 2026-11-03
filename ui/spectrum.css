@@ -52,10 +52,14 @@
   --s2-elevated: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 4)
     calc(var(--spectrum-drop-shadow-blur) * 4) var(--spectrum-drop-shadow-elevated-color);
   --s2-ease: var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-in-out);
-  /* What lies under the pointer in a Menu or a list: the content color, faintly (Spectrum CSS
-     Menu's item hover), so it shows on light and dark alike; stronger when pressed. */
+  /* Overlays in the content color, so they show on light and dark alike: faint for a selected
+     or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
+     CSS Menu's item hover). */
   --s2-hover: rgb(var(--spectrum-gray-1000-rgb), var(--spectrum-transparent-black-100-opacity));
   --s2-down: rgb(var(--spectrum-gray-1000-rgb), var(--spectrum-transparent-black-200-opacity));
+  /* A pill's radius, half a control's height. (--spectrum-corner-radius-full is the unitless
+     0.5, a factor, not a radius: border-radius ignores it.) */
+  --s2-pill: calc(var(--s2-ctl) / 2);
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-100);
   line-height: var(--spectrum-line-height-200);
@@ -376,6 +380,18 @@
 @media (max-width: 699px) {
   .spectrum header { gap: var(--spectrum-spacing-100); padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
 }
+
+/* Avatars' initials, on S2's categorical backgrounds that take white text, in place of the
+   pages' hues (`data-hue`: the index in COLORS of ui/header.js and ui/inbox.js). The pages set
+   the hue inline, which only !important outranks. */
+.spectrum .av[data-hue="0"] { background: var(--spectrum-cinnamon-background-color-default) !important; }
+.spectrum .av[data-hue="1"] { background: var(--spectrum-seafoam-background-color-default) !important; }
+.spectrum .av[data-hue="2"] { background: var(--spectrum-purple-background-color-default) !important; }
+.spectrum .av[data-hue="3"] { background: var(--spectrum-magenta-background-color-default) !important; }
+.spectrum .av[data-hue="4"] { background: var(--spectrum-blue-background-color-default) !important; }
+.spectrum .av[data-hue="5"] { background: var(--spectrum-green-background-color-default) !important; }
+.spectrum .av[data-hue="6"] { background: var(--spectrum-brown-background-color-default) !important; }
+.spectrum .av[data-hue="7"] { background: var(--spectrum-cyan-background-color-default) !important; }
 
 /* "Signed out" (ui/app.js): Spectrum 2's notice Toast. */
 .spectrum .signedout {

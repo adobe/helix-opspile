@@ -95,7 +95,9 @@ const backlink = (t, label) => (t.permalink
   ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
 
 const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
-function hue(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; }
+/** A name's hue, as its index in COLORS (`data-hue`, which the Spectrum 2 look colors by). */
+function hueOf(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % COLORS.length; }
+const hue = (name) => COLORS[hueOf(name)];
 const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 // Initials underneath, the picture on top: while a picture loads (or when Gravatar has
 // none and answers 404), the initials show instead of a blank.
@@ -106,7 +108,7 @@ function avatar(name, url, cls = '', { key = null, tab = false } = {}) {
   const who = key
     ? ` data-p="${esc(key)}" role="button" aria-label="${esc(name)}"${tab ? ' tabindex="0"' : ''}`
     : ` title="${esc(name)}"`;
-  return `<span class="av ${cls}" style="background:${hue(name)}"${who}>${esc(initials(name))}${img}</span>`;
+  return `<span class="av ${cls}" data-hue="${hueOf(name)}" style="background:${hue(name)}"${who}>${esc(initials(name))}${img}</span>`;
 }
 
 // ---------------------------------------------------------------- profile cards
@@ -730,7 +732,7 @@ function personKind(id) {
   return top === 'vendor' || top === 'partner' ? top : 'customer';
 }
 /** A filter row's icon for a name without one: its initial on its colour, as avatars have. */
-const tile = (name) => `<span class="ico av" style="background:${hue(name)}" aria-hidden="true">${esc(initials(name).slice(0, 1))}</span>`;
+const tile = (name) => `<span class="ico av" data-hue="${hueOf(name)}" style="background:${hue(name)}" aria-hidden="true">${esc(initials(name).slice(0, 1))}</span>`;
 /** Involves: you and the people as their avatars (round), your teams as tiles. */
 function involvesFace(v) {
   if (v.startsWith('team:')) return tile(involvesLabel(v));

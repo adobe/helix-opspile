@@ -44,17 +44,8 @@
 }
 .spectrum .c-discord { background: var(--spectrum-purple-visual-color) !important; }
 
-/* Avatar: round, the initials under the picture on S2's categorical backgrounds (those that
-   take white text), in place of the script's hues (ui/inbox.js COLORS, matched by value). */
+/* Avatar: round and bold (its colors are every page's, ui/spectrum.css). */
 .spectrum .av { border-radius: 50%; font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-white); }
-.spectrum .av[style*="c2410c"] { background: var(--spectrum-cinnamon-background-color-default) !important; }
-.spectrum .av[style*="0f766e"] { background: var(--spectrum-seafoam-background-color-default) !important; }
-.spectrum .av[style*="7c3aed"] { background: var(--spectrum-purple-background-color-default) !important; }
-.spectrum .av[style*="be185d"] { background: var(--spectrum-magenta-background-color-default) !important; }
-.spectrum .av[style*="1d4ed8"] { background: var(--spectrum-blue-background-color-default) !important; }
-.spectrum .av[style*="4d7c0f"] { background: var(--spectrum-green-background-color-default) !important; }
-.spectrum .av[style*="a16207"] { background: var(--spectrum-brown-background-color-default) !important; }
-.spectrum .av[style*="0e7490"] { background: var(--spectrum-cyan-background-color-default) !important; }
 .spectrum [data-p]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 
 /* The filter rail: one floating card per facet (S2's Card on layer 2, no border, elevated as

@@ -204,6 +204,7 @@ window.Header = (() => {
     for (const id of ['userAv', 'menuAv']) {
       $(id).textContent = initials;
       $(id).style.background = COLORS[h % COLORS.length];
+      $(id).dataset.hue = String(h % COLORS.length);
     }
     $('me').textContent = name;
     $('userSub').textContent = sub;
