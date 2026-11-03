@@ -16,7 +16,9 @@
  * and per new thread; stock (storage, the plan) what keeping it costs a month. The filters are
  * the period, the services and the customers and teams; they are the page's address, so a view
  * can be linked, and the header brings it back as it was left. A click on a service in the legend
- * picks it, on a customer or a team picks them; a service's row opens its metrics.
+ * picks it, on a customer or a team picks them; a service's row opens its metrics. Under the
+ * chart, a treemap shows where the period's flow went: by service (and its metrics), customer or
+ * team; a click on a tile picks it too.
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -59,6 +61,8 @@ const state = {
   open: new Set(),
   sort: { orgs: 'flow', teams: 'flow' },
   all: { orgs: false },
+  // What the treemap is of: services, orgs or teams.
+  tm: 'services',
   loading: 0,
 };
 
@@ -353,6 +357,135 @@ function drawChart() {
   if (box && state.data) box.innerHTML = chart(state.data, box.clientWidth);
 }
 
+// ---- the treemap --------------------------------------------------------------------------
+
+/** How far a row of tiles of areas `row` along a side `side` is from square: 1 is square. */
+function worst(row, side) {
+  const total = row.reduce((n, r) => n + r.area, 0);
+  const max = Math.max(...row.map((r) => r.area));
+  const min = Math.min(...row.map((r) => r.area));
+  return Math.max((side * side * max) / (total * total), (total * total) / (side * side * min));
+}
+
+/**
+ * Tiles for `items` (`{ value }`, biggest first) in the box `x, y, w, h`, as square as they go
+ * (Bruls, Huizing and van Wijk's squarified treemap): each item with its `x, y, w, h`.
+ */
+function squarify(items, box) {
+  let {
+    x, y, w, h,
+  } = box;
+  const total = items.reduce((n, it) => n + it.value, 0);
+  if (!(total > 0) || w <= 0 || h <= 0) return [];
+  let rest = items.filter((it) => it.value > 0).map((it) => ({ it, area: (it.value / total) * w * h }));
+  const out = [];
+  while (rest.length) {
+    const side = Math.min(w, h);
+    const row = [rest[0]];
+    let i = 1;
+    while (i < rest.length && worst([...row, rest[i]], side) <= worst(row, side)) {
+      row.push(rest[i]);
+      i += 1;
+    }
+    const thick = row.reduce((n, r) => n + r.area, 0) / side;
+    let off = 0;
+    for (const r of row) {
+      const len = r.area / thick;
+      out.push(w >= h ? {
+        ...r.it, x, y: y + off, w: thick, h: len,
+      } : {
+        ...r.it, x: x + off, y, w: len, h: thick,
+      });
+      off += len;
+    }
+    if (w >= h) {
+      x += thick;
+      w -= thick;
+    } else {
+      y += thick;
+      h -= thick;
+    }
+    rest = rest.slice(i);
+  }
+  return out;
+}
+
+/** A label cut to what fits in `w` pixels at about 6.5 pixels a character. */
+const fit = (text, w) => {
+  const n = Math.floor((w - 10) / 6.5);
+  if (n < 3) return '';
+  return text.length > n ? `${text.slice(0, n - 1)}…` : text;
+};
+
+/** What the treemap is of, with the names its switch shows. */
+const TM = { services: 'Services', orgs: 'Customers', teams: 'Teams' };
+
+/**
+ * The tiles of the treemap, `{ value, name, color, pick, children }`: the services' flow (and their
+ * metrics' inside), or the customers' or teams' (the shared rows grey).
+ */
+function tmItems(d, by) {
+  if (by === 'services') {
+    return d.services.filter((s) => s.flow > 0).map((s) => ({
+      value: s.flow,
+      name: s.name,
+      color: color(s.id),
+      pick: `data-service="${esc(s.id)}"`,
+      children: s.metrics.filter((m) => !m.stock && m.usd > 0)
+        .map((m) => ({ value: m.usd, name: m.detail ? `${m.label}, ${m.detail}` : m.label })),
+    }));
+  }
+  const key = by === 'orgs' ? 'org' : 'team';
+  return [...d[by]].filter((g) => g.flow > 0).sort((a, b) => b.flow - a.flow).map((g, i) => ({
+    value: g.flow,
+    name: g.name,
+    // The biggest the strongest, the shared rows grey.
+    color: g[key] === '' ? '#8b929b' : `color-mix(in srgb, var(--accent) ${Math.max(35, 100 - i * 8)}%, var(--card))`,
+    pick: `data-pick="${key}" data-value="${esc(g[key])}"`,
+    picked: state.q[key].includes(g[key] || (key === 'org' ? SHARED_ORG : NO_TEAM)),
+  }));
+}
+
+/** The treemap of what `state.tm` says, at the width it has (`width`, in CSS pixels). */
+function treemap(d, width) {
+  const items = tmItems(d, state.tm);
+  const total = items.reduce((n, it) => n + it.value, 0);
+  if (!total) return '<div class="empty">Nothing counted in this period yet.</div>';
+  const W = Math.max(320, Math.round(width));
+  const H = 280;
+  const share = (v) => `${((v / total) * 100).toFixed(v / total < 0.1 ? 1 : 0)}%`;
+  const label = (t, name, v, light) => {
+    if (t.w < 44 || t.h < 20) return '';
+    const head = fit(name, t.w);
+    const sub = t.h >= 36 ? fit(`${usd(v)} · ${share(v)}`, t.w) : '';
+    const cls = light ? 'tl light' : 'tl';
+    return `<text class="${cls}" x="${t.x + 6}" y="${t.y + 15}">${esc(head)}</text>${sub ? `<text class="${cls} v" x="${t.x + 6}" y="${t.y + 30}">${esc(sub)}</text>` : ''}`;
+  };
+  const tiles = squarify(items, {
+    x: 0, y: 0, w: W, h: H,
+  }).map((t, i) => {
+    const tip = `data-tm="${i}"`;
+    // A service's metrics inside it, under its name, when there is room.
+    let inner = '';
+    if (t.children?.length > 1 && t.w > 90 && t.h > 70) {
+      const kids = squarify([...t.children].sort((a, b) => b.value - a.value), {
+        x: t.x + 2, y: t.y + 36, w: t.w - 4, h: t.h - 38,
+      });
+      inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}" fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
+      t.kids = kids;
+    }
+    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"/>${label(t, t.name, t.value, state.tm !== 'services')}</g>${inner}`;
+  }).join('');
+  state.tmTiles = { items, total };
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the flow goes, by ${esc(TM[state.tm].toLowerCase())}">${tiles}</svg><div class="tip" id="tmtip" hidden></div>`;
+}
+
+/** The treemap again, at the width its card has now. */
+function drawTreemap() {
+  const box = $('treemap');
+  if (box && state.data) box.innerHTML = treemap(state.data, box.clientWidth);
+}
+
 function servicesTable(d) {
   if (!d.services.length) return '<div class="empty">No service counted anything in this period.</div>';
   const rows = d.services.map((s) => {
@@ -447,6 +580,7 @@ function render() {
   $('body').innerHTML = `${state.error ? `<p class="hint err">${esc(state.error)}</p>` : ''}
     ${kpis(d)}
     <div class="card"><h2>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
+    <div class="card"><h2 class="split"><span>Where the flow goes</span><span class="seg" id="tmBy">${Object.entries(TM).map(([id, name]) => `<button type="button" data-tm-by="${id}" aria-pressed="${state.tm === id}">${name}</button>`).join('')}</span></h2><div class="treemap" id="treemap"></div></div>
     <div class="cols">
       <div class="card"><h2>Services</h2>${servicesTable(d)}</div>
       <div class="card"><h2>Customers</h2>${whoTable('orgs', d.orgs)}</div>
@@ -455,11 +589,30 @@ function render() {
     ${prices(d)}
     ${notes(d)}`;
   drawChart();
+  drawTreemap();
 }
 
 // ---- events -------------------------------------------------------------------------------
 
+/** A tile's name, flow and share of the treemap, and its metric's when it is one. */
+function tmTooltip(e, g) {
+  const tip = $('tmtip');
+  if (!tip) return;
+  if (!g || !state.tmTiles) { tip.hidden = true; return; }
+  const { items, total } = state.tmTiles;
+  const t = items[Number(g.dataset.tm)];
+  const k = g.dataset.kid !== undefined ? [...t.children].sort((a, b) => b.value - a.value)[Number(g.dataset.kid)] : null;
+  const pct = (v) => `${((v / total) * 100).toFixed(1)}%`;
+  tip.innerHTML = `<div class="t">${esc(t.name)} · ${usd(t.value)} · ${pct(t.value)}</div>${k ? `<div class="row"><span class="dot" style="background:${t.color}"></span><span>${esc(k.name)}</span><span>${usd(k.value)}</span></div>` : ''}<div class="sub">${t.picked ? 'Picked: click to drop' : 'Click: only this one'}</div>`;
+  tip.hidden = false;
+  const box = $('treemap').getBoundingClientRect();
+  const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);
+  tip.style.left = `${Math.max(0, left)}px`;
+  tip.style.top = `${Math.max(0, e.clientY - box.top - tip.offsetHeight - 10)}px`;
+}
+
 function tooltip(e) {
+  tmTooltip(e, e.target.closest?.('#treemap g.tile'));
   const g = e.target.closest?.('g.col');
   const tip = $('tip');
   if (!tip) return;
@@ -518,6 +671,13 @@ function wire() {
     else change((q) => { q[b.dataset.drop] = q[b.dataset.drop].filter((x) => x !== b.dataset.value); });
   });
   $('body').addEventListener('click', (e) => {
+    const by = e.target.closest('[data-tm-by]');
+    if (by) {
+      state.tm = by.dataset.tmBy;
+      $('tmBy').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === by)));
+      drawTreemap();
+      return;
+    }
     const svc = e.target.closest('[data-service]');
     if (svc) {
       const id = svc.dataset.service;
@@ -558,7 +718,10 @@ function wire() {
   let resizing = 0;
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizing);
-    resizing = requestAnimationFrame(drawChart);
+    resizing = requestAnimationFrame(() => {
+      drawChart();
+      drawTreemap();
+    });
   });
   window.addEventListener('opspile:signedin', () => load());
 }

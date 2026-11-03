@@ -440,6 +440,9 @@ and team:
   messages and the threads started in the period, in what is selected. The chart has about as
   many columns whatever the period: an hour each for a week or less (7 days), a day each up to
   45 days (30 days, a month), a week each for longer (90 days).
+- **Where the flow goes**: a treemap of the period's flow under the chart, by service (each
+  tile holds its metrics, a model or a bucket apiece), by customer, or by team; a click on a tile
+  picks it, as in the legend and the tables.
 - **Stock**: what keeping it costs a month (R2, D1, Vectorize, AI Search, the agents' Durable
   Object storage, the Workers Paid plan): each day's measurement averaged over the period.
 - **Customers** and **teams**, with their messages, threads, flow, cost per message and thread,

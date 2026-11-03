@@ -104,6 +104,20 @@
   .tip .row span:nth-child(2) { flex: 1; }
   .tip .row span:last-child { font-variant-numeric: tabular-nums; }
   .tip .t { font-weight: 600; margin-bottom: 4px; }
+  /* The treemap: a tile per service (its metrics inside), customer or team, by its flow. */
+  h2.split { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  h2.split .seg { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; }
+  h2.split .seg button { padding: 1px 9px; }
+  .treemap { position: relative; min-height: 280px; }
+  .treemap svg { display: block; }
+  .treemap g.tile { cursor: pointer; }
+  .treemap g.tile rect { stroke: var(--card); stroke-width: 1.5; }
+  .treemap g.tile:hover > rect { filter: brightness(1.12); }
+  .treemap g.tile.on > rect { stroke: var(--ink); stroke-width: 2; }
+  .treemap text.tl { fill: #fff; font-size: 12px; font-weight: 600; pointer-events: none;
+    paint-order: stroke; stroke: rgba(0,0,0,.35); stroke-width: 2px; }
+  .treemap text.tl.v { font-weight: 400; font-size: 11px; }
+  .treemap text.tl.light { fill: #fff; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; }
   .legend button { display: inline-flex; gap: 6px; align-items: center; border: 0; background: none; padding: 2px 4px; color: var(--mute); }
   .legend button:hover { color: var(--ink); }
