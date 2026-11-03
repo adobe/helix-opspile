@@ -161,8 +161,8 @@ deploy, and load teams, people and rules (data, never committed) with `cf d1 que
 
 ### Inbox and Access
 
-`/inbox` and `/api` (with `/inbox/admin` and `/inbox/kb` under them) are one Cloudflare
-Access application. People sign in with **Slack** (Slack's OpenID Connect, through the opspile
+`/inbox`, `/api` and `/spectrum` (with `/inbox/admin` and `/inbox/kb` under them) are one
+Cloudflare Access application. People sign in with **Slack** (Slack's OpenID Connect, through the opspile
 Slack app), **Microsoft** (Entra ID, the opspile app registration, our tenant only) or a
 **one-time code** by email. Whichever they use, the application's allow policy decides, by
 email: it lists the staff members of the ops teams, and the Worker keeps it so (see
@@ -207,9 +207,8 @@ set colors, sizes, spaces, radii and durations with tokens only (`test/ui-spectr
 The header keeps the links between the pages in the look they are in, and your menu switches
 between the two looks on the page on screen. `npm run ui:dev` serves them too.
 
-The pages hold no data and call `/api`, which is behind Access. For a signed-out visitor to be
-sent to sign in on opening `/spectrum` itself, rather than on the page's first call, add
-`/spectrum` to the Access application's paths.
+`/spectrum` is a path of the same Access application as `/inbox` and `/api` (see "Inbox and
+Access"), so a signed-out visitor is sent to sign in there too.
 
 ### MCP server
 
