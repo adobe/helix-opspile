@@ -256,12 +256,19 @@ function renderBar() {
 function kpis(d) {
   const t = d.totals;
   const days = `${d.days} day${d.days === 1 ? '' : 's'}`;
+  // The estimates count from the first whole day of every source; say so when that cuts the period.
+  const e = d.estimate;
+  const cut = e && e.from > d.from ? e.from : '';
+  const since = cut ? ` since ${cut.slice(5)}` : '';
+  const why = cut ? ` Counted from ${cut} (UTC), the first whole day every source has counted: before it, the period's messages were not all costed.` : '';
+  const none = !e ? ' Not estimated: the period ends before every source was counting.' : '';
+  const allIn = t.flowMonthly === null ? null : t.flowMonthly + t.stock;
   return `<div class="kpis">
-    <div class="kpi" title="What the work of the period cost at list prices: requests, rows, tokens, operations"><div class="k">Flow, ${days}</div><div class="v">${usd(t.flow)}</div><div class="s">${usd(t.flowMonthly)} a month at this rate</div></div>
-    <div class="kpi" title="The flow divided by the messages of the period"><div class="k">Per message</div><div class="v">${usd(t.perMessage)}</div><div class="s">${num(t.messages)} messages</div></div>
-    <div class="kpi" title="The flow divided by the threads started in the period"><div class="k">Per thread</div><div class="v">${usd(t.perThread)}</div><div class="s">${num(t.threads)} new threads</div></div>
+    <div class="kpi" title="What the work of the period cost at list prices: requests, rows, tokens, operations.${esc(why || none)}"><div class="k">Flow, ${days}</div><div class="v">${usd(t.flow)}</div><div class="s">${usd(t.flowMonthly)} a month at the rate${since || ' of the period'}</div></div>
+    <div class="kpi" title="The flow divided by the messages.${esc(why || none)}"><div class="k">Per message</div><div class="v">${usd(t.perMessage)}</div><div class="s">${num(t.messages)} messages${cut ? `, rate${since}` : ''}</div></div>
+    <div class="kpi" title="The flow divided by the threads started.${esc(why || none)}"><div class="k">Per thread</div><div class="v">${usd(t.perThread)}</div><div class="s">${num(t.threads)} new threads${cut ? `, rate${since}` : ''}</div></div>
     <div class="kpi" title="What keeping it costs a month: storage, vectors, the plan"><div class="k">Stock, a month</div><div class="v">${usd(t.stock)}</div><div class="s">storage and the plan</div></div>
-    <div class="kpi" title="Flow at this rate plus stock"><div class="k">A month, all in</div><div class="v">${usd(t.flowMonthly + t.stock)}</div><div class="s">flow at this rate + stock</div></div>
+    <div class="kpi" title="Flow at this rate plus stock"><div class="k">A month, all in</div><div class="v">${usd(allIn)}</div><div class="s">flow at this rate + stock</div></div>
   </div>`;
 }
 
