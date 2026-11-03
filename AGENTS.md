@@ -37,11 +37,17 @@ code and docs, is the decision model that labels threads and channels.
   inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
   which keeps where each page was left in the browser tab, and you with your menu. Change it
   there, not in a page.
+- `/spectrum…` serves every page in Spectrum 2's look (README, "Spectrum 2 look"): the same
+  HTML and scripts, with `ui/spectrum.css` and `ui/spectrum-<page>.css` after the page's own
+  styles. A UI change shows in both looks; check it under `/spectrum` too. Those stylesheets
+  bind Spectrum 2 tokens (`var(--spectrum-…)`) only, no raw colors or lengths. Links between
+  pages go through `Header.path()`, so they stay in the look they are in.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
   `src/ui-markdown.bundle.js` and `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
-  editor's text field; both from `scripts/ui-markdown.mjs`, not committed). `npm run build`
-  builds the bundles, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and
-  `cf dev`. Run `npm ci` first in a fresh checkout.
+  editor's text field; both from `scripts/ui-markdown.mjs`, not committed), and
+  `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
+  way). `npm run build` builds the bundles, and so do `npm test`, `npm run lint`,
+  `npm run ui:dev`, `cf deploy` and `cf dev`. Run `npm ci` first in a fresh checkout.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`.
