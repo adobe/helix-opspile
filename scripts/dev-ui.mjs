@@ -16,6 +16,7 @@
  *
  *   npm run ui:dev                 # http://localhost:8787/inbox (/spectrum: in Spectrum 2)
  *   PORT=9000 npm run ui:dev
+ *   UI_SCHEME=light npm run ui:dev     # light (or dark) whatever the browser prefers
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
@@ -1656,6 +1657,15 @@ async function uiPage(name, spectrum = false) {
   let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, files);
   if (spectrum) {
     served = spectrumPage(served, name.replace(/\.html$/, ''), files);
+  }
+  // UI_SCHEME=light or dark: the pages in that color scheme, whatever the browser prefers
+  // (for screenshots of both).
+  const scheme = process.env.UI_SCHEME;
+  if (scheme === 'light' || scheme === 'dark') {
+    const other = scheme === 'light' ? 'dark' : 'light';
+    served = served.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
+      .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
+      .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
   }
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
