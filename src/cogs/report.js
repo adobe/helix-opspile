@@ -19,8 +19,12 @@ import { dayOf, HOUR_DAYS } from './rollup.js';
  * The COGS dashboard's numbers (`GET /api/admin/cogs`, the admin team): what the days from `from`
  * to `to` cost at list prices, from `cogs_usage` (src/cogs/rollup.js).
  *
- * Flow (requests, rows, tokens) costs what it used in the period, and per message and per thread:
- * divided by the messages and the new threads of the period, in what is selected. Stock (bytes,
+ * Flow (requests, rows, tokens) costs what it used in the period. The estimates (a month at this
+ * rate, per message and per thread) only count from the first whole day every source has counted
+ * (`estimateWindow`): the day the newest one started is partial, and before it, the period had
+ * messages but not all of their cost. A month at this rate divides by the time the window has had
+ * so far (today's hours, not a whole day); per message and per thread by the window's messages
+ * and new threads, in what is selected. Stock (bytes,
  * vectors, the plan) costs a month: each series' average over the days it was measured, at its
  * price per month.
  *
@@ -81,6 +85,19 @@ export function chartUnit({ from, days }, now = Date.now()) {
 }
 
 const pad = (n) => String(n).padStart(2, '0');
+/**
+ * The part of the period the estimates count, `{ from, days }`: from the first whole day of the
+ * source that started last (`since`: each source's first day), up to `now` (`days`, fractional).
+ * Null when the period ends before it.
+ */
+export function estimateWindow({ from, to }, since, now = Date.now()) {
+  const firsts = Object.values(since || {}).filter((d) => DAY.test(d || ''));
+  const whole = firsts.length ? dayOf(ms(firsts.sort().at(-1)) + DAY_MS) : from;
+  const start = whole > from ? whole : from;
+  const days = (Math.min(now, ms(to) + DAY_MS) - ms(start)) / DAY_MS;
+  return start <= to && days > 0 ? { from: start, days } : null;
+}
+
 /** The Monday of `day`'s week (UTC). */
 const mondayOf = (day) => dayOf(ms(day) - ((new Date(ms(day)).getUTCDay() + 6) % 7) * DAY_MS);
 
@@ -200,20 +217,11 @@ async function chartRows(env, from, to, orgs, teams, hourly) {
   return results || [];
 }
 
-/** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate. */
-export async function cogsReport(env, url, { now = Date.now() } = {}) {
-  const { from, to, days } = period(url, now);
-  const unit = chartUnit({ from, days }, now);
-  const services = csv(url.searchParams.get('service'));
-  const orgs = csv(url.searchParams.get('org'));
-  const teams = csv(url.searchParams.get('team'));
-  const spread = url.searchParams.get('allocate') !== 'none';
-
-  const [rows, dayRows] = await Promise.all([
-    seriesOf(env, from, to),
-    chartRows(env, from, to, orgs, teams, unit === 'hour'),
-  ]);
-
+/**
+ * A period's rows (`seriesOf`) priced and shared out: `volume`, the message `weights`, the priced
+ * `rows` (shared out, unless not `spread`), and `unpriced`.
+ */
+function costed(rows, spread) {
   const volume = rows.filter((r) => r.service === VOLUME);
   const weights = new Map();
   for (const r of volume.filter((v) => v.metric === 'messages')) {
@@ -230,18 +238,96 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const unpriced = [...new Set(rows
     .filter((r) => r.service !== VOLUME && (!known(r) || !unitPrice(r.service, r.metric, r.detail)))
     .map((r) => `${r.service}/${r.metric}${r.detail ? ` (${r.detail})` : ''}`))];
-  const spreadRows = spread ? allocate(priced, weights) : priced;
+  return {
+    volume, weights, rows: spread ? allocate(priced, weights) : priced, unpriced,
+  };
+}
+
+/**
+ * What `c` (`costed`) adds up to, in what `pick` and `inServices` select: flow, stock, messages
+ * and threads, flow per service, and per customer and team (`group`: every customer, or team, of
+ * the other filter).
+ */
+function totalsOf(c, {
+  pick, inServices, orgs, teams,
+}) {
+  const chosen = c.rows.filter((r) => pick(r) && inServices(r));
+  const vol = c.volume.filter(pick);
+  const flowBy = new Map();
+  for (const r of chosen.filter((x) => !isStock(x.service, x.metric))) {
+    flowBy.set(r.service, (flowBy.get(r.service) || 0) + r.usd);
+  }
+  const group = (key) => {
+    const m = new Map();
+    const of = (k) => m.get(k) || m.set(k, {
+      key: k, flow: 0, shared: 0, stock: 0, messages: 0, threads: 0,
+    }).get(k);
+    const otherFilter = key === 'org' ? (r) => !teams.length || teams.includes(r.team)
+      : (r) => !orgs.length || orgs.includes(r.org);
+    for (const r of c.rows.filter((x) => inServices(x) && otherFilter(x))) {
+      const g = of(r[key]);
+      if (isStock(r.service, r.metric)) {
+        g.stock += r.usd;
+      } else {
+        g.flow += r.usd;
+        g.shared += r.shared ? r.usd : 0;
+      }
+    }
+    for (const r of c.volume.filter(otherFilter)) {
+      const g = of(r[key]);
+      g.messages += r.metric === 'messages' ? r.quantity : 0;
+      g.threads += r.metric === 'threads' ? r.quantity : 0;
+    }
+    return m;
+  };
+  return {
+    chosen,
+    flow: sum(chosen.filter((r) => !isStock(r.service, r.metric))),
+    stock: sum(chosen.filter((r) => isStock(r.service, r.metric))),
+    messages: sum(vol.filter((r) => r.metric === 'messages'), (r) => r.quantity),
+    threads: sum(vol.filter((r) => r.metric === 'threads'), (r) => r.quantity),
+    flowBy,
+    org: group('org'),
+    team: group('team'),
+  };
+}
+
+/** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate. */
+export async function cogsReport(env, url, { now = Date.now() } = {}) {
+  const { from, to, days } = period(url, now);
+  const unit = chartUnit({ from, days }, now);
+  const services = csv(url.searchParams.get('service'));
+  const orgs = csv(url.searchParams.get('org'));
+  const teams = csv(url.searchParams.get('team'));
+  const spread = url.searchParams.get('allocate') !== 'none';
+
+  const [rows, dayRows, firstDay] = await Promise.all([
+    seriesOf(env, from, to),
+    chartRows(env, from, to, orgs, teams, unit === 'hour'),
+    env.DB.prepare('SELECT source, MIN(day) AS day FROM cogs_usage GROUP BY source').all()
+      .then((r) => r.results || []).catch(() => []),
+  ]);
+  const since = Object.fromEntries(firstDay.map((r) => [r.source, r.day]));
+  const estimate = estimateWindow({ from, to }, since, now);
 
   const pick = (r) => (!orgs.length || orgs.includes(r.org))
     && (!teams.length || teams.includes(r.team));
   const inServices = (r) => !services.length || services.includes(r.service);
-  const chosen = spreadRows.filter((r) => pick(r) && inServices(r));
-  const flow = chosen.filter((r) => !isStock(r.service, r.metric));
-  const stock = chosen.filter((r) => isStock(r.service, r.metric));
-  const vol = volume.filter(pick);
-  const messages = sum(vol.filter((r) => r.metric === 'messages'), (r) => r.quantity);
-  const threads = sum(vol.filter((r) => r.metric === 'threads'), (r) => r.quantity);
-  const flowUsd = sum(flow);
+  const select = {
+    pick, inServices, orgs, teams,
+  };
+  const c = costed(rows, spread);
+  const { weights, unpriced } = c;
+  const all = totalsOf(c, select);
+  // The estimates' part of the period: the same rows when it is the whole of it.
+  let est = null;
+  if (estimate) {
+    est = estimate.from === from ? all
+      : totalsOf(costed(await seriesOf(env, estimate.from, to), spread), select);
+  }
+  const perOf = (flow, n) => (est ? per(flow, n) : null);
+  const { chosen, messages, threads } = all;
+  const flowUsd = all.flow;
 
   const byService = SERVICES.map((s) => {
     const mine = chosen.filter((r) => r.service === s.id);
@@ -259,14 +345,14 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       m.usd += r.usd;
       metrics.set(k, m);
     }
-    const flowS = sum(mine.filter((r) => !isStock(r.service, r.metric)));
+    const estFlow = est ? est.flowBy.get(s.id) || 0 : 0;
     return {
       id: s.id,
       name: s.name,
-      flow: flowS,
+      flow: all.flowBy.get(s.id) || 0,
       stock: sum(mine.filter((r) => isStock(r.service, r.metric))),
-      perMessage: per(flowS, messages),
-      perThread: per(flowS, threads),
+      perMessage: perOf(estFlow, est?.messages),
+      perThread: perOf(estFlow, est?.threads),
       metrics: [...metrics.values()].map((m) => {
         const def = metricOf(s.id, m.metric);
         const p = unitPrice(s.id, m.metric, m.detail);
@@ -309,38 +395,20 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     }
   }
 
-  // Customers and teams: what they cost, of what is selected (but every customer, or team).
-  const group = (key) => {
-    const m = new Map();
-    const of = (k) => m.get(k) || m.set(k, {
-      key: k, flow: 0, shared: 0, stock: 0, messages: 0, threads: 0,
-    }).get(k);
-    const otherFilter = key === 'org' ? (r) => !teams.length || teams.includes(r.team)
-      : (r) => !orgs.length || orgs.includes(r.org);
-    for (const r of spreadRows.filter((x) => inServices(x) && otherFilter(x))) {
-      const g = of(r[key]);
-      if (isStock(r.service, r.metric)) {
-        g.stock += r.usd;
-      } else {
-        g.flow += r.usd;
-        g.shared += r.shared ? r.usd : 0;
-      }
-    }
-    for (const r of volume.filter(otherFilter)) {
-      const g = of(r[key]);
-      g.messages += r.metric === 'messages' ? r.quantity : 0;
-      g.threads += r.metric === 'threads' ? r.quantity : 0;
-    }
-    return [...m.values()].map((g) => ({
-      ...g, perMessage: per(g.flow, g.messages), perThread: per(g.flow, g.threads),
-    })).sort((a, b) => b.flow - a.flow || b.messages - a.messages);
-  };
+  // Customers and teams: what they cost, of what is selected (but every customer, or team), and
+  // per message and thread in the estimates' part of the period.
+  const group = (key) => [...all[key].values()].map((g) => {
+    const e = est ? est[key].get(g.key) : null;
+    return {
+      ...g,
+      perMessage: e ? per(e.flow, e.messages) : null,
+      perThread: e ? per(e.flow, e.threads) : null,
+    };
+  }).sort((a, b) => b.flow - a.flow || b.messages - a.messages);
 
-  const [orgNames, teamNames, firstDay] = await Promise.all([
+  const [orgNames, teamNames] = await Promise.all([
     env.DB.prepare('SELECT slug, name, type FROM orgs').all().then((r) => r.results || []).catch(() => []),
     env.DB.prepare('SELECT slug, name FROM teams').all().then((r) => r.results || []).catch(() => []),
-    env.DB.prepare('SELECT source, MIN(day) AS day FROM cogs_usage GROUP BY source').all()
-      .then((r) => r.results || []).catch(() => []),
   ]);
   const orgInfo = new Map(orgNames.map((o) => [o.slug, o]));
   const teamInfo = new Map(teamNames.map((t) => [t.slug, t]));
@@ -351,14 +419,15 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     days,
     allocate: spread ? 'messages' : 'none',
     filters: { service: services, org: orgs, team: teams },
+    estimate,
     totals: {
       flow: flowUsd,
-      flowMonthly: (flowUsd / days) * 30.44,
-      stock: sum(stock),
+      flowMonthly: est ? (est.flow / estimate.days) * 30.44 : null,
+      stock: all.stock,
       messages,
       threads,
-      perMessage: per(flowUsd, messages),
-      perThread: per(flowUsd, threads),
+      perMessage: perOf(est?.flow, est?.messages),
+      perThread: perOf(est?.flow, est?.threads),
     },
     services: byService,
     chart: { unit, columns: columns(unit, from, to, costs, now) },
@@ -373,7 +442,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       team: g.key,
       name: g.key === SHARED ? 'No team' : (teamInfo.get(g.key)?.name || g.key),
     })),
-    since: Object.fromEntries(firstDay.map((r) => [r.source, r.day])),
+    since,
     unpriced,
     prices: priceList(),
   };

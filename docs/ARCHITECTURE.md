@@ -1425,7 +1425,11 @@ and up to three of the last seven before yesterday without hours yet; hours olde
 days are deleted.
 
 **The report** (`src/cogs/report.js`). Flow costs what the period used; per message and per thread
-it is divided by the period's messages and new threads of what is selected. Stock costs a month:
+it is divided by the period's messages and new threads of what is selected. These estimates, and
+a month at this rate, count from the first whole day of the source that started last (each
+source's first day is partial, and before it messages were counted without all of their cost),
+and a month at this rate divides by the time so far (`estimateWindow`: today counts its hours). A
+period that ends before then has no estimates. Stock costs a month:
 each series at its average over the days it was measured. Shared rows are shared out by the
 period's messages: a team's (a room's) over that team's customers, nobody's over everyone; then the
 filters apply, so a customer's cost includes its share. The chart has about as many columns
