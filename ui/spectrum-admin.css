@@ -2,4 +2,321 @@
  * Teams, Orgs and Requests (ui/admin.html), in Spectrum 2's look under /spectrum:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css).
+ *
+ * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
+ * - the frame: the list on the base layer, what is picked in it on layer 1, its cards on
+ *   layer 2, so they show in both color schemes; no lines between them (layers and spacing).
+ * - the list: a SearchField over a ListView with highlight selection, its headings as
+ *   SideNav's section headers.
+ * - a card: a panel (layer 2, a large radius, an inset as big as its controls want), its h2 a
+ *   Heading, sentence case as written.
+ * - the tables: TableView, compact; the actions in their rows quiet standalone Links.
+ * - the tags: Badge, subtle, small; a color only where it means something (role, type,
+ *   request status, Clef's verdict), no more than one of them blue.
+ * - the pickers (a channel, a member): ComboBox, their list a Popover with Menu items.
+ * - the status line: StatusLight, small; an error's text in the negative color, as HelpText.
+ * - an org's type: SegmentedControl (ui/spectrum.css); its icon suggestions selectable Cards.
+ * - "Pick a team." and the like: IllustratedMessage, without the illustration.
  */
+
+/* ---- the frame --------------------------------------------------------------------------- */
+
+.spectrum #list {
+  padding: var(--spectrum-spacing-200);
+  background: var(--spectrum-background-base-color);
+  border-right: 0;
+}
+.spectrum #detail {
+  padding: var(--spectrum-spacing-300) var(--spectrum-spacing-400) var(--spectrum-spacing-600);
+  background: var(--spectrum-background-layer-1-color);
+}
+
+/* Text: two tiers, the content and what is said about it (subdued). */
+.spectrum .sub, .spectrum .row .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .hint { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); margin-top: var(--spectrum-spacing-100); }
+.spectrum code, .spectrum .mono { font-size: var(--spectrum-code-size-xs); }
+.spectrum .hint code { color: var(--spectrum-neutral-content-color-default); }
+
+/* Headings: in a card, a Heading (bold, the heading color, as written: "Members"); in the list,
+   SideNav's section header (small, medium weight, subdued). */
+.spectrum h2 {
+  margin: var(--spectrum-spacing-400) 0 var(--spectrum-spacing-200);
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xs);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum h2:first-child { margin-top: 0; }
+.spectrum #list h2 {
+  margin: var(--spectrum-side-navigation-item-to-header) 0 var(--spectrum-side-navigation-header-to-item);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+
+/* Fields and buttons at Spectrum 2's medium size: as tall as a control, the text inset as
+   TextField and ActionButton have it. */
+.spectrum input:not([type="checkbox"], [type="radio"]), .spectrum select {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+}
+.spectrum .form button:not(.primary, .danger, .link), .spectrum .icons .again,
+.spectrum #suggestTable td > button {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum .form { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); }
+
+/* ---- the list: SearchField and ListView ------------------------------------------------- */
+
+/* SearchField: a field as round as its height. */
+.spectrum #list .search {
+  margin-bottom: var(--spectrum-spacing-100);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  border-radius: calc(var(--s2-ctl) / 2);
+}
+.spectrum .row {
+  gap: var(--spectrum-text-to-visual-300);
+  min-height: var(--s2-ctl);
+  padding: var(--spectrum-component-top-to-text-75) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  transition: background-color var(--s2-ease);
+}
+.spectrum #list .row + .row { margin-top: var(--spectrum-spacing-50); }
+.spectrum .row:hover { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
+/* The one picked: ListView's highlight, the accent faintly, darker under the pointer. */
+.spectrum .row.on { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
+.spectrum .row.on:hover { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity-hover)); }
+.spectrum .row .name i { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* An org's icon: a thumbnail, rounded as a nested object is. */
+.spectrum .ico { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .ico.none { background: var(--spectrum-gray-200); }
+/* Checkbox, small, with its label. */
+.spectrum label.only {
+  gap: var(--spectrum-text-to-visual-75);
+  margin: 0 var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum #list .form input { min-width: 0; }
+.spectrum #list > .hint { padding: 0 var(--spectrum-component-edge-to-text-100); }
+
+/* ---- the detail: title, cards ------------------------------------------------------------ */
+
+.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .title h1 {
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-m) !important; /* over its style="font-size:20px" */
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
+/* The name, edited in place: a heading until the pointer or the focus is on it, then a field. */
+.spectrum .title input.big {
+  min-height: var(--spectrum-component-height-200);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-m);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  background: transparent;
+  border-color: transparent;
+}
+.spectrum .title input.big:hover { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-400); }
+.spectrum .title input.big:focus { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-800); }
+/* The knowledge base: a standalone Link, quiet (underlined under the pointer). */
+.spectrum .title a { font-weight: var(--spectrum-medium-font-weight); text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .title a:hover { text-decoration: underline; }
+.spectrum .title .ico { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+
+/* A card: a panel on layer 2, no border, rounded and inset as its default-size controls want. */
+.spectrum .card {
+  margin-bottom: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+}
+.spectrum .card > label b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .card > label input[type="checkbox"] { margin: 0; }
+
+/* Side-aligned field labels (a Form with labelPosition="side"): small and subdued. */
+.spectrum .field { gap: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.spectrum .field > label { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight); }
+
+/* ---- TableView, compact ------------------------------------------------------------------ */
+
+.spectrum th {
+  padding: var(--spectrum-component-top-to-text-75) var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-line-height-100);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+}
+.spectrum td {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-spacing-100);
+  line-height: var(--spectrum-line-height-100);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+.spectrum td div.sub { display: block; margin-top: var(--spectrum-spacing-50); }
+.spectrum .person .sub { margin: 0; }
+.spectrum tr:last-child td { border-bottom: 0; }
+.spectrum td.n { color: var(--spectrum-neutral-content-color-default); font-variant-numeric: tabular-nums; }
+/* A section of rows (Clef's other suggestions): TableView's section header. */
+.spectrum tr.section td {
+  padding-top: var(--spectrum-component-top-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+/* Wide tables scroll sideways in their card, never the page (the suggestions too). */
+.spectrum #suggestTable { overflow-x: auto; }
+.spectrum .person { margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-50) 0; }
+/* What a row does: quiet standalone Links, repeated on every row (underlined under the
+   pointer); in a sentence they keep the underline. */
+.spectrum td button.link, .spectrum .picks button.link { text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
+.spectrum td button.link:hover:not(:disabled) { text-decoration: underline; }
+.spectrum button.link:disabled { color: var(--spectrum-disabled-content-color); background: none; }
+
+/* ---- Badge: what a row or a list item is ----------------------------------------------- */
+
+.spectrum .tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-component-edge-to-text-50);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-neutral-subtle-background-color-default);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  line-height: var(--spectrum-line-height-100);
+  vertical-align: middle;
+}
+/* Set by hand (manual, manager, self-managed, shared by): indigo, so the one blue on screen
+   stays the page's action. */
+.spectrum .tag.manual { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); }
+.spectrum .tag.partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .tag.vendor { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-yellow-subtle-background-color-default); }
+/* A request's status, and Clef's verdict when it is this team's. */
+.spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .tag.confirmed, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .tag.declined { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .tag.clef { color: var(--spectrum-neutral-content-color-default); }
+
+/* ---- StatusLight: what was done, and what failed ----------------------------------------- */
+
+.spectrum .status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spectrum-text-to-visual-75);
+  min-height: var(--spectrum-component-height-50);
+  margin: 0 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  line-height: var(--spectrum-line-height-100);
+}
+.spectrum .status:not(:empty)::before {
+  content: "";
+  flex: none;
+  width: var(--spectrum-status-light-dot-size-small);
+  height: var(--spectrum-status-light-dot-size-small);
+  border-radius: 50%;
+  background: var(--spectrum-neutral-visual-color);
+  translate: 0 calc(var(--spectrum-status-light-dot-size-small) / -4);
+}
+.spectrum .status.ok::before { background: var(--spectrum-positive-visual-color); }
+.spectrum .status.warn::before { background: var(--spectrum-notice-visual-color); }
+.spectrum .status.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum .status.err::before { background: var(--spectrum-negative-visual-color); }
+.spectrum #list .status { margin: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100) 0; }
+.spectrum .preview .status { display: inline-flex; margin: 0; }
+.spectrum .preview ul { margin-top: var(--spectrum-spacing-100); padding-left: var(--spectrum-spacing-400); }
+
+/* ---- ComboBox: the channel and member pickers -------------------------------------------- */
+
+/* Its list: a Popover, elevated, with Menu items. */
+.spectrum .picks {
+  margin-top: var(--spectrum-spacing-75);
+  padding: var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .picks.up { margin: 0 0 var(--spectrum-spacing-75); box-shadow: var(--s2-elevated); }
+.spectrum .picks .row {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .picks .row + .row { margin-top: 0; }
+.spectrum .picks .row:hover, .spectrum .picks .row.on { background: var(--s2-down); }
+.spectrum .picks .pickrow .name { gap: var(--spectrum-spacing-50); }
+.spectrum .picks .pickrow .ch { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .picks .pickrow .where { font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); }
+.spectrum .picks .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* ---- an org: icon suggestions ------------------------------------------------------------ */
+
+/* Selectable Cards: gray at rest, an accent outline and a faint accent fill when picked. */
+.spectrum .icons { gap: var(--spectrum-spacing-100); }
+.spectrum .iconpick {
+  gap: var(--spectrum-spacing-75);
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-100) var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .iconpick:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .iconpick img { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .iconpick .host { font-size: var(--spectrum-font-size-75); }
+.spectrum .iconpick[aria-pressed="true"], .spectrum .iconpick[aria-pressed="true"]:hover:not(:disabled) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-accent-subtle-background-color-default);
+  border-color: var(--spectrum-accent-visual-color);
+  box-shadow: none;
+}
+
+/* ---- empty states ------------------------------------------------------------------------ */
+
+.spectrum .empty { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .card .empty { padding: var(--spectrum-spacing-200) 0; }
+/* Nothing picked yet: IllustratedMessage's heading, centered in the pane. */
+.spectrum #detail > .empty {
+  padding: var(--spectrum-spacing-1000) var(--spectrum-spacing-400);
+  text-align: center;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-heading-size-xs);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+}
+
+/* The phone's back button: a quiet icon-only ActionButton. */
+.spectrum .title .back { color: var(--spectrum-neutral-content-color-default); border-radius: var(--s2-radius); }
+.spectrum .title .back:hover { background: var(--spectrum-gray-100); }
+
+/* Narrower screens, as the page has them. */
+@media (max-width: 1099px) {
+  .spectrum #detail { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-300) var(--spectrum-spacing-500); }
+}
+@media (max-width: 699px) {
+  .spectrum #detail { padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-500); }
+  .spectrum .card { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+  .spectrum .title { gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+  .spectrum .title .back {
+    width: var(--s2-ctl);
+    height: var(--s2-ctl);
+  }
+  .spectrum .title .back svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+  .spectrum .title input.big { font-size: var(--spectrum-heading-size-s); }
+  .spectrum .title h1 { font-size: var(--spectrum-heading-size-s) !important; }
+  .spectrum .field > label { margin-top: var(--spectrum-spacing-100); }
+}
