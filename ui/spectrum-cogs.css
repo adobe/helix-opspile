@@ -240,6 +240,8 @@
 .spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
 .spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
 /* Over the style attribute, which only !important does. */
+/* What no customer or team in particular uses (the treemap's shared tile): S2's neutral gray. */
+.spectrum [data-series="shared"] { --s2-series: var(--spectrum-gray-visual-color); }
 .spectrum .dot[data-series] { background: var(--s2-series) !important; }
 .spectrum .chart g.col rect[data-series]:not(.hover) { fill: var(--s2-series); }
 
@@ -349,3 +351,43 @@
   .spectrum .card, .spectrum .kpi { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
   .spectrum .kpis { gap: var(--spectrum-spacing-200); }
 }
+
+/* ---- the treemap: where the flow goes ------------------------------------------------------
+   Its switch a SegmentedControl in the card's heading; the service tiles in the chart's
+   categorical colors (`data-series`), the customers' and teams' in the accent the page names
+   (--accent, mixed by size), the shared one gray; tiles parted by the card's own layer, the
+   picked one outlined in the content color; the
+   tooltip the chart's Popover. */
+.spectrum h2.split { gap: var(--spectrum-spacing-200); }
+.spectrum h2.split .seg { font-size: var(--spectrum-font-size-75); }
+.spectrum h2.split .seg button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+}
+.spectrum .treemap { min-height: calc(var(--spectrum-spacing-1000) * 3 - var(--spectrum-spacing-100)); }
+.spectrum .treemap g.tile rect[data-series] { fill: var(--s2-series); }
+.spectrum .treemap g.tile rect {
+  stroke: var(--spectrum-background-layer-2-color);
+  stroke-width: var(--spectrum-border-width-200);
+  transition: filter var(--s2-ease);
+}
+.spectrum .treemap g.tile:hover > rect { filter: brightness(1.12); }
+.spectrum .treemap g.tile.on > rect {
+  stroke: var(--spectrum-neutral-content-color-default);
+  stroke-width: var(--spectrum-border-width-200);
+}
+/* A service tile's label in gray-25: white on the light scheme's deep colors, near black on the
+   dark scheme's bright ones. The customers' and teams' (`light`), on the accent, stay white. */
+.spectrum .treemap text.tl {
+  fill: var(--spectrum-gray-25);
+  stroke: none;
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .treemap text.tl.light {
+  fill: var(--spectrum-white);
+  stroke: var(--spectrum-transparent-black-500);
+  stroke-width: var(--spectrum-border-width-200);
+}
+.spectrum .treemap text.tl.v { font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-regular-font-weight); }

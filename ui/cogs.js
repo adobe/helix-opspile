@@ -422,7 +422,7 @@ const fit = (text, w) => {
 const TM = { services: 'Services', orgs: 'Customers', teams: 'Teams' };
 
 /**
- * The tiles of the treemap, `{ value, name, color, pick, children }`: the services' flow (and their
+ * The tiles of the treemap, `{ value, name, color, series, pick, children }`: the services' flow (and their
  * metrics' inside), or the customers' or teams' (the shared rows grey).
  */
 function tmItems(d, by) {
@@ -431,6 +431,7 @@ function tmItems(d, by) {
       value: s.flow,
       name: s.name,
       color: color(s.id),
+      series: s.id,
       pick: `data-service="${esc(s.id)}"`,
       children: s.metrics.filter((m) => !m.stock && m.usd > 0)
         .map((m) => ({ value: m.usd, name: m.detail ? `${m.label}, ${m.detail}` : m.label })),
@@ -442,6 +443,7 @@ function tmItems(d, by) {
     name: g.name,
     // The biggest the strongest, the shared rows grey.
     color: g[key] === '' ? '#8b929b' : `color-mix(in srgb, var(--accent) ${Math.max(35, 100 - i * 8)}%, var(--card))`,
+    series: g[key] === '' ? 'shared' : null,
     pick: `data-pick="${key}" data-value="${esc(g[key])}"`,
     picked: state.q[key].includes(g[key] || (key === 'org' ? SHARED_ORG : NO_TEAM)),
   }));
@@ -472,10 +474,10 @@ function treemap(d, width) {
       const kids = squarify([...t.children].sort((a, b) => b.value - a.value), {
         x: t.x + 2, y: t.y + 36, w: t.w - 4, h: t.h - 38,
       });
-      inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}" fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
+      inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''} fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
       t.kids = kids;
     }
-    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"/>${label(t, t.name, t.value, state.tm !== 'services')}</g>${inner}`;
+    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''}/>${label(t, t.name, t.value, state.tm !== 'services')}</g>${inner}`;
   }).join('');
   state.tmTiles = { items, total };
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the flow goes, by ${esc(TM[state.tm].toLowerCase())}">${tiles}</svg><div class="tip" id="tmtip" hidden></div>`;
