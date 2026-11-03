@@ -14,7 +14,7 @@
 /**
  * Local, live-reloading preview of the inbox UI with fake data.
  *
- *   npm run ui:dev                 # http://localhost:8787/inbox
+ *   npm run ui:dev                 # http://localhost:8787/inbox (/spectrum: in Spectrum 2)
  *   PORT=9000 npm run ui:dev
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
@@ -67,7 +67,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { cleanExpertEvent } from '../src/expertevents.js';
 import { suggestMentions } from '../src/mention-match.js';
-import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
+import { inboxPage as servedInbox, page as servedPage, spectrumPage } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
 } from '../src/shortcodes.js';
@@ -1646,10 +1646,17 @@ const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:c
   width(); apply();
 })();</script>`;
 
-/** ui/<name>.html as the Worker serves it, with the banner and live reload. */
-async function uiPage(name) {
+/**
+ * ui/<name>.html as the Worker serves it, with the banner and live reload; with `spectrum`,
+ * in Spectrum 2's look, as under /spectrum.
+ */
+async function uiPage(name, spectrum = false) {
   const html = await readFile(join(uiDir, name), 'utf8');
-  const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
+  const files = await scripts();
+  let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, files);
+  if (spectrum) {
+    served = spectrumPage(served, name.replace(/\.html$/, ''), files);
+  }
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
@@ -1789,6 +1796,15 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/inbox') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(await uiPage('inbox.html'));
+      return;
+    }
+    // Spectrum 2's look of the same pages, as the Worker serves it under /spectrum.
+    const spectrum = {
+      '/spectrum': 'inbox', '/spectrum/kb': 'kb', '/spectrum/admin': 'admin', '/spectrum/cogs': 'cogs',
+    }[url.pathname];
+    if (spectrum) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(await uiPage(`${spectrum}.html`, true));
       return;
     }
     if (ICONS[url.pathname]) {

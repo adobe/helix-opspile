@@ -26,6 +26,7 @@ function tab(path, storage = new Map()) {
     addEventListener() {},
     querySelector: () => null,
     querySelectorAll: () => [],
+    closest: () => null,
   });
   const go = (url) => {
     const u = new URL(url, location.href);
@@ -166,6 +167,28 @@ describe('the header', () => {
     assert.equal(Header.stats({ org: 'acme' }), null);
     Header.init({ admin: true }, { count: false });
     assert.equal(Header.href('stats'), null);
+  });
+
+  it('keeps the pages in Spectrum 2\'s look under /spectrum, and where they were left in either', () => {
+    const { Header, history, storage } = tab('/spectrum?team=t');
+    assert.equal(Header.pageOf('/spectrum/kb?repo=r'), 'agents');
+    assert.equal(Header.pageOf('/spectrum/admin?tab=orgs'), 'orgs');
+    assert.equal(Header.pageOf('/spectrumx'), null);
+    assert.equal(Header.path('/inbox/kb?org=acme'), '/spectrum/kb?org=acme');
+    assert.equal(Header.path('/inbox'), '/spectrum');
+    assert.equal(Header.path('/inboxes'), '/inboxes');
+    history.replaceState(null, '', '/spectrum?team=t&t=th1');
+    // Kept as the classic look has it, opened in the look on screen.
+    assert.equal(storage.get('opspile.page.inbox'), '/inbox?team=t&t=th1');
+    assert.equal(Header.href('agents'), '/spectrum/kb');
+    const kb = tab('/spectrum/kb', storage);
+    assert.equal(kb.Header.href('inbox'), '/spectrum?team=t&t=th1');
+    kb.Header.init({ admin: true }, { count: false, prefer: { teams: () => '/inbox/admin?tab=teams&team=edge' } });
+    assert.equal(kb.Header.href('teams'), '/spectrum/admin?tab=teams&team=edge');
+    assert.match(kb.byId('pages').innerHTML, /data-page="cogs" href="\/spectrum\/cogs"/);
+    // The classic look is where it was.
+    assert.equal(tab('/inbox/kb', storage).Header.href('inbox'), '/inbox?team=t&t=th1');
+    assert.equal(tab('/inbox').Header.path('/inbox/kb'), '/inbox/kb');
   });
 
   it('keeps nothing from another origin or another path', () => {

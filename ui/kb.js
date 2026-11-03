@@ -107,7 +107,7 @@ async function leave() {
  */
 function teamInbox() {
   const b = base();
-  return b && b.kind === 'team' ? `/inbox?team=${encodeURIComponent(b.slug)}` : null;
+  return b && b.kind === 'team' ? Header.path(`/inbox?team=${encodeURIComponent(b.slug)}`) : null;
 }
 
 /**
@@ -120,7 +120,7 @@ function toUrl(mode = 'push') {
   if (state.repo) q.set('repo', state.repo);
   if (state.file && !state.file.isNew) q.set('path', state.file.path);
   if (VIEWS.includes(state.view)) q.set('view', state.view);
-  const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
+  const url = Header.path(`/inbox/kb${q.size ? `?${q}` : ''}`);
   if (url !== `${location.pathname}${location.search}`) {
     history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
   }

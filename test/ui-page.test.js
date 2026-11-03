@@ -746,6 +746,7 @@ describe('inbox page', () => {
       viewName: (slug) => state.teams.find((t) => t.slug === slug)?.name || slug,
       platform: (t) => ({ slack: 'Slack' }[t.source]),
       Markdown: { CHANNEL_REF },
+      Header: { path: (p) => p },
     });
     const refs = [
       {
