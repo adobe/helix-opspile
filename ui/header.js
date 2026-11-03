@@ -24,6 +24,11 @@
  * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
  * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
+ *
+ * Every page is also served in Spectrum 2's look, under /spectrum (/spectrum is the inbox,
+ * /spectrum/kb, /spectrum/admin and /spectrum/cogs the others): there, `path` turns a page's
+ * address (/inbox…) into its own, so the links between the pages stay in that look, and your
+ * menu has the way to the other look of the page on screen.
  */
 window.Header = (() => {
   const PAGES = [
@@ -46,15 +51,28 @@ window.Header = (() => {
   };
   let shut = 0;
 
+  /** In Spectrum 2's look (/spectrum…). */
+  const SPECTRUM = /^\/spectrum(\/|$)/.test(location.pathname);
+  /** A page's address (/inbox, /inbox/kb?…) as this look has it: under /spectrum there. */
+  const path = (url) => (SPECTRUM && typeof url === 'string' ? url.replace(/^\/inbox(?=[/?#]|$)/, '/spectrum') : url);
+  /** A page's address in the classic look, whichever it is in. */
+  const classic = (url) => url.replace(/^\/spectrum(?=[/?#]|$)/, '/inbox');
+  /** The page on screen in the other look. */
+  const other = () => {
+    const here = `${location.pathname}${location.search}`;
+    return SPECTRUM ? classic(here) : here.replace(/^\/inbox(?=[/?#]|$)/, '/spectrum');
+  };
+
   /** Which page an address on this origin is, or null. */
   function pageOf(url) {
     let u;
     try { u = new URL(url, location.origin); } catch { return null; }
     if (u.origin !== location.origin) return null;
-    if (u.pathname === '/inbox') return 'inbox';
-    if (u.pathname === '/inbox/kb') return 'agents';
-    if (u.pathname === '/inbox/cogs') return 'cogs';
-    if (u.pathname !== '/inbox/admin') return null;
+    const p = classic(u.pathname);
+    if (p === '/inbox') return 'inbox';
+    if (p === '/inbox/kb') return 'agents';
+    if (p === '/inbox/cogs') return 'cogs';
+    if (p !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
     return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
   }
@@ -63,7 +81,7 @@ window.Header = (() => {
     const id = pageOf(url);
     if (!id) return;
     const u = new URL(url, location.origin);
-    try { sessionStorage.setItem(KEY + id, `${u.pathname}${u.search}`); } catch { /* private mode */ }
+    try { sessionStorage.setItem(KEY + id, classic(`${u.pathname}${u.search}`)); } catch { /* private mode */ }
   }
   const kept = (id) => { try { return sessionStorage.getItem(KEY + id); } catch { return null; } };
   /**
@@ -74,7 +92,7 @@ window.Header = (() => {
   function href(id) {
     if (id === 'stats') return opts.prefer.stats?.() || stats();
     if (pageOf(location.href) === id) return `${location.pathname}${location.search}`;
-    return opts.prefer[id]?.() || kept(id) || opts.fallback[id]?.() || PAGES.find((p) => p.id === id).href;
+    return path(opts.prefer[id]?.() || kept(id) || opts.fallback[id]?.() || PAGES.find((p) => p.id === id).href);
   }
 
   /**
@@ -101,6 +119,8 @@ window.Header = (() => {
   /** The page on screen marked, and every link pointing where its page was left. */
   function sync() {
     const here = pageOf(location.href);
+    const look = $('look');
+    if (look) look.href = other();
     for (const a of links()) {
       a.href = href(a.dataset.page);
       if (a.dataset.page === here && !a.closest('h1')) a.setAttribute('aria-current', 'page');
@@ -141,7 +161,7 @@ window.Header = (() => {
     const nav = $('pages');
     const item = (p) => (p.external
       ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
-      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`);
+      : `<a data-page="${p.id}" href="${path(p.href)}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -184,6 +204,7 @@ window.Header = (() => {
     for (const id of ['userAv', 'menuAv']) {
       $(id).textContent = initials;
       $(id).style.background = COLORS[h % COLORS.length];
+      $(id).dataset.hue = String(h % COLORS.length);
     }
     $('me').textContent = name;
     $('userSub').textContent = sub;
@@ -221,6 +242,12 @@ window.Header = (() => {
     }
   }
 
+  // The other look of the page on screen, in your menu, above Log out.
+  const logout = document.querySelector('#menu a[href="/cdn-cgi/access/logout"]')?.closest('section');
+  if (logout) {
+    logout.insertAdjacentHTML('beforebegin', `<section><a class="item" id="look" href="${other()}" title="${SPECTRUM
+      ? 'This page in the look the inbox has today' : 'This page in Adobe\'s Spectrum 2 design, a preview'}">${SPECTRUM ? 'Classic look' : 'Spectrum 2 look (preview)'}</a></section>`);
+  }
   remember();
   for (const m of ['pushState', 'replaceState']) {
     const native = history[m].bind(history);
@@ -236,6 +263,6 @@ window.Header = (() => {
   sync();
 
   return {
-    init, sync, setCount, user, role, remember, href, pageOf, stats,
+    init, sync, setCount, user, role, remember, href, pageOf, stats, path,
   };
 })();

@@ -1,0 +1,393 @@
+/*
+ * COGS, what the inbox costs (ui/cogs.html), in Spectrum 2's look under /spectrum:
+ * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
+ * (see ui/spectrum.css).
+ *
+ * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
+ * - the page: layer 1 under the header, its cards and figures on layer 2.
+ * - the filters: a toolbar of one size: SegmentedControl (the period), DateFields, a Picker
+ *   with several picked (the services: its Popover a Menu of checkboxes), a ComboBox (the
+ *   customer), a Picker (the team), a Checkbox; what is picked a TagGroup of removable Tags.
+ * - the figures: a stat panel (Spectrum 2 has no component for one): a label, the value in a
+ *   heading's size, what it means subdued.
+ * - the chart: the page's own SVG, in Spectrum 2 charts' look: the series in the categorical
+ *   palette (s2Categorical16), the grid on the metric axis only, the axis labels subdued, the
+ *   tooltip a Popover (ChartInspect), the legend's entries quiet and toggleable.
+ * - the tables: TableView, compact, numbers at the end in tabular figures, sortable columns,
+ *   the picked rows highlighted, the services' metrics as child rows, the totals a summary row.
+ * - the list prices: a quiet Disclosure.
+ */
+
+/* ---- the page ---------------------------------------------------------------------------- */
+
+.spectrum main { background: var(--spectrum-background-layer-1-color); }
+.spectrum .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .hint { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); margin-top: var(--spectrum-spacing-100); }
+.spectrum .empty { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .err, .spectrum .hint.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum #body { transition: opacity var(--s2-ease); }
+
+/* Headings: Spectrum 2's Heading, as written ("Flow per day"), the period beside it subdued. */
+.spectrum h2 {
+  gap: var(--spectrum-spacing-200);
+  margin: 0 0 var(--spectrum-spacing-200);
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xs);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum h2 .sub { font-weight: var(--spectrum-regular-font-weight); }
+
+/* A card: a panel on layer 2, no border, rounded and inset as its content wants. */
+.spectrum .card {
+  margin-bottom: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+}
+.spectrum .cols { gap: var(--spectrum-spacing-300); }
+.spectrum .cols > .card { margin-bottom: var(--spectrum-spacing-300); }
+
+/* ---- the filters: a toolbar of medium-size controls -------------------------------------- */
+
+.spectrum .bar {
+  gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  margin-bottom: var(--spectrum-spacing-300);
+  padding-top: var(--spectrum-spacing-200);
+  padding-bottom: var(--spectrum-spacing-200);
+  background: var(--spectrum-background-layer-1-color);
+  border-bottom: 0;
+}
+.spectrum .bar .group { gap: var(--spectrum-spacing-100); }
+.spectrum .bar input:not([type="checkbox"]), .spectrum .bar select, .spectrum #servicesBtn {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+}
+.spectrum .bar input[type="date"] { padding: 0 var(--spectrum-component-edge-to-text-75); }
+/* The period: SegmentedControl (ui/spectrum.css), its segments as tall as the fields. */
+.spectrum .seg button { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-75); }
+.spectrum .seg button + button { border-left-color: transparent; }
+/* The services: a Picker that takes several, so a field's look, as the team's Picker beside it. */
+.spectrum #servicesBtn {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+}
+.spectrum #servicesBtn:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-400); }
+.spectrum #servicesBtn:active:not(:disabled) { background: var(--spectrum-gray-25); border-color: var(--spectrum-gray-800); }
+/* Its Popover: a Menu of checkboxes, the swatch of each service, and its two actions after a
+   divider; under its button (the popover's anchor), or over it when there is no room below. */
+.spectrum #servicesMenu {
+  inset: auto;
+  margin: var(--spectrum-spacing-75) 0;
+  position-area: block-end span-inline-end;
+  position-try-fallbacks: flip-block, flip-inline;
+  min-width: calc(var(--spectrum-component-height-100) * 8);
+  padding: var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum #servicesMenu label {
+  gap: var(--spectrum-text-to-visual-100);
+  min-height: var(--s2-ctl);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-100);
+  line-height: var(--spectrum-line-height-100);
+}
+.spectrum #servicesMenu label:hover { background: var(--s2-down); }
+.spectrum #servicesMenu input { margin: 0; }
+.spectrum #servicesMenu .actions {
+  margin-top: var(--spectrum-spacing-75);
+  padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-50);
+  border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+/* Checkbox, with its label at the toolbar's size. */
+.spectrum label.check {
+  gap: var(--spectrum-text-to-visual-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+}
+/* What is picked: removable Tags, gray, with their clear button. */
+.spectrum .chips { gap: var(--spectrum-spacing-75); }
+.spectrum .chip {
+  gap: var(--spectrum-text-to-visual-75);
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-50) 0 var(--spectrum-component-edge-to-text-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-75);
+  line-height: var(--spectrum-line-height-100);
+}
+.spectrum .chip button {
+  display: grid;
+  place-items: center;
+  width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum .chip button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-down); }
+.spectrum .chips > button.link { min-height: var(--spectrum-component-height-75); }
+
+/* ---- the figures: a stat panel ----------------------------------------------------------- */
+
+.spectrum .kpis { gap: var(--spectrum-spacing-300); margin-bottom: var(--spectrum-spacing-300); }
+.spectrum .kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spectrum-spacing-50);
+  padding: var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+}
+.spectrum .kpi .k { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight); }
+.spectrum .kpi .v {
+  margin: 0;
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-m);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
+.spectrum .kpi .s { margin: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+
+/* ---- the chart --------------------------------------------------------------------------- */
+
+.spectrum .chart .axis text {
+  fill: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-variant-numeric: tabular-nums;
+}
+.spectrum .chart .grid line { stroke: var(--spectrum-gray-200); }
+/* The column under the pointer, faintly (what ChartInspect highlights). */
+.spectrum .chart .hover { fill: var(--s2-hover); }
+.spectrum .chart g.col:hover .hover { opacity: 1; }
+/* A thin edge of the card's color between the services of a column, so small ones show. */
+.spectrum .chart g.col rect:not(.hover) { stroke: var(--spectrum-background-layer-2-color); stroke-width: var(--spectrum-border-width-100); }
+/* The tooltip: a Popover. */
+.spectrum .tip {
+  min-width: calc(var(--spectrum-component-height-100) * 6);
+  padding: var(--spectrum-spacing-200);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-75);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .tip .t { margin-bottom: var(--spectrum-spacing-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .tip .row { gap: var(--spectrum-text-to-visual-100); }
+/* The legend: quiet, toggleable entries; the one picked in the content color, bold. */
+.spectrum .legend { gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-75); }
+.spectrum .legend button {
+  gap: var(--spectrum-text-to-visual-75);
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .legend button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum .legend button[aria-pressed="true"], .spectrum .legend button[aria-pressed="true"]:hover:not(:disabled) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+
+/* A service's swatch, in the chart, the legend, the tooltip, the menu, the tags and the tables. */
+.spectrum .dot {
+  width: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  height: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  border-radius: var(--spectrum-corner-radius-75);
+}
+/*
+ * The services in Spectrum 2's categorical palette, s2Categorical16 (as React Spectrum Charts
+ * S2 has it: A is categorical-100, indigo-1100, and so on), in the order ui/cogs.js lists them,
+ * the same in both schemes' values. ui/cogs.js names the service of every dot and column
+ * (`data-series`): Amazon Bedrock A, Workers AI B, AI Search C, Durable Objects D, Workers E,
+ * Workers Logs F, R2 G, D1 H, Vectorize I, Queues J, Artifacts K, Browser Run L, Workers
+ * Analytics Engine M; any other service is F, as Workers Logs.
+ */
+.spectrum [data-series] { --s2-series: var(--spectrum-pink-700); }
+.spectrum [data-series="bedrock"] { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum [data-series="workers_ai"] { --s2-series: var(--spectrum-magenta-900); }
+.spectrum [data-series="ai_search"] { --s2-series: var(--spectrum-orange-700); }
+.spectrum [data-series="durable_objects"] { --s2-series: var(--spectrum-blue-700); }
+.spectrum [data-series="workers"] { --s2-series: var(--spectrum-purple-900); }
+.spectrum [data-series="workers_logs"] { --s2-series: var(--spectrum-pink-700); }
+.spectrum [data-series="r2"] { --s2-series: var(--spectrum-seafoam-700); }
+.spectrum [data-series="d1"] { --s2-series: var(--spectrum-fuchsia-1000); }
+.spectrum [data-series="vectorize"] { --s2-series: var(--spectrum-green-1000); }
+.spectrum [data-series="queues"] { --s2-series: var(--spectrum-celery-700); }
+.spectrum [data-series="artifacts"] { --s2-series: var(--spectrum-red-700); }
+.spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
+.spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
+/* Over the style attribute, which only !important does. */
+/* What no customer or team in particular uses (the treemap's shared tile): S2's neutral gray. */
+.spectrum [data-series="shared"] { --s2-series: var(--spectrum-gray-visual-color); }
+.spectrum .dot[data-series] { background: var(--s2-series) !important; }
+.spectrum .chart g.col rect[data-series]:not(.hover) { fill: var(--s2-series); }
+
+/* ---- TableView, compact ------------------------------------------------------------------ */
+
+/* The cells' inline space: compact, as many columns fit a half-width card. */
+.spectrum table { --s2-cell: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
+
+.spectrum th {
+  padding: var(--spectrum-component-top-to-text-75) var(--s2-cell);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-line-height-100);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+}
+.spectrum td {
+  padding: var(--spectrum-component-top-to-text-100) var(--s2-cell);
+  line-height: var(--spectrum-line-height-100);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+.spectrum tr:last-child td { border-bottom: 0; }
+.spectrum td.m { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum td div.sub { margin-top: var(--spectrum-spacing-50); }
+/* A sortable column: its header a quiet button, the sorted one with its arrow. */
+.spectrum th button.sort {
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-75);
+  font-weight: inherit;
+}
+.spectrum th button.sort:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: none; }
+.spectrum th button.sort[data-on] { color: var(--spectrum-neutral-content-color-default); }
+/* Rows that pick (a customer, a team) or open (a service): hover, down, and the picked one
+   highlighted as TableView's selection. */
+.spectrum tr.pick td { transition: background-color var(--s2-ease); }
+.spectrum tr.pick:hover td { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
+.spectrum tr.pick:active td { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-down-opacity)); }
+.spectrum tr.on td { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
+.spectrum tr.on:hover td { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity-hover)); }
+/* A service's metrics: child rows, one tier in, smaller and subdued. */
+.spectrum tr.metric td {
+  padding-top: var(--spectrum-spacing-50);
+  padding-bottom: var(--spectrum-spacing-50);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum tr.metric td:first-child { padding-left: calc(var(--s2-cell) + var(--spectrum-spacing-300) + var(--spectrum-spacing-200)); }
+.spectrum .twist { width: var(--spectrum-workflow-icon-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum tr.pick:hover .twist { color: var(--spectrum-neutral-subdued-content-color-hover); }
+/* The totals: TableView's summary row. */
+.spectrum tr.total td {
+  background: var(--spectrum-gray-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  border-top: 0;
+}
+.spectrum tr.total td:first-child { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); }
+.spectrum tr.total td:last-child { border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
+.spectrum .name { gap: var(--spectrum-text-to-visual-100); }
+/* A type beside a customer: a Badge, subtle, small. */
+.spectrum .tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-component-edge-to-text-50);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-neutral-subtle-background-color-default);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  line-height: var(--spectrum-line-height-100);
+}
+/* Each one's share of the flow: a bar of one series, so the palette's first color. */
+.spectrum .bar-in {
+  height: var(--spectrum-spacing-75);
+  margin-top: var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-75);
+  background: var(--spectrum-indigo-1100);
+  opacity: 1;
+}
+.spectrum .more { margin-top: var(--spectrum-spacing-100); }
+
+/* ---- the list prices: a quiet Disclosure ------------------------------------------------- */
+
+.spectrum details.card > summary {
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xs);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+  letter-spacing: normal;
+  text-transform: none;
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum details.card > summary::marker { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum details.card[open] > summary { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum .prices td { font-size: var(--spectrum-font-size-75); }
+.spectrum .prices a { font-weight: var(--spectrum-medium-font-weight); }
+
+/* Narrower screens, as the page has them. */
+@media (max-width: 699px) {
+  /* The period's dates go under its segments rather than past the screen's edge. */
+  .spectrum .bar .group, .spectrum .seg { flex-wrap: wrap; }
+  .spectrum .kpi .v { font-size: var(--spectrum-heading-size-s); }
+  .spectrum .card, .spectrum .kpi { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+  .spectrum .kpis { gap: var(--spectrum-spacing-200); }
+}
+
+/* ---- the treemap: where the flow goes ------------------------------------------------------
+   Its switch a SegmentedControl in the card's heading; the service tiles in the chart's
+   categorical colors (`data-series`), the customers' and teams' in the accent the page names
+   (--accent, mixed by size), the shared one gray; tiles parted by the card's own layer, the
+   picked one outlined in the content color; the
+   tooltip the chart's Popover. */
+.spectrum h2.split { gap: var(--spectrum-spacing-200); }
+.spectrum h2.split .seg { font-size: var(--spectrum-font-size-75); }
+.spectrum h2.split .seg button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+}
+.spectrum .treemap { min-height: calc(var(--spectrum-spacing-1000) * 3 - var(--spectrum-spacing-100)); }
+.spectrum .treemap g.tile rect[data-series] { fill: var(--s2-series); }
+.spectrum .treemap g.tile rect {
+  stroke: var(--spectrum-background-layer-2-color);
+  stroke-width: var(--spectrum-border-width-200);
+  transition: filter var(--s2-ease);
+}
+.spectrum .treemap g.tile:hover > rect { filter: brightness(1.12); }
+.spectrum .treemap g.tile.on > rect {
+  stroke: var(--spectrum-neutral-content-color-default);
+  stroke-width: var(--spectrum-border-width-200);
+}
+/* A service tile's label in gray-25: white on the light scheme's deep colors, near black on the
+   dark scheme's bright ones. The customers' and teams' (`light`), on the accent, stay white. */
+.spectrum .treemap text.tl {
+  fill: var(--spectrum-gray-25);
+  stroke: none;
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .treemap text.tl.light {
+  fill: var(--spectrum-white);
+  stroke: var(--spectrum-transparent-black-500);
+  stroke-width: var(--spectrum-border-width-200);
+}
+.spectrum .treemap text.tl.v { font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-regular-font-weight); }

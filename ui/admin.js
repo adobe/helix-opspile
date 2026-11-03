@@ -201,7 +201,7 @@ const PICK = { teams: 'a team', orgs: 'an org', requests: 'a request' };
 function toUrl() {
   const q = new URLSearchParams({ tab: state.tab });
   if (state.sel) q.set(PARAM[state.tab], state.sel);
-  history.replaceState(null, '', `/inbox/admin?${q}`);
+  history.replaceState(null, '', Header.path(`/inbox/admin?${q}`));
   // Phones show the list or what is picked in it (see the styles).
   document.body.classList.toggle('picked', Boolean(state.sel));
 }
@@ -1104,7 +1104,7 @@ async function showTeam(slug) {
   $('detail').innerHTML = `
     <div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
-      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}">Knowledge base</a>` : ''}
+      ${real ? `<a href="${Header.path(`/inbox/kb?team=${encodeURIComponent(team.slug)}`)}">Knowledge base</a>` : ''}
       ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><label style="display:flex;gap:8px;align-items:center">
@@ -1328,7 +1328,7 @@ function drawRequest(r, preview) {
     <div class="card"><div class="field">
       <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
       <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
-      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>For</label><span><a href="${Header.path(`/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}`)}">${esc(teamLabel(r.team))}</a></span>
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
       ${r.note ? `<label>Note</label><span class="note">${esc(r.note)}</span>` : ''}
       ${open ? '' : `<label>Answer</label><span>${decisionText(r)}</span>`}
@@ -1521,7 +1521,7 @@ async function showOrg(slug) {
   Header.user(state.me, Header.role(state.me));
   if (!state.me.admin && !state.me.manages?.length) {
     $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
-    $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
+    $('detail').innerHTML = `<div class="empty"><a href="${Header.path('/inbox')}">Back to the inbox</a></div>`;
     return;
   }
   Header.init(state.me, {
@@ -1543,7 +1543,7 @@ async function showOrg(slug) {
   $('detail').addEventListener('click', (e) => {
     if (e.target.closest('[data-back]')) { unselect(); return; }
     // A link to another team or org here (a request's team) opens it as the header does.
-    const a = e.target.closest('a[href^="/inbox/admin?"]');
+    const a = e.target.closest(`a[href^="${Header.path('/inbox/admin?')}"]`);
     if (a && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       openUrl(a.getAttribute('href'));

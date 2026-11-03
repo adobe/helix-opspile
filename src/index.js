@@ -24,6 +24,13 @@ import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
 import headerCss from '../ui/header.css' with { type: 'text' };
+// Spectrum 2's look of the pages, under /spectrum (src/page.js `spectrumPage`).
+import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
+import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
+import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
+import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
+import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
+import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
@@ -47,7 +54,7 @@ import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
-import { inboxPage, page } from './page.js';
+import { inboxPage, page, spectrumPage } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { ensureSubscription } from './subscription.js';
@@ -73,11 +80,28 @@ const SCRIPTS = {
   'rank.js': rankJs,
   'table.js': tableJs,
   'header.css': headerCss,
+  'spectrum-fonts.css': spectrumFontsCss,
+  'spectrum.css': spectrumCss,
+  'spectrum-inbox.css': spectrumInboxCss,
+  'spectrum-admin.css': spectrumAdminCss,
+  'spectrum-kb.css': spectrumKbCss,
+  'spectrum-cogs.css': spectrumCogsCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
 const KB_PAGE = page(kbHtml, SCRIPTS);
 const COGS_PAGE = page(cogsHtml, SCRIPTS);
+/**
+ * The same pages in Spectrum 2's look, a preview beside them: /spectrum is the inbox,
+ * /spectrum/kb, /spectrum/admin and /spectrum/cogs the others (ui/header.js keeps the links
+ * between them there).
+ */
+const SPECTRUM_PAGES = {
+  '/spectrum': spectrumPage(INBOX_PAGE, 'inbox', SCRIPTS),
+  '/spectrum/admin': spectrumPage(ADMIN_PAGE, 'admin', SCRIPTS),
+  '/spectrum/kb': spectrumPage(KB_PAGE, 'kb', SCRIPTS),
+  '/spectrum/cogs': spectrumPage(COGS_PAGE, 'cogs', SCRIPTS),
+};
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -199,6 +223,11 @@ const handlers = {
     if (pathname === '/inbox/cogs') {
       // What the inbox costs (admin team; the API checks), under /inbox like the others.
       return new Response(COGS_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
+    if (Object.hasOwn(SPECTRUM_PAGES, pathname)) {
+      return new Response(SPECTRUM_PAGES[pathname], {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }

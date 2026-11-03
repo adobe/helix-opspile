@@ -1,0 +1,888 @@
+/*
+ * The inbox (ui/inbox.html, ui/inbox.js, ui/table.js) in Spectrum 2's look under /spectrum:
+ * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
+ * (see ui/spectrum.css). The layout, the sizes that set it (rows, rail, columns) and the
+ * behavior stay the page's; this file sets what each component looks like in S2's anatomy.
+ */
+
+/* Foundations: the page's own colors (bubbles, rows, the floating layers), as S2 names them.
+   Unread rows sit on layer 2, read ones on layer 1, as ListView's rows on their list. */
+:root.spectrum {
+  --me: var(--spectrum-accent-background-color-default);
+  --me-ink: var(--spectrum-white);
+  --me-link: var(--spectrum-white);
+  --them: var(--spectrum-gray-100);
+  --them-ink: var(--spectrum-neutral-content-color-default);
+  --them-link: var(--spectrum-accent-content-color-default);
+  --them-code: var(--s2-hover);
+  --mention-adobe: var(--spectrum-red-900);
+  --gold: var(--spectrum-yellow-visual-color);
+  --brown: var(--spectrum-brown-visual-color);
+  --crimson: var(--spectrum-red-visual-color);
+  --teams: var(--spectrum-indigo-visual-color);
+  --row-read: var(--spectrum-background-layer-1-color);
+  --row-unread: var(--spectrum-background-layer-2-color);
+  /* ListView's highlight selection: blue-900 mixed into the base, and outlined in it. */
+  --s2-row-sel: color-mix(in srgb, var(--spectrum-blue-900) 10%, var(--spectrum-gray-25));
+  --s2-row-sel-hover: color-mix(in srgb, var(--spectrum-blue-900) 15%, var(--spectrum-gray-25));
+  --s2-row-hover: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity));
+  --s2-row-down: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-down-opacity));
+  --sel: var(--s2-row-sel);
+  /* Floating layers: the filter cards hang over the list (elevated), the open row is lifted
+     out of it (dragged). */
+  --r: var(--spectrum-corner-radius-large-default);
+  --card-shadow: var(--s2-elevated);
+  --lift-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6)
+    calc(var(--spectrum-drop-shadow-blur) * 6) var(--spectrum-drop-shadow-dragged-color);
+  --s2-popover: var(--spectrum-background-layer-2-color);
+  --s2-pill: calc(var(--s2-ctl) / 2);
+}
+.spectrum .c-critical, .spectrum .t .dot.c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
+.spectrum .c-slack {
+  background: linear-gradient(var(--spectrum-cyan-visual-color) 25%, var(--spectrum-green-visual-color) 0 50%,
+    var(--spectrum-yellow-visual-color) 0 75%, var(--spectrum-magenta-visual-color) 0) !important;
+}
+.spectrum .c-discord { background: var(--spectrum-purple-visual-color) !important; }
+
+/* Avatar: round and bold (its colors are every page's, ui/spectrum.css). */
+.spectrum .av { border-radius: 50%; font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-white); }
+.spectrum [data-p]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+/* The filter rail: one floating card per facet (S2's Card on layer 2, no border, elevated as
+   it hangs over the list), its values a ListView with highlight selection. */
+.spectrum #filters .card {
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  padding-top: var(--spectrum-spacing-200);
+  padding-bottom: var(--spectrum-spacing-100);
+}
+.spectrum .card h3 {
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-heading-color);
+}
+/* The card's light: a StatusLight's dot, positive. */
+.spectrum .card h3::before {
+  width: var(--spectrum-status-light-dot-size-medium);
+  height: var(--spectrum-status-light-dot-size-medium);
+  background: var(--spectrum-positive-visual-color);
+}
+.spectrum .card h3 .clear {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .card h3 .clear:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .fg {
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .fr {
+  gap: var(--spectrum-text-to-visual-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  transition: background-color var(--s2-ease);
+}
+.spectrum .fr:hover { background: var(--s2-row-hover); }
+.spectrum .fr:active { background: var(--s2-row-down); }
+.spectrum .fr.on { background: var(--s2-row-sel); }
+.spectrum .fr.on:hover { background: var(--s2-row-sel-hover); }
+.spectrum .fr.on::after { border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900); }
+.spectrum .fr.on .lab { font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fr.on .n { font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fr .lab.new { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .fr .lab.dim { color: var(--spectrum-disabled-content-color); }
+.spectrum .fr .ind { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico.av { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico.av.round { border-radius: 50%; }
+/* Counts in the UI font's tabular figures; bars as a Meter's fill, without its track. */
+.spectrum .fr .n {
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--spectrum-line-height-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .fr .bar { height: var(--spectrum-progress-bar-thickness-medium); border-radius: calc(var(--spectrum-progress-bar-thickness-medium) / 2); }
+.spectrum .fr .bar.stack { gap: var(--spectrum-border-width-100); }
+/* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
+.spectrum .fr .men, .spectrum #threads .count .filt b {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-accent-background-color-default);
+  color: var(--spectrum-white);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+}
+/* Exclude (≠): a quiet, extra-small ActionButton over the label's end; red once it excludes. */
+.spectrum .fr .not {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  transition: opacity var(--s2-ease), color var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum .fr .not:hover { color: var(--spectrum-negative-content-color-default); box-shadow: none; background: var(--s2-down); }
+.spectrum .fr.off .not { color: var(--spectrum-negative-content-color-default); }
+.spectrum .fr.off .lab { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The thread list: a ListView, rows divided by a hairline, read on layer 1 and unread on
+   layer 2, hovered and pressed in the gray overlay, the open one in highlight selection. */
+.spectrum #threads { border-left-color: var(--line); border-right-color: var(--line); }
+.spectrum .t { border-bottom-color: var(--line); transition: background-color var(--s2-ease); }
+.spectrum .t:hover { background: linear-gradient(var(--s2-row-hover), var(--s2-row-hover)), var(--row-bg); }
+.spectrum .t:active { background: linear-gradient(var(--s2-row-down), var(--s2-row-down)), var(--row-bg); }
+.spectrum .t.sel, .spectrum .t.sel:hover { --row-bg: var(--s2-row-sel); background: var(--s2-row-sel); }
+.spectrum .t .title { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .t.unread .title { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t.resolved:not(.unread) .title { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .when, .spectrum .t .l2, .spectrum .t .l3 { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .l3 b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .l3.dim { color: var(--spectrum-disabled-content-color); }
+.spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .ok { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .drafted { font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-accent-content-color-default); }
+.spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
+/* Faces: an AvatarGroup, each ringed in the row's own layer. */
+.spectrum .moods .em { background: var(--spectrum-gray-100); }
+/* Tags beside a title: S2 Badges, subtle, in their meaning's color. */
+.spectrum .tag { color: var(--spectrum-neutral-subdued-content-color-default); background: var(--spectrum-gray-100); border-color: transparent; }
+.spectrum .tag.hot { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
+.spectrum .tag.us { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
+.spectrum .tag.tech { color: var(--spectrum-neutral-content-color-default); }
+/* The open thread's row, lifted out of the list (#lift): selected, and dragged above it. */
+.spectrum #lift .t {
+  border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--s2-row-sel);
+}
+.spectrum #lift .t .faces .av { border-color: var(--s2-row-sel); }
+.spectrum mark { background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
+
+/* The list's toolbar, sticky on layer 1. */
+.spectrum #threads .count {
+  gap: var(--spectrum-spacing-100);
+  padding-top: var(--spectrum-spacing-100);
+  padding-bottom: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-background-layer-1-color);
+  border-bottom-color: var(--line);
+}
+/* SearchField: S2's pill, a 2px border on the base, the loupe at its start. */
+.spectrum .find {
+  height: var(--s2-ctl);
+  gap: var(--spectrum-text-to-visual-100);
+  padding: 0 var(--spectrum-spacing-100) 0 calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-spacing-50));
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  transition: border-color var(--s2-ease);
+}
+.spectrum .find:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .find:focus-within { border-color: var(--spectrum-gray-800); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .find:has(input:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .find svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .find input, .spectrum .find input:hover, .spectrum .find input:focus {
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.spectrum .find input::placeholder { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .find kbd { padding: 0 var(--spectrum-spacing-75); }
+/* The views (each team, then Personal): S2's SegmentedControl, the picked one raised. */
+.spectrum #threads .count .order {
+  padding: 0;
+  gap: 0;
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum #threads .count .order button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum #threads .count .order button:hover { color: var(--spectrum-neutral-content-color-hover); background: transparent; }
+.spectrum #threads .count .order button[aria-checked="true"], .spectrum #threads .count .order button[aria-checked="true"]:hover {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border-color: var(--spectrum-gray-900);
+  box-shadow: none;
+  font-weight: var(--spectrum-bold-font-weight);
+}
+/* Unread only, the bell, a new thread, Filters, Clear: quiet ActionButtons; toggled on, in
+   ActionButton's selected state. */
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq) {
+  height: var(--spectrum-component-height-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--s2-radius);
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum #threads .count :is(.unread, .bell, .newpost) { width: var(--spectrum-component-height-75); }
+.spectrum #threads .count :is(.filt, .clearq) { padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt) svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):active { background: var(--spectrum-gray-300); }
+.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"],
+.spectrum #threads .count .filt[aria-expanded="true"] {
+  color: var(--spectrum-gray-25);
+  background: var(--spectrum-neutral-background-color-selected-default);
+  border-color: transparent;
+}
+.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"]:hover,
+.spectrum #threads .count .filt[aria-expanded="true"]:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum #threads .count .found { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The list's end: "Show older" a secondary Button, the closing note subdued. */
+.spectrum #threads .rows > .older {
+  min-height: var(--s2-ctl);
+  border-radius: var(--s2-pill);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+}
+.spectrum #threads .rows > .older:hover { background: var(--spectrum-gray-200); }
+.spectrum #threads .rows > .end { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #threads .rows > .end .linkish { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .linkish { color: var(--spectrum-accent-content-color-default); text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum .linkish:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+/* Empty, loading and error notes in a pane: an IllustratedMessage's body, without the art. */
+.spectrum .empty { font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The open thread's header: its title in S2's Title style, the facts under it subdued. */
+.spectrum .ph { border-bottom-color: var(--line); }
+.spectrum .ph h2 { gap: var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
+.spectrum .ph .sub { gap: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .resolved { color: var(--spectrum-positive-visual-color); }
+.spectrum .ph .reopened { color: var(--spectrum-notice-visual-color); }
+.spectrum .back { font-size: var(--spectrum-font-size-75); color: var(--spectrum-accent-content-color-default); }
+.spectrum .back:hover { color: var(--spectrum-accent-content-color-hover); }
+/* Back to the threads (narrow screens): a quiet ActionButton. */
+.spectrum .ph .close { border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum .ph .close:hover { background: var(--spectrum-gray-200); }
+.spectrum .ph .close svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+/* The experts: an ActionGroup of two quiet buttons on a gray pill, their list a Menu. */
+.spectrum .experts {
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--s2-pill);
+}
+.spectrum .experts .top { border-radius: var(--s2-pill); }
+.spectrum .experts .more { border-left: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: 0 var(--s2-pill) var(--s2-pill) 0; }
+.spectrum .experts .top:hover, .spectrum .experts .more:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+
+/* The feed's landmarks: the day as a subtle neutral Badge, dividers and events subdued. */
+.spectrum .day span {
+  padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .divider, .spectrum .post { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .divider::after { border-top-color: var(--spectrum-gray-300); }
+.spectrum .post::before, .spectrum .post::after { border-top-color: var(--spectrum-gray-300); }
+.spectrum .sys, .spectrum .seen { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .compose-error { color: var(--spectrum-negative-content-color-default); }
+
+/* Messages. S2 has no chat bubble outside its AI toolkit (UserMessage): composed from a layer
+   fill, S2's extra-large radius (the tail's corner small) and the body type. Customers and
+   colleagues on gray, your own on the accent, as the classic page does. */
+.spectrum .msg .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .who b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .msg .meta { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .face .badge-ico { border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-white); border-color: var(--pane); }
+.spectrum .msg.agent a.face:hover .av, .spectrum .msg.agent a.face:focus-visible .av { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .bubble {
+  padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  border-bottom-left-radius: var(--spectrum-corner-radius-75);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .msg.adobe .bubble { border-bottom-left-radius: var(--spectrum-corner-radius-extra-large-default); border-bottom-right-radius: var(--spectrum-corner-radius-75); }
+.spectrum .bubble a { text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum .bubble p + p { margin-top: var(--spectrum-spacing-100); }
+.spectrum .bubble h1, .spectrum .bubble h2, .spectrum .bubble h3, .spectrum .bubble h4, .spectrum .bubble h5, .spectrum .bubble h6 { color: inherit; font-weight: var(--spectrum-bold-font-weight); }
+/* Code: Source Code Pro; inline on a faint overlay, a block on one too (S2: a layer and a
+   radius, no outline). */
+.spectrum .bubble code {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum .msg.mine .bubble code { background: var(--spectrum-transparent-black-200); }
+.spectrum .bubble pre {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  background: var(--them-code);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .msg.mine .bubble pre { background: var(--spectrum-transparent-black-200); }
+.spectrum .msg.agent .bubble pre { background: var(--s2-hover); }
+.spectrum .bubble blockquote.quote { border-radius: var(--spectrum-corner-radius-75) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-75); }
+.spectrum .bubble blockquote.quote > p.quote-by { font-size: var(--spectrum-font-size-75); }
+.spectrum .bubble blockquote.quote .quote-by b[role="button"] { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble .mention { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble a.channel { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .msg.mine .bubble .mention.adobe { border-radius: var(--spectrum-corner-radius-75); color: var(--spectrum-white); background: var(--spectrum-red-background-color-default); }
+.spectrum .msg.found .bubble { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-notice-visual-color); }
+.spectrum .msg .bubble { transition: box-shadow var(--spectrum-animation-duration-600) var(--spectrum-animation-ease-out); }
+/* Images: S2's small radius for media nested in the bubble; a gallery's tiles likewise. */
+.spectrum .bubble img.att { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .gallery { gap: var(--spectrum-spacing-100); }
+.spectrum .bubble .gallery > img.att { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .gallery > img.att:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+
+/* The thread agent's turn: an outlined bubble in the accent's visual color (dashed while it
+   is done, solid and faintly filled while it works), its working sign a ProgressCircle. */
+.spectrum .msg.agent .bubble { border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .msg.agent .bubble::before, .spectrum .msg.agent .bubble::after { border-width: var(--spectrum-border-width-200); }
+.spectrum .msg.agent .bubble a { color: var(--spectrum-accent-content-color-default); }
+.spectrum .msg.agent.working .bubble {
+  border-style: solid;
+  border-color: var(--spectrum-accent-visual-color);
+  background: var(--spectrum-accent-subtle-background-color-default);
+}
+.spectrum .msg.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum .msg.agent .spin, .spectrum .file-view .fv-wait .spin {
+  width: var(--spectrum-progress-circle-size-small);
+  height: var(--spectrum-progress-circle-size-small);
+  border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);
+  border-top-color: var(--spectrum-accent-content-color-default);
+  vertical-align: text-bottom;
+  animation-duration: var(--spectrum-animation-duration-2000);
+}
+.spectrum .msg.deleted .bubble { opacity: 1; color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Sending: a small ProgressBar under the bubble; a failed send, a negative message with its
+   alert icon and a Link to try again. */
+.spectrum .msg .sendbar { height: var(--spectrum-progress-bar-thickness-small); border-radius: calc(var(--spectrum-progress-bar-thickness-small) / 2); background: var(--spectrum-gray-300); }
+.spectrum .msg .sendbar i { background: var(--spectrum-accent-content-color-default); }
+.spectrum .msg .unsent { font-size: var(--spectrum-font-size-75); }
+.spectrum .msg .unsent .why { color: var(--spectrum-negative-content-color-default); }
+.spectrum .msg .unsent .why::before {
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  background: var(--spectrum-negative-visual-color);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .msg .unsent button { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); background: none; }
+.spectrum .msg .unsent button:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+
+/* Reactions under a message: small ActionButtons, yours selected in the accent's subtle fill. */
+.spectrum .rx { gap: var(--spectrum-spacing-75); }
+.spectrum .rx span, .spectrum .rx button {
+  padding: 0 var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+}
+.spectrum .rx button:hover { background: var(--spectrum-gray-200); }
+.spectrum .rx button.mine { background: var(--spectrum-accent-subtle-background-color-default); border-color: var(--spectrum-accent-visual-color); }
+/* The quick reactions and the emoji picker: a Popover holding quiet ActionButtons. */
+.spectrum .msg .quick, .spectrum .picker {
+  gap: var(--spectrum-spacing-50);
+  padding: var(--spectrum-spacing-50);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .msg .quick button, .spectrum .picker button { background: none; border: 0; border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .msg .quick button:hover, .spectrum .msg .quick button:focus-visible,
+.spectrum .picker button:hover, .spectrum .picker button:focus-visible { background: var(--s2-down); }
+.spectrum .msg .quick button[aria-pressed="true"] { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum .msg .quick .more { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .quick .edit { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .msg .quick .edit:not(:last-child) { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); box-shadow: var(--spectrum-border-width-100) 0 0 var(--spectrum-gray-200); }
+
+/* Files on a message: a card each on the bubble's own overlay, the kind's badge in S2's
+   categorical backgrounds (those that take white text), "Preview" a small ActionButton. */
+.spectrum .bubble .files { gap: var(--spectrum-spacing-75); }
+.spectrum .bubble .file { --kind: var(--spectrum-gray-background-color-default); gap: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .bubble .file[data-kind="table"] { --kind: var(--spectrum-green-background-color-default); }
+.spectrum .bubble .file[data-kind="text"] { --kind: var(--spectrum-gray-background-color-default); }
+.spectrum .bubble .file[data-kind="video"] { --kind: var(--spectrum-purple-background-color-default); }
+.spectrum .bubble .file[data-kind="audio"] { --kind: var(--spectrum-magenta-background-color-default); }
+.spectrum .bubble .file[data-kind="image"] { --kind: var(--spectrum-cyan-background-color-default); }
+.spectrum .bubble .file[data-kind="pdf"] { --kind: var(--spectrum-red-background-color-default); }
+.spectrum .bubble .file[data-kind="doc"] { --kind: var(--spectrum-blue-background-color-default); }
+.spectrum .bubble .file[data-kind="sheet"] { --kind: var(--spectrum-seafoam-background-color-default); }
+.spectrum .bubble .file[data-kind="slides"] { --kind: var(--spectrum-cinnamon-background-color-default); }
+.spectrum .bubble .file[data-kind="archive"] { --kind: var(--spectrum-brown-background-color-default); }
+.spectrum .bubble .file-ico { color: var(--spectrum-white); font-family: var(--s2-font); font-weight: var(--spectrum-extra-bold-font-weight); letter-spacing: normal; }
+.spectrum .bubble .file-ico::before { background: linear-gradient(225deg, transparent 50%, var(--spectrum-transparent-white-500) 50%); }
+.spectrum .bubble .file .file-name { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble .file-sub { font-size: var(--spectrum-font-size-75); }
+.spectrum .bubble .file-act {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: var(--s2-radius);
+}
+.spectrum .bubble .file-act:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .bubble .file video.file-player { background: var(--spectrum-black); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .file a.file-go { border-radius: var(--s2-radius); }
+
+/* A file's preview (ui/table.js) and its dialog: S2's TableView. The header on layer 1 in
+   bold, rows divided by a hairline (no stripes), hovered in the gray overlay; the find box a
+   small TextField, the spinner a ProgressCircle. */
+.spectrum .file-view, .spectrum .file-dialog { --zebra: var(--pane); }
+.spectrum .bubble .file-view {
+  font-size: var(--spectrum-font-size-75);
+  border-color: var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .bubble .file-view.failed, .spectrum .file-view .fv-wait { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-bar { gap: var(--spectrum-spacing-100); background: var(--spectrum-background-layer-1-color); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-count { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-find {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+}
+.spectrum :is(.file-view, .file-dialog) .fv-find:hover { border-color: var(--spectrum-gray-400); }
+.spectrum :is(.file-view, .file-dialog) .fv-find:focus { border-color: var(--spectrum-gray-800); }
+.spectrum :is(.file-view, .file-dialog) :is(.fv-expand, .fv-close) {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  background: transparent;
+}
+.spectrum :is(.file-view, .file-dialog) :is(.fv-expand, .fv-close):hover { background: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table :is(th, td) { border-bottom-color: var(--spectrum-gray-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th {
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-weight: var(--spectrum-bold-font-weight);
+  border-bottom-color: var(--spectrum-gray-300);
+}
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort] { color: var(--spectrum-neutral-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th button::after { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort="ascending"] button::after,
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort="descending"] button::after { color: var(--spectrum-neutral-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th button:focus-visible { outline: var(--s2-focus); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-table tbody tr:hover td { background: linear-gradient(var(--s2-row-hover), var(--s2-row-hover)), var(--pane); }
+.spectrum :is(.file-view, .file-dialog) .fv-table .fv-n { color: var(--spectrum-neutral-subdued-content-color-default); border-right-color: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table .fv-none, .spectrum :is(.file-view, .file-dialog) .fv-more { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-more { border-top-color: var(--spectrum-gray-200); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-text { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-har tr.fv-failed td:nth-child(3) { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum :is(.file-view, .file-dialog) .fv-table tr.fv-detail td { background: var(--spectrum-background-layer-1-color); }
+.spectrum :is(.file-view, .file-dialog) :focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .fv-request p, .spectrum .fv-request dt, .spectrum .fv-request .fv-secret { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fv-request :is(.fv-url, dl) { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum .fv-request .fv-why { color: var(--spectrum-negative-content-color-default); }
+.spectrum .fv-request h4 { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .fv-request button { font-size: var(--spectrum-font-size-75); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .fv-request .fv-text { border: 0; border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-background-layer-1-color); }
+/* The preview's dialog: S2's Dialog, full-size (a Takeover's proportions), its header plain. */
+.spectrum dialog.file-dialog { border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); font-size: var(--spectrum-font-size-100); }
+.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+.spectrum .file-dialog .fv-head { gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-400); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum .file-dialog .fv-title { font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
+.spectrum .file-dialog .fv-link { color: var(--spectrum-accent-content-color-default); }
+
+/* The lightbox: the overlay at its darkest; its controls are ActionButtons for content over
+   imagery (a translucent black fill, white glyphs), the current thumbnail outlined white. */
+.spectrum dialog.lightbox { color: var(--spectrum-white); background: transparent; box-shadow: none; border-radius: 0; }
+.spectrum dialog.lightbox::backdrop { background: var(--spectrum-transparent-black-900); opacity: 1; }
+.spectrum dialog.lightbox .stage > img { border-radius: var(--spectrum-corner-radius-100); box-shadow: var(--lift-shadow); background: var(--spectrum-white); }
+.spectrum dialog.lightbox :is(.bar a, .bar button, .count, .nav) {
+  color: var(--spectrum-white);
+  background: var(--spectrum-transparent-black-600);
+  border: 0;
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum dialog.lightbox :is(.bar a, .bar button) { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); display: inline-flex; align-items: center; }
+.spectrum dialog.lightbox :is(.bar a, .bar button, .nav):hover { color: var(--spectrum-white); background: var(--spectrum-transparent-black-800); }
+.spectrum dialog.lightbox .nav { border-radius: var(--spectrum-corner-radius-large-default); transition: background-color var(--s2-ease); }
+.spectrum dialog.lightbox .strip { gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-75); background: var(--spectrum-transparent-black-600); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum dialog.lightbox .strip button { border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-gray-800); border-color: transparent; }
+.spectrum dialog.lightbox .strip button[aria-current="true"] { border-color: var(--spectrum-white); }
+.spectrum dialog.lightbox :focus-visible { outline: var(--spectrum-focus-indicator-thickness) solid var(--spectrum-white); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+/* The composer: the reply box a TextArea (2px border, darker on hover, darkest focused), Send
+   S2's accent Button, the paperclip a quiet ActionButton as tall as the box. */
+.spectrum .composer { gap: var(--spectrum-spacing-100); border-top-color: var(--line); }
+.spectrum .composer textarea {
+  min-height: var(--spectrum-component-height-200);
+  padding: var(--spectrum-component-top-to-text-200) var(--spectrum-component-edge-to-text-200);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .composer textarea:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .composer textarea:focus { border-color: var(--spectrum-gray-800); }
+.spectrum .composer textarea:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .composer button.send {
+  min-height: var(--spectrum-component-height-200);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-200);
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: 0;
+  border-radius: calc(var(--spectrum-component-height-200) / 2);
+  font-size: var(--spectrum-font-size-200);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .composer button.send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+.spectrum .composer button.send:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .composer button.send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+.spectrum .composer .attach {
+  width: var(--spectrum-component-height-200);
+  height: var(--spectrum-component-height-200);
+  color: var(--spectrum-neutral-content-color-default);
+  border-radius: var(--s2-radius);
+}
+.spectrum .composer .attach svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+.spectrum .composer .attach:hover, .spectrum .composer .attach:focus-visible { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .composer .attach[aria-disabled="true"] { opacity: 1; color: var(--spectrum-disabled-content-color); background: none; }
+.spectrum .composer .connect { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Files going with the reply: cards on gray, each with a small CloseButton. */
+.spectrum .tray { gap: var(--spectrum-spacing-100); }
+.spectrum .tray .chip { gap: var(--spectrum-spacing-100); background: var(--spectrum-gray-100); border: 0; border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .tray .chip.img img { border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .tray .chip .ico { border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-accent-subtle-background-color-default); color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .tray .chip .nm { font-size: var(--spectrum-font-size-75); }
+.spectrum .tray .chip .sz { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .tray .chip .x {
+  width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  border: 0;
+  border-radius: 50%;
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .tray .chip .x:hover, .spectrum .tray .chip .x:focus-visible { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-default); }
+.spectrum .tray .attach-error { font-size: var(--spectrum-font-size-75); color: var(--spectrum-negative-content-color-default); }
+/* Dropping files: S2's DropZone (dashed accent edge on the drop-zone tint, the title in bold). */
+.spectrum #pane .dropzone {
+  border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color);
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  background: linear-gradient(rgb(var(--spectrum-drop-zone-background-color-rgb), var(--spectrum-drop-zone-background-color-opacity)),
+    rgb(var(--spectrum-drop-zone-background-color-rgb), var(--spectrum-drop-zone-background-color-opacity))),
+    color-mix(in srgb, var(--pane) 86%, transparent);
+}
+.spectrum #pane .dropzone > div { gap: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #pane .dropzone b { font-size: var(--spectrum-font-size-500); font-weight: var(--spectrum-black-font-weight); color: var(--spectrum-heading-color); }
+.spectrum #pane .dropzone svg { width: var(--spectrum-component-height-200); height: var(--spectrum-component-height-200); color: var(--spectrum-accent-visual-color); }
+.spectrum #pane .dropzone.refused { border-color: var(--spectrum-negative-visual-color); }
+.spectrum #pane .dropzone.refused svg { color: var(--spectrum-negative-visual-color); }
+
+/* Every floating list the inbox opens (mentions, channels, experts, a quote's links, a
+   source, a profile): S2's Popover (layer 2, a hairline, the large radius, elevated), and
+   their options Menu items (the gray overlay under the pointer or the keyboard). */
+.spectrum :is(.mentions, .chans, .expertlist, .linkpick, .srcpop, .pcard) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum :is(.mentions, .chans, .expertlist, .linkpick) { padding: var(--spectrum-spacing-75); }
+.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a) {
+  min-height: var(--s2-ctl);
+  gap: var(--spectrum-text-to-visual-100);
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick a:hover, .linkpick a:focus-visible) {
+  color: var(--spectrum-neutral-content-color-hover);
+  background: var(--s2-down);
+}
+.spectrum :is(.expertlist button, .linkpick a):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .chans li.none { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.mentions, .chans) .hint { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .expertlist b { font-weight: var(--spectrum-medium-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .expertlist small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .expertlist button.reject { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .expertlist button.reject:hover { color: var(--spectrum-neutral-content-color-hover); }
+/* The channel search of a new thread: a TextField over its list. */
+.spectrum .chanpick input { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .ph.newthread .sub b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ph.newthread .cancel { font-size: var(--spectrum-font-size-75); }
+
+/* Profile cards: a Popover with a large Avatar, the relation a bold Badge in its category's
+   S2 color. */
+.spectrum .pcard { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.spectrum .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .pcard .ttl, .spectrum .pcard .note { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard dt { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .rel {
+  padding: 0 var(--spectrum-spacing-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+}
+.spectrum .pcard .rel.adobe { background: var(--spectrum-accent-background-color-default); }
+.spectrum .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
+.spectrum .pcard .rel.customer { background: var(--spectrum-cinnamon-background-color-default); }
+.spectrum .pcard .rel.bot { background: var(--spectrum-gray-background-color-default); }
+/* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
+.spectrum .srcpop .head { font-size: var(--spectrum-font-size-75); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum .srcpop .host, .spectrum .srcpop .only { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .srcpop blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
+.spectrum .srcpop .view .none { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The thread's shared draft under the reply box: a dashed card in the accent's subtle fill,
+   "Send as me" the accent Button, "as the bot" an outline one, the rest small ActionButtons. */
+.spectrum .draftbar {
+  gap: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-accent-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
+}
+.spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .draftbar .pv { border-radius: var(--spectrum-corner-radius-75); background: none; }
+.spectrum .draftbar .pv:hover { background: none; }
+.spectrum .draftbar .pv .by { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .draftbar .pv .tx { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .draftbar .act { gap: var(--spectrum-spacing-75); }
+.spectrum .draftbar button:not(.pv) {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .draftbar button.more { padding: 0 var(--spectrum-spacing-100); }
+.spectrum .draftbar button.asme { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .draftbar button.asme:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .draftbar button.asbot { color: var(--spectrum-accent-content-color-default); background: transparent; border-color: var(--spectrum-accent-visual-color); }
+.spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
+.spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
+.spectrum .draftbar .srcs .lb { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The draft's sources: S2 Tags (gray, a hairline), linked. */
+.spectrum .draftbar .src {
+  padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-accent-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .draftbar .src:hover, .spectrum .draftbar .src:focus-visible { border-color: var(--spectrum-gray-800); }
+.spectrum .composer textarea.previewing {
+  border-style: dashed;
+  border-color: var(--spectrum-accent-visual-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
+}
+/* Held Send's other ways to send: a stack of secondary Buttons, floating (elevated); Resolve
+   outlined in positive, Save draft in the accent. */
+.spectrum .sendwrap .hold { gap: var(--spectrum-spacing-75); }
+.spectrum .sendwrap .hold button {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .sendwrap .hold button:hover { background: var(--spectrum-gray-100); }
+.spectrum .sendwrap .hold .resolve { border-color: var(--spectrum-positive-visual-color); }
+.spectrum .sendwrap .hold .resolve[aria-pressed="true"] { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .sendwrap .hold .savedraft { border-color: var(--spectrum-accent-visual-color); }
+
+/* Editing one of your messages in place: the bubble holds a TextArea, Save and Cancel small
+   ActionButtons beside the hint. */
+.spectrum .bubble.editing textarea {
+  min-height: var(--spectrum-component-height-200);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .bubble.editing textarea:focus { border-color: var(--spectrum-gray-800); }
+.spectrum .edithint { gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); opacity: 1; }
+.spectrum .edithint button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  font-size: var(--spectrum-font-size-75);
+  border-radius: var(--s2-radius);
+}
+.spectrum .edithint button[data-edit-save] { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-25); border: 0; font-weight: var(--spectrum-bold-font-weight); }
+
+/* Reviewing Clef's labels (admin): a floating panel (layer 2, elevated, it sticks over the
+   feed), each question an ActionGroup whose picked answer is selected; Apply the accent. */
+.spectrum .rv {
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .rv .q { gap: var(--spectrum-spacing-75); }
+.spectrum .rv .q b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .rv button { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
+.spectrum .rv button.model { border-color: var(--spectrum-accent-visual-color); }
+.spectrum .rv button.picked, .spectrum .rv button.picked:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
+.spectrum .rv .hist { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.rv, dialog.confirm) .apply { gap: var(--spectrum-spacing-100); }
+/* The accent Button wherever a panel or dialog sends. */
+.spectrum :is(.rv, dialog.confirm) .apply .send {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: 0;
+  border-radius: var(--s2-pill);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum :is(.rv, dialog.confirm) .apply .send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+.spectrum :is(.rv, dialog.confirm) .apply .send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+.spectrum dialog.confirm .apply button:not(.send) {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum dialog.confirm .apply button:not(.send):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+/* Confirming a send: S2's Dialog (layer 2, extra-large radius, elevated over the underlay). */
+.spectrum dialog.confirm {
+  padding: var(--spectrum-spacing-400);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+.spectrum dialog.confirm p { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum dialog.confirm .apply { margin-top: var(--spectrum-spacing-400); }
+
+/* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
+   action an outline Button for static white. */
+.spectrum .toast {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-300);
+  min-height: var(--spectrum-toast-height);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-neutral-subdued-background-color-default);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .toast :is(button, a) {
+  margin-left: 0;
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+  text-decoration: none;
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-white);
+  border-radius: var(--s2-pill);
+}
+.spectrum .toast :is(button, a):hover { color: var(--spectrum-white); background: var(--spectrum-transparent-white-200); }
+
+/* The inbox's parts of your menu (Notifications, the bells, Thread Agent): Menu items whose
+   chosen state is the checkmark (regular weight, as S2's Menu), each bell a row with a
+   quiet clear button. */
+.spectrum .menu .item[aria-checked="true"] { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .menu .hint { font-size: var(--spectrum-font-size-75); }
+.spectrum .menu #bells .bell { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75) var(--spectrum-spacing-50) var(--spectrum-component-edge-to-text-100); }
+.spectrum .menu #bells .bell svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu #bells .bell a { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .menu #bells .bell button {
+  width: var(--spectrum-component-height-75);
+  height: var(--spectrum-component-height-75);
+  padding: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .menu #bells .bell button:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-down); }
+.spectrum .menu #tracesHere select { width: calc(100% - var(--spectrum-spacing-300)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+
+/* Narrower screens: the filters a drawer over the underlay (on the base, elevated, no edge),
+   the list and the open thread sliding in turn as the page does. */
+@media (max-width: 1099px) {
+  .spectrum #filters { background: var(--spectrum-background-base-color); border-right: 0; }
+  .spectrum main.filtering #filters { box-shadow: var(--lift-shadow); }
+  .spectrum main.dragging #filters {
+    box-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6) calc(var(--spectrum-drop-shadow-blur) * 6)
+      rgb(var(--spectrum-drop-shadow-color-300-rgb), calc(var(--spectrum-drop-shadow-color-300-opacity) * var(--pull, 0)));
+  }
+  .spectrum main::after { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+  /* In the drawer the cards sit on the base like any Card: no overhang, so no shadow. */
+  .spectrum #filters .card { box-shadow: none; background: var(--spectrum-background-layer-1-color); }
+}
+@media (max-width: 699px) {
+  .spectrum .ph h2 { font-size: var(--spectrum-font-size-200); }
+  .spectrum .bubble { padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100); }
+  .spectrum .composer { gap: var(--spectrum-spacing-75); }
+  .spectrum .composer textarea { padding: var(--spectrum-component-top-to-text-200) var(--spectrum-component-edge-to-text-100); }
+  .spectrum .composer button.send { padding: 0 var(--spectrum-component-pill-edge-to-text-100); }
+}
+/* A touch screen: the tokens are S2's large scale already (src/page.js), so the controls
+   above grow with them; iOS zooms into a field under 16px, which the large scale's body
+   size is. */
+@media (hover: none) and (pointer: coarse) {
+  .spectrum .find input, .spectrum .composer textarea { font-size: var(--spectrum-font-size-100); }
+}

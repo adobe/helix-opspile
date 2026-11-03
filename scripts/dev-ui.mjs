@@ -14,8 +14,9 @@
 /**
  * Local, live-reloading preview of the inbox UI with fake data.
  *
- *   npm run ui:dev                 # http://localhost:8787/inbox
+ *   npm run ui:dev                 # http://localhost:8787/inbox (/spectrum: in Spectrum 2)
  *   PORT=9000 npm run ui:dev
+ *   UI_SCHEME=light npm run ui:dev     # light (or dark) whatever the browser prefers
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
@@ -67,7 +68,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { cleanExpertEvent } from '../src/expertevents.js';
 import { suggestMentions } from '../src/mention-match.js';
-import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
+import { inboxPage as servedInbox, page as servedPage, spectrumPage } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
 } from '../src/shortcodes.js';
@@ -1646,10 +1647,26 @@ const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:c
   width(); apply();
 })();</script>`;
 
-/** ui/<name>.html as the Worker serves it, with the banner and live reload. */
-async function uiPage(name) {
+/**
+ * ui/<name>.html as the Worker serves it, with the banner and live reload; with `spectrum`,
+ * in Spectrum 2's look, as under /spectrum.
+ */
+async function uiPage(name, spectrum = false) {
   const html = await readFile(join(uiDir, name), 'utf8');
-  const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
+  const files = await scripts();
+  let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, files);
+  if (spectrum) {
+    served = spectrumPage(served, name.replace(/\.html$/, ''), files);
+  }
+  // UI_SCHEME=light or dark: the pages in that color scheme, whatever the browser prefers
+  // (for screenshots of both).
+  const scheme = process.env.UI_SCHEME;
+  if (scheme === 'light' || scheme === 'dark') {
+    const other = scheme === 'light' ? 'dark' : 'light';
+    served = served.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
+      .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
+      .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
+  }
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
@@ -1789,6 +1806,15 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/inbox') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(await uiPage('inbox.html'));
+      return;
+    }
+    // Spectrum 2's look of the same pages, as the Worker serves it under /spectrum.
+    const spectrum = {
+      '/spectrum': 'inbox', '/spectrum/kb': 'kb', '/spectrum/admin': 'admin', '/spectrum/cogs': 'cogs',
+    }[url.pathname];
+    if (spectrum) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(await uiPage(`${spectrum}.html`, true));
       return;
     }
     if (ICONS[url.pathname]) {
