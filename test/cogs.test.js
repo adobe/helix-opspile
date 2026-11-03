@@ -20,7 +20,7 @@ import {
   bedrockModel, costOf, isStock, priceList, unitPrice,
 } from '../src/cogs/prices.js';
 import {
-  allocate, chartUnit, cogsReport, columns, period,
+  allocate, chartUnit, cogsReport, columns, estimateWindow, period,
 } from '../src/cogs/report.js';
 import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, volumeRows,
@@ -565,7 +565,8 @@ describe('cogs: rollup', () => {
 });
 
 describe('cogs: report', () => {
-  function seeded() {
+  /** Two days of usage; `counting`: every source counted since long before them. */
+  function seeded({ counting = true } = {}) {
     const DB = d1({ teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix ops' }], people: [ADA, BO] });
     DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES
       ('acme', 'ACME Corporation', 'customer', '2026-10-20T09:00:00Z'),
@@ -601,6 +602,13 @@ describe('cogs: report', () => {
     usageRow(DB, {
       day: '2026-11-02', service: 'workers_ai', metric: 'input_tokens', detail: '@cf/someone/new', quantity: 10,
     });
+    if (counting) {
+      for (const source of ['meter', 'account', 'd1']) {
+        usageRow(DB, {
+          day: '2026-10-01', source, service: 'volume', metric: 'days', quantity: 1,
+        });
+      }
+    }
     return { DB };
   }
   const url = (q) => new URL(`https://opspile.example/api/admin/cogs?${q}`);
@@ -653,7 +661,10 @@ describe('cogs: report', () => {
     close(r.chart.columns[9].services.workers, 1);
     assert.deepEqual(r.chart.columns[10].services, {});
     assert.deepEqual(r.unpriced, ['workers_ai/input_tokens (@cf/someone/new)']);
-    assert.deepEqual(r.since, { account: '2026-11-01', d1: '2026-11-01', meter: '2026-11-01' });
+    assert.deepEqual(r.since, { account: '2026-10-01', d1: '2026-10-01', meter: '2026-10-01' });
+    // A month at the rate of the period so far: a day and a half.
+    assert.deepEqual(r.estimate, { from: '2026-11-01', days: 1.5 });
+    close(r.totals.flowMonthly, (10 / 1.5) * 30.44);
   });
 
   it('filters by customer, team and service, after sharing out', async () => {
@@ -682,6 +693,31 @@ describe('cogs: report', () => {
     r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&team=edge'), { now: NOW });
     assert.equal(r.totals.flow, 0);
     assert.equal(r.totals.perMessage, null);
+  });
+
+  it('estimates from the first whole day every source counted, to now', async () => {
+    const since = { account: '2026-10-01', d1: '2026-10-01', meter: '2026-11-01' };
+    const p = { from: '2026-10-04', to: '2026-11-02' };
+    assert.deepEqual(estimateWindow(p, since, NOW), { from: '2026-11-02', days: 0.5 });
+    assert.deepEqual(estimateWindow(p, {}, NOW), { from: '2026-10-04', days: 29.5 });
+    assert.deepEqual(estimateWindow({ from: '2026-10-01', to: '2026-10-31' }, { meter: '2026-09-01' }, NOW), { from: '2026-10-01', days: 31 });
+    assert.equal(estimateWindow({ from: '2026-10-01', to: '2026-11-01' }, since, NOW), null);
+    // The meter started on the 1st: its first day is partial, so the estimates count the 2nd only.
+    const env = seeded({ counting: false });
+    let r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW });
+    assert.deepEqual(r.estimate, { from: '2026-11-02', days: 0.5 });
+    close(r.totals.flow, 10);
+    assert.equal(r.totals.messages, 80);
+    close(r.totals.flowMonthly, (5 / 0.5) * 30.44);
+    close(r.totals.perMessage, 5 / 40);
+    close(r.totals.perThread, 5 / 4);
+    close(r.services.find((s) => s.id === 'bedrock').perMessage, 4 / 40);
+    close(r.orgs.find((o) => o.org === 'acme').perThread, (4 + 0.75) / 3);
+    r = await cogsReport(env, url('from=2026-10-30&to=2026-11-01'), { now: NOW });
+    assert.equal(r.estimate, null);
+    assert.equal(r.totals.flowMonthly, null);
+    assert.equal(r.totals.perMessage, null);
+    assert.equal(r.orgs.find((o) => o.org === 'acme').perMessage, null);
   });
 
   it('charts about as many columns whatever the period: by the hour, the day or the week', async () => {

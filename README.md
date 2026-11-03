@@ -437,7 +437,10 @@ and team:
 
 - **Flow**: what the period's work used (requests, CPU time, rows, operations, tokens, queries),
   in dollars, per service, and **per message** and **per thread**: divided by the
-  messages and the threads started in the period, in what is selected. The chart has about as
+  messages and the threads started in the period, in what is selected. These estimates (and a
+  month at this rate) count from the first whole day every source has counted: the Worker's own
+  counts started mid-day, and before them the period's messages were not all costed. A month at
+  this rate divides by the time so far, today's hours included. The chart has about as
   many columns whatever the period: an hour each for a week or less (7 days), a day each up to
   45 days (30 days, a month), a week each for longer (90 days).
 - **Stock**: what keeping it costs a month (R2, D1, Vectorize, AI Search, the agents' Durable
