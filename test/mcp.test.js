@@ -370,7 +370,13 @@ describe('mcp tools', () => {
   });
 
   it('get_thread returns messages with ids, and nothing for other teams', async () => {
-    const t = structured(await callTool(env(), 'get_thread', { thread: SLACK }));
+    const e = env();
+    assert.equal(structured(await callTool(e, 'get_thread', { thread: SLACK })).kind, 'other');
+    e.DB.sqlite.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model,
+      labeled_at) VALUES (?, 'incident', 0.9, '2026-10-21T10:05:00Z', 'clef', '2026-10-21T10:06:00Z')`)
+      .run(SLACK);
+    const t = structured(await callTool(e, 'get_thread', { thread: SLACK }));
+    assert.equal(t.kind, 'incident');
     assert.equal(t.customer, 'acme');
     assert.deepEqual(t.messages.map((m) => [m.message, m.text]), [
       [`${SLACK}|1.1`, 'Our site is down'], [`${SLACK}|1.2`, 'Still down, @Ada?'],

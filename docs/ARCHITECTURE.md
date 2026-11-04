@@ -248,7 +248,8 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
 **Re-threading.** People often post a follow-up as a new root message instead of replying,
 or split one request over several messages, and alert channels post the same alert again
 and again. A root by the same person within three minutes of their previous root in the
-channel, with nobody else's root between them, continues it (a *burst*). When a root message
+channel, with nobody else's root between them, continues it (a *burst*), unless that root is
+deleted by then: people delete a message and post it again, and the new one is the thread. When a root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
 earlier roots in the same channel, within 14 days, are found by vector search.
@@ -292,8 +293,10 @@ pulls in near-identical later alerts that had found nothing earlier, and a root 
 next root by the same person within three minutes. A conversation's root is decided from the
 conversations before it, so re-threading a channel again goes oldest root first
 (`scripts/replay.mjs --rethread --channel <id>`). The inbox shows a group as
-one entry: the first thread's title, the latest activity, the most pressing attention of any
-member, and all members' messages in order. A root is re-threaded 30 seconds after it arrives,
+one entry: the first thread's title, the latest activity and the latest member's label, the most
+pressing attention of any member, and all members' messages in order. A first thread whose messages
+were all deleted after a member folded into it has no activity, title or link: the next member's
+stand in. A root is re-threaded 30 seconds after it arrives,
 so it can be in the inbox on its own until then: a match tells the open inboxes which threads
 it folded, which take those threads' own entries off the list once the group's is there (as does
 a reload of the first page that has them in a group, should the announcement be missed), one

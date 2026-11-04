@@ -389,12 +389,13 @@ export async function rethread(env, key, { force = false } = {}) {
 
   // A burst: the channel's previous root is by the same person, minutes earlier. People
   // split one request over several messages instead of replying to themselves.
-  // Only people in conversations: a bot posts many different alerts within minutes.
+  // Only people in conversations: a bot posts many different alerts within minutes. Not a root
+  // that is deleted: people delete a message and post it again, and the new one is the thread.
   const rootAuthor = conversation && await env.DB.prepare(`SELECT author_key
     FROM messages WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
   const author = rootAuthor && rootAuthor.author_key;
   const previous = author && await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
-    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1 AND m.deleted = 0
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at < ? AND t.root_at >= ? ORDER BY t.root_at DESC LIMIT 1`)
     .bind(
@@ -526,7 +527,7 @@ export async function rethread(env, key, { force = false } = {}) {
   }
   // The next root, if it is by the same person minutes later, continues this one.
   const next = author && await env.DB.prepare(`SELECT t.*, m.author_key
-    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.deleted = 0
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
     .bind(

@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, mentionedByName, PREVIEW_MAX, previewOf, readState, titleOf,
-  waitingOn,
+  advanceWatermark, indexMessage, latestMember, mentionedByName, PREVIEW_MAX, previewOf, readState,
+  titleOf, waitingOn,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -261,5 +261,17 @@ describe('previewOf', () => {
     const long = previewOf('word '.repeat(100));
     assert.equal(long.length, PREVIEW_MAX);
     assert.ok(long.endsWith('…'));
+  });
+});
+
+describe('latestMember', () => {
+  it('takes a member whose messages are all deleted for the oldest, not the latest', () => {
+    const members = [
+      { thread: 'a', any_at: null },
+      { thread: 'b', any_at: '2026-10-20T10:00:36Z' },
+      { thread: 'c', any_at: '2026-10-20T10:00:12Z' },
+    ];
+    assert.equal(latestMember(members).thread, 'b');
+    assert.equal(latestMember([{ thread: 'a', any_at: null }]).thread, 'a');
   });
 });

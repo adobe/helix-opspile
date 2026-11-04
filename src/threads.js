@@ -183,6 +183,16 @@ export async function findMessage(db, {
 export const ATTENTION = ['adobe', 'mentioned-me', 'mentioned-team', 'team', 'me'];
 
 /**
+ * The member of a re-threaded group with the latest activity, whose label speaks for the group. A
+ * member whose messages are all deleted has no `any_at`: it is the oldest, not the latest (as
+ * text, `null` sorts after every date).
+ */
+export function latestMember(members) {
+  return [...members]
+    .sort((a, b) => String(b.any_at || '').localeCompare(String(a.any_at || '')))[0];
+}
+
+/**
  * Who a thread waits on: `us`, `customer`, `vendor` or `nobody`. Clef's `next_actor` (on
  * `label`) answers it, but a label can be stale or wrong: when Adobe posted last, the thread
  * does not wait on us, whatever the label says. Without a label, a thread waits on us when

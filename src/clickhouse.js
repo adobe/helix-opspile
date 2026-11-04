@@ -18,7 +18,7 @@ import {
   isResolved, mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { effectiveLabel, reviewsFor } from './review.js';
-import { waitingOn } from './threads.js';
+import { latestMember, waitingOn } from './threads.js';
 
 /**
  * The klickhaus export: one row per message, metadata and Clef's classification but no text,
@@ -185,7 +185,7 @@ async function entries(env, groups) {
   const out = new Map();
   for (const [g, members] of groups) {
     const anchor = members.find((m) => m.thread === g) || members[0];
-    const latest = [...members].sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0];
+    const latest = latestMember(members);
     const labelKey = labelOf.has(latest.thread) ? latest.thread : anchor.thread;
     const model = labelOf.get(labelKey) || null;
     const label = effectiveLabel(model, reviewsOf.get(labelKey) || []);

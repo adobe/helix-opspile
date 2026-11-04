@@ -291,7 +291,8 @@ function threadHead(key, data) {
     link: t.permalink || null,
     resolution: (data.resolution && data.resolution.state) || 'open',
     urgency: urgencyOf(data),
-    kind: kindOf({ kind: t.kind, label: data.label }),
+    // The thread view's label has Clef's kind as `kind` (the inbox's has `label_kind`).
+    kind: kindOf({ kind: t.kind, label: data.label && { label_kind: data.label.kind } }),
     facts: data.facts.map((x) => ({ field: x.field, value: x.value })),
   };
 }

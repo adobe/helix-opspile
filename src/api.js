@@ -52,7 +52,9 @@ import {
 } from './shares.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
-import { ATTENTION, readState, waitingOn } from './threads.js';
+import {
+  ATTENTION, latestMember, readState, waitingOn,
+} from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
 import { statsFor } from './klickhaus.js';
@@ -280,7 +282,8 @@ const max = (xs) => xs.filter(Boolean).sort().pop() || null;
 /**
  * Folds re-threaded threads into one entry per group (keyed by the group's first
  * thread). The entry keeps the first thread's title and link, the latest activity and
- * label of any member, the most pressing attention, and the list of members.
+ * label of any member, the most pressing attention, and the list of members. A first thread
+ * whose messages are all deleted has neither title nor link: the next member's stand in.
  */
 export function fold(threads) {
   const groups = new Map();
@@ -297,7 +300,8 @@ export function fold(threads) {
     }
     const byRoot = [...ms].sort((a, b) => String(a.root_at).localeCompare(String(b.root_at)));
     const anchor = ms.find((m) => m.thread === k) || byRoot[0];
-    const latest = [...ms].sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0];
+    const latest = latestMember(ms);
+    const first = (f) => [anchor, ...byRoot].map((m) => m[f]).find(Boolean) ?? anchor[f];
     const people = [];
     for (const m of byRoot) {
       for (const p of m.participants || []) {
@@ -309,6 +313,8 @@ export function fold(threads) {
     return {
       ...anchor,
       thread: k,
+      title: first('title'),
+      permalink: first('permalink'),
       last_at: max(ms.map((m) => m.last_at)),
       any_at: max(ms.map((m) => m.any_at)),
       last_author: latest.last_author,
@@ -708,8 +714,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const readSet = new Set(read.map((m) => m.thread));
   const readKeys = read.length === group.length ? keys : JSON.stringify(read.map((m) => m.thread));
   // The latest member's label speaks for the group.
-  const labelKey = [...group]
-    .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0].thread;
+  const labelKey = latestMember(group).thread;
   const entryKeys = [key, ...group.map((m) => m.thread)];
   // Everything below depends only on the group: ask D1 and R2 at once, not one by one
   // (opening a thread waited for some fifteen round trips in a row).
@@ -718,8 +723,11 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentTurn,
   ] = await Promise.all([
-    env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
-      AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
+    // The first thread's root, else its first message, else (all of it deleted) the group's.
+    env.DB.prepare(`SELECT permalink FROM messages
+      WHERE thread IN (SELECT value FROM json_each(?1)) AND deleted = 0 AND permalink IS NOT NULL
+      ORDER BY (thread = ?2 AND id = ?3) DESC, (thread = ?2) DESC, at LIMIT 1`)
+      .bind(keys, key, row.root_id).first(),
     Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
       .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
