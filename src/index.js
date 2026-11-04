@@ -46,6 +46,7 @@ import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
+import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
@@ -97,10 +98,11 @@ function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
 }
 
-/** The favicon and touch icon, decoded once per isolate. */
+/** The favicon, the touch icon and the notifications' sound, decoded once per isolate. */
+const ASSETS = { ...ICONS, ...SOUNDS };
 const iconBytes = new Map();
 function icon(pathname) {
-  const entry = ICONS[pathname];
+  const entry = ASSETS[pathname];
   if (!entry) {
     return null;
   }
