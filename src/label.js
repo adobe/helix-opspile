@@ -38,52 +38,132 @@ export const MAX_QUESTIONS = 24;
 /**
  * What a thread is about, across kinds: an incident and a question can both be about the CDN.
  * Each is one Clef yes/no question in the labeling call; a thread keeps those at or above
- * TOPIC_MIN (labels.topics). `name` is what the inbox shows.
+ * TOPIC_MIN (labels.topics). `name` is what the inbox shows. Found with the topic map
+ * (src/topicmap.js): what the threads were about that no question asked.
  */
 export const TOPICS = {
   authoring: {
     name: 'Authoring',
-    what: 'authoring content: Universal Editor, Document Authoring, blocks, components or templates',
+    what: 'how authors write and edit pages in the authoring tools (Universal Editor, Document'
+      + ' Authoring, Experience Workspace, Word or Google Docs, sheets, Forms): their editing'
+      + ' features, content models, fields and components, not access to them',
   },
   auth: {
     name: 'Sign-in and permissions',
-    what: 'signing in or permissions: login, SSO, IMS, tokens, or an access-denied or unauthorized error',
+    what: 'signing in or permissions: login, SSO, IMS, tokens, API keys or credentials, roles, or'
+      + ' an access-denied or unauthorized error',
   },
   commerce: {
     name: 'Commerce',
-    what: 'commerce: products, catalogs, product or listing pages, carts, checkout, or product feeds',
+    what: 'commerce: product data and feeds (Merchant Center, reviews, LLM feeds), catalogs, stock'
+      + ' and pricing, product or listing pages, carts, checkout or orders',
   },
   project: {
-    name: 'Project status',
-    what: 'the status of a project: a proof of concept, a plan, next steps, progress or a review',
-  },
-  golive: {
-    name: 'Go-live and migration',
-    what: 'a go-live, launch, cutover or migration to a new site or platform',
+    name: 'Project plan and go-live',
+    what: 'a migration or launch project: moving a site, pages or domains to a new platform, a'
+      + ' go-live, launch or cutover and its date, a proof of concept, onboarding, or the plan'
+      + ' and next steps',
   },
   cdn: {
     name: 'CDN and caching',
-    what: 'the CDN, caching, purging, domains, DNS or certificates',
+    what: 'the CDN or caching: Fastly, Akamai, Cloudflare or CloudFront, BYO CDN setup, purging,'
+      + ' push invalidation or origin routing',
+  },
+  domains: {
+    name: 'Domains and certificates',
+    what: 'domains, DNS, delegation or TLS certificates',
   },
   performance: {
     name: 'Performance',
-    what: 'page performance: Core Web Vitals, Lighthouse, LCP, CLS, INP or loading speed',
+    what: 'page performance: Core Web Vitals, Lighthouse, LCP, CLS, INP, loading speed,'
+      + ' performance reports or scores, or preloading and optimizing what loads first',
   },
   publishing: {
     name: 'Preview and publishing',
-    what: 'previewing, publishing or unpublishing content, or content that does not sync or update',
+    what: 'previewing, publishing or unpublishing content, content (not code) that does not update'
+      + ' after publishing, or content overwritten or published by mistake',
   },
   seo: {
     name: 'SEO',
-    what: 'SEO: redirects, sitemaps, robots.txt, indexing, canonical URLs or structured data',
+    what: 'SEO: sitemaps, robots.txt, indexing, canonical URLs, structured data, or how search'
+      + ' engines or AI assistants show or classify pages',
+  },
+  urls: {
+    name: 'URLs and redirects',
+    what: 'URLs: redirects, aliases, vanity or legacy URLs, links between pages, or pages that'
+      + ' return 404',
   },
   integrations: {
     name: 'Integrations',
-    what: 'an integration with another system: analytics, tag managers, personalization, consent,'
-      + ' translation, search, or a third-party API',
+    what: 'connecting the site to another product or service: analytics (Adobe Analytics, GTM,'
+      + ' Tealium, Launch), Adobe Target or personalization, consent (OneTrust), search (Coveo),'
+      + ' translation (Lilt, Lionbridge), AI assistants and connectors (MCP, Claude), workflow'
+      + ' (Workfront), reviews, or a third-party API',
+  },
+  code: {
+    name: 'Code and deployment',
+    what: 'code and deployments: the GitHub or BYO Git repository, code sync, branches, builds, or'
+      + ' code changes that do not show on the site',
+  },
+  assets: {
+    name: 'Assets and images',
+    what: 'assets and images: the DAM, Asset Picker, Dynamic Media, uploads, renditions, image'
+      + ' quality or asset URLs',
+  },
+  content: {
+    name: 'Content structure and reuse',
+    what: 'Content Fragments or Experience Fragments, MSM live copies, rolling content out to'
+      + ' locales or regions, translation and localization, or how a site\'s content and folders'
+      + ' are organized across languages and regions',
+  },
+  frontend: {
+    name: 'Blocks and front-end code',
+    what: 'the site\'s front-end code: how blocks are built, styled, laid out or rendered, the'
+      + ' header, footer or navigation, server-side rendering, or the JavaScript, CSS, fonts and'
+      + ' icons in the repository',
+  },
+  errors: {
+    name: 'Errors and traffic',
+    what: 'errors and load: 5xx responses, timeouts, outages, error messages from the platform, or'
+      + ' unusual or excessive traffic or load, not a sign-in or permission error',
+  },
+  limits: {
+    name: 'Limits and quotas',
+    what: 'a product limit: a size, length, count or rate limit or quota, or a request to raise'
+      + ' one',
+  },
+  security: {
+    name: 'Security and compliance',
+    what: 'security and compliance: protecting a site or origin, secrets and keys, allowlisting'
+      + ' IPs or redirect URIs, content security policy, vulnerabilities, privacy, or compliance'
+      + ' documents',
+  },
+  optimizer: {
+    name: 'Sites Optimizer and Brand Visibility',
+    what: 'AEM Sites Optimizer, Brand Visibility or Preflight: their crawls, reports,'
+      + ' opportunities, suggestions or AI optimizations',
+  },
+  roadmap: {
+    name: 'Roadmap and early access',
+    what: 'a feature that is not generally available yet (beta, early access, an experiment or a'
+      + ' pilot), when a feature ships or is enabled, or a feature request or product feedback',
+  },
+  inbox: {
+    name: 'Inbox and bot',
+    what: 'this inbox, its bots and agents, or how a Slack, Teams or Discord channel is set up for'
+      + ' support',
   },
 };
-export const TOPIC_MIN = 0.8;
+/**
+ * A thread keeps the topics Clef gives at least this: the best single cut on 225 threads labeled
+ * by hand (macro F1 0.81, at 0.8 it was 0.62; the threads with no topic 12%, at 0.8 36%). Per-topic
+ * cuts did no better on held-out threads. Clef's answers move a little with the other questions of
+ * a call, and it was measured with these in this order (QUESTIONS and the first 20 topics in one
+ * call, `inbox` with the tech stack in the next): keep the order, or measure again.
+ */
+export const TOPIC_MIN = 0.55;
+/** Topics no longer asked, as the topic that took them over, for the labels from before. */
+const RETIRED_TOPICS = { golive: 'project' };
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -183,8 +263,12 @@ export function topicList(stored) {
   } catch {
     parsed = null;
   }
-  return parsed && typeof parsed === 'object'
-    ? Object.entries(parsed).sort((x, y) => y[1] - x[1]).map(([id]) => id) : [];
+  if (!parsed || typeof parsed !== 'object') {
+    return [];
+  }
+  const ids = Object.entries(parsed).sort((x, y) => y[1] - x[1])
+    .map(([id]) => RETIRED_TOPICS[id] || id);
+  return [...new Set(ids)];
 }
 
 /** The names the inbox shows for topic ids. */

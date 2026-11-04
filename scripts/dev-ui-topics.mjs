@@ -36,7 +36,7 @@ function random(seed) {
 const TOPICS = [
   ['CDN purge and stale cache', 'Customers see old pages after publishing and need the cache cleared or its rules fixed.', { cdn: 0.5, publishing: 0.2 },
     ['Purge by surrogate key leaves stale pages', 'Cache rule changes have no effect', 'Old CSS served after deploy', 'Stale product images on the live site', 'Purge API returns 403'], 9],
-  ['Bring-your-own CDN setup', 'Customers putting their own CDN in front of the site need its origin, headers and keys right.', { cdn: 0.6, golive: 0.2 },
+  ['Bring-your-own CDN setup', 'Customers putting their own CDN in front of the site need its origin, headers and keys right.', { cdn: 0.6, project: 0.2 },
     ['Origin headers for our own CDN', 'Push invalidation for a customer CDN', 'Akamai property in front of the site', 'Fastly service setup review'], 8],
   ['Certificates and domains', 'Customers need certificates issued and domains pointed before a launch.', { cdn: 0.3 },
     ['Expired certificate served on www', 'Delegating a subdomain', 'Wildcard certificate for regional sites', 'Apex domain redirect'], 6],
@@ -56,7 +56,7 @@ const TOPICS = [
     ['Review feed product ids do not match', 'Marketplace feed rejects variants', 'Feed SFTP upload settings', 'Missing prices in the shopping feed'], 7],
   ['Checkout and orders', 'Orders fail or land wrong between the storefront and the commerce backend.', { commerce: 0.85 },
     ['Checkout rejects a custom shipping address', 'Orders reassigned between accounts', 'Coupon for a corporate account fails', 'Cart empties after sign-in'], 6],
-  ['Storefront build', 'One customer builds a new storefront and works through its open items.', { commerce: 0.3, golive: 0.3 },
+  ['Storefront build', 'One customer builds a new storefront and works through its open items.', { commerce: 0.3, project: 0.3 },
     ['Storefront product detail page', 'Category page filters', 'Storefront search results', 'Account pages on the storefront'], 8],
   ['Fragments and multi-site rollout', 'Teams roll content out to many sites and languages and need fragments and inheritance to work.', {},
     ['Rolling out fragments to every locale', 'Inheritance breaks for one market', 'Editing fragments in the editor', 'Language copies out of sync'], 6],
@@ -76,7 +76,7 @@ const TOPICS = [
     ['Form submissions not reaching the CRM', 'Tag manager loads twice', 'Consent banner blocks analytics', 'Chat widget on every page'], 6],
   ['Optimizer reports', 'Customers question what the optimizer and its reports show.', {},
     ['Optimizer crawl misses pages', 'Report numbers differ from analytics', 'Opportunity list is empty', 'Optimizer access for a new team'], 5],
-  ['Go-live dates and rollout', 'Projects agree dates, open items and who does what before launch.', { golive: 0.6, project: 0.2 },
+  ['Go-live dates and rollout', 'Projects agree dates, open items and who does what before launch.', { project: 0.7 },
     ['Go-live checklist for the first site', 'Launch date moved', 'Open items before cutover', 'Pilot status update'], 6],
 ];
 

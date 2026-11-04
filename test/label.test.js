@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
+  isTitle, MAX_QUESTIONS, QUESTIONS, stateOf, tidyTitle, TOPIC_MIN, TOPICS, topicList, topicsOf,
+  writeTitle,
 } from '../src/label.js';
 
 // Made-up thread and people only.
@@ -80,13 +81,31 @@ describe('kinds and topics', () => {
 
   it('keeps the topics Clef is sure of, likeliest first', () => {
     const topics = topicsOf({
-      'topic.cdn': { noul: 0.81 }, 'topic.seo': { noul: 0.95 }, 'topic.auth': { noul: 0.3 }, next_actor: {},
+      'topic.cdn': { noul: 0.81 },
+      'topic.seo': { noul: 0.95 },
+      'topic.code': { noul: 0.55 },
+      'topic.auth': { noul: 0.3 },
+      'topic.nope': { noul: 0.99 },
+      next_actor: {},
     });
-    assert.deepEqual(topics, { cdn: 0.81, seo: 0.95 });
-    assert.deepEqual(topicList(JSON.stringify(topics)), ['seo', 'cdn']);
-    assert.equal(topicsOf({ 'topic.cdn': { noul: 0.2 } }), null);
+    assert.deepEqual(topics, { cdn: 0.81, seo: 0.95, code: 0.55 });
+    assert.deepEqual(topicList(JSON.stringify(topics)), ['seo', 'cdn', 'code']);
+    assert.equal(topicsOf({ 'topic.cdn': { noul: 0.54 } }), null);
     assert.deepEqual(topicList(null), []);
     assert.deepEqual(topicList('not json'), []);
+  });
+
+  it('shows a retired topic of an older label as the one that took it over', () => {
+    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85}'), ['project', 'cdn']);
+    assert.deepEqual(topicList('{"project":0.95,"golive":0.9}'), ['project']);
+  });
+
+  it('asks the topics in the order they were measured in, the 21st in the second call', () => {
+    assert.deepEqual(Object.keys(TOPICS), ['authoring', 'auth', 'commerce', 'project', 'cdn',
+      'domains', 'performance', 'publishing', 'seo', 'urls', 'integrations', 'code', 'assets',
+      'content', 'frontend', 'errors', 'limits', 'security', 'optimizer', 'roadmap', 'inbox']);
+    assert.equal(Object.keys(QUESTIONS).length + Object.keys(TOPICS).length, MAX_QUESTIONS + 1);
+    assert.equal(TOPIC_MIN, 0.55);
   });
 });
 
