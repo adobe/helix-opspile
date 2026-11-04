@@ -26,8 +26,8 @@ import {
 import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
-import { inTeam, isAdmin, managesTeam } from './review.js';
-import { ownsCustomer } from './shares.js';
+import { mayEdit, mayRead } from './kbaccess.js';
+import { isAdmin, managesTeam } from './review.js';
 
 /**
  * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
@@ -117,18 +117,16 @@ async function shown(env, row) {
 }
 
 /** Whether `me` may manage the servers of `scope`/`slug`: whoever edits its knowledge base. */
-const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && managesTeam(me, slug));
+const mayManage = (env, me, scope, slug) => mayEdit(env, me, { kind: scope, slug });
 
 /**
  * The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null.
- * With `read`, of one `me` may look at: a member of its team, or of a team that owns its
- * customer (src/shares.js), sees its servers, read-only.
+ * With `read`, of one `me` may look at (src/kbaccess.js): read-only, at bare URLs.
  */
 export async function ownerOf(env, me, repo, { read = false } = {}) {
   const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
     .bind(String(repo)).first();
-  const may = base && (mayManage(me, base.kind, base.slug) || (read && (base.kind === 'team'
-    ? inTeam(me, base.slug) : await ownsCustomer(env, me, base.slug))));
+  const may = base && await (read ? mayRead : mayEdit)(env, me, base);
   return may ? { scope: base.kind, slug: base.slug } : null;
 }
 
@@ -378,7 +376,7 @@ async function globalsView(env, me, owner, only) {
           installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
           configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
         };
-      } else if (app && mayManage(me, owner.scope, owner.slug)) {
+      } else if (app && await mayManage(env, me, owner.scope, owner.slug)) {
         // Team managers install it on their repositories; the admin team then allows that.
         const { slug, htmlUrl, installUrl } = shownApp(app);
         view.github = { app: { slug, htmlUrl, installUrl } };
@@ -634,7 +632,7 @@ async function list(env, me, repo) {
   }
   const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
     ORDER BY name`).bind(owner.scope, owner.slug).all();
-  const may = mayManage(me, owner.scope, owner.slug);
+  const may = await mayManage(env, me, owner.scope, owner.slug);
   const servers = await Promise.all((results || []).map((r) => shown(env, r)));
   return json({
     repo,
@@ -688,7 +686,7 @@ async function update(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   const { fields, error } = await fieldsFrom(env, body, current);
@@ -737,7 +735,7 @@ async function remove(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   if (current.auth === 'oauth' && current.oauth_by) {
@@ -752,7 +750,7 @@ async function recheck(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   const checked = await check(env, current.id);
@@ -764,7 +762,7 @@ async function recheck(env, me, body) {
 /** A server `me` manages that signs in with OAuth, by id; else an error response. */
 async function oauthServer(env, me, id) {
   const current = await byId(env, id);
-  if (!current || !mayManage(me, current.scope, current.slug)) {
+  if (!current || !await mayManage(env, me, current.scope, current.slug)) {
     return { error: json({ error: 'no such server' }, 404) };
   }
   if (current.auth !== 'oauth') {
@@ -799,7 +797,7 @@ async function oauthStart(env, me, body) {
  */
 async function oauthCallback(env, me, url) {
   const row = await serverForState(env, url.searchParams.get('state'));
-  if (!row || !mayManage(me, row.scope, row.slug)) {
+  if (!row || !await mayManage(env, me, row.scope, row.slug)) {
     return text('This sign-in expired or was not started here. Connect the server again from the'
       + ' knowledge-base editor.\n', 400);
   }

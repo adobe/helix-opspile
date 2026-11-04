@@ -89,28 +89,27 @@ const ownedBy = (alias, param) => `${alias}.kind != 'ignore' AND (
     OR (${alias}.source, ${alias}.channel_id) IN (SELECT source, channel_id FROM channel_teams
       WHERE team IN (SELECT value FROM json_each(${param}))))`;
 
-const slugsOf = (me) => JSON.stringify(((me && me.teams) || []).map((t) => t.slug));
-
 /**
- * The customers (org slugs) `me`'s teams own: those with a channel filed under one of them or
- * shared with one. A team's members read the knowledge bases of the customers it owns. A Set.
+ * The customers (org slugs) the teams `teams` (slugs) own: those with a channel filed under one
+ * of them or shared with one. A team's members read the knowledge bases of the customers it
+ * owns, and its managers change them. A Set.
  */
-export async function ownedCustomers(env, me) {
-  if (!me || !(me.teams || []).length) {
+export async function ownedCustomers(env, teams) {
+  if (!(teams || []).length) {
     return new Set();
   }
   const { results } = await env.DB.prepare(`SELECT DISTINCT t.org FROM threads t
-    WHERE ${ownedBy('t', '?1')} AND t.org IS NOT NULL`).bind(slugsOf(me)).all();
+    WHERE ${ownedBy('t', '?1')} AND t.org IS NOT NULL`).bind(JSON.stringify(teams)).all();
   return new Set((results || []).map((r) => r.org));
 }
 
-/** Whether one of `me`'s teams owns customer `org` (see `ownedCustomers`), by `threads_org`. */
-export async function ownsCustomer(env, me, org) {
-  if (!me || !(me.teams || []).length || !org) {
+/** Whether one of `teams` (slugs) owns customer `org` (see `ownedCustomers`), by `threads_org`. */
+export async function ownsCustomer(env, teams, org) {
+  if (!(teams || []).length || !org) {
     return false;
   }
   const row = await env.DB.prepare(`SELECT 1 FROM threads t
-    WHERE t.org = ?2 AND ${ownedBy('t', '?1')} LIMIT 1`).bind(slugsOf(me), String(org)).first();
+    WHERE t.org = ?2 AND ${ownedBy('t', '?1')} LIMIT 1`).bind(JSON.stringify(teams), String(org)).first();
   return Boolean(row);
 }
 

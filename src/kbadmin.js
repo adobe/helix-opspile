@@ -20,37 +20,20 @@ import {
 } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
-import { inTeam, isAdmin, managesTeam } from './review.js';
-import { ownedCustomers, ownsCustomer } from './shares.js';
+import { access, mayEdit, mayRead } from './kbaccess.js';
+import { isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
 
 /**
- * May `me` edit this knowledge base? The admin team edits all of them; a team manager the
- * knowledge base of the teams they manage.
- */
-const mayEdit = (me, base) => isAdmin(me) || (base.kind === 'team' && managesTeam(me, base.slug));
-
-/**
- * May `me` look at this knowledge base, its agents and their tools? Whoever edits it, the
- * members of its team, and for a customer's, the members of the teams that own the customer
- * (a channel of theirs is filed under or shared with the team): read-only (their own settings
- * aside, which are not the editor's). `owned(slug)`: whether `me`'s teams own that customer.
- */
-const readable = (me, base, owned) => mayEdit(me, base)
-  || (base.kind === 'team' ? inTeam(me, base.slug) : owned(base.slug));
-
-const mayRead = async (env, me, base) => readable(me, base, () => false)
-  || (base.kind === 'org' && ownsCustomer(env, me, base.slug));
-
-/**
  * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
  * the knowledge bases, list and read their files, and change them as the signed-in person
- * (team managers: their teams' knowledge bases only); the members of a team read its
- * knowledge base and those of the customers it owns, and see their agents, without changing
- * them. Writes go through the same path as the agents' (OKF checks, indexes and log by code,
- * retry on a concurrent push), are committed with the person as author and stamped
- * `human:<email>`, and may also change `systemprompt.md`, which agents cannot.
+ * (team managers: those of their teams and of the customers their teams own); the members of
+ * a team read its knowledge base and those of the customers it owns, and see their agents,
+ * without changing them (src/kbaccess.js). Writes go through the same path as the agents'
+ * (OKF checks, indexes and log by code, retry on a concurrent push), are committed with the
+ * person as author and stamped `human:<email>`, and may also change `systemprompt.md`, which
+ * agents cannot.
  */
 
 const MAX_MESSAGE = 200;
@@ -167,10 +150,10 @@ async function toolCounts(env) {
  * whether `me` may change it (`may`).
  */
 async function listBases(env, me) {
-  const [agents, tools, owned, { results }] = await Promise.all([
+  const [agents, tools, may, { results }] = await Promise.all([
     agentCounts(env),
     toolCounts(env),
-    isAdmin(me) ? new Set() : ownedCustomers(env, me),
+    access(env, me),
     env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at, k.entries,
         t.name AS team_name
       FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
@@ -178,7 +161,7 @@ async function listBases(env, me) {
   ]);
   return json({
     systemPrompt: SYSTEM_PROMPT,
-    bases: (results || []).filter((r) => readable(me, r, (slug) => owned.has(slug))).map((r) => ({
+    bases: (results || []).filter((r) => may.edit(r) || may.read(r)).map((r) => ({
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
@@ -187,7 +170,7 @@ async function listBases(env, me) {
       entries: r.entries ?? null,
       agents: agents.size(`${r.kind}:${r.slug}`),
       tools: tools.size(`${r.kind}:${r.slug}`),
-      may: mayEdit(me, r),
+      may: may.edit(r),
     })),
   });
 }
@@ -379,7 +362,7 @@ async function switchAgent(env, me, body) {
   return json({ ok: true, channel, agent });
 }
 
-/** Routes `/api/kb*` (see `mayRead` and `mayEdit`). Returns null for other paths. */
+/** Routes `/api/kb*` (see src/kbaccess.js). Returns null for other paths. */
 export async function kbAdmin(request, env, url, me) {
   if (url.pathname === '/api/kb' && request.method === 'GET') {
     return listBases(env, me);
@@ -419,8 +402,10 @@ export async function kbAdmin(request, env, url, me) {
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
-  if (request.method !== 'GET' && !mayEdit(me, base)) {
-    return json({ error: 'the admin team and the team\'s managers change its knowledge base' }, 403);
+  if (request.method !== 'GET' && !await mayEdit(env, me, base)) {
+    return json({
+      error: 'the admin team and the managers of the teams it belongs to change it',
+    }, 403);
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {
     return files(env, repo);

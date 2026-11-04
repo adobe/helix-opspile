@@ -767,10 +767,9 @@ async function proxyApi(req, res, url, b) {
 async function kbApi(req, res, url) {
   // Who reads and who changes a knowledge base's files: as src/kbadmin.js lists them (a
   // manager changes their teams'; a member reads their teams' and their customers').
-  const allowed = async (repo) => {
+  const listed = async (repo) => {
     const list = await adminApi.kb({ method: 'GET' }, new URL('http://localhost/api/kb'), null);
-    const base = (await list.json()).bases.find((b) => b.repo === repo);
-    return Boolean(base) && (req.method === 'GET' || base.may);
+    return (await list.json()).bases.find((b) => b.repo === repo);
   };
   if (MEMBER && req.method !== 'GET') {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
@@ -799,8 +798,12 @@ async function kbApi(req, res, url) {
     return json(res, out, r.status);
   }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
-  if (!kb.has(repo) || !await allowed(repo)) {
+  const listing = kb.has(repo) && await listed(repo);
+  if (!listing) {
     return json(res, { error: 'no such knowledge base' }, 404);
+  }
+  if (req.method !== 'GET' && !listing.may) {
+    return json(res, { error: 'the admin team and the managers of the teams it belongs to change it' }, 403);
   }
   if (url.pathname === '/api/kb/files') {
     const files = await kb.files(repo);

@@ -136,7 +136,7 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
     }
   });
 
-  it('shows the members of the teams that own a customer its knowledge base, read-only', async () => {
+  it('shows the teams that own a customer its knowledge base, and lets their managers change it', async () => {
     const srv = await gitServer();
     try {
       srv.create('kb-org-acme');
@@ -161,10 +161,17 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       const env = { DB, ARTIFACTS: srv.artifacts };
       const EDGE = { ...MEMBER, teams: [{ slug: 'edge' }] };
       const HELIX_MANAGER = { ...MEMBER, teams: [{ slug: 'helix', role: 'manager' }] };
-      for (const [me, repos] of [
-        [MEMBER, [['kb-team-helix', false], ['kb-org-acme', false]]],
-        [HELIX_MANAGER, [['kb-team-helix', true], ['kb-org-acme', false]]],
-        [EDGE, [['kb-org-acme', false]]],
+      const EDGE_MANAGER = { ...MEMBER, teams: [{ slug: 'edge', role: 'manager' }] };
+      const CDN_MANAGER = { ...MEMBER, teams: [{ slug: 'cdn', role: 'manager' }] };
+      const put = (me, path, content, base) => call(env, me, 'PUT', '/api/kb/file', {
+        repo: 'kb-org-acme', path, content, base,
+      });
+      const concept = (title) => `---\ntype: Reference\ntitle: ${title}\n---\nBody\n`;
+      for (const [me, repos, may] of [
+        [MEMBER, [['kb-team-helix', false], ['kb-org-acme', false]], false],
+        [EDGE, [['kb-org-acme', false]], false],
+        [HELIX_MANAGER, [['kb-team-helix', true], ['kb-org-acme', true]], true],
+        [EDGE_MANAGER, [['kb-org-acme', true]], true],
       ]) {
         // eslint-disable-next-line no-await-in-loop
         const bases = await (await call(env, me, 'GET', '/api/kb')).json();
@@ -179,22 +186,52 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
         }
         // eslint-disable-next-line no-await-in-loop
         const mcp = await (await call(env, me, 'GET', '/api/kb/mcp?repo=kb-org-acme')).json();
-        assert.deepEqual([mcp.may, mcp.servers.map((s) => s.url)], [false, ['https://s.example/mcp']]);
-        // Reading it is all (a manager passes the API's gate, and finds no knowledge base).
+        assert.deepEqual([mcp.may, mcp.servers.map((s) => s.url)], [
+          may, [may ? 'https://u:p@s.example/mcp?token=t0ken' : 'https://s.example/mcp'],
+        ]);
+      }
+
+      // The members only read it.
+      for (const me of [MEMBER, EDGE]) {
         for (const [method, path, body] of [
-          ['PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: 'x' }],
+          ['PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: concept('A') }],
           ['DELETE', '/api/kb/file', { repo: 'kb-org-acme', path: 'index.md' }],
           ['POST', '/api/kb/mcp', { repo: 'kb-org-acme', name: 'x', url: 'https://x.example/mcp' }],
         ]) {
           // eslint-disable-next-line no-await-in-loop
-          const { status } = await call(env, me, method, path, body);
-          assert.ok([403, 404].includes(status), `${method} ${path}: ${status}`);
+          assert.equal((await call(env, me, method, path, body)).status, 403, `${method} ${path}`);
         }
       }
+      // The managers of helix (acme's channel is filed under it) and of edge (shared with it)
+      // change it, as themselves.
+      let res = await put(HELIX_MANAGER, 'sites/www.md', concept('www'));
+      assert.equal(res.status, 200);
+      res = await put(EDGE_MANAGER, 'sites/www.md', concept('www, again'), (await res.json()).hash);
+      assert.equal(res.status, 200);
+      res = await call(env, EDGE_MANAGER, 'DELETE', '/api/kb/file', {
+        repo: 'kb-org-acme', path: 'sites/www.md', base: (await res.json()).hash,
+      });
+      assert.equal(res.status, 200);
+      const { commits } = await (await call(env, HELIX_MANAGER, 'GET', '/api/kb/log?repo=kb-org-acme')).json();
+      assert.deepEqual(commits.map((c) => [c.message, c.author]), [
+        ['Delete sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'],
+      ]);
+      // Not the managers of a team that does not own the customer, nor through an ignored channel.
+      assert.equal((await put(CDN_MANAGER, 'a.md', concept('A'))).status, 404);
+      assert.equal((await call(env, HELIX_MANAGER, 'PUT', '/api/kb/file', {
+        repo: 'kb-org-initech', path: 'a.md', content: concept('A'),
+      })).status, 404);
+      const server = DB.rows("SELECT id FROM mcp_servers WHERE slug = 'acme'")[0].id;
+      assert.equal((await call(env, CDN_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 404);
+
       // Once the channel is no longer shared with edge, edge no longer owns acme.
       DB.sqlite.exec('DELETE FROM channel_teams');
       assert.deepEqual((await (await call(env, EDGE, 'GET', '/api/kb')).json()).bases, []);
       assert.equal((await call(env, EDGE, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+      assert.equal((await put(EDGE_MANAGER, 'a.md', concept('A'))).status, 404);
+      assert.equal((await call(env, EDGE_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 404);
+      // helix's manager still does: deleting the server works.
+      assert.equal((await call(env, HELIX_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 200);
     } finally {
       await srv.close();
     }
