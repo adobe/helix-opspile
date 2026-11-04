@@ -2804,9 +2804,9 @@ async function sendDraft(key, asApp) {
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (asApp) {
     const sendIt = async (again = false) => {
-      const failed = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [], again });
-      if (failed?.unsure) toast(`It may have been sent: ${failed.error}.`, { label: 'Send again', run: () => sendIt(true) });
-      else toast(failed ? `Nothing was sent: ${failed.error}.` : 'Sent as the bot.');
+      const sent = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [], again });
+      if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
+      else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '));
     };
     await sendIt();
   } else {
@@ -3072,6 +3072,8 @@ async function deliver(p) {
     body: reworded ? data.text : p.body, postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
+  const invited = invitedSaying(data);
+  if (invited) toast(invited);
   if (p.status === 'delivered' || reworded) showSending(p.thread);
   if (p.status !== 'delivered') animateSending();
   return true;
@@ -3158,7 +3160,8 @@ const appKeys = new Map();
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
  * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
  * mentions, as when you send it. `again` sends it under a new key, knowing it may go out twice.
- * Resolves to null, or to `{ error, unsure }`; `unsure` when nobody knows whether it went out.
+ * Resolves to `{ invited }` (what `invitedSaying` says, or ''), or to `{ error, unsure }`;
+ * `unsure` when nobody knows whether it went out.
  */
 async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [], again = false } = {}) {
   // Sending the same thing again after a lost answer is a retry. A key stays until the post is
@@ -3178,7 +3181,7 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   }
   if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   openThread(key, { live: true });
-  return null;
+  return { invited: invitedSaying(res.data) };
 }
 
 // ---------------------------------------------------------------- new threads
@@ -3436,14 +3439,15 @@ async function postNew() {
   state.composers.delete(NEW);
   mention.picked.delete(NEW);
   // Somewhere else by now: that stays on screen.
-  if (state.compose !== c) { toast(`Posted in ${channel.name}.`); return; }
+  const invited = invitedSaying(res.data);
+  if (state.compose !== c) { toast([`Posted in ${channel.name}.`, invited].filter(Boolean).join(' ')); return; }
   state.compose = null;
   syncReading();
   toUrl(false);
   renderThreads();
   const said = `Posted in ${esc(channel.name)}.`;
   $('pane').innerHTML = `<div class="empty">${said}${res.data.thread ? ' Opening the thread…' : ''}</div>`;
-  if (TAKING_TURNS.matches || !res.data.thread) toast(`Posted in ${channel.name}.`);
+  if (TAKING_TURNS.matches || !res.data.thread || invited) toast([`Posted in ${channel.name}.`, invited].filter(Boolean).join(' '));
   if (!res.data.thread) return;
   state.awaiting = res.data.thread;
   openWhenHere(res.data.thread, channel.name);
@@ -4031,6 +4035,17 @@ function mentionsIn(key, body) {
   return [...(mention.picked.get(key)?.values() || [])]
     .filter((p) => new RegExp(`@${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(body))
     .map((p) => ({ id: p.id, name: p.name }));
+}
+
+/**
+ * What a post's answer says about the colleagues it mentioned who were not in the Slack
+ * channel (src/invite.js): who the bot added to it, and whom Slack would not let it add, or ''.
+ */
+function invitedSaying(data) {
+  const names = (list) => list.map((p) => p.name || 'someone').join(', ');
+  const added = data?.invited?.length ? `Added ${names(data.invited)} to the channel, so they see the mention.` : '';
+  const refused = data?.uninvited?.length ? `${names(data.uninvited)} ${data.uninvited.length === 1 ? 'is' : 'are'} not in the channel, and the bot could not add them: they may not see the mention.` : '';
+  return [added, refused].filter(Boolean).join(' ');
 }
 
 /** A short note at the bottom; `action` adds a link (`href`) or a button (`run`). */
@@ -5727,9 +5742,9 @@ const WEBMCP_TOOLS = [
       const d = draft && data.draft?.updated_at === draft ? data.draft : null;
       const mentions = [...new Map([...(d?.mentions || []), ...mentionsIn(key, body)]
         .map((m) => [m.id, m])).values()];
-      const failed = await sendAsApp(key, body, draft, { mentions });
-      if (failed?.unsure) return fail(`It may have been sent: ${failed.error}. Check the thread before sending it again.`);
-      return failed ? fail(`Nothing was sent: ${failed.error}.`) : out({ ok: true, thread: key, note: 'Sent as the opspile app; it shows in the thread once the platform delivers it.' });
+      const sent = await sendAsApp(key, body, draft, { mentions });
+      if (sent.unsure) return fail(`It may have been sent: ${sent.error}. Check the thread before sending it again.`);
+      return sent.error ? fail(`Nothing was sent: ${sent.error}.`) : out({ ok: true, thread: key, note: ['Sent as the opspile app; it shows in the thread once the platform delivers it.', sent.invited].filter(Boolean).join(' ') });
     },
   },
   {

@@ -91,7 +91,7 @@ Nothing below is committed; set it on the Worker.
 
 | Name | Kind | What |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`) |
+| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`). A Slack post from the inbox that mentions a colleague who is not in the channel has the app add them first (bot scopes `channels:write.invites` and `groups:write.invites`; without them, nobody is added and the post goes out as before) |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |

@@ -78,8 +78,9 @@ export async function recordAppPost(env, me, t, id) {
  * platform's bot can attach): posts `text` in the thread as the opspile app, for a staff member
  * of one of the thread's teams, with its emoji `:names:` as the platform knows them (`text` in
  * the answer). `mentions` are account ids from /api/mentionable, as for POST /api/post: each
- * `@Name` of one of them becomes a platform mention (src/agent/posting.js). The reply arrives
- * like any other message, through the platform's events, by the app.
+ * `@Name` of one of them becomes a platform mention (src/agent/posting.js), and on Slack the
+ * Adobe people among them are added to the channel first (`invited`, src/invite.js). The reply
+ * arrives like any other message, through the platform's events, by the app.
  */
 export async function postApp(env, me, request, inTeam, files = []) {
   const { thread: key, text, mentions: ids } = request || {};
@@ -117,6 +118,11 @@ export async function postApp(env, me, request, inTeam, files = []) {
     route: 'post', action: 'app', platform: res.platform, team: check.entry.team,
   }));
   return json({
-    ok: true, platform: res.platform, id: res.id, text: sent,
+    ok: true,
+    platform: res.platform,
+    id: res.id,
+    text: sent,
+    ...(res.invited ? { invited: res.invited } : {}),
+    ...(res.uninvited ? { uninvited: res.uninvited } : {}),
   });
 }

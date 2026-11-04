@@ -880,6 +880,24 @@ channel of the team). Opening the suggestions lists a channel's members when tha
 old, and looks up the members opspile has never seen (`users.info`), so a colleague who is in
 the channel but never posted anywhere opspile reads can be mentioned too.
 
+**Mentioning someone who is not in the channel.** Slack notifies nobody of a mention in a
+channel they are not in, so a Slack message the inbox posts first adds the colleagues it
+mentions to the channel (`src/invite.js`): as a person (`POST /api/post`, a reply or a new
+thread), as the opspile app (`POST /api/post/app`) and from an agent's `post_message`. Only
+Adobe people (`staff` on the account or its person), not bots, not the one who posts, and
+up to ten a message: anyone else may be a customer, and is never put in another customer's
+channel. The opspile Slack app adds them, one `conversations.invite` each (bot scopes
+`channels:write.invites`, and `groups:write.invites` for private channels), so nobody has to
+connect their account again; Slack answers `already_in_channel` for whoever is in already, so no
+listing of members is read first. The post goes out either way, after the invites. The answer
+says whom the bot added (`invited`) and whom Slack would not add (`uninvited`, with Slack's
+error: in another workspace of the grid, a guest); the page says so in a toast, and the agent
+and the MCP client in their result. A call that fails as such (the scope missing, the app not
+in the channel) refuses nobody and is only logged (`route: invite`). Teams adds people to a team
+through an approval flow of its own, and a message written in Slack itself is left to Slack,
+which asks there; a thread agent still points out a mention of someone not in the channel
+(`src/agent/members.js`).
+
 The suggestions that open with the `@` bring along everything they are picked from (`pool` of
 `GET /api/mentionable`: the accounts of the workspace, each marked as in the thread, in the
 channel or by its affinity, and the bots), and the page ranks what is typed after it itself,

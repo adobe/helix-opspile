@@ -375,6 +375,31 @@ function people(entry) {
 }
 
 /** The channels ME posted or was mentioned in, as `source:channelId`: the personal view's. */
+/** Whether a person counts as in the channel of `entry`: listed there, or posted there. */
+function channelMember(entry) {
+  const posted = new Set([...store.threads.values()]
+    .filter((t) => t.ch.channelId === entry.ch.channelId)
+    .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
+  const listed = new Set(entry.ch.members || []);
+  return (p) => listed.has(p.key) || posted.has(p.name);
+}
+
+/**
+ * As src/invite.js answers a Slack post: the Adobe people it mentions who are not in the
+ * channel were added to it first (`invited`). They stay out here, so the case shows again.
+ */
+function invitedFor(entry, mentions) {
+  if (!entry || entry.row.source !== 'slack') {
+    return {};
+  }
+  const inChannel = channelMember(entry);
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const invited = [...store.people.values(), ...store.members]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p))
+    .map((p) => ({ id: `slack-${p.key}`, name: p.name }));
+  return invited.length ? { invited } : {};
+}
+
 function myChannels() {
   const { name } = store.people.get(ME);
   const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
@@ -1174,10 +1199,7 @@ async function api(req, res, url) {
     }
     const here = new Set(starting ? []
       : thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
-    const posted = new Set([...store.threads.values()]
-      .filter((t) => t.ch.channelId === entry.ch.channelId)
-      .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
-    const listed = new Set(entry.ch.members || []);
+    const inChannel = channelMember(entry);
     // A stand-in for the vectors (src/expertise.js): an Adobe person's affinity is how many of
     // this thread's longer words their messages anywhere have, the viewer's own aside.
     const wordsOf = (s) => new Set(String(s || '').toLowerCase().match(/[a-z]{5,}/g) || []);
@@ -1199,7 +1221,7 @@ async function api(req, res, url) {
         name: p.name,
         aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
         here: here.has(p.name),
-        member: listed.has(p.key) || posted.has(p.name),
+        member: inChannel(p),
         staff: p.staff,
         affinity: p.staff ? affinity.get(p.name) || 0 : 0,
       })),
@@ -1346,6 +1368,7 @@ async function api(req, res, url) {
         id: started.id,
         text: String(reply).trim(),
         thread: started.key,
+        ...invitedFor([...store.threads.values()].find((t) => t.ch === ch), mentions),
       });
     }
     if (app && !store.threads.get(key)?.ch.appPosting) {
@@ -1407,7 +1430,7 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, app ? 1200 : ARRIVE_MS);
     return json(res, {
-      ok: true, platform: entry.row.source, id, text: sent,
+      ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
     });
   }
   if (url.pathname === '/api/edit' && req.method === 'POST') {
