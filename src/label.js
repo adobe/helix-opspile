@@ -196,12 +196,29 @@ export const vocab = async (env, team = null) => ({
   tech: await techNames(env, team), topics: topicNames(),
 });
 
+/** Clairic's `products` field (tuned in the product census; see docs/ARCHITECTURE.md). */
+export const PRODUCTS_INSTRUCTIONS = 'The products, services, tools or technologies this thread'
+  + ' is about, Adobe\'s and other companies\', by name (for example a CDN, an authoring tool, an'
+  + ' identity provider, an analytics or consent service, a commerce platform): not generic terms'
+  + ' such as API, website, JSON or cache, and not the customer or a person';
+/** At most this many products per thread, each at most MAX_PRODUCT characters. */
+export const MAX_PRODUCTS = 8;
+const MAX_PRODUCT = 60;
+
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
   affected_url: { type: 'text', instructions: 'URL of the affected page, site or environment' },
   error: { type: 'text', instructions: 'An error message, status code or failing behaviour quoted in the thread' },
   deadline: { type: 'date', instructions: 'Date by which the customer needs this answered or done' },
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
+  // What the thread is about, by name: the tech stack's vocabulary is a list someone wrote, and
+  // the Topics page (src/topicmap.js) shows the names it does not have yet. One `product` fact
+  // per name.
+  products: {
+    type: 'list',
+    items: 'text',
+    instructions: PRODUCTS_INSTRUCTIONS,
+  },
 };
 
 function who(m) {
@@ -299,13 +316,26 @@ async function threadReactions(env, key) {
   return { by, latest };
 }
 
-/** Clairic answers worth keeping: non-null, above the confidence threshold. */
+/**
+ * Clairic answers worth keeping: non-null, above the confidence threshold. A list (`products`)
+ * is a fact per item, of the field without its plural `s` (`product`), each trimmed, at most
+ * MAX_PRODUCTS of them, the same name in another case once.
+ */
 export function clairicFacts(answers) {
   const facts = [];
   for (const [field, a] of Object.entries(answers || {})) {
     const threshold = FIELD_CONFIDENCE[field] ?? MIN_CONFIDENCE;
-    if (a && a.value !== null && a.value !== undefined && a.value !== ''
-      && (a.confidence === undefined || a.confidence >= threshold)) {
+    const sure = a && (a.confidence === undefined || a.confidence >= threshold);
+    if (sure && Array.isArray(a.value)) {
+      const seen = new Set();
+      for (const item of a.value) {
+        const value = String(item ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_PRODUCT);
+        if (value && !seen.has(value.toLowerCase()) && seen.size < MAX_PRODUCTS) {
+          seen.add(value.toLowerCase());
+          facts.push({ field: field.replace(/s$/, ''), value, confidence: a.confidence ?? null });
+        }
+      }
+    } else if (sure && a.value !== null && a.value !== undefined && a.value !== '') {
       facts.push({ field, value: String(a.value), confidence: a.confidence ?? null });
     }
   }

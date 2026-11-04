@@ -741,8 +741,11 @@ and an unchanged thread is never labeled twice):
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
-  the error, a deadline and a go-live date. Only values at or above a confidence threshold are
-  kept (0.8, and 0.6 for the free-text problem).
+  the error, a deadline and a go-live date, and the **products** the thread is about, by name
+  (a list: a `product` fact each, at most eight). Only values at or above a confidence threshold
+  are kept (0.8, and 0.6 for the free-text problem). The products are not the tech stack: they
+  are what the threads say, matched against it on the Topics page, so the names nobody put in
+  the tech stack yet show up there.
 
 **Label review.** Members of the admin team can review labels in the inbox: a queue of
 current labels nobody has reviewed, least confident first, and per question the right
@@ -768,7 +771,14 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   what its customers need, from the titles of its fifteen most typical threads (nearest its
   centre). It names no customer, and a name it gives twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customer (`orgs`), and Clef's topics (`labels.topics`), the **tags** on the page.
+  messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
+  and the **products** Clairic named. Each product is matched against the tech stack (every
+  team's enabled entries): an entry covers it when its id or name is the product's, or is in it
+  as words ("Akamai Property Manager" is Akamai's), or its description names it, cut at commas,
+  "or", "such as" and brackets ("a consent manager such as OneTrust or Cookiebot"). A covered
+  product is named as its entry; one no entry covers is a **gap**, named as most threads write
+  it. "AEM" and "Adobe" in front do not count, and generic names (API, CDN, JSON, Slack, …) are
+  left out.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 
@@ -777,8 +787,11 @@ person, topic, tag and customer, as big as its threads, a line between two that 
 thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
 customer; the topics are the hubs). The filters are a team, the kinds shown and the threads a
 line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
-without a pick, the topics are listed with the share of their threads Clef tagged at all, the
-fewest first on a click: the topics Clef rarely tags are what its topic questions miss.
+without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
+names, by their threads; adding one on the Agents page, or its name to an entry's description,
+makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
+fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
+drawn as a hollow ring.
 
 ## Replying
 

@@ -8,7 +8,8 @@
  *   ActionButtons with their swatch (a legend that filters), a Picker (the shared threads), a
  *   SearchField with suggestions (find), and the build's date beside an ActionButton (Rebuild).
  * - the graph: the page's own SVG, a node per person, topic, tag or customer in Spectrum 2's
- *   categorical palette (s2Categorical16: indigo, seafoam, orange, magenta), the lines neutral;
+ *   categorical palette (s2Categorical16: indigo, seafoam, orange, magenta, celery), the lines
+ *   neutral, a product not in the tech stack a hollow ring of its color;
  *   what is pointed at or picked keeps its colour and the rest fades. The tooltip a Popover.
  * - the panel: a heading with the kind above it as a Detail, the theme as body text, lists of
  *   what it is joined to as ListView rows with a Meter each, the threads as Links, and the topics
@@ -132,6 +133,17 @@ tr.pick { cursor: pointer; }
 .spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
 .spectrum [data-type="tag"] { --s2-type: var(--spectrum-orange-700); }
 .spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
+.spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+/* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
+.spectrum .node[data-gap] circle {
+  fill: var(--spectrum-background-layer-2-color);
+  stroke: var(--s2-type);
+  stroke-width: var(--spectrum-border-width-400);
+}
+.spectrum .dot[data-gap] {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--s2-type);
+}
 .spectrum .dot {
   width: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
   height: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));

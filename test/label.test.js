@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  clairicFacts, FIELDS, MAX_PRODUCTS,
   isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
@@ -67,6 +68,28 @@ describe('thread titles', () => {
     assert.equal(tidyTitle('Using Edge Functions with Akamai', acme), 'Using Edge Functions with Akamai');
     assert.equal(tidyTitle('Acme Corp', acme), null);
     assert.equal(tidyTitle('Adding users to a team', { org: '_unassigned' }), 'Adding users to a team');
+  });
+});
+
+describe('Clairic facts', () => {
+  it('keeps a list as a fact per item, trimmed, once each, at most a few', () => {
+    const facts = clairicFacts({
+      products: {
+        type: 'list', confidence: 0.92, value: ['Akamai', ' akamai ', 'Universal  Editor', '', null, 'A', 'B', 'C', 'D', 'E', 'F', 'G'],
+      },
+      problem: { value: 'Purge fails', confidence: 0.7 },
+      error: { value: null, confidence: 1 },
+    });
+    assert.deepEqual(
+      facts.filter((f) => f.field === 'product').map((f) => f.value),
+      ['Akamai', 'Universal Editor', 'A', 'B', 'C', 'D', 'E', 'F'].slice(0, MAX_PRODUCTS),
+    );
+    assert.deepEqual(facts.find((f) => f.field === 'problem'), { field: 'problem', value: 'Purge fails', confidence: 0.7 });
+    assert.equal(clairicFacts({ products: { type: 'list', confidence: 0.4, value: ['Akamai'] } }).length, 0);
+  });
+
+  it('asks Clairic for the products as a list', () => {
+    assert.deepEqual([FIELDS.products.type, FIELDS.products.items], ['list', 'text']);
   });
 });
 

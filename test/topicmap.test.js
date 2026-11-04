@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
-  buildTopicMap, centered, KEEP, kmeans, latestTopicMap, MIN_THREADS, sweepTopicMap, topicCount,
+  buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, productKey,
+  productsOf, sweepTopicMap, techIndex, topicCount,
 } from '../src/topicmap.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -81,6 +82,13 @@ async function setup({ perGroup = 10 } = {}) {
         topics: g === 0 && i % 2 ? '{"cdn":0.93}' : null,
         label: 'question',
       });
+      if (g === 0) {
+        // The cache threads name a CDN the tech stack has, one it does not, and generic words.
+        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
+          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Edge Functions');
+        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
+          VALUES (?, 'clairic', 'product', 'CDN', 0.9)`).run(key);
+      }
       post(key, 'a', group.staff, 1);
       post(key, 'b', group.staff, 1);
       post(key, 'c', CY.id, 0);
@@ -140,6 +148,42 @@ describe('topic map: clustering', () => {
   });
 });
 
+describe('topic map: products and the tech stack', () => {
+  const TECH = [
+    { tech: 'akamai', name: 'Akamai', description: 'Akamai as CDN' },
+    { tech: 'consent', name: 'Consent manager', description: 'a consent manager such as OneTrust or Cookiebot' },
+    { tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics, Web SDK or Experience Platform data collection' },
+    { tech: 'aso', name: 'Sites Optimizer', description: 'AEM Sites Optimizer' },
+  ];
+  const index = techIndex(TECH);
+
+  it('finds the entry that names a product: its name, a name in its description, or a part', () => {
+    assert.equal(productKey('AEM Sites Optimizer'), 'sites optimizer');
+    assert.equal(productKey('Adobe  Web-SDK'), 'web sdk');
+    assert.equal(coveredBy('Akamai', index), 'akamai');
+    assert.equal(coveredBy('akamai property manager', index), 'akamai');
+    assert.equal(coveredBy('OneTrust', index), 'consent');
+    assert.equal(coveredBy('Web SDK', index), 'analytics');
+    assert.equal(coveredBy('AEM Sites Optimizer', index), 'aso');
+    assert.equal(coveredBy('Google Tag Manager', index), null);
+    assert.equal(coveredBy('', index), null);
+  });
+
+  it('names a covered product as its entry, a gap as most threads write it, and drops generic words', () => {
+    const { of, products } = productsOf([
+      { thread: 'a', value: 'OneTrust' }, { thread: 'a', value: 'Cookiebot' },
+      { thread: 'a', value: 'Tealium' }, { thread: 'b', value: 'tealium' }, { thread: 'c', value: 'Tealium' },
+      { thread: 'b', value: 'API' }, { thread: 'b', value: 'Slack' },
+    ], TECH);
+    assert.deepEqual(products, {
+      'tech:consent': { name: 'Consent manager', tech: 'consent' },
+      'new:tealium': { name: 'Tealium', tech: null },
+    });
+    assert.deepEqual(of.get('a'), ['tech:consent', 'new:tealium']);
+    assert.deepEqual(of.get('b'), ['new:tealium']);
+  });
+});
+
 describe('topic map: building', () => {
   it('clusters the threads worth it, names the topics, and keeps who posted and for whom', async () => {
     const env = await setup();
@@ -172,6 +216,14 @@ describe('topic map: building', () => {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
     assert.equal(map.tags.cdn, 'CDN and caching');
+    // The products: Akamai is the tech stack's (migration 0043), Edge Functions a gap, CDN generic.
+    assert.deepEqual(map.products, {
+      'tech:akamai': { name: 'Akamai', tech: 'akamai' },
+      'new:edge functions': { name: 'Edge Functions', tech: null },
+    });
+    assert.deepEqual(one.products, ['tech:akamai']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:edge functions']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:1.2').products, []);
     assert.equal(map.built_by, 'Ada');
 
     const latest = await latestTopicMap(env);

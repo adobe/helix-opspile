@@ -12,7 +12,7 @@
 
 import { TITLER, topicNames } from '../src/label.js';
 import { EMBEDDING_MODEL } from '../src/rethread.js';
-import { MIN_MESSAGES } from '../src/topicmap.js';
+import { MIN_MESSAGES, productsOf } from '../src/topicmap.js';
 
 /**
  * The Topics page's made-up map for `npm run ui:dev` (`/inbox/topics`): what src/topicmap.js
@@ -97,6 +97,45 @@ const ORGS = [
   ['aperture', 'Aperture Science', 'customer'], ['vandelay', 'Vandelay Industries', 'partner'], ['gringotts', 'Gringotts', 'customer'],
   ['bluesun', 'Blue Sun', 'customer'], ['opspile', 'opspile', 'internal'],
 ];
+// The products the threads of a topic name (Clairic's `product` facts), and how often: some the
+// tech stack below has, some it does not (Edge Functions, the Sidekick, a tag manager, a reviews
+// service), so the preview shows gaps.
+const PRODUCTS = {
+  0: { Akamai: 0.3, Fastly: 0.3, 'Edge Functions': 0.15 },
+  1: { Akamai: 0.4, Cloudflare: 0.4, CloudFront: 0.2 },
+  2: { Cloudflare: 0.3, "Let's Encrypt": 0.2 },
+  3: { GitHub: 0.6, 'Code Sync': 0.3 },
+  4: { Sidekick: 0.8, Okta: 0.3, IMS: 0.3 },
+  5: { 'Admin Console': 0.4, IMS: 0.3, 'Config Service': 0.3 },
+  6: { 'Universal Editor': 0.3 },
+  7: { 'Edge Functions': 0.3 },
+  8: { Lighthouse: 0.3, RUM: 0.3, 'Dynamic Media': 0.3 },
+  9: { 'Google Merchant Center': 0.5, Bazaarvoice: 0.4 },
+  10: { 'Adobe Commerce': 0.7 },
+  11: { 'Adobe Commerce': 0.5, 'Product Bus': 0.4 },
+  12: { 'Content Fragments': 0.6, 'Universal Editor': 0.3 },
+  13: { 'Document Authoring': 0.4, SharePoint: 0.3 },
+  15: { 'Google Search Console': 0.3 },
+  16: { 'AEM Assets': 0.6, 'Asset Picker': 0.4, 'Dynamic Media': 0.3 },
+  19: {
+    'Google Tag Manager': 0.4, OneTrust: 0.3, 'Adobe Analytics': 0.3, Tealium: 0.2,
+  },
+  20: { 'Sites Optimizer': 0.8 },
+};
+// The tech stack the products are matched against (a part of migration 0043's).
+const TECH = [
+  ['akamai', 'Akamai', 'Akamai as CDN'], ['fastly', 'Fastly', 'Fastly as CDN'],
+  ['cloudflare', 'Cloudflare', 'Cloudflare as CDN'], ['cloudfront', 'CloudFront', 'Amazon CloudFront as CDN'],
+  ['github', 'GitHub', 'GitHub for code'], ['sso', 'Single sign-on', 'single sign-on through its own identity provider (Okta or Microsoft Entra ID)'],
+  ['ue', 'Universal Editor', 'Universal Editor'], ['da', 'Document Authoring', 'Document Authoring (da.live)'],
+  ['sharepoint', 'SharePoint', 'SharePoint or OneDrive as the content source'], ['rum', 'Operational telemetry', 'real-user monitoring or operational telemetry (RUM)'],
+  ['assets', 'Assets', 'AEM Assets or Dynamic Media'], ['feeds', 'Product feeds', 'product feeds to Google Merchant Center or other marketplaces'],
+  ['commerce', 'Commerce', 'Adobe Commerce (Magento) or Commerce drop-ins'], ['productbus', 'Product Bus', 'the Product Bus for its commerce data'],
+  ['consent', 'Consent manager', 'a consent manager such as OneTrust or Cookiebot'],
+  ['analytics', 'Analytics', 'Adobe Analytics, Web SDK or Experience Platform data collection'],
+  ['aso', 'Sites Optimizer', 'AEM Sites Optimizer'],
+].map(([tech, name, description]) => ({ tech, name, description }));
+
 // The storefront is one customer's.
 const OWN_TOPIC = { 11: 'wonka' };
 const TEAMS = ['edge', 'platform'];
@@ -115,6 +154,7 @@ export function topicMapFixture(now = Date.now()) {
   const favorites = Object.fromEntries(ORGS.map(([slug]) => [slug,
     [anyTopic(), anyTopic(), anyTopic()]]));
   const threads = [];
+  const facts = [];
   const topics = TOPICS.map(([label, theme, tags, titles, weight], id) => {
     const size = weight * 2 + Math.floor(rnd() * 5);
     for (let n = 0; n < size; n += 1) {
@@ -136,8 +176,14 @@ export function topicMapFixture(now = Date.now()) {
         staff[other] = (staff[other] || 0) + 1;
       }
       const at = now - Math.floor(rnd() * 60 * 86400000);
+      const key = `slack:T-FAKE:C0TOPIC${String(id).padStart(2, '0')}:${1790000000 + threads.length}.000100`;
+      for (const [name, p] of Object.entries(PRODUCTS[id] || {})) {
+        if (rnd() < p) {
+          facts.push({ thread: key, value: name });
+        }
+      }
       threads.push({
-        key: `slack:T-FAKE:C0TOPIC${String(id).padStart(2, '0')}:${1790000000 + threads.length}.000100`,
+        key,
         title: `${pick(titles)}${rnd() < 0.3 ? pick(SUFFIXES) : ''}`,
         team: org === 'opspile' ? 'platform' : pick(TEAMS),
         org,
@@ -157,6 +203,7 @@ export function topicMapFixture(now = Date.now()) {
   });
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
+  const products = productsOf(facts, TECH);
   return {
     version: 1,
     built_at: new Date(now - 2 * 86400000).toISOString(),
@@ -165,11 +212,14 @@ export function topicMapFixture(now = Date.now()) {
     namer: TITLER,
     min_messages: MIN_MESSAGES,
     topics: order.map((old, i) => ({ ...topics[old], id: i })),
-    threads: threads.map((t) => ({ ...t, topic: renumber.get(t.topic) }))
+    threads: threads.map((t) => ({
+      ...t, topic: renumber.get(t.topic), products: products.of.get(t.key) || [],
+    }))
       .sort((a, b) => a.topic - b.topic || b.sim - a.sim),
     people,
     orgs: Object.fromEntries(ORGS.map(([slug, name, type]) => [slug, { name, type }])),
     tags: topicNames(),
+    products: products.products,
   };
 }
 
