@@ -284,6 +284,33 @@ describe('bursts', () => {
       assert.deepEqual(rows, [{ logical_thread: null, logical_via: null }, { logical_thread: a, logical_via: 'burst' }], `order ${order}`);
     }
   });
+
+  it('does not fold a root into one that was deleted: it was posted again', async () => {
+    for (const order of [[0, 1], [1, 0]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+      const at0 = new Date(T0).toISOString();
+      const at1 = new Date(T0 + 36000).toISOString();
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '6.0', 'Hi Ada, the report is attached', at0);
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '6.1', 'Hi Ada, the report is attached, CC Bo', at1);
+      // eslint-disable-next-line no-await-in-loop
+      await env.CHANNELS.put('channels/acme/helix/slack-C1/6.0/6.0.md', render({
+        source: 'slack', thread: a, id: '6.0', at: at0, deletedAt: at1,
+      }, ''));
+      env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+      for (const [k, at, id, deleted] of [[a, at0, '6.0', 1], [b, at1, '6.1', 0]]) {
+        env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted,
+          deleted) VALUES ('slack', 'E1', 'C1', ?, ?, ?, 'slack:E1:U7', 1, ?)`).run(id, k, at, deleted);
+      }
+      for (const i of order) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, [a, b][i]);
+      }
+      const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
+      assert.deepEqual(rows.map((r) => r.logical_via), [null, null], `order ${order}`);
+    }
+  });
 });
 
 describe('conversations', () => {
@@ -647,5 +674,39 @@ describe('fold', () => {
     assert.equal(g.last_text, 'newer'); // the latest member's
     assert.deepEqual(g.members.map((m) => m.thread), ['a', 'b']);
     assert.equal(solo.thread, 'c');
+  });
+
+  it('shows the next member for a first thread whose messages are all deleted', () => {
+    // The first thread's root was deleted after the next one folded into it: no activity, no
+    // title, no link, no label.
+    const [g] = fold([
+      {
+        thread: 'a',
+        root_at: '2026-10-20T10:00:00Z',
+        last_at: null,
+        any_at: null,
+        messages: 0,
+        title: null,
+        permalink: null,
+        label: null,
+        participants: [],
+      },
+      {
+        thread: 'b',
+        logical_thread: 'a',
+        root_at: '2026-10-20T10:00:36Z',
+        last_at: '2026-10-20T10:00:36Z',
+        any_at: '2026-10-20T10:00:36Z',
+        messages: 1,
+        title: 'Report attached',
+        permalink: 'https://example.com/b',
+        label: { next_actor: 'us', label_kind: 'request' },
+        last_text: 'the report',
+        participants: [],
+      },
+    ]);
+    assert.deepEqual([g.thread, g.title, g.permalink, g.label.label_kind, g.last_text], [
+      'a', 'Report attached', 'https://example.com/b', 'request', 'the report',
+    ]);
   });
 });

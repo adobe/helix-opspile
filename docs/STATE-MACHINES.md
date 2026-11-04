@@ -46,7 +46,9 @@ hash. One that is skipped after a job died on it (its file is gone, or an edit e
 `rethreaded_at`, since asking again finds the same. Split is final: `logical_via = 'split'`,
 `logical_thread` cleared and `rethreaded_at` moved to the split (for the export sweep), and neither
 a forced re-threading nor a burst pulls it in again. The split is conditional on the group the root
-is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw.
+is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. A deleted root takes no
+one in (no burst joins it), but a group whose first root is deleted later keeps its key: the inbox
+reads its entry from the members that are still there (`latestMember`, `fold` in `src/api.js`).
 
 **Thread label.** unlabeled → current → stale (`labels.labeled_through`, `src/label.js`). Labeling
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
