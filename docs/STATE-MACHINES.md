@@ -107,7 +107,10 @@ retry finds nothing unseen afterwards. Deliveries run one at a time.
 that stopped half way with no run pending counts as failed after 15 minutes.
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
-asks again; after five in a row the spinner goes.
+asks again; after five in a row the spinner goes. A thread opened with no copy (a fresh page) is
+asked ahead (`askAgentAhead`), with the inbox or the thread, and every render of it waits up to
+800 ms for that answer, so the turn shows with the messages. Asks at the same time share one
+request (`askAgent`); an answer asked ahead is kept until `loadAgent` takes it, for ten seconds.
 
 **Injection verdict.** unchecked → passed or flagged (`verdict:<id>`, `src/agent/delivery.js`). A
 failed check is not a verdict: it is not stored, the queue retries the delivery, and reading the
