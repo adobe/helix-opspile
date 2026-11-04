@@ -659,7 +659,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     return key;
   }
 
-  seed({
+  const preview503 = seed({
     ch: CHANNELS.aemAcme,
     messages: [
       ['sam', 340, 'Our preview site is returning 503s since this morning\'s deploy.'],
@@ -716,6 +716,17 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ],
     },
   });
+  {
+    // Reactions on the bubbles' edge: two of a kind (one yours) show a count, a single one not.
+    const entry = threads.get(preview503);
+    const [, , , , ravi, blocked] = entry.messages;
+    entry.reactionSeeds = [
+      { id: blocked.id, emoji: 'eyes', by: 'dana' },
+      { id: blocked.id, emoji: 'eyes', by: 'lena' },
+      { id: blocked.id, emoji: 'pray', by: 'priya' },
+      { id: ravi.id, emoji: 'raised_hands', by: 'priya' },
+    ];
+  }
 
   seed({
     ch: CHANNELS.aemGlobex,
@@ -829,7 +840,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       },
     });
     const entry = threads.get(key);
-    entry.reactionSeeds = [{ id: entry.rootId, emoji: 'approved', by: 'dana' }];
+    // One on your own (blue) bubble too.
+    entry.reactionSeeds = [
+      { id: entry.rootId, emoji: 'approved', by: 'dana' },
+      { id: entry.messages[1].id, emoji: 'pray', by: 'sam' },
+    ];
   }
 
   // Two messages mention the viewer since she last read it, one before: the customer card

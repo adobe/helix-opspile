@@ -1714,11 +1714,13 @@ function message(m, prev, fresh, followed = false) {
   });
   const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' ? ' bot' : ''} · ${clock(m.at)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
-  // Reactions: who reacted on hover; a click adds yours, or takes it off again.
+  // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
+  // it off again.
   const can = canReact(m);
   const rx = (m.reactions || []).map((r) => {
     const tip = esc(`${r.names.join(', ') || r.emoji}${can ? (r.mine ? ' · click to take yours off' : ' · click to add yours') : ''}`);
-    const chip = `${emojiChip(r.emoji, m.source)} ${r.count}`;
+    // The count once more than one has left it: a single one is just the emoji.
+    const chip = `${emojiChip(r.emoji, m.source)}${r.count > 1 ? ` ${r.count}` : ''}`;
     return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
       : `<span title="${tip}">${chip}</span>`;
   }).join('');
