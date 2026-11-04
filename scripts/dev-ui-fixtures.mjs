@@ -775,6 +775,22 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
   });
 
+  // An alert that fires again and again, every post folded into the first: in production a
+  // group of thousands, of which the thread shows the latest posts' messages and says how many
+  // it leaves out (src/api.js's MAX_READ_MEMBERS; the preview's is smaller, scripts/dev-ui.mjs).
+  const storm = seed({
+    ch: CHANNELS.alerts,
+    messages: [['bot', 14 * 60, '[FIRING] Origin errors above 1% on www']],
+  });
+  for (let i = 1; i <= 11; i += 1) {
+    const again = seed({
+      ch: CHANNELS.alerts,
+      messages: [['bot', 14 * 60 - i * 70, `[FIRING] Origin errors above 1% on www (${i + 1})`]],
+    });
+    threads.get(again).logical = storm;
+    Object.assign(threads.get(again), { row: deriveRow(threads.get(again)) });
+  }
+
   // Only a bot posted, yesterday: in the personal view (Dana posted in the channel) it sorts
   // by that post, not above everything else. Slack sent the channel it names as an id only
   // (`<#C…>`): the thread shows the channel's name, linked to its customer in the inbox.

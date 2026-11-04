@@ -635,6 +635,31 @@ export function editableAs(meta, mine, asApp) {
 }
 
 /**
+ * How many members of a group a thread view reads the messages of: the latest by activity,
+ * with the group's first and the asked one. Every member is a folder, a listing and a read at
+ * least, and an invocation may make 10,000 calls; an alert channel folds thousands of posts
+ * into one entry, which then answered 500. The others are counted in `earlier_posts`.
+ */
+export const MAX_READ_MEMBERS = 500;
+
+/** The members of `group` (in `root_at` order) whose messages are read, in the same order. */
+export function readMembers(group, keep = [], most = MAX_READ_MEMBERS) {
+  if (group.length <= most) {
+    return group;
+  }
+  const kept = new Set(keep.filter(Boolean).slice(0, most));
+  const latest = [...group]
+    .sort((a, b) => String(b.any_at || b.root_at).localeCompare(String(a.any_at || a.root_at)));
+  for (const m of latest) {
+    if (kept.size >= most) {
+      break;
+    }
+    kept.add(m.thread);
+  }
+  return group.filter((m) => kept.has(m.thread));
+}
+
+/**
  * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
  * every member's messages in order. Each message carries its platform `thread`. A member's
  * key opens its group (a root that is folded later was opened, linked or kept in a tab under
@@ -662,6 +687,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const readers = viewTeam(me, teams, wanted);
   const group = anchor ? rows : [own];
   const keys = JSON.stringify(group.map((m) => m.thread));
+  // The members whose messages are shown: all of them, but for a very large group.
+  const read = readMembers(group, [key, asked]);
+  const readKeys = read.length === group.length ? keys : JSON.stringify(read.map((m) => m.thread));
   // The latest member's label speaks for the group.
   const labelKey = [...group]
     .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))[0].thread;
@@ -675,18 +703,18 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   ] = await Promise.all([
     env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
-    Promise.all(group.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
+    Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
       .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
-      .bind(me.id, keys).all(),
+      .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
         COALESCE(p.name, i.name) AS name, i.person = ? AS mine
       FROM reactions r
       LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
       LEFT JOIN people p ON p.id = i.person
-      WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, keys).all(),
+      WHERE r.thread IN (SELECT value FROM json_each(?)) ORDER BY r.at`).bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT w.person, w.thread, w.read_at, w.via
       FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
       WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(readers, keys).all(),
@@ -785,6 +813,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       logical_via: m.logical_via,
     })),
     messages,
+    // The members whose messages are left out (MAX_READ_MEMBERS): the least recent posts.
+    earlier_posts: group.length - read.length,
     profiles: cards,
     mentioned,
     channels,

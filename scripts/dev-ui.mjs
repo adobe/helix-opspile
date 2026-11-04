@@ -82,7 +82,7 @@ import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
-import { fold } from '../src/api.js';
+import { fold, readMembers } from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -640,6 +640,8 @@ function channelRefs(source, texts) {
  * An inbox entry, as src/api.js's `thread`: the thread, or the group it was re-threaded into,
  * with every member's messages. A member's key opens its group: `thread.thread` is the entry's.
  */
+const DEV_READ_MEMBERS = 8;
+
 function thread(asked) {
   const own = store.threads.get(asked);
   const entry = own && store.threads.get(own.row.logical_thread || asked);
@@ -650,7 +652,10 @@ function thread(asked) {
   const group = [...store.threads.values()]
     .filter((e) => e.row.thread === key || e.row.logical_thread === key)
     .sort((a, b) => String(a.row.root_at).localeCompare(String(b.row.root_at)));
-  const paths = group.map((e) => e.row.path);
+  // As src/api.js: a very large group reads its latest posts only. The fixtures' storm of
+  // alerts stands for thousands, so the preview reads fewer than the Worker does.
+  const read = readMembers(group.map((e) => e.row), [key, asked], DEV_READ_MEMBERS);
+  const paths = read.map((m) => m.path);
   const teamIds = new Set(members(entry.row.team).map((m) => m.id));
   const messages = [...store.files.entries()]
     .filter(([path]) => paths.some((p) => path.startsWith(p)))
@@ -686,6 +691,7 @@ function thread(asked) {
       thread: m.thread, root_at: m.root_at, last_at: m.last_at, any_at: m.any_at,
     })),
     messages,
+    earlier_posts: group.length - read.length,
     profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
     // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
     // the platform's accounts (a channel member who never posted) alike.
