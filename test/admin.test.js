@@ -117,6 +117,11 @@ describe('admin: teams and members', () => {
     r = await call(e, ADA, 'GET', '/api/admin/people?team=helix&q=staff.example');
     assert.deepEqual(r.body.people.map((p) => p.email), ['cy@staff.example']);
     assert.deepEqual((await call(e, ADA, 'GET', '/api/admin/people?q=c')).body.people, []);
+    // A pasted list of addresses is longer than D1 takes in a LIKE: nobody, not a 500.
+    const list = Array.from({ length: 6 }, (_, i) => `person${i}@staff.example`).join(', ');
+    r = await call(e, ADA, 'GET', `/api/admin/people?team=search&q=${encodeURIComponent(list)}`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.people, []);
 
     // Added: a person, staff, named after their account, linked to it.
     r = await call(e, ADA, 'POST', '/api/admin/members', { team: 'search', email: 'Cy@Staff.example' });

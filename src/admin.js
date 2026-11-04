@@ -14,6 +14,7 @@ import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
+import { likePattern } from './like.js';
 import { ensureKnowledgeBase } from './kb.js';
 import { isStaffDomain, loadRules, toChannel } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
@@ -785,20 +786,23 @@ async function setRole(env, body) {
  * team's members are left out.
  */
 async function people(env, q, teamSlug) {
-  const needle = `%${q.toLowerCase().replace(/[%_]/g, '')}%`;
-  if (needle.length < 4) {
+  const asked = String(q || '').trim().toLowerCase();
+  if (asked.length < 2) {
     return json({ people: [] });
   }
+  // Cut to what D1 takes: a pasted list of addresses finds nobody, instead of failing.
+  const needle = likePattern(asked);
   const known = await rows(env, `SELECT p.id, p.name, p.email, p.staff,
       (SELECT GROUP_CONCAT(team, ',') FROM team_members m WHERE m.person = p.id) AS teams
     FROM people p
-    WHERE p.email IS NOT NULL AND (LOWER(p.name) LIKE ?1 OR LOWER(p.email) LIKE ?1)
+    WHERE p.email IS NOT NULL
+      AND (LOWER(p.name) LIKE ?1 ESCAPE '\\' OR LOWER(p.email) LIKE ?1 ESCAPE '\\')
       AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.person = p.id AND m.team = ?2)
     LIMIT 40`, needle, teamSlug || '');
   const accounts = await rows(env, `SELECT MAX(i.name) AS name, LOWER(i.email) AS email
     FROM identities i
     WHERE i.person IS NULL AND i.kind = 'person' AND i.email IS NOT NULL
-      AND (LOWER(i.name) LIKE ?1 OR LOWER(i.email) LIKE ?1)
+      AND (LOWER(i.name) LIKE ?1 ESCAPE '\\' OR LOWER(i.email) LIKE ?1 ESCAPE '\\')
       AND NOT EXISTS (SELECT 1 FROM people p WHERE p.email = i.email)
     GROUP BY LOWER(i.email) LIMIT 40`, needle);
   const list = [

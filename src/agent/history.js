@@ -12,6 +12,7 @@
 
 import { entryOf } from '../drafts.js';
 import { EMBEDDING_MODEL } from '../rethread.js';
+import { likePattern as like } from '../like.js';
 
 /**
  * The channel's earlier conversations, for a thread agent (list_channel_threads, and
@@ -44,8 +45,6 @@ export async function channelOf(env, key) {
     .bind(entry.key).first();
   return row ? { ...row, keys: entry.keys } : null;
 }
-
-const like = (s) => `%${String(s).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 /** Roots of the channel similar to `query` (Vectorize, as rethread.js writes them), by score. */
 async function similarRoots(env, here, query) {
