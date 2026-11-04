@@ -656,6 +656,7 @@ function thread(asked) {
   // alerts stands for thousands, so the preview reads fewer than the Worker does.
   const read = readMembers(group.map((e) => e.row), [key, asked], DEV_READ_MEMBERS);
   const paths = read.map((m) => m.path);
+  const readSet = new Set(read.map((m) => m.thread));
   const teamIds = new Set(members(entry.row.team).map((m) => m.id));
   const messages = [...store.files.entries()]
     .filter(([path]) => paths.some((p) => path.startsWith(p)))
@@ -688,7 +689,11 @@ function thread(asked) {
   return {
     thread: entry.row,
     members: group.map(({ row: m }) => ({
-      thread: m.thread, root_at: m.root_at, last_at: m.last_at, any_at: m.any_at,
+      thread: m.thread,
+      root_at: m.root_at,
+      last_at: m.last_at,
+      any_at: m.any_at,
+      ...(readSet.has(m.thread) ? {} : { left_out: true }),
     })),
     messages,
     earlier_posts: group.length - read.length,

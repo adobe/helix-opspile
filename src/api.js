@@ -689,6 +689,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const keys = JSON.stringify(group.map((m) => m.thread));
   // The members whose messages are shown: all of them, but for a very large group.
   const read = readMembers(group, [key, asked]);
+  const readSet = new Set(read.map((m) => m.thread));
   const readKeys = read.length === group.length ? keys : JSON.stringify(read.map((m) => m.thread));
   // The latest member's label speaks for the group.
   const labelKey = [...group]
@@ -811,9 +812,11 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       last_at: m.last_at,
       any_at: m.any_at,
       logical_via: m.logical_via,
+      // Its messages are not read (MAX_READ_MEMBERS): the page says where posts are missing.
+      ...(readSet.has(m.thread) ? {} : { left_out: true }),
     })),
     messages,
-    // The members whose messages are left out (MAX_READ_MEMBERS): the least recent posts.
+    // How many members are `left_out`: the least recent posts.
     earlier_posts: group.length - read.length,
     profiles: cards,
     mentioned,

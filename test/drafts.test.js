@@ -344,6 +344,10 @@ describe('shared drafts', () => {
     assert.equal(data.members.length, n + 1);
     assert.equal(listed.length, MAX_READ_MEMBERS);
     assert.equal(data.earlier_posts, n + 1 - MAX_READ_MEMBERS);
+    // Which ones, so the page says where posts are missing: the oldest but the first and asked.
+    const out = data.members.flatMap((m, i) => (m.left_out ? [i] : []));
+    assert.equal(out.length, data.earlier_posts);
+    assert.deepEqual([out[0], out.at(-1)], [2, data.earlier_posts + 1]);
     const bodies = data.messages.map((m) => m.body);
     // The group's first post, the asked one (the oldest alert) and the latest.
     assert.equal(bodies[0], 'the first alert');
