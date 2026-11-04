@@ -42,6 +42,8 @@ import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import {
   agentPerson, agentToolsExtension, opspileExtension, staffExtension,
 } from '../src/agent/tools.js';
+import { keepTurn, keptTurn } from '../src/agent/kept.js';
+import { thread as inboxThread } from '../src/api.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -318,6 +320,38 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('keep their latest finished turn, which comes with the thread', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const me = {
+      id: 7, name: 'Ada Staff', email: 'ada@staff.example', teams: [{ slug: 'helix', name: 'Helix' }],
+    };
+    const turnOf = async (x = e) => (await inboxThread(x, me, THREAD)).agent_turn;
+    const done = {
+      state: 'done', text: 'Nothing to change.', startedAt: '2026-10-21T10:00:00.000Z', endedAt: '2026-10-21T10:01:00.000Z',
+    };
+    assert.equal(await turnOf(), null);
+    // A turn in progress is the agent's to say (GET /api/agent), and kb agents have no thread.
+    assert.equal(await keepTurn(e, THREAD, { ...done, state: 'working', endedAt: null }), false);
+    assert.equal(await keepTurn(e, 'kb:helix:acme', done), false);
+    assert.equal(await turnOf(), null);
+    assert.equal(await keepTurn(e, THREAD, done), true);
+    assert.deepEqual(await turnOf(), done);
+    // An older turn does not replace a newer one; a later one does, failed or not.
+    const failed = {
+      state: 'failed', text: 'The turn did not finish.', startedAt: '2026-10-21T11:00:00.000Z', endedAt: '2026-10-21T11:00:30.000Z',
+    };
+    await keepTurn(e, THREAD, failed);
+    await keepTurn(e, THREAD, { ...done, text: 'Older.' });
+    assert.deepEqual(await keptTurn(e, THREAD), failed);
+    // Only where the channel has an agent, as GET /api/agent says.
+    assert.equal(await turnOf({ ...e, AGENT_CHANNELS: '' }), null);
+    assert.deepEqual(await turnOf(), failed);
+    // A reset transcript has no turn: nothing is kept.
+    await keepTurn(e, THREAD, null);
+    assert.equal(await turnOf(), null);
   });
 
   it('hear who discarded their draft, and only theirs', async () => {

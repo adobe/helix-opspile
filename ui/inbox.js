@@ -1750,7 +1750,8 @@ function message(m, prev, fresh, followed = false) {
 
 // ---------------------------------------------------------------- the thread agent
 // Its latest turn, under the last message (GET /api/agent): what it is doing while it works,
-// its note for the team once done: its thinking. Asked when a thread opens or changes, and
+// its note for the team once done: its thinking. A finished one comes with the thread
+// (`agent_turn`, keptAgentTurn), so it shows with the messages. Asked when a thread opens or changes, and
 // every few seconds while it works, or while a new message waits for it to start. Not where
 // you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
 // avatar and name open the agent settings of the thread's team, at the thread's channel.
@@ -1812,6 +1813,20 @@ function placeAgent(key) {
   node.__html = html;
   if (old) old.replaceWith(node); else feed.append(node);
   if (near) scroller.scrollTop = scroller.scrollHeight;
+}
+
+/**
+ * The agent's latest finished turn, as the thread came with it (`agent_turn`, kept in D1 when a
+ * turn ends): shown with the messages, not a moment after them. What the agent itself said
+ * (loadAgent) wins when it is about a later turn, or about this one while it still worked.
+ */
+function keptAgentTurn(key, turn) {
+  if (!turn) return;
+  const known = state.agents.get(key);
+  const was = known?.turn;
+  if (was && (was.startedAt > turn.startedAt || (was.startedAt === turn.startedAt && was.state !== 'working'))) return;
+  if (known) known.turn = turn;
+  else state.agents.set(key, { turn, latest: null, timer: null });
 }
 
 /** Asks the thread's agent how its latest turn went; keeps asking while it works. */
@@ -2145,6 +2160,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const prevScroller = pane.querySelector('.scroller');
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
+  const keepHeight = prevScroller ? prevScroller.scrollHeight : 0;
   // A draft shown in the reply box on hover gives the box back first: what it held is what counts.
   if (switching) hideSource();
   endDraftPreview();
@@ -2282,6 +2298,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (gap) items.push({ html: `<div class="sys">${gap.toLocaleString()} later ${gap === 1 ? 'post is' : 'posts are'} not shown.</div>` });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
   const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
+  keptAgentTurn(key, data.agent_turn);
   const agent = state.agents.get(key);
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
@@ -2315,10 +2332,14 @@ async function openThread(key, { live = false, cached = false } = {}) {
   loadAgent(key, { latest });
   loadExperts(key, switching);
   const scroller = pane.querySelector('.scroller');
-  if (live && !switching) {
-    // New messages scroll up into view if I was at the bottom; otherwise stay put.
+  // Shown for the first time (a fresh page, where the first render is a live one, for the
+  // workspace's emoji): placed where it opens, not scrolled down from the top.
+  if (live && !switching && prevScroller) {
+    // New messages scroll up into view if I was at the bottom; otherwise stay put. Nothing new
+    // (the same thread again, as the workspace's emoji arrive): it stays where it was, also
+    // when that was the first unread message, a little above the bottom.
     scroller.scrollTop = keepTop;
-    if (wasNear) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    if (wasNear && scroller.scrollHeight > keepHeight) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
   } else {
     // Opened from a search result: at the message that matched, marked for a moment.
     const jump = state.jump?.key === key ? state.jump : null;
