@@ -110,7 +110,7 @@ export class ThreadAgent extends Agent {
     this.registry = createRegistry();
     // Not `this.mcp`: the Agents SDK's own MCP client manager lives there, and the SDK calls it
     // (listPrompts, listTools) when the agent starts.
-    this.servers = new AgentMcp(env, ctx.storage);
+    this.servers = new AgentMcp(env, ctx.storage, { target: () => this.target() });
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();

@@ -537,6 +537,9 @@ async function loadMcp(repo) {
 /** Whether a global server is on somewhere here: for the team, or in any of these channels. */
 const globalOn = (g) => Boolean((g.team && g.team.enabled) || Object.values(g.channels).some((c) => c.enabled));
 
+/** Whether a server is on somewhere here: for all its channels, or in one. */
+const serverOn = (s) => Boolean(s.enabled || Object.values(s.channels || {}).some((c) => c.enabled));
+
 const mcpUsable = (s) => {
   const allowed = String(s.allow || '').split(/[\s,]+/).filter(Boolean);
   return allowed.length ? s.tools.filter((t) => allowed.includes(t.name)).length : s.tools.length;
@@ -545,7 +548,7 @@ const mcpUsable = (s) => {
 /** "2 servers", or "none", next to "MCP servers". */
 function mcpTag() {
   if (!state.mcp) return '<span class="tag missing">unknown</span>';
-  const on = state.mcp.filter((s) => s.enabled).length + (state.globals || []).filter(globalOn).length;
+  const on = state.mcp.filter(serverOn).length + (state.globals || []).filter(globalOn).length;
   return on ? `<span class="tag agent">${on} server${on === 1 ? '' : 's'}</span>` : '<span class="tag missing">none</span>';
 }
 
@@ -568,6 +571,20 @@ function oauthCreds(o) {
   return o.by ? `OAuth: connected by ${o.by}, no longer works` : 'OAuth: not connected';
 }
 
+/**
+ * The per-channel switches of a team's or a customer's own server: a channel switched on its
+ * own wins over the server's switch, which the others follow.
+ */
+const serverPerChannel = (s) => channelSwitches({
+  kind: 'sch',
+  id: String(s.id),
+  title: s.name,
+  switches: s.channels || {},
+  team: { enabled: s.enabled },
+  follow: 'As the server',
+  may: mayEdit(),
+});
+
 function mcpRow(s) {
   const allowed = new Set(String(s.allow || '').split(/[\s,]+/).filter(Boolean));
   const usable = mcpUsable(s);
@@ -584,18 +601,23 @@ function mcpRow(s) {
     : s.headerNames.length ? s.headerNames.map((h) => `${h} ••••`).join(', ') : 'no credentials';
   const signIn = oauth ? `<button data-connect="${s.id}"${oauth.connected ? '' : ' class="primary"'}>${oauth.connected ? 'Reconnect' : 'Connect'}</button>${oauth.connected ? `<button data-disconnect="${s.id}">Disconnect</button>` : ''}` : '';
   const checkable = !oauth || oauth.connected;
-  return `<div class="ch">
-    <div class="who">
+  const b = base();
+  const by = s.updatedBy && `changed by ${s.updatedBy}`;
+  return `<div class="ch global">
+    <div class="head">
       <div class="nm">${esc(s.name)}<span class="src mono">mcp__${esc(s.name.replace(/[^a-z0-9_]/g, '_'))}</span>${status}</div>
+      ${mayEdit() ? `<span class="acts">${signIn}${checkable ? `<button data-check="${s.id}">Check</button>` : ''}<button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>` : ''}
+      <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
+      <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${mayEdit() ? (s.enabled ? `Agents of every channel of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-server="${s.id}"${mayEdit() ? '' : ' disabled'}></button>
+    </div>
+    <div class="who">
       <div class="sub">${esc([s.description, s.url].filter(Boolean).join(' · '))}</div>
       ${oauth && oauth.error ? `<div class="sub err">${esc(oauth.error)}</div>` : ''}
       ${s.checkError ? `<div class="sub err">${esc(s.checkError)}</div>` : ''}
       ${tools ? `<div class="tags">${tools}</div>` : ''}
-      <div class="sub by">${esc([creds, s.checkedAt && `checked ${ago(s.checkedAt)}`, s.updatedBy && `changed by ${s.updatedBy}`].filter(Boolean).join(' · '))}</div>
+      <div class="sub by">${esc([creds, s.checkedAt && `checked ${ago(s.checkedAt)}`, by].filter(Boolean).join(' · '))}</div>
     </div>
-    ${mayEdit() ? `<span class="acts">${signIn}${checkable ? `<button data-check="${s.id}">Check</button>` : ''}<button data-edit="${s.id}">Edit</button><button class="danger" data-del="${s.id}">Delete</button></span>` : ''}
-    <span class="state${s.enabled ? ' on' : ''}">${s.enabled ? 'On' : 'Off'}</span>
-    <button class="switch" role="switch" aria-checked="${s.enabled}" aria-label="Agents use ${esc(s.name)}" title="${mayEdit() ? (s.enabled ? 'Agents use it; turn it off' : 'Turn it on for the agents') : `Only ${esc(whoEdits())} change it.`}" data-server="${s.id}"${mayEdit() ? '' : ' disabled'}></button>
+    ${serverPerChannel(s)}
   </div>`;
 }
 
@@ -633,10 +655,11 @@ const perSummary = (switches) => {
  * The per-channel switches of a tool or a global server: the channels switched on their own
  * first, then by name, with a filter when there are many. In a customer's knowledge base they
  * are all there is (no team switch above them), so they are shown; in a team's they fold.
- * `kind` names the select (`tch`, `gch`).
+ * `kind` names the select (`tch`, `gch`, `sch`); `follow` is what a channel without its own
+ * switch follows, and `may` whether `me` changes them.
  */
 function channelSwitches({
-  kind, id, title, switches, team, works = () => true, unworkable,
+  kind, id, title, switches, team, works = () => true, unworkable, follow = 'As its team', may = true,
 }) {
   const b = base();
   const list = switchable();
@@ -657,8 +680,8 @@ function channelSwitches({
     const tip = ok ? switchedBy(sw) : na;
     const hidden = q && !label(c).toLowerCase().includes(q);
     return `<div class="row2" data-find="${esc(label(c).toLowerCase())}"${hidden ? ' hidden' : ''}><span title="${esc(tip)}">${esc(label(c))}${ok ? '' : ` <i class="na">${esc(na)}</i>`}</span>
-      <select data-${kind}="${esc(id)}" data-channel="${esc(c.channelId)}" aria-label="${esc(title)} in ${esc(channelName(c))}"${c.may && ok ? '' : ' disabled'}>
-        <option value=""${value === '' ? ' selected' : ''}>As its team${teamState ? ` (${teamState})` : ''}</option>
+      <select data-${kind}="${esc(id)}" data-channel="${esc(c.channelId)}" aria-label="${esc(title)} in ${esc(channelName(c))}"${c.may && ok && may ? '' : ' disabled'}>
+        <option value=""${value === '' ? ' selected' : ''}>${esc(follow)}${teamState ? ` (${teamState})` : ''}</option>
         <option value="on"${value === 'on' ? ' selected' : ''}>On</option>
         <option value="off"${value === 'off' ? ' selected' : ''}>Off</option>
       </select></div>`;
@@ -1180,6 +1203,7 @@ function renderMcp(shownNote) {
   : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
     <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
+    ${list && list.length ? `<div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(`Each is on or off for every channel of ${b.name}, or for one of them (a channel's own switch wins).`)}</div>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}
     ${list && mayEdit() ? mcpForm(editing || {}) : ''}</div>`;
@@ -1255,7 +1279,8 @@ function renderMcp(shownNote) {
       const on = !s.enabled;
       const yes = await ask(
         on ? `Turn on ${s.name} for the agents?` : `Turn off ${s.name} for the agents?`,
-        on ? 'Agents of these threads can call its tools again, from their next message.' : 'Agents stop using it with their next message. Its settings and credentials stay.',
+        on ? 'Agents of these threads can call its tools again, from their next message, except in channels switched off on their own.'
+          : 'Agents stop using it with their next message, except in channels switched on on their own. Its settings and credentials stay.',
         on ? 'Turn on' : 'Turn off',
       );
       if (!yes) return;
@@ -1263,6 +1288,26 @@ function renderMcp(shownNote) {
       if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
       put(body.server);
       renderMcp(on ? reached(body.server) : { kind: 'ok', text: `Agents do not use ${s.name} any more.` });
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-sch]')) {
+    el.onchange = async () => {
+      const s = find(el.dataset.sch);
+      const c = state.channels.find((x) => x.channelId === el.dataset.channel);
+      const enabled = el.value === '' ? null : el.value === 'on';
+      const repo = state.repo;
+      const { ok, body } = await call('/api/kb/mcp/channel', { method: 'PUT', body: JSON.stringify({ id: s.id, channel: c.channelId, enabled }) });
+      if (state.repo !== repo || state.view !== 'mcp') return;
+      if (!ok) {
+        el.value = switchValue(s.channels[c.channelId]);
+        showNote({ kind: 'err', text: body.error || 'Switching failed.' });
+        return;
+      }
+      // Kept in place, so that the row is not sorted away from under you (channelSwitched).
+      Object.assign(s, body.server);
+      renderFiles();
+      refreshBases();
+      channelSwitched(el, s.channels, { kind: 'ok', text: enabled === null ? `${s.name} in ${channelName(c)} follows the server's switch again.` : `${s.name} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
   }
   const save = async (patch = {}) => {
