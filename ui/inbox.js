@@ -4193,6 +4193,35 @@ function dropEntries(keys) {
   if (!state.data || !keys.size) return;
   state.data.threads = state.data.threads.filter((t) => !keys.has(t.thread));
 }
+// Threads the room said were folded, by the group they went into, until that group's entry is
+// in the inbox.
+const folds = new Map();
+/**
+ * Folds the threads `keys` into the entry of `group`, as the room announced: their own entries
+ * go, and the group's has them as members until a reload brings it as the server has it. While
+ * the group is not in the inbox (on a page not loaded, or only once reloaded), its stubs stay:
+ * else the conversation would leave the list until then.
+ */
+function foldInto(group, keys) {
+  for (const k of keys) if (k !== group) folds.set(k, group);
+  settleFolds();
+}
+/** The folds announced whose group is in the inbox now: done. */
+function settleFolds() {
+  if (!state.data || !folds.size) return;
+  const byKey = new Map(state.data.threads.map((t) => [t.thread, t]));
+  const gone = new Set();
+  for (const [k, group] of folds) {
+    const entry = byKey.get(group);
+    if (!entry) continue;
+    const members = entry.members || (entry.members = []);
+    const stub = byKey.get(k);
+    if (!members.some((m) => m.thread === k)) members.push({ thread: k, last_at: stub?.last_at || null, any_at: stub?.any_at || null });
+    gone.add(k);
+    folds.delete(k);
+  }
+  dropEntries(gone);
+}
 async function loadInbox(early = null) {
   const ahead = early && await early;
   const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
@@ -4212,6 +4241,7 @@ async function loadInbox(early = null) {
     if (!first.elsewhere && prev.elsewhere) first.elsewhere = prev.elsewhere;
   }
   state.data = first;
+  settleFolds();
   // Personal's rooms grow once you are in a channel of another team: listen there too.
   if (first.rooms && !first.rooms.every((r) => state.rooms?.includes(r))) {
     state.rooms = first.rooms;
@@ -4232,6 +4262,7 @@ function addPage(p) {
   const added = p.threads.filter((t) => !keys.has(t.thread));
   dropEntries(foldedIn(added));
   state.data.threads.push(...added);
+  settleFolds();
   state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
   state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
   if (p.elsewhere) state.data.elsewhere = p.elsewhere;
@@ -4388,9 +4419,9 @@ function listen(team, live, { again = false } = {}) {
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {
       if (ev.folded) for (const k of [ev.thread, ...ev.folded]) if (k !== state.open) state.cache.delete(k);
-      // The folded threads' own entries go now: their group's entry has them (once reloaded),
-      // also when it is on an older page, which is not reloaded.
-      if (ev.folded) dropEntries(new Set(ev.folded.filter((k) => k !== ev.thread)));
+      // The folded threads' own entries go once their group's is here: now, if it is (also on
+      // an older page, which is not reloaded), else when a reload or a page brings it.
+      if (ev.folded) foldInto(ev.thread, ev.folded);
       // Re-filed under another org or team (a rule change): cached copies say where they were.
       if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
       const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
