@@ -4687,6 +4687,7 @@ function renderNotify() {
   }[perm] || '';
   if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While the inbox is open, in a tab or as the app.' : 'While the inbox is open. The bell above the list adds the view on screen.';
   $('notifyAllow').hidden = perm !== 'default';
+  $('notifySound').setAttribute('aria-checked', String(soundOn()));
 }
 function wireNotify() {
   const toggle = (key) => async () => {
@@ -4697,6 +4698,13 @@ function wireNotify() {
   $('notifyMentions').onclick = toggle('mentions');
   $('notifyThreads').onclick = toggle('threads');
   $('notifyAllow').onclick = () => askToNotify();
+  $('notifySound').onclick = () => {
+    localStorage.setItem(SOUND_KEY, soundOn() ? 'off' : 'on');
+    renderNotify();
+    unlockAudio();
+    playChime();
+  };
+  for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, unlockAudio, { capture: true, passive: true });
   $('bells').onclick = (e) => {
     const x = e.target.closest('[data-unbell]');
     if (!x) return;
@@ -4734,17 +4742,125 @@ const noteUrl = (scope, thread) => {
   q.set('t', thread);
   return `/inbox?${q}`;
 };
-/** Shows one, unless the thread is on screen in a focused window or this message was shown. */
+/**
+ * The notifications' sound: /notify.mp3 (src/sound.js), which the page plays, as browsers do
+ * not play a notification's own (macOS plays Chrome's only now and then), so the notifications
+ * themselves are silent. Per device (localStorage `opspile.notify.sound`), on unless turned off.
+ * Browsers only let a page play sound once it was clicked or typed in: the audio starts on the
+ * first click, and a page not clicked since it was loaded stays silent. Inboxes open in several
+ * tabs play it once (a lock held for a moment). A short tone, if the sound does not load.
+ */
+const SOUND_KEY = 'opspile.notify.sound';
+const soundOn = () => localStorage.getItem(SOUND_KEY) !== 'off';
+let audio = null;
+let chime = null;
+function unlockAudio() {
+  if (!audio && window.AudioContext) {
+    audio = new AudioContext();
+    chime = fetch('/notify.mp3', { redirect: 'error' })
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+      .then((b) => audio.decodeAudioData(b))
+      .catch(() => null);
+  }
+  if (audio?.state === 'suspended') audio.resume().catch(() => {});
+}
+/** Two soft tones, a fifth apart: the sound when /notify.mp3 did not load. */
+function fallbackTone(t) {
+  [[880, 0], [1320, 0.12]].forEach(([f, d]) => {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = f;
+    gain.gain.setValueAtTime(0, t + d);
+    gain.gain.linearRampToValueAtTime(0.4, t + d + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + d + 0.9);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t + d);
+    osc.stop(t + d + 0.95);
+  });
+}
+function playChime() {
+  if (!audio || !soundOn()) return;
+  const run = async () => {
+    if (audio.state === 'suspended') await audio.resume().catch(() => {});
+    const buffer = await chime;
+    const t = audio.currentTime + 0.02;
+    if (!buffer) { fallbackTone(t); return; }
+    const src = audio.createBufferSource();
+    src.buffer = buffer;
+    src.connect(audio.destination);
+    src.start(t);
+  };
+  if (!navigator.locks) { run(); return; }
+  navigator.locks.request('opspile:chime', { ifAvailable: true }, async (lock) => {
+    if (!lock) return;
+    run();
+    await new Promise((r) => { setTimeout(r, 1500); });
+  }).catch(() => {});
+}
+/**
+ * A notification's picture: the author's avatar, round, as the inbox shows it (initials on
+ * their hue underneath, the picture on top), as a PNG data URL. A picture that does not allow
+ * drawing (no CORS) is used as it is, square; none, or one that does not load: the initials.
+ */
+async function noteFace(name, url) {
+  const S = 192;
+  const load = (cors) => new Promise((resolve) => {
+    const img = new Image();
+    if (cors) img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+  const pic = url ? await load(true) : null;
+  if (url && !pic && await load(false)) return url;
+  try {
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const g = c.getContext('2d');
+    g.beginPath(); g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); g.clip();
+    if (pic) {
+      // Cover the circle, as object-fit: cover does.
+      const k = Math.max(S / pic.naturalWidth, S / pic.naturalHeight);
+      const w = pic.naturalWidth * k; const h = pic.naturalHeight * k;
+      g.drawImage(pic, (S - w) / 2, (S - h) / 2, w, h);
+    } else {
+      g.fillStyle = hue(name);
+      g.fillRect(0, 0, S, S);
+      g.fillStyle = 'white';
+      g.font = `600 ${S * 0.4}px adobe-clean, system-ui, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(initials(name), S / 2, S / 2 + S * 0.02);
+    }
+    return c.toDataURL('image/png');
+  } catch {
+    return '/icon-192.png';
+  }
+}
+/**
+ * Shows one, unless the thread is on screen in a focused window or this message was shown.
+ * `author` and `avatar`: who wrote it, whose face is its picture. A newer message in a thread
+ * replaces the thread's notification, and alerts again (`renotify`).
+ */
 async function showNote({
-  thread, at, title, body, url,
+  thread, at, title, body, url, author, avatar: face,
 }) {
   const id = `${thread}@${at}`;
   if (!notifying() || watch.noted.has(id)) return;
   if (document.hasFocus() && document.visibilityState === 'visible' && state.open === thread) return;
   watch.noted.add(id);
   const opts = {
-    body, tag: `opspile:${thread}`, icon: '/icon-192.png', badge: '/icon-192.png', data: { url },
+    body,
+    tag: `opspile:${thread}`,
+    renotify: true,
+    icon: author ? await noteFace(author, face) : '/icon-192.png',
+    badge: '/icon-192.png',
+    timestamp: Date.parse(at) || Date.now(),
+    silent: true,
+    data: { url },
   };
+  playChime();
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) { await reg.showNotification(title, opts); return; }
@@ -4770,6 +4886,18 @@ const clipNote = (s, n = 160) => {
     .replace(/<@[^>]+>/g, '@…').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim();
   return v.length > n ? `${v.slice(0, n - 1)}…` : v;
 };
+/**
+ * A notification's text, the same for every kind: who wrote, for which customer (`title`), then
+ * what they wrote, and in which thread (`body`).
+ */
+function noteText({
+  author, org, text, thread,
+}) {
+  return {
+    title: [author || 'Someone', org].filter(Boolean).join(' · '),
+    body: [text ? clipNote(text, 140) : 'New message', `↳ ${clipNote(thread || '(no text)', 70)}`].join('\n'),
+  };
+}
 /** A message that mentions you, or else is in a thread of yours: who wrote what, in which thread. */
 async function noteMessage(ev, team) {
   const me = state.me.id;
@@ -4780,12 +4908,19 @@ async function noteMessage(ev, team) {
   let data = null;
   try { data = await get(`/api/thread?thread=${encodeURIComponent(ev.thread)}&team=${encodeURIComponent(team)}`); } catch { /* the title is enough */ }
   const msg = data?.messages?.findLast((m) => m.at === ev.at) || data?.messages?.at(-1);
-  const title = data?.thread?.title || known?.title || 'a thread';
+  const th = data?.thread || known;
+  const author = ev.author || msg?.author?.name;
   showNote({
     thread: known?.thread || ev.thread,
     at: ev.at,
-    title: `${ev.author || 'Someone'} ${atMe ? 'mentioned you' : 'wrote in your thread'}`,
-    body: `${clipNote(title, 80)}${msg?.body ? `\n${clipNote(msg.body)}` : ''}`,
+    ...noteText({
+      author: atMe ? `${author || 'Someone'} mentioned you` : author,
+      org: th && orgName(th),
+      text: msg?.body && plain(msg.body),
+      thread: th?.title || 'a thread',
+    }),
+    author: author || '?',
+    avatar: msg?.avatar || th?.participants?.find((p) => p.name === author)?.avatar,
     // A room that is not one of your teams' (you are on none): the thread is in Personal.
     url: noteUrl((state.teams || []).some((t) => t.slug === team) ? team : PERSONAL_VIEW, known?.thread || ev.thread),
   });
@@ -4835,11 +4970,16 @@ function checkBells(scope, data) {
     if (!at || at <= was || !t.unread || !bells.length || state.as) continue;
     const b = bells.find((x) => inBell(x, data, t));
     if (!b) continue;
+    const p = preview(t);
+    const author = p?.who || t.last_author;
     showNote({
       thread: t.thread,
       at,
-      title: clipNote(t.title || '(no text)', 80),
-      body: `${t.last_author ? `${t.last_author} wrote` : 'New message'} · ${orgName(t)}\n🔔 ${bellLabel(b)}`,
+      ...noteText({
+        author, org: orgName(t), text: p?.text, thread: t.title,
+      }),
+      author: author || orgName(t) || '?',
+      avatar: (t.participants || []).find((x) => x.name === author)?.avatar,
       url: noteUrl(scope, t.thread),
     });
   }

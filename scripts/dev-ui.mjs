@@ -66,6 +66,7 @@ import { parse } from '../src/channels.js';
 import { channelTokens, SLACK_CHANNEL_ID } from '../src/channelrefs.js';
 import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
+import { SOUNDS } from '../src/sound.js';
 import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { cleanExpertEvent } from '../src/expertevents.js';
@@ -333,6 +334,22 @@ function members(...teams) {
 /** A person's identity key on a platform, like `messages.author_key`. */
 const keyOf = (p, source) => `${source}:T-FAKE:${p ? p.key : 'bot'}`;
 
+/** `/api/me`'s picture of the signed-in person (src/api.js `avatarOf`): a made-up face. */
+const FACE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#8fb8de"/><circle cx="32" cy="25" r="12" fill="#f1d3b8"/><path d="M10 64c2-14 11-21 22-21s20 7 22 21z" fill="#35577d"/></svg>')}`;
+
+/**
+ * A made-up face for every other person (the rest show their initials, as people without a
+ * picture do): FACE in a colour of their own, so avatars and notifications have pictures.
+ */
+const SHIRTS = ['#35577d', '#7d3557', '#357d4f', '#7d6a35', '#4f357d'];
+function faceOf(p) {
+  if (!p || p.id % 2) {
+    return null;
+  }
+  const shirt = SHIRTS[p.id % SHIRTS.length];
+  return FACE.replace(encodeURIComponent('#35577d'), encodeURIComponent(shirt));
+}
+
 /** Profile cards for these identity keys, as src/profiles.js builds them from D1. */
 function profiles(keys) {
   const out = {};
@@ -343,7 +360,7 @@ function profiles(keys) {
     const partner = partnerOf(domain, store.partners);
     out[k] = p ? {
       name: p.name,
-      avatar: null,
+      avatar: faceOf(p),
       platform: source,
       kind: 'person',
       title: p.title || null,
@@ -370,7 +387,7 @@ function people(entry) {
   const domains = [...seen.values()].filter((p) => p && !p.staff).map((p) => p.email.split('@').pop());
   return {
     participants: [...seen].slice(0, 5).map(([name, p]) => ({
-      name, staff: Boolean(p?.staff), avatar: null, key: p ? keyOf(p, entry.ch.source) : null,
+      name, staff: Boolean(p?.staff), avatar: faceOf(p), key: p ? keyOf(p, entry.ch.source) : null,
     })),
     customerDomain: domains[0] || null,
   };
@@ -735,7 +752,7 @@ function thread(asked) {
     .map(({ meta, body }) => ({
       ...meta,
       body,
-      avatar: null,
+      avatar: faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
       authorKey: meta.author.kind === 'system' ? null : keyOf(
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,
@@ -937,8 +954,6 @@ const statsOf = (teams) => {
   const stats = statsFor(store.klickhaus, { teams });
   return stats ? { stats } : {};
 };
-/** `/api/me`'s picture of the signed-in person (src/api.js `avatarOf`): a made-up face. */
-const FACE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#8fb8de"/><circle cx="32" cy="25" r="12" fill="#f1d3b8"/><path d="M10 64c2-14 11-21 22-21s20 7 22 21z" fill="#35577d"/></svg>')}`;
 
 /**
  * The preview's video: eight seconds of ffmpeg's moving test pattern, and its first
@@ -1945,8 +1960,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(301, { location: preview }).end();
       return;
     }
-    if (ICONS[url.pathname]) {
-      const { type, base64 } = ICONS[url.pathname];
+    if (ICONS[url.pathname] || SOUNDS[url.pathname]) {
+      const { type, base64 } = ICONS[url.pathname] || SOUNDS[url.pathname];
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
       return;
     }

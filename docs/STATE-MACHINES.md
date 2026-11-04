@@ -238,3 +238,8 @@ again with it. A failed import is not final: a code block a minute later tries a
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.
+
+**Notification sound.** silent → unlocked → loaded or tone (`audio` and `chime` in `ui/inbox.js`). A
+page plays sound only after a click or key press in it, so the first one creates the audio and
+fetches `/notify.mp3`; a reload starts silent again. A sound that does not load plays a short tone.
+On unless `opspile.notify.sound` is `off`, per device; one tab plays it (the `opspile:chime` lock).
