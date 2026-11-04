@@ -805,13 +805,15 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
    is not a message anyone posted. Solid and tinted while it works. */
 .msg.agent .bubble { background: transparent;
   border-radius: var(--spectrum-corner-radius-800); position: relative; }
-/* A thought bubble's trail, dotted: the larger circle flush with the bubble's right edge, the
-   smaller one further down, towards the avatar. */
+/* A thought bubble's trail, dotted, from the bubble to the avatar: the larger circle just
+   under the bubble's bottom-right corner, clear of its border, and the smaller one past the
+   corner, between it and the avatar's lower half, with about the same gap on either side
+   (the offsets count from the bubble's padding box, inside its border). */
 .msg.agent .col { margin-bottom: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); }
 .msg.agent .bubble::before, .msg.agent .bubble::after { content: ''; position: absolute; box-sizing: border-box;
   border-radius: 50%; border: var(--spectrum-border-width-200) dotted; border-color: inherit; background: inherit; }
-.msg.agent .bubble::before { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); right: calc(-1 * (var(--spectrum-border-width-100) * 1.5)); bottom: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100))); }
-.msg.agent .bubble::after { width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); right: calc(-1 * (var(--spectrum-spacing-75) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-500) - var(--spectrum-border-width-100))); }
+.msg.agent .bubble::before { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); right: var(--spectrum-spacing-75); bottom: calc(-1 * (var(--spectrum-spacing-300) + var(--spectrum-spacing-75) + var(--spectrum-border-width-200))); }
+.msg.agent .bubble::after { width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); right: calc(-1 * var(--spectrum-spacing-100)); bottom: calc(-1 * (var(--spectrum-spacing-500) - var(--spectrum-border-width-100))); }
 
 .msg.agent .bubble code { background: var(--them-code); }
 
