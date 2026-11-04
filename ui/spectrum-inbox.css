@@ -808,13 +808,14 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
    is not a message anyone posted. Solid and tinted while it works. */
 .msg.agent .bubble { background: transparent;
   border-radius: var(--spectrum-corner-radius-800); position: relative; }
-/* A thought bubble's trail, dotted: the larger circle flush with the bubble's right edge, the
-   smaller one further down, towards the avatar. */
-.msg.agent .col { margin-bottom: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); }
+/* A thought bubble's trail, dashed or solid like the bubble, from it to the avatar: the larger circle
+   tucked under the bubble's bottom-right corner, the smaller one past the corner, towards the
+   avatar's lower half (the offsets count from the bubble's padding box, inside its border). */
+.msg.agent .col { margin-bottom: calc(var(--spectrum-spacing-500) + var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg.agent .bubble::before, .msg.agent .bubble::after { content: ''; position: absolute; box-sizing: border-box;
-  border-radius: 50%; border: var(--spectrum-border-width-200) dotted; border-color: inherit; background: inherit; }
-.msg.agent .bubble::before { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); right: calc(-1 * (var(--spectrum-border-width-100) * 1.5)); bottom: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100))); }
-.msg.agent .bubble::after { width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); right: calc(-1 * (var(--spectrum-spacing-75) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-500) - var(--spectrum-border-width-100))); }
+  border-radius: 50%; border: var(--spectrum-border-width-200) dashed; border-color: inherit; border-style: inherit; background: inherit; }
+.msg.agent .bubble::before { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); right: calc(-1 * (var(--spectrum-border-width-200) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-300) + var(--spectrum-border-width-100) * 1.5)); }
+.msg.agent .bubble::after { width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-200)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-200)); right: calc(-1 * (var(--spectrum-spacing-100) + var(--spectrum-border-width-200) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-400) + var(--spectrum-border-width-100))); }
 
 .msg.agent .bubble code { background: var(--them-code); }
 
@@ -1370,8 +1371,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bubble .gallery > img.att:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 
 /* The thread agent's turn: an outlined bubble in the accent's visual color (dashed while it
-   is done, solid and faintly filled while it works), its working sign a ProgressCircle. */
-.spectrum .msg.agent .bubble { border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); color: var(--spectrum-neutral-content-color-default); }
+   is done, solid and faintly filled while it works), its working sign a ProgressCircle. A
+   thought has no tail, so all four corners are round. */
+.spectrum .msg.agent .bubble { border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); border-bottom-right-radius: var(--spectrum-corner-radius-extra-large-default); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .msg.agent .bubble::before, .spectrum .msg.agent .bubble::after { border-width: var(--spectrum-border-width-200); }
 .spectrum .msg.agent .bubble a { color: var(--spectrum-accent-content-color-default); }
 .spectrum .msg.agent.working .bubble {
