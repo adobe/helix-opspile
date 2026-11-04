@@ -96,7 +96,8 @@ header .note { white-space: nowrap; }
   color: inherit; text-align: left; }
 #user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
 #user .av, .menu .id .av { display: grid; place-items: center; flex: none;
-  border-radius: 50%; }
+  border-radius: 50%; position: relative; overflow: hidden; }
+#user .av img, .menu .id .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 #user .who { display: flex; flex-direction: column; line-height: 1.2; }
 #user .nm { white-space: nowrap; }
 #user .sub { white-space: nowrap; }

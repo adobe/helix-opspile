@@ -862,6 +862,8 @@ const statsOf = (teams) => {
   const stats = statsFor(store.klickhaus, { teams });
   return stats ? { stats } : {};
 };
+/** `/api/me`'s picture of the signed-in person (src/api.js `avatarOf`): a made-up face. */
+const FACE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#8fb8de"/><circle cx="32" cy="25" r="12" fill="#f1d3b8"/><path d="M10 64c2-14 11-21 22-21s20 7 22 21z" fill="#35577d"/></svg>')}`;
 
 /**
  * The preview's video: eight seconds of ffmpeg's moving test pattern, and its first
@@ -949,6 +951,7 @@ async function api(req, res, url) {
       manages: MANAGER ? ['edge'] : [],
       // The header's Stats link (src/klickhaus.js): Dana is in Edge ops, unless --no-team.
       ...statsOf(teams),
+      avatar: FACE,
       // The person's teams and the teams of the personal view's channels (src/shares.js).
       rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
         .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
