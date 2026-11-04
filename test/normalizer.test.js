@@ -400,6 +400,28 @@ describe('processKey', () => {
     assert.equal(calls.filter((c) => c === '/api/team.info').length, 2);
   });
 
+  it('splits a folded root back out of its group when a person replies in its thread', async () => {
+    const k = (ts) => `slack/E1/C1/2026/10/21/${ts}-a.json`;
+    const e = env({
+      [k('1.1')]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'the dates are off',
+      }),
+      [k('1.5')]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.5', text: 'I cannot roll out',
+      }),
+      [k('1.6')]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.6', text: 'which site?', thread_ts: '1.5',
+      }),
+    });
+    await processKey(e, k('1.1'));
+    await processKey(e, k('1.5'));
+    e.DB.sqlite.prepare(`UPDATE threads SET logical_thread = 'slack:E1:C1:1.1', logical_via = 'clef',
+      logical_p = 0.96, rethreaded_at = '2026-10-21T12:00:00Z' WHERE thread = 'slack:E1:C1:1.5'`).run();
+    await processKey(e, k('1.6'));
+    assert.deepEqual(e.DB.rows(`SELECT logical_thread, logical_via FROM threads
+      WHERE thread = 'slack:E1:C1:1.5'`), [{ logical_thread: null, logical_via: 'split' }]);
+  });
+
   it('caches channels and people in D1', async () => {
     const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';
@@ -828,11 +850,13 @@ describe('backfill, mentions and labels', () => {
     notified.length = 0;
     await processKey(e, watched);
     assert.deepEqual(announced(), [7]);
-    // A thread of its own at first, then folded into the one Ada is watching.
+    // A thread of its own at first, then folded into the one Ada is watching (as a burst: a
+    // root folded by Clef would be split out again by the reply in its thread).
     await processKey(e, other);
     assert.equal(announced(), undefined);
     const [a, b] = e.DB.rows('SELECT thread FROM threads ORDER BY root_at').map((r) => r.thread);
-    await e.DB.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').bind(a, b).run();
+    await e.DB.prepare("UPDATE threads SET logical_thread = ?, logical_via = 'burst' WHERE thread = ?")
+      .bind(a, b).run();
     await processKey(e, follow);
     assert.deepEqual(announced(), [7]);
   });

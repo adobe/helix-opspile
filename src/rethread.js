@@ -27,6 +27,9 @@ import { teamsOf } from './shares.js';
  * A match sets `logicalThread` on the new thread, pointing at the earliest thread of the
  * group, so repeated alerts and follow-ups fold into one inbox entry. A root that quotes a
  * message (Slack: forwarded, or a link to it) was started on purpose, and stays on its own.
+ * So does a conversation's root that people answer in its own platform thread: one that has
+ * replies when it is decided is not folded, and one that gets them after it was folded is split
+ * back out (`dethread`), for good.
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -201,6 +204,23 @@ const groupOf = (t) => t.logical_thread || t.thread;
 export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE_HEAD.test(l));
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
+/**
+ * `logical_via` of a root that was split out of its group (`dethread`): it is decided, and not
+ * folded again, not even by a forced re-threading or a burst before it.
+ */
+export const SPLIT = 'split';
+
+/**
+ * Whether a root has replies of its own: a person posted in its platform thread. People who
+ * answer there, and not in the conversation it was folded into, hold a conversation of its own,
+ * and the inbox's replies go to the platform thread its entry was last active in
+ * (src/post.js `target`), which must be this one then.
+ */
+async function answered(env, thread) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM messages
+    WHERE thread = ? AND id != ? AND counted = 1 AND deleted = 0 LIMIT 1`)
+    .bind(thread.thread, thread.root_id).first());
+}
 
 /**
  * The conversations a new root in a conversation channel may continue: the channel's latest
@@ -320,6 +340,9 @@ export async function rethread(env, key, { force = false } = {}) {
   if (!thread || !thread.root_at) {
     return { result: 'skip', reason: 'no root' };
   }
+  if (thread.logical_via === SPLIT) {
+    return { result: 'unchanged', logical: null, reason: 'split' };
+  }
   if (thread.rethreaded_at && !force) {
     return { result: 'unchanged', logical: thread.logical_thread };
   }
@@ -404,8 +427,11 @@ export async function rethread(env, key, { force = false } = {}) {
   let match = null;
   let asked = null;
   const quoting = quotes(root.parsed.body);
-  if (quoting) {
-    // On its own: see quotes().
+  // A burst is one request in pieces, wherever it is answered; anything else that people answer
+  // in its own platform thread is a conversation of its own.
+  const replied = conversation && !quoting && !burst && await answered(env, thread);
+  if (quoting || replied) {
+    // On its own: see quotes() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
@@ -511,7 +537,8 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.root_at,
       new Date(Date.parse(thread.root_at) + BURST_MS).toISOString(),
     ).first();
-  const nextFree = next && (!next.logical_thread || joined.includes(next.logical_thread));
+  const nextFree = next && next.logical_via !== SPLIT
+    && (!next.logical_thread || joined.includes(next.logical_thread));
   const nextBurst = nextFree && next.author_key === author;
   const nextRoot = nextBurst && await rootBody(env, next);
   if (nextBurst && !(nextRoot && quotes(nextRoot.parsed.body))) {
@@ -554,9 +581,73 @@ export async function rethread(env, key, { force = false } = {}) {
     via: match ? match.via : null,
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
+    ...(replied ? { reason: 'has replies of its own' } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
   };
+}
+
+/**
+ * De-threading: a conversation's root that was folded into an earlier conversation, and then
+ * gets replies in its own platform thread, is split back out into an inbox entry of its own
+ * (see answered()). Called for every reply a person posts; only a folded root changes, once:
+ * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
+ * burst go with it. A burst member itself, and alerts, stay in their group: a burst is one
+ * request in pieces, and someone answering one of a series of alerts answers all of them.
+ * `rethreaded_at` moves to now, so the export sweep writes the threads again.
+ */
+export async function dethread(env, key) {
+  const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
+  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
+    || !thread.root_id || !await answered(env, thread)) {
+    return { result: 'unchanged' };
+  }
+  const group = thread.logical_thread;
+  const now = new Date().toISOString();
+  // Only from the group it is in now: a job that decided otherwise meanwhile wins.
+  const { meta } = await env.DB.prepare(`UPDATE threads SET logical_thread = NULL, logical_via = ?,
+      logical_p = NULL, rethreaded_at = ? WHERE thread = ? AND logical_thread = ?`)
+    .bind(SPLIT, now, key, group).run();
+  if (!meta || !meta.changes) {
+    return { result: 'unchanged' };
+  }
+  await markRootFile(env, thread, null);
+  // The roots its author posted right after it, each within minutes of the one before, with
+  // nobody else's root between them: the burst re-threading folded into the group with it.
+  const author = await env.DB.prepare(`SELECT author_key FROM messages
+    WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
+  const split = [key];
+  let last = thread;
+  while (author && author.author_key) {
+    // eslint-disable-next-line no-await-in-loop
+    const next = await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
+      JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+      WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
+        AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
+      .bind(
+        thread.source,
+        thread.tenant,
+        thread.channel_id,
+        last.thread,
+        last.root_at,
+        new Date(Date.parse(last.root_at) + BURST_MS).toISOString(),
+      ).first();
+    if (!next || next.author_key !== author.author_key || next.logical_thread !== group
+      || next.logical_via !== 'burst') {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare('UPDATE threads SET logical_thread = ?, rethreaded_at = ? WHERE thread = ?')
+      .bind(key, now, next.thread).run();
+    // eslint-disable-next-line no-await-in-loop
+    await markRootFile(env, next, key);
+    split.push(next.thread);
+    last = next;
+  }
+  // Open inboxes reload the group, which has these no more, and list them on their own.
+  const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
+  await notifyRoom(env, rooms, { type: 'thread', thread: group, split });
+  return { result: 'split', group, split };
 }
 
 /**

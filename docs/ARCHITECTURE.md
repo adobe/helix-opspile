@@ -273,6 +273,17 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   with a quote ("first step in that direction") reads like a follow-up of whatever was said last.
   The root after it can still continue it. In the transcripts Clef reads, a quote is
   `> <author> wrote:` and its text.
+- **Replies of its own (de-threading):** a conversation's root that people answer in its own
+  platform thread holds a conversation of its own, however much it reads like a follow-up (a
+  different customer raising a related problem by @-mentioning whoever was active last). One
+  that has a person's reply when it is decided is not folded. One that gets its first after it
+  was folded is split back out (`dethread`, on that reply): its row loses `logical_thread`
+  and gets `logical_via = 'split'`, which re-threading (forced, or a burst before it) leaves
+  alone for good, its root file loses `logicalThread`, the roots that followed it in a burst go
+  with it, and the open inboxes reload the group (`split` in the room's `thread` event). So the
+  group's entry stops interleaving the two platform threads, and its replies go to its own
+  platform thread again (src/post.js `target`, the entry's latest). A burst member, and alerts,
+  stay in their group.
 
 A match sets `logicalThread` on that one message file and on its thread row, always pointing at
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing

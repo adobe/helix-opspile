@@ -4512,6 +4512,17 @@ function settleFolds() {
   }
   dropEntries(gone);
 }
+/**
+ * Takes the threads `keys` out of the entry of `group`, as the room announced (they were split
+ * back out of it): a fold of them still waiting is off, the group's cached copy is stale, and its
+ * entry has them as members no more. Their own entries come with the reload.
+ */
+function splitFrom(group, keys) {
+  for (const k of keys) folds.delete(k);
+  for (const k of [group, ...keys]) if (k !== state.open) state.cache.delete(k);
+  const entry = state.data?.threads.find((t) => t.thread === group);
+  if (entry?.members) entry.members = entry.members.filter((m) => !keys.includes(m.thread));
+}
 async function loadInbox(early = null) {
   const ahead = early && await early;
   const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
@@ -4714,6 +4725,9 @@ function listen(team, live, { again = false } = {}) {
       // The folded threads' own entries go once their group's is here: now, if it is (also on
       // an older page, which is not reloaded), else when a reload or a page brings it.
       if (ev.folded) foldInto(ev.thread, ev.folded);
+      // Split back out of the group (a folded root that got replies of its own): the group's
+      // cached copy and entry have them no more, and the reload lists them on their own.
+      if (ev.split) splitFrom(ev.thread, ev.split);
       // Re-filed under another org or team (a rule change): cached copies say where they were.
       if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
       const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
