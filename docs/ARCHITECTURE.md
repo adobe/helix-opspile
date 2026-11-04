@@ -249,7 +249,9 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
 or split one request over several messages, and alert channels post the same alert again
 and again. A root by the same person within three minutes of their previous root in the
 channel, with nobody else's root between them, continues it (a *burst*), unless that root is
-deleted by then: people delete a message and post it again, and the new one is the thread. When a root message
+deleted by then (people delete a message and post it again, and the new one is the thread), or
+someone has answered it in its thread already (then the new one is a message of its own, as the
+next of several questions each in its thread). When a root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
 earlier roots in the same channel, within 14 days, are found by vector search.
@@ -265,7 +267,12 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   the groups of up to four similar roots (cosine ≥ 0.6) as a transcript: each conversation's
   first message and its latest two before the new root, marked with the conversation's letter
   and how long before they were posted, then the new message, and says which conversation it
-  continues or that it is a new topic. A match needs a probability of at least 0.8. Comparing
+  continues or that it is a new topic. A match needs a probability of at least 0.8, and 0.99
+  for a conversation with replies in its platform threads (`MIN_CLEF_THREADED`): people continue
+  a chat with more top-level messages where the chat is top-level messages, and where they reply
+  in threads, a new top-level message is nearly always a topic of its own, however close it
+  reads. Folded into conversations held in threads at 0.8, new roots got replies of their own as
+  often as the channel's new topics; folded into ones without, half as often. Comparing
   the new root with each candidate on its own spread Clef's answer over several candidates and
   left most of a chat in pieces. Platform notices ("… has joined the channel") are left alone.
 - **Quotes:** a root that quotes a message (below) stays on its own, whatever Clef or a burst
@@ -274,6 +281,8 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   with a quote ("first step in that direction") reads like a follow-up of whatever was said last.
   The root after it can still continue it. In the transcripts Clef reads, a quote is
   `> <author> wrote:` and its text.
+- **Thread marks:** a root that announces a thread (🧵, `:thread:`) stays on its own too, and
+  out of a burst: nearly all of them are answered in their thread.
 - **Replies of its own (de-threading):** a conversation's root that people answer in its own
   platform thread holds a conversation of its own, however much it reads like a follow-up (a
   different customer raising a related problem by @-mentioning whoever was active last). One

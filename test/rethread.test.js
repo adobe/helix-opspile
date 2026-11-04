@@ -327,7 +327,8 @@ describe('conversations', () => {
   const ask = (env) => env.clefCalls[0].questions.continues;
 
   it('asks Clef which of the latest conversations a root continues, reading them as a transcript', async () => {
-    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
+    // Sure enough for a conversation that is answered in its thread (MIN_CLEF_THREADED).
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.995 }) };
     const at0 = new Date(T0).toISOString();
     const atReply = new Date(T0 + 20 * 60000).toISOString();
     const at1 = new Date(T0 + 5 * 3600000).toISOString();
@@ -501,13 +502,14 @@ describe('de-threading', () => {
   const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
 
   /**
-   * A conversation (a customer's question, Adobe's answers), then another customer's new root
-   * that @-mentions whoever answered last about a related problem, which Clef folds into it.
+   * A conversation (a customer's question, Adobe's answers in its thread), then another
+   * customer's new root that @-mentions whoever answered last about a related problem, which
+   * Clef folds into it (all but certain: the conversation is held in its thread).
    */
   async function folded(extra = {}) {
     const notified = [];
     const env = {
-      DB: d1(), CHANNELS: fakeBucket(), ROOMS: rooms(notified), ...fakes({ clefChoice: 'c0', clefP: 0.96 }), ...extra,
+      DB: d1(), CHANNELS: fakeBucket(), ROOMS: rooms(notified), ...fakes({ clefChoice: 'c0', clefP: 0.995 }), ...extra,
     };
     const a = await seed(env, '20.0', 'Rolling out the banner to the second locale shows the dates in the wrong format', at(0));
     const b = await seed(env, '20.5', '@Grace Hi! I heard you are working on the rollout? I cannot roll out to the other site', at(60));
@@ -528,7 +530,7 @@ describe('de-threading', () => {
     const {
       env, a, b, notified,
     } = await folded();
-    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'clef', logical_p: 0.96 });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'clef', logical_p: 0.995 });
     // Folded, the entry's replies go to the platform thread it was last active in: the other one.
     assert.equal((await target(env, a)).thread, b);
     // Nobody answered yet: it stays.
@@ -621,6 +623,95 @@ describe('de-threading', () => {
     env.DB.sqlite.prepare('UPDATE threads SET logical_via = ?, rethreaded_at = ? WHERE thread = ?').run(SPLIT, at(2), b);
     await rethread(env, a, { force: true });
     assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
+  });
+});
+
+describe('conversations held in threads', () => {
+  const post = (env, k, id, at, user) => env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant,
+    channel_id, id, thread, at, author_key, counted) VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, 1)`)
+    .run(id, k, at, `slack:E1:${user}`);
+  const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+  const channel = (env) => env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+  const row = (env, k) => env.DB.rows('SELECT logical_thread, logical_via FROM threads WHERE thread = ?', k)[0];
+
+  it('needs Clef all but certain to fold a root into a conversation answered in its thread', async () => {
+    const cases = [[false, 0.96, true], [true, 0.96, false], [true, 0.995, true]];
+    for (const [threaded, p, folds] of cases) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: p }) };
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '30.0', 'Rolling out the banner shows the dates in the wrong format', at(0));
+      // eslint-disable-next-line no-await-in-loop
+      const f = await seed(env, '30.1', 'Which locale?', at(20));
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '30.5', '@Grace I cannot roll out to the other site either', at(60));
+      channel(env);
+      post(env, a, '30.0', at(0), 'U1');
+      if (threaded) {
+        // The answer in the conversation's thread.
+        post(env, a, '30.2', at(20), 'U3');
+      } else {
+        // The answer as a message of its own, folded into it.
+        post(env, f, '30.1', at(20), 'U3');
+        env.DB.sqlite.prepare("UPDATE threads SET logical_thread = ?, logical_via = 'clef' WHERE thread = ?").run(a, f);
+      }
+      post(env, b, '30.5', at(60), 'U2');
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, a);
+      // eslint-disable-next-line no-await-in-loop
+      const r = await rethread(env, b);
+      assert.equal(r.result, folds ? 'rethreaded' : 'new-topic', `threaded ${threaded}, p ${p}`);
+      if (!folds) {
+        assert.deepEqual([r.clef, r.threaded], [p, true]);
+      }
+    }
+  });
+
+  it('is no burst of a root that was answered in its thread already', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+    const a = await seed(env, '31.0', 'Can teams be excluded from the list?', at(0));
+    const b = await seed(env, '31.1', 'Also, search does not find people by their handle', at(2));
+    channel(env);
+    post(env, a, '31.0', at(0), 'U1');
+    post(env, a, '31.5', at(1), 'U3');
+    post(env, b, '31.1', at(2), 'U1');
+    assert.equal((await rethread(env, b)).result, 'new-topic');
+    assert.equal(env.clefCalls.length, 1, 'Clef decides instead');
+    // Nor does the root before it pull it in, decided again.
+    await rethread(env, a, { force: true });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
+  });
+
+  it('still is a burst of one whose reply came after it', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const a = await seed(env, '32.0', 'Hi team', at(0));
+    const b = await seed(env, '32.1', 'preview is down for our site', at(1));
+    channel(env);
+    post(env, a, '32.0', at(0), 'U1');
+    post(env, b, '32.1', at(1), 'U1');
+    post(env, a, '32.5', at(5), 'U3');
+    await rethread(env, a);
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'burst' });
+  });
+
+  it('leaves a root that announces a thread on its own, and out of a burst', async () => {
+    for (const mark of [':thread:', '\u{1F9F5}']) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.999 }) };
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '33.0', `Feed - missing products ${mark}`, at(0));
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '33.1', `Feed - missing GTIN ${mark}`, at(2));
+      channel(env);
+      post(env, a, '33.0', at(0), 'U1');
+      post(env, b, '33.1', at(2), 'U1');
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await rethread(env, b), {
+        result: 'new-topic', via: null, p: null, reason: 'starts a thread',
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, a, { force: true });
+      assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
+      assert.equal(env.clefCalls.length, 0);
+    }
   });
 });
 

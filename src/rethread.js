@@ -29,7 +29,14 @@ import { teamsOf } from './shares.js';
  * message (Slack: forwarded, or a link to it) was started on purpose, and stays on its own.
  * So does a conversation's root that people answer in its own platform thread: one that has
  * replies when it is decided is not folded, and one that gets them after it was folded is split
- * back out (`dethread`), for good.
+ * back out (`dethread`), for good. A root that announces a thread (🧵, `:thread:`) stays on its
+ * own, too.
+ *
+ * People continue a chat with more top-level messages where the chat is top-level messages.
+ * Where its people reply in platform threads, a new top-level message is nearly always a topic
+ * of its own, however close it reads: so Clef must be all but certain to fold a root into a
+ * conversation with thread replies (MIN_CLEF_THREADED), and a root is no burst of one that has
+ * been answered already.
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -67,6 +74,12 @@ const LABELS = 'ABCDEFGHIJ';
 export const MIN_CLEF = 0.7;
 /** In conversations, where it reads the transcript and is sure of the right answers. */
 export const MIN_CLEF_CONVERSATION = 0.8;
+/**
+ * For a conversation with replies in its platform threads. Folded into one at Clef's usual
+ * certainty, new roots got replies of their own as often as the channel's new topics do: they
+ * were new topics. Folded into a conversation without any, half as often, as follow-ups do.
+ */
+export const MIN_CLEF_THREADED = 0.99;
 const MAX_TEXT = 1500;
 const SNIPPET = 600;
 
@@ -202,6 +215,11 @@ const groupOf = (t) => t.logical_thread || t.thread;
  * direction") reads like a follow-up of whatever was said last.
  */
 export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE_HEAD.test(l));
+/**
+ * Whether a root announces a thread (🧵, `:thread:`, often in its first line): its author wants the
+ * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
+ */
+export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
 /**
@@ -216,10 +234,10 @@ export const SPLIT = 'split';
  * and the inbox's replies go to the platform thread its entry was last active in
  * (src/post.js `target`), which must be this one then.
  */
-async function answered(env, thread) {
+async function answered(env, thread, before = null) {
   return Boolean(await env.DB.prepare(`SELECT 1 FROM messages
-    WHERE thread = ? AND id != ? AND counted = 1 AND deleted = 0 LIMIT 1`)
-    .bind(thread.thread, thread.root_id).first());
+    WHERE thread = ? AND id != ? AND counted = 1 AND deleted = 0 AND (?3 IS NULL OR at < ?3) LIMIT 1`)
+    .bind(thread.thread, thread.root_id, before).first());
 }
 
 /**
@@ -280,7 +298,16 @@ async function conversations(env, thread, similar) {
       }
     }
     if (messages.length) {
-      out.push({ thread: g, group: g, messages });
+      // Replies in the conversation's platform threads (by people, before the new root).
+      // eslint-disable-next-line no-await-in-loop
+      const replied = await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages m
+          JOIN threads t ON t.thread = m.thread
+        WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.id != t.root_id
+          AND m.at < ? AND m.deleted = 0 AND m.counted = 1`)
+        .bind(g, g, thread.thread, thread.root_at).first();
+      out.push({
+        thread: g, group: g, messages, replies: (replied && replied.n) || 0,
+      });
     }
   }
   return out;
@@ -323,7 +350,15 @@ export async function askClefConversation(env, text, at, convs) {
       best = { candidate: c, p };
     }
   });
-  return best && best.p >= MIN_CLEF_CONVERSATION ? best : { p: best ? best.p : 0 };
+  if (!best) {
+    return { p: 0 };
+  }
+  // A conversation held in platform threads needs Clef all but certain (MIN_CLEF_THREADED).
+  const threaded = Boolean(best.candidate.replies);
+  if (best.p >= (threaded ? MIN_CLEF_THREADED : MIN_CLEF_CONVERSATION)) {
+    return best;
+  }
+  return { p: best.p, ...(threaded ? { threaded } : {}) };
 }
 
 // Longer than a job's retries take.
@@ -406,7 +441,10 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.root_at,
       new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
     ).first();
-  const burst = previous && previous.author_key === author ? previous : null;
+  // Not once someone answered it in its thread: the next root is no piece of it then, but a
+  // message of its own (the next of several questions, each in its thread).
+  const burst = previous && previous.author_key === author
+    && !await answered(env, previous, thread.root_at) ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -428,11 +466,12 @@ export async function rethread(env, key, { force = false } = {}) {
   let match = null;
   let asked = null;
   const quoting = quotes(root.parsed.body);
+  const announcing = conversation && !quoting && announcesThread(root.parsed.body);
   // A burst is one request in pieces, wherever it is answered; anything else that people answer
   // in its own platform thread is a conversation of its own.
-  const replied = conversation && !quoting && !burst && await answered(env, thread);
-  if (quoting || replied) {
-    // On its own: see quotes() and answered().
+  const replied = conversation && !quoting && !announcing && !burst && await answered(env, thread);
+  if (quoting || announcing || replied) {
+    // On its own: see quotes(), announcesThread() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
@@ -540,9 +579,12 @@ export async function rethread(env, key, { force = false } = {}) {
     ).first();
   const nextFree = next && next.logical_via !== SPLIT
     && (!next.logical_thread || joined.includes(next.logical_thread));
-  const nextBurst = nextFree && next.author_key === author;
+  const nextBurst = nextFree && next.author_key === author
+    && !await answered(env, thread, next.root_at);
   const nextRoot = nextBurst && await rootBody(env, next);
-  if (nextBurst && !(nextRoot && quotes(nextRoot.parsed.body))) {
+  const nextBody = nextRoot && nextRoot.parsed.body;
+  const nextOwn = nextRoot && (quotes(nextBody) || announcesThread(nextBody));
+  if (nextBurst && !nextOwn) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
         rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
     joined.push(next.thread);
@@ -582,9 +624,12 @@ export async function rethread(env, key, { force = false } = {}) {
     via: match ? match.via : null,
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
+    ...(announcing ? { reason: 'starts a thread' } : {}),
     ...(replied ? { reason: 'has replies of its own' } : {}),
-    // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
+    // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
+    // that one was held in threads (MIN_CLEF_THREADED).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
+    ...(!match && asked && asked.threaded ? { threaded: true } : {}),
   };
 }
 
