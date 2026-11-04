@@ -564,6 +564,29 @@ describe('connecting and posting', () => {
     assert.equal(thread, `teams:T:G1:19:c:${id}`);
   });
 
+  it('replies in a thread it started before the inbox has it, on Slack and on Teams', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${await makeState(e, 1, 'slack')}`));
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const slack = await post(e, ME, { channel: 'slack:E1:C1', root: '1793799329.853649', text: 'And one more thing.' }, inTeam);
+    assert.equal(slack.status, 200);
+    assert.equal((await slack.json()).thread, undefined);
+    const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
+    assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1793799329.853649', text: 'And one more thing.' });
+    const teams = await post(e, ME, { channel: 'teams:T:19:c', root: '1793796088682', text: 'And one more thing.' }, inTeam);
+    assert.equal(teams.status, 200);
+    const reply = calls.find((c) => c.u.includes('graph.microsoft.com') && c.u.includes('/messages'));
+    assert.match(reply.u, /\/teams\/G1\/channels\/19%3Ac\/messages\/1793796088682\/replies$/);
+    // Only a thread's id: nothing else goes into the platform's path.
+    calls.length = 0;
+    for (const root of ['', '../x', '1.2/../3', 42.5]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await post(e, ME, { channel: 'teams:T:19:c', root, text: 'x' }, inTeam)).status, 400);
+    }
+    assert.equal((await post(e, ME, { channel: 'slack:E1:C1', root: '1.2', text: 'x' }, () => false)).status, 404);
+    assert.deepEqual(calls, []);
+  });
+
   it('starts no thread without a channel, or in one that is not a conversation', async () => {
     const e = env();
     e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,

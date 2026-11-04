@@ -1013,7 +1013,15 @@ every channel the person may post in, the view's first, and **Post** stays off u
 picked; `POST /api/post` itself refuses a post that names neither a thread nor a channel.
 Alert and ignored channels are not offered, nor is Discord, where the inbox cannot post as the
 person. Nothing is written to D1: the thread comes back through ingestion like any message,
-some ten seconds later, and the page opens it once `/api/thread` has it.
+some ten seconds later (one in ten takes 20 seconds or more: the normalize queue's delivery), and
+the page opens it once `/api/thread` has it, as soon as the team's room announces it. Until then
+the pane shows the thread as it will look, from the moment Post is pressed: its title, channel
+and message, with the bar a reply being sent has, and a reply box: what is sent from it shows at
+once too, and goes out as soon as the platform has named the first message, into that thread on
+the platform (`POST /api/post` with `channel` and `root`), in the order it was written. Nothing
+waits for the inbox to have the thread. A post that fails takes the replies written meanwhile
+back into the composer, after its text. The channels to pick from are asked for when the pointer
+reaches ✎.
 
 ### Drafts
 

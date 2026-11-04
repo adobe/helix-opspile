@@ -89,9 +89,13 @@ lasts a day, so after that Retry turns into Send again.
 **Draft preview.** off → showing → off (`draftPreview`, `ui/inbox.js`). `syncDraftPreview` is the one
 place that decides, from the pointer and the focus, and the box is always given back as it was.
 
-**New-thread composer.** editing → posting → awaiting → opened, or gave up after 30 seconds
-(`state.compose`, `state.awaiting`). Every navigation clears `awaiting`, so a thread that arrives late
-does not take over the screen.
+**New-thread composer.** editing → posting → awaiting → opened, or still awaited after five minutes
+(`state.compose`, `state.awaiting`, `started`). From posting on, the pane shows the thread as it will
+look (`renderStarted`), with a reply box whose replies wait for the platform's id of the thread
+(`started.ready`), then go out as any reply does; a failed post goes back to editing, with the
+text and those replies. The team's room saying the
+thread is here opens it at once; the page also asks, less often each time. Every navigation clears
+`awaiting`, so a thread that arrives late does not take over the screen.
 
 **Message edit.** viewing → editing → saving → shown until the platform echoes it (`state.editing`,
 `state.edits`). A failed save opens the editor again with the text. The overlay ends when the edit

@@ -3016,6 +3016,7 @@ function ownLook(key, source) {
 /** Shows the thread's replies being sent as they are now, if it is open. */
 function showSending(key) {
   if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
+  else if (startedShown() && (key === STARTED || key === started.key)) renderStarted();
 }
 
 /** Fills the bars, one frame at a time, while any are on their way. */
@@ -3065,7 +3066,9 @@ async function deliver(p) {
   let data = {};
   try {
     // With files, as multipart (src/attach.js).
-    res = await postWith('/api/post', { thread: p.thread, text: p.body, mentions: p.mentions, key: p.key, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
+    // A reply in a thread started here before the inbox had it goes to the platform's thread.
+    const where = p.root ? { channel: p.channel, root: p.root } : { thread: p.thread };
+    res = await postWith('/api/post', { ...where, text: p.body, mentions: p.mentions, key: p.key, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
     data = res.data || {};
   } catch { /* offline, or the connection dropped */ }
   if (!res?.ok) {
@@ -3079,7 +3082,8 @@ async function deliver(p) {
     const again = data.files && (data.reconnect || data.connect);
     if (again) toast(p.error, { label: 'Connect again', href: `/api/auth/${again}/start?files=1` });
     // Somewhere else by now: say so there.
-    if (state.open !== p.thread) toast(`A reply was not sent: ${p.error}`, { label: 'Show', run: () => openThread(p.thread) });
+    const here = state.open === p.thread || (startedShown() && started.key === p.thread);
+    if (!here) toast(`A reply was not sent: ${p.error}`, { label: 'Show', run: () => openThread(p.thread) });
     // The reply box offers to connect the account.
     if (data.connect && state.open === p.thread) openThread(p.thread, { live: true });
     else showSending(p.thread);
@@ -3211,23 +3215,38 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
 // has a search for one, and nothing can be posted until one is picked. Posting needs the same
 // as a reply (POST /api/post, as yourself) and takes the same text, files and mentions, which
 // wait under `NEW` as a thread's do under its key. The channel is picked anew each time; the
-// text stays in this tab until it is posted. The thread then comes back through the platform's
-// events, as a reply does, some ten seconds later, and opens once it is in the inbox.
+// text stays in this tab until it is posted. Posting shows the thread at once, as it will look,
+// its message a bubble with the bar a reply has while the platform takes it. The thread then
+// comes back through the platform's events (some ten seconds later, now and then a minute or
+// more), and opens in its place once it is in the inbox: the team's room says so, and the page
+// asks meanwhile. Replies can be sent in the meantime: they go out as soon as the platform has
+// the thread (`sendStarted`).
 const NEW = 'new';
 const CHANNEL_MAX = 50;
 const CHANNELS_FOR_MS = 5 * 60 * 1000;
-const ARRIVAL_TRIES = 15;
-const ARRIVAL_EVERY_MS = 2000;
+// Asked after 2 s, then less often, up to every 8 s, for five minutes.
+const ARRIVAL_FIRST_MS = 2000;
+const ARRIVAL_MAX_MS = 8000;
+const ARRIVAL_WAIT_MS = 5 * 60 * 1000;
 let channelsAsked = null;
 
 /** Whether thread or composer `key` is the one in the pane. */
-const inPane = (key) => (state.compose ? NEW : state.open) === key;
+const inPane = (key) => ((startedShown() && STARTED) || (state.compose ? NEW : state.open)) === key;
 
-/** The channels the viewer may start a thread in (GET /api/channels), kept for a while. */
+/**
+ * The channels the viewer may start a thread in (GET /api/channels). The list asked last is
+ * answered at once; once it is a few minutes old, it is asked again behind it.
+ */
 function postableChannels() {
-  if (!channelsAsked || Date.now() - channelsAsked.at > CHANNELS_FOR_MS) {
-    channelsAsked = { at: Date.now(), list: get('/api/channels').then((d) => d.channels) };
-    channelsAsked.list.catch(() => { channelsAsked = null; });
+  if (!channelsAsked) {
+    const list = get('/api/channels').then((d) => d.channels);
+    channelsAsked = { at: Date.now(), list };
+    list.catch(() => { if (channelsAsked?.list === list) channelsAsked = null; });
+  } else if (Date.now() - channelsAsked.at > CHANNELS_FOR_MS) {
+    const asked = channelsAsked;
+    asked.at = Date.now();
+    get('/api/channels').then((d) => { if (channelsAsked === asked) asked.list = Promise.resolve(d.channels); })
+      .catch(() => {});
   }
   return channelsAsked.list;
 }
@@ -3399,16 +3418,176 @@ async function openCompose({ push = true } = {}) {
   (c.channel ? $('reply') : $('chan-q'))?.focus();
 }
 
-/** Opens the thread `key` started once it is in the inbox, unless the pane moved on. */
-function openWhenHere(key, shown, tries = ARRIVAL_TRIES) {
-  setTimeout(async () => {
-    if (state.awaiting !== key) return;
+/** A title for the thread as the inbox gives one at first (src/threads.js `titleOf`). */
+function firstLine(text) {
+  const line = String(text || '').split('\n').map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
+    .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
+    .trim()).find(Boolean) || '';
+  return line.length > 140 ? `${line.slice(0, 139)}…` : line;
+}
+
+// The thread being started, from Post until it is in the inbox: `{ channel, p, key, root, ready }`.
+// `p` is its message, as a reply being sent is (`state.sending`); `key` its inbox entry and `root`
+// the platform's id of the message, once the platform has it (`ready` resolves to the key then,
+// or to null). Replies written meanwhile go out as soon as `root` is known, into the thread on
+// the platform (POST /api/post with `channel` and `root`): nothing waits for the inbox.
+let started = null;
+/** Whether the pane shows the thread being started: while it is posted, and then awaited. */
+const startedShown = () => Boolean(started) && !state.open
+  && (started.key ? state.awaiting === started.key : Boolean(state.compose?.posting));
+// The key its reply box and its replies have until the thread is in the inbox.
+const STARTED = 'started';
+/** The replies being sent of the thread being started, its first message first. */
+const startedSending = (s) => state.sending.filter((p) => p === s.p || p.started === s);
+
+/**
+ * The thread being started, in the pane: its header as the thread's will be, its messages as
+ * replies being sent look, and a reply box (`STARTED`) whose replies go out as soon as the
+ * platform has the thread. Built again as it changes, keeping what is typed.
+ */
+function renderStarted() {
+  const s = started;
+  const pane = $('pane');
+  const { channel, p } = s;
+  const box = $('reply');
+  const focused = box && document.activeElement === box;
+  const caret = focused ? [box.selectionStart, box.selectionEnd] : null;
+  // The customer's icon and name, as the thread's header will show them.
+  const like = state.data?.threads.find((t) => t.org === channel.org && orgIcon(t)) || {};
+  const icon = orgIcon(like) ? `<img src="${esc(favicon(orgIcon(like)))}" alt="">` : channelIcon(channel);
+  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2>
+    <div class="sub">${icon}<span>${esc(channel.orgName || channel.org || '')}</span> · <span>${esc(channel.name)}</span></div></div>`;
+  // As openThread lays a thread out: a run of one author's messages has the avatar by its last.
+  const items = [`<div class="day"><span>${esc(dayLabel(p.at))}</span></div>`];
+  let last = null;
+  for (const x of startedSending(s)) {
+    const m = { ...x, pending: true };
+    if (last && continues(last.m, m)) items[last.i] = message(last.m, last.prev, last.fresh, true);
+    last = {
+      i: items.length, m, prev: last?.m || null, fresh: !x.shown,
+    };
+    items.push(message(m, last.prev, last.fresh));
+    x.shown = true;
+  }
+  const note = s.note ? `<div class="sys">${esc(s.note)}</div>` : '';
+  const feed = `<div class="scroller"><div class="feed">${items.join('')}${note}</div></div>`;
+  // Slack names the files of a post, not its message: replies wait for the thread in the inbox.
+  const can = s.root !== null;
+  const reply = `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
+    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false" placeholder="Reply in thread"></textarea>
+    <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Send once the thread is in the inbox: what you write waits here"'}>Send</button></span></div>`;
+  const scroller = pane.querySelector('.scroller');
+  const top = scroller && pane.__started === s ? scroller.scrollTop : null;
+  pane.innerHTML = `${head}${feed}${reply}`;
+  pane.__key = null;
+  pane.__started = s;
+  const now = pane.querySelector('.scroller');
+  now.scrollTop = top === null || top + now.clientHeight >= now.scrollHeight - 80 ? now.scrollHeight : top;
+  const box2 = $('reply');
+  box2.value = state.composers.get(STARTED)?.text || '';
+  growReply(box2);
+  box2.oninput = () => {
+    state.composers.set(STARTED, { text: box2.value, from: '', base: null });
+    growReply(box2);
+    suggest(STARTED);
+  };
+  box2.onclick = () => suggest(STARTED);
+  box2.onblur = () => setTimeout(closeMentions, 150);
+  box2.onkeydown = (e) => {
+    if (mentionKey(e, STARTED)) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeThread(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); if (can) sendStarted(); }
+  };
+  $('send').onclick = (e) => { e.preventDefault(); if (can) sendStarted(); };
+  if (focused) { box2.focus(); box2.setSelectionRange(...caret); }
+}
+
+/** Sends the reply box of the thread being started: shown at once, out once the thread is. */
+function sendStarted() {
+  const s = started;
+  const box = $('reply');
+  const body = box?.value.trim();
+  if (!s || !body) return;
+  closeMentions();
+  const mentions = mentionsIn(STARTED, body);
+  const picked = mention.picked.get(STARTED);
+  const kinds = Object.fromEntries(mentions.map((m) => [m.name, (picked?.has(m.name) && pickedKind(picked.get(m.name))) || mentionKindOf(m.name)]).filter(([, k]) => k));
+  box.value = '';
+  growReply(box);
+  state.composers.delete(STARTED);
+  mention.picked.delete(STARTED);
+  sendSeq += 1;
+  const p = {
+    thread: s.key || STARTED, body, mentions, kinds, files: [], uploads: [], at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: s.channel.source, status: 'sending', started: s, channel: s.channel.ref, ...ownLook(STARTED, s.channel.source),
+  };
+  state.sending.push(p);
+  renderStarted();
+  animateSending();
+  // In the order they were written, once the platform has the thread (`postNew` takes back
+  // those it cannot send).
+  s.ready.then((key) => {
+    if (!key || !s.root || !state.sending.includes(p)) return;
+    Object.assign(p, { thread: key, root: s.root });
+    postPending(p);
+  });
+}
+
+/**
+ * Takes the replies of thread `s` that cannot go out back into a reply box (`into`), in the
+ * order they were written, before what the box of the thread being started holds now.
+ */
+function takeBackReplies(s, into) {
+  const replies = startedSending(s).filter((x) => x !== s.p);
+  state.sending = state.sending.filter((x) => !replies.includes(x));
+  const meanwhile = state.composers.get(STARTED)?.text?.trim();
+  state.composers.delete(STARTED);
+  mention.picked.delete(STARTED);
+  const had = into === NEW ? composerFor(NEW).text.trim() : '';
+  const text = [had, ...replies.map((x) => x.body), meanwhile].filter(Boolean).join('\n\n');
+  if (text) state.composers.set(into, { text, from: '', base: null });
+}
+
+/**
+ * Opens the thread being started once it is in the inbox, unless the pane moved on: when its
+ * team's room says so (`now`), and asked a little less often each time meanwhile.
+ */
+function awaitStarted(key, { now = false, wait = ARRIVAL_FIRST_MS } = {}) {
+  const s = started;
+  if (!s || s.key !== key || state.awaiting !== key) return;
+  clearTimeout(s.timer);
+  s.timer = setTimeout(async () => {
+    if (started !== s || state.awaiting !== key || s.asking) return;
+    s.asking = true;
     const here = await get(threadUrl(key)).catch(() => null);
-    if (state.awaiting !== key) return;
-    if (here) openThread(key);
-    else if (tries > 1) openWhenHere(key, shown, tries - 1);
-    else $('pane').innerHTML = `<div class="empty">Posted in ${esc(shown)}. It shows up in the inbox as soon as it arrives.</div>`;
-  }, ARRIVAL_EVERY_MS);
+    s.asking = false;
+    if (started !== s || state.awaiting !== key) return;
+    if (!here) {
+      if (Date.now() - s.since < ARRIVAL_WAIT_MS) {
+        awaitStarted(key, { wait: Math.min(ARRIVAL_MAX_MS, wait + 1000) });
+      } else {
+        s.note = 'Posted. It shows in the inbox as soon as it arrives.';
+        renderStarted();
+      }
+      return;
+    }
+    // The reply box keeps what was written, and where; the thread takes the place of this one.
+    const box = $('reply');
+    const focused = box && document.activeElement === box;
+    const caret = focused ? [box.selectionStart, box.selectionEnd] : null;
+    if (state.composers.has(STARTED)) state.composers.set(key, state.composers.get(STARTED));
+    if (mention.picked.has(STARTED)) mention.picked.set(key, mention.picked.get(STARTED));
+    state.composers.delete(STARTED);
+    mention.picked.delete(STARTED);
+    closeMentions();
+    started = null;
+    state.cache.set(key, { data: here, at: Date.now() });
+    await openThread(key);
+    const reply = $('reply');
+    if (focused && reply && state.open) {
+      reply.focus({ preventScroll: true });
+      if (reply.value === box.value) reply.setSelectionRange(...caret);
+    }
+  }, now ? 0 : wait);
 }
 
 /** Posts the composer's text and files, once a channel is picked. */
@@ -3428,19 +3607,38 @@ async function postNew() {
   closeMentions();
   c.posting = true;
   c.error = null;
-  $('send').disabled = true;
-  $('send').textContent = 'Posting…';
   const { channel } = c;
+  const mentions = mentionsIn(NEW, text);
+  const picked = mention.picked.get(NEW);
+  const kinds = Object.fromEntries(mentions.map((m) => [m.name, (picked?.has(m.name) && pickedKind(picked.get(m.name))) || mentionKindOf(m.name)]).filter(([, k]) => k));
   // Posting the same thing again after a lost answer is a retry, under the same key. Something
   // else, or the same once the Worker could not tell and the button said so, is a new post.
   const posted = JSON.stringify([channel.ref, text, files.map((f) => [f.name, f.size])]);
   if (!c.try || c.try.posted !== posted || c.unsure) c.try = { posted, key: crypto.randomUUID() };
+  // Shown at once, as the thread will look, its message as a reply being sent does.
+  sendSeq += 1;
+  const p = {
+    thread: STARTED, body: text, mentions, kinds, files: attached.map((a) => ({ name: a.file.name, type: a.file.type, url: a.url })), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: channel.source, status: 'sending', startedAt: Date.now(), doneAt: null, ...ownLook(STARTED, channel.source),
+  };
+  let ready;
+  state.composers.delete(STARTED);
+  mention.picked.delete(STARTED);
+  started = {
+    channel, p, key: null, root: undefined, note: null, since: Date.now(), ready: new Promise((r) => { ready = r; }),
+  };
+  const s = started;
+  state.sending.push(p);
+  renderStarted();
+  $('reply')?.focus();
+  animateSending();
   const res = await postWith('/api/post', {
-    channel: channel.ref, text, mentions: mentionsIn(NEW, text), key: c.try.key,
-  }, files);
+    channel: channel.ref, text, mentions, key: c.try.key,
+  }, files).catch(() => ({ ok: false, status: 0, data: {} }));
   c.posting = false;
   c.unsure = false;
   if (!res.ok) {
+    state.sending = state.sending.filter((x) => x !== p);
+    if (started === s) started = null;
     const { data } = res;
     if (sendOutcome(res) === 'failed') c.try = null;
     c.unsure = Boolean(data.unknown);
@@ -3450,28 +3648,43 @@ async function postNew() {
     if (data.connect) state.me.connected = { ...state.me.connected, [data.connect]: false };
     const again = data.files && (data.reconnect || data.connect);
     if (again) toast(c.error, { label: 'Connect again', href: `/api/auth/${again}/start?files=1` });
+    // What was written in its thread meanwhile comes back after the text.
+    takeBackReplies(s, NEW);
+    ready(null);
     if (state.compose !== c) { toast(`Your new thread was not posted: ${c.error}`); return; }
+    // Back to the composer, with the text and files, and why.
     renderCompose();
     $('reply')?.focus();
     return;
   }
-  for (const a of attached) if (a.url) URL.revokeObjectURL(a.url);
   state.attachments.delete(NEW);
   state.composers.delete(NEW);
   mention.picked.delete(NEW);
-  // Somewhere else by now: that stays on screen.
+  const now = Date.now();
+  const key = res.data.thread || null;
+  // The message as sent (emoji names as the platform knows them), under its thread.
+  Object.assign(p, {
+    thread: key || STARTED, body: typeof res.data.text === 'string' ? res.data.text : p.body, postedId: res.data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
+  });
+  Object.assign(s, { key, root: key ? res.data.id : null });
+  // No id to reply to: what was written for the thread waits in its reply box.
+  if (!key) takeBackReplies(s, STARTED);
+  for (const x of startedSending(s)) if (x !== p) x.thread = key;
+  ready(key);
   const invited = invitedSaying(res.data);
-  if (state.compose !== c) { toast([`Posted in ${channel.name}.`, invited].filter(Boolean).join(' ')); return; }
-  state.compose = null;
+  const said = [`Posted in ${channel.name}.`, invited].filter(Boolean).join(' ');
+  // Slack names the files of a post, not the message: it shows in the inbox when it arrives.
+  if (!key) s.note = 'Posted. It shows in the inbox as soon as it arrives.';
+  // Somewhere else by now: that stays on screen.
+  if (state.compose !== c) { toast(said); return; }
+  Object.assign(state, { compose: null, awaiting: key });
   syncReading();
   toUrl(false);
   renderThreads();
-  const said = `Posted in ${esc(channel.name)}.`;
-  $('pane').innerHTML = `<div class="empty">${said}${res.data.thread ? ' Opening the thread…' : ''}</div>`;
-  if (TAKING_TURNS.matches || !res.data.thread || invited) toast([`Posted in ${channel.name}.`, invited].filter(Boolean).join(' '));
-  if (!res.data.thread) return;
-  state.awaiting = res.data.thread;
-  openWhenHere(res.data.thread, channel.name);
+  if ((TAKING_TURNS.matches && !key) || invited) toast(said);
+  renderStarted();
+  animateSending();
+  if (key) awaitStarted(key);
 }
 
 // ---------------------------------------------------------------- editing
@@ -3826,8 +4039,8 @@ const mention = {
 // focus; the list of suggestions next to it.
 /** What /api/mentionable is asked about: the thread, or the channel a new one goes to (none yet). */
 function mentionScope(key) {
-  if (key !== NEW) return `thread=${encodeURIComponent(key)}`;
-  const c = state.compose?.channel;
+  if (key !== NEW && key !== STARTED) return `thread=${encodeURIComponent(key)}`;
+  const c = key === STARTED ? started?.channel : state.compose?.channel;
   return c ? `channel=${encodeURIComponent(c.ref)}` : null;
 }
 const mentionBox = () => (document.activeElement?.classList?.contains('editbox') ? document.activeElement : $('reply'));
@@ -3953,7 +4166,7 @@ function clefRanking(q) {
 }
 
 function suggestEmoji(key, hit) {
-  const slack = /^slack:/.test(key === NEW ? state.compose?.channel?.ref : key);
+  const slack = /^slack:/.test(key === NEW ? state.compose?.channel?.ref : (key === STARTED ? started?.channel?.ref : key));
   const found = Markdown.matchEmoji(slack ? ownEmoji.names : SLACK_EMOJI.names, slack ? ownEmoji.alike : SLACK_EMOJI.aliases || {}, hit.q, EMOJI_MAX)
     .map((name) => ({ emoji: name }));
   if (!found.length) closeMentions();
@@ -4488,6 +4701,8 @@ function listen(team, live, { again = false } = {}) {
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     noteEvent(ev, team);
+    // The thread being started is in the inbox (in any room: it may be another team's channel).
+    if (ev.type === 'thread' && ev.thread && ev.thread === state.awaiting) awaitStarted(ev.thread, { now: true });
     // A room only the notifications listen to: the inbox on screen is not its.
     if (!screenTeams().includes(team)) return;
     if (ev.type === 'read' && ev.person === state.me.id) return;
@@ -5083,7 +5298,7 @@ function fromUrl() {
 // Under 700px the list and the open thread take turns (`main.reading` while one is open), and
 // under 1100px the filter cards are in a drawer (`main.filtering` while it is open).
 const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
-const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose));
+const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
   dismissExperts();
@@ -5273,6 +5488,8 @@ async function start() {
   $('threads').addEventListener('pointerover', (e) => {
     const t = e.target.closest('.t');
     if (t) prefetch(t.dataset.thread, { urgent: true });
+    // On the way to ✎: the channels to post in are asked now, so the composer opens with them.
+    else if (e.target.closest('[data-compose]') && !state.as) postableChannels().catch(() => {});
   });
   $('threads').addEventListener('click', (e) => { if (e.target.closest('[data-older]')) loadOlder(); });
   $('threads').addEventListener('scroll', seenSoon, { passive: true });
