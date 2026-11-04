@@ -13,8 +13,9 @@
 /*
  * The knowledge-base editor, the Agents page: every knowledge base (pile 3) you may see, its
  * files, and an editor that saves as you type: a pause in typing commits the file as the
- * signed-in person. The admin team edits every knowledge base, team managers their teams';
- * the other members of a team see its knowledge base, its agents and their tools read-only,
+ * signed-in person. The admin team edits every knowledge base, team managers their teams' and
+ * those of the customers their teams own; the other members of those teams see them, their
+ * agents and their tools read-only,
  * and change only their own settings here: whether the agent's thinking shows in their inbox,
  * everywhere or in one channel (`traces`, `channelTraces` of /api/settings). No native dialogs (alert, confirm): a debugger attached over CDP dismisses them on
  * its own, so the questions that remain are asked in the page. The one exception is
@@ -37,7 +38,7 @@ const base = () => state.bases.find((b) => b.repo === state.repo);
 /** Whether you change the open knowledge base, its agents and their tools; else you only look. */
 const mayEdit = () => Boolean(base()?.may);
 /** Who changes the open knowledge base, for the read-only. */
-const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team');
+const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team and the managers of its ops teams');
 
 async function call(path, options = {}) {
   const res = await fetch(path, {
@@ -1168,7 +1169,7 @@ function renderMcp(shownNote) {
   const whose = b.kind === 'team' ? `the threads of ${b.name}` : `the threads of ${b.name}, in every ops team`;
   const explain = `What the thread agents of these threads can do beyond reading and drafting: the built-in tools, which
     they call directly, and MCP servers, whose tools they call from code mode scripts, as tools.mcp__<name>__<tool> (only what
-    a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team${b.kind === 'team' ? ` and the managers of ${b.name}` : ''} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
+    a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team and the managers of ${b.kind === 'team' ? b.name : 'its ops teams'} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
   const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`

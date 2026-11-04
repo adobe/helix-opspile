@@ -351,15 +351,19 @@ history and the trust tiers OKF derives from `verified`.
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
 to it, the team's first and then the customer's, to the end of its system prompt, read again
-before each model request; HTML comments in them are left out. Only the admin team writes
-them, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
+before each model request; HTML comments in them are left out. Only people write them,
+whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
-**Editor.** Members of the admin team, and team managers for their teams' knowledge bases,
-have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
+**Editor.** Members of the admin team, and team managers for the knowledge bases of their
+teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. The other members of a team see its knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`); what they change is only their
+says per knowledge base whether they may change it, `may`), and the customers' it owns the
+same way. A team owns the customers with a channel filed under it or shared with it
+(`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
+when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
+members change is only their
 own settings, whether the agent's thinking shows in their inbox (see *In the inbox*, below). It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).
