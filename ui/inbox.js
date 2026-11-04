@@ -2151,6 +2151,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const prevScroller = pane.querySelector('.scroller');
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
+  const keepHeight = prevScroller ? prevScroller.scrollHeight : 0;
   // A draft shown in the reply box on hover gives the box back first: what it held is what counts.
   if (switching) hideSource();
   endDraftPreview();
@@ -2325,9 +2326,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Shown for the first time (a fresh page, where the first render is a live one, for the
   // workspace's emoji): placed where it opens, not scrolled down from the top.
   if (live && !switching && prevScroller) {
-    // New messages scroll up into view if I was at the bottom; otherwise stay put.
+    // New messages scroll up into view if I was at the bottom; otherwise stay put. Nothing new
+    // (the same thread again, as the workspace's emoji arrive): it stays where it was, also
+    // when that was the first unread message, a little above the bottom.
     scroller.scrollTop = keepTop;
-    if (wasNear) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    if (wasNear && scroller.scrollHeight > keepHeight) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
   } else {
     // Opened from a search result: at the message that matched, marked for a moment.
     const jump = state.jump?.key === key ? state.jump : null;
