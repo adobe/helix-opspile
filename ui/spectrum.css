@@ -18,7 +18,7 @@
 * { box-sizing: border-box; }
 html, body { height: var(--app-height, 100%); overflow: hidden; }
 body { margin: 0; background: var(--bg); display: flex; flex-direction: column;
-  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); translate: 0 var(--app-top, 0); }
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); translate: 0 var(--app-top, 0px); }
 button, input:where(:not([type="file"])), select { font: inherit; color: inherit; background: var(--card);
  padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); }
 button, select { cursor: pointer; }
@@ -56,7 +56,7 @@ header .count { display: inline-grid; place-items: center;
   line-height: 1; }
 header .count[hidden] { display: none; }
 /* Phones: the pages are a menu under the one you are on. */
-.pagemenu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100); margin: 0; min-width: calc(var(--spectrum-spacing-100) * 23);
+.pagemenu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100); margin: 0; min-width: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75));
   padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
  }
 .pagemenu a { display: flex; align-items: center; height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500));
@@ -103,7 +103,7 @@ header .note { white-space: nowrap; }
 #user svg { width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); }
 
 /* Your menu: who you are, the page's own sections, logging out. */
-.menu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) var(--spectrum-spacing-200) auto auto; margin: 0; width: calc(var(--spectrum-spacing-100) * 36); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
+.menu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) var(--spectrum-spacing-200) auto auto; margin: 0; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
   max-width: calc(100vw - var(--spectrum-spacing-400)); max-height: calc(100dvh - var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-100));
   overscroll-behavior: contain;
  }

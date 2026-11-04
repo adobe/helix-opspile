@@ -17,16 +17,16 @@
 /* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
    indicator and, on the phone's side, under the camera: the sections scroll their ends out
    from under it, and the page keeps clear of the sides. The insets are 0 everywhere else. */
-:root { --safe-bottom: env(safe-area-inset-bottom, 0); }
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
 /* With the on-screen keyboard open (see the script at the end), the page follows what is left
    above it, and the keyboard covers the home indicator. */
-:root.keyboard { --safe-bottom: 0; }
+:root.keyboard { --safe-bottom: 0px; }
 main > section::after { content: ""; display: block; height: var(--safe-bottom); flex: none; }
 button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
 button.danger { color: var(--red); }
 /* The header is every page's (ui/header.css). */
-main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 33) calc(var(--spectrum-spacing-100) * 40) 1fr; min-height: 0; }
+main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 32 + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-100) * 40) 1fr; min-height: 0; }
 main > section { overflow: auto; min-height: 0; }
 #bases { background: var(--bg); }
 #files { background: var(--col); }
@@ -186,7 +186,7 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
 #files > .up + h2 { margin-top: 0; }
 
 @media (max-width: 1099px) {
-  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 21), 22%) minmax(calc(var(--spectrum-spacing-100) * 25), 27%) minmax(0, 1fr); }
+  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 21 + var(--spectrum-spacing-50)), 22%) minmax(calc(var(--spectrum-spacing-100) * 25), 27%) minmax(0, 1fr); }
 }
 @media (max-width: 699px) {
   main { grid-template-columns: 100%; }

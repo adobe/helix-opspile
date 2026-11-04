@@ -204,9 +204,10 @@ Clean Spectrum VF (`ui/spectrum-fonts.css`, from Adobe Fonts); `spectrum-tokens.
 controls); and `ui/spectrum-<page>.css` (the page's own: its layout, then its look). Those
 stylesheets set colors, sizes, spaces, radii and durations with tokens only
 (`test/ui-spectrum.test.js`): spaces from the spacing scale (a value between two steps as their
-sum, an odd pixel as the hairline border width), text on the type ramp, the layout's larger
-sizes on its 8px grid (`calc(var(--spectrum-spacing-100) * n)`). The browser's chrome
-(`theme-color`) is Spectrum 2's base background.
+sum, an odd pixel with the hairline border width), the layout's larger sizes on its 8px grid
+plus the rest (`calc(var(--spectrum-spacing-100) * n + …)`), text on the type ramp, radii,
+borders and durations on theirs. A zero length keeps its unit (`0px`): calc() cannot add a
+unitless 0 to a length. The browser's chrome (`theme-color`) is Spectrum 2's base background.
 
 Until it was every page's look it was a preview under `/spectrum`; those addresses redirect to the
 same pages under `/inbox`. `/spectrum` is still a path of the Access application (see "Inbox

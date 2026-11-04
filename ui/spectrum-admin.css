@@ -25,10 +25,10 @@
 /* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
    indicator and, on the phone's side, under the camera: the sections scroll their ends out
    from under it, and the page keeps clear of the sides. The insets are 0 everywhere else. */
-:root { --safe-bottom: env(safe-area-inset-bottom, 0); }
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
 /* With the on-screen keyboard open (see the script at the end), the page follows what is left
    above it, and the keyboard covers the home indicator. */
-:root.keyboard { --safe-bottom: 0; }
+:root.keyboard { --safe-bottom: 0px; }
 main > section::after { content: ""; display: block; height: var(--safe-bottom); flex: none; }
 button { white-space: nowrap; }
 button:disabled { opacity: .45; cursor: default; }
@@ -81,7 +81,7 @@ td input { width: 100%; }
 .seg { display: inline-flex; overflow: hidden; }
 .seg button { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); }
 
-.field { display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 14) 1fr; align-items: center; }
+.field { display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 13 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 1fr; align-items: center; }
 
 
 .status.ok { color: var(--green); } .status.err { } .status.warn { color: var(--yellow); }
@@ -155,7 +155,7 @@ tr.left td { opacity: .55; }
 .inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
 .hint.lead { margin: 0 0 var(--spectrum-spacing-100); }
 .empty.pad { padding: var(--spectrum-spacing-100); }
-#ntSlug { width: calc(var(--spectrum-spacing-100) * 14); }
+#ntSlug { width: calc(var(--spectrum-spacing-100) * 13 + var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
 #rPriority { width: var(--spectrum-spacing-900); }
 
 /* ==== Its look ================================================================================= */

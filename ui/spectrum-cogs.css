@@ -21,8 +21,8 @@
 /* ==== The page's layout ========================================================================
    Where everything is and how it moves: the grid, the panes, the sizes that set them, and the
    states the script sets. Its look, in Spectrum 2's components, follows below. */
-:root { --safe-bottom: env(safe-area-inset-bottom, 0); }
-:root.keyboard { --safe-bottom: 0; }
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+:root.keyboard { --safe-bottom: 0px; }
 button { white-space: nowrap; }
 button:disabled { opacity: .45; cursor: default; }
 
@@ -55,8 +55,8 @@ h2 {
 .chip button:hover { color: var(--ink); }
 .dot { flex: none; }
 label.check { display: flex; align-items: center; cursor: pointer; }
-.bar input.search { width: calc(var(--spectrum-spacing-100) * 24); }
-.bar select { max-width: calc(var(--spectrum-spacing-100) * 23); }
+.bar input.search { width: calc(var(--spectrum-spacing-100) * 23 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.bar select { max-width: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75)); }
 
 #servicesMenu label { display: flex; align-items: center; cursor: pointer; }
 #servicesMenu label:hover { background: var(--hover); }
@@ -73,7 +73,7 @@ label.check { display: flex; align-items: center; cursor: pointer; }
 
 /* The chart: a stacked bar per day, a colour per service. */
 .chart { position: relative; }
-.chart { min-height: calc(var(--spectrum-spacing-100) * 28); }
+.chart { min-height: calc(var(--spectrum-spacing-100) * 27 + var(--spectrum-spacing-75)); }
 .chart svg { display: block; overflow: visible; }
 
 
@@ -81,10 +81,10 @@ label.check { display: flex; align-items: center; cursor: pointer; }
 .chart g.col:hover .hover { opacity: .6; }
 .tip { position: absolute; z-index: 5; pointer-events: none;
  }
-.tip .row { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
+.tip .row { display: flex; align-items: center; }
 .tip .row span:nth-child(2) { flex: 1; }
 .tip .row span:last-child { font-variant-numeric: tabular-nums; }
-.tip .t { font-weight: 600; margin-bottom: var(--spectrum-spacing-75); }
+
 /* The treemap: a tile per service (its metrics inside), customer or team, by its flow. */
 h2.split { justify-content: space-between; align-items: center; flex-wrap: wrap; }
 h2.split .seg { font-weight: 400; }

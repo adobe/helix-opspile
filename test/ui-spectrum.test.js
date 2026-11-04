@@ -43,6 +43,16 @@ describe('Spectrum 2', () => {
     }
   });
 
+  it('keeps zero lengths that calc() adds to lengths, and the filter cards\' overhang', () => {
+    for (const file of STYLESHEETS) {
+      // A custom property set to a unitless 0 breaks every calc() that adds it to a length.
+      assert.doesNotMatch(SCRIPTS[file], /--[a-z0-9-]+:\s*0\s*[;}]/, file);
+    }
+    // The filter cards hang out to the right as they are picked or pointed at (--out), padded
+    // as much, so their contents stay where they are.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /#filters \.card \{[^}]*--out: 0px; margin-right: calc\(-1 \* var\(--out\)\); padding-right: calc\([^;]*\+ var\(--out\)\)/);
+  });
+
   it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {
     assert.equal(fromPreview('/spectrum', '?team=t&t=th1'), '/inbox?team=t&t=th1');
     assert.equal(fromPreview('/spectrum/'), '/inbox');
@@ -93,8 +103,9 @@ describe('Spectrum 2', () => {
       const raw = [
         ...css.matchAll(/#[0-9a-f]{3,8}\b(?![^{]*\{)/gi),
         ...css.matchAll(/\b(?:rgba?|hsla?|oklch|lab|lch)\(\s*[\d.]/gi),
-        // em is a size relative to the text, as a percentage is.
-        ...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|ms|s)\b/g),
+        // em is a size relative to the text, as a percentage is. A zero keeps its unit (`0px`):
+        // a unitless 0 is a number, which calc() cannot add to a length.
+        ...[...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|ms|s)\b/g)].filter((m) => !/^-?0*\.?0+[a-z]+$/.test(m[0])),
         ...css.matchAll(/(?<![\w-])(?:white|black|red|blue|green|yellow|gray|grey|orange|purple|pink)\b(?=\s*[;!)])/g),
       ].map((m) => m[0]);
       assert.deepEqual(raw, [], file);
