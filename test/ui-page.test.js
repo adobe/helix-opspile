@@ -485,7 +485,7 @@ describe('inbox page', () => {
     function inbox(answers) {
       const state = { team: 'helix', data: null, scores: new Map() };
       const got = [...answers];
-      const fns = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox, addPage, foldInto', {
+      const fns = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox, addPage, foldInto, splitFrom', {
         state,
         personal: () => false,
         scopeKey: () => 'helix',
@@ -524,7 +524,7 @@ describe('inbox page', () => {
     });
 
     /** `listen` on the inbox of `inbox()`: the room's events, as its socket gets them. */
-    function room(state, foldInto) {
+    function room(state, foldInto, splitFrom = () => {}) {
       const sockets = [];
       const reloads = [];
       const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
@@ -537,6 +537,7 @@ describe('inbox page', () => {
         noteEvent: () => {},
         screenTeams: () => ['helix'],
         foldInto,
+        splitFrom,
       });
       listen('helix', 1);
       return { send: (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) }), reloads };
@@ -570,6 +571,36 @@ describe('inbox page', () => {
       assert.deepEqual(keys(), ['a', 'stub']);
       addPage(page([entry('group')]));
       assert.deepEqual(keys(), ['a', 'group']);
+    });
+
+    it('lists a thread split back out of its group on its own (de-threading)', async () => {
+      const {
+        state, keys, loadInbox, foldInto, splitFrom,
+      } = inbox([
+        page([entry('group', ['group', 'b']), entry('a')], 'cursor'),
+        page([entry('b'), entry('group'), entry('a')], 'cursor'),
+      ]);
+      await loadInbox();
+      const { send, reloads } = room(state, foldInto, splitFrom);
+      state.cache.set('group', 1).set('b', 2).set('a', 3);
+      send({ type: 'thread', thread: 'group', split: ['b'] });
+      assert.deepEqual(state.data.threads[0].members.map((m) => m.thread), ['group']);
+      assert.deepEqual([...state.cache.keys()], ['a'], 'the group\'s copy has its messages');
+      assert.deepEqual(reloads, ['group']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['b', 'group', 'a']);
+    });
+
+    it('drops a fold still waiting for its group when the thread is split out', async () => {
+      const {
+        state, keys, loadInbox, addPage, foldInto, splitFrom,
+      } = inbox([page([entry('b'), entry('a')], 'cursor')]);
+      await loadInbox();
+      const { send } = room(state, foldInto, splitFrom);
+      send({ type: 'thread', thread: 'group', folded: ['b'] });
+      send({ type: 'thread', thread: 'group', split: ['b'] });
+      addPage(page([entry('group')]));
+      assert.deepEqual(keys(), ['b', 'a', 'group']);
     });
   });
 

@@ -19,7 +19,7 @@ import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
-import { rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
+import { dethread, rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
@@ -439,6 +439,15 @@ export async function processKey(env, key, cache = {}) {
         rootId: message.rootId,
         thread: message.thread,
       });
+    }
+  }
+  // A person's reply in the platform thread of a root that was folded into another conversation:
+  // it is a conversation of its own now (src/rethread.js dethread), before its agent is poked and
+  // the inboxes hear of the message. The group it left is exported again; this one is below.
+  if (message.id !== message.rootId && !deleted && cls.kind === 'channel' && author.kind === 'person') {
+    const split = await dethread(env, message.thread);
+    if (split.group) {
+      await queueExport(env, [split.group, ...split.split]);
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).

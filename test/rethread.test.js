@@ -15,7 +15,10 @@ import { describe, it } from 'node:test';
 import { fold } from '../src/api.js';
 import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
-import { ago, rethread, skeleton } from '../src/rethread.js';
+import { target } from '../src/post.js';
+import {
+  ago, dethread, rethread, skeleton, SPLIT,
+} from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
@@ -448,6 +451,149 @@ describe('conversations', () => {
     conversation(env, [[a, at0, '13.0', 'U1']]);
     assert.deepEqual(await rethread(env, b), { result: 'skip', reason: 'system message' });
     assert.equal(env.clefCalls.length, 0);
+  });
+});
+
+describe('de-threading', () => {
+  const rooms = (notified) => ({
+    idFromName: (n) => n,
+    get: (team) => ({
+      fetch: async (u, init) => {
+        notified.push({ team, ...JSON.parse(init.body) });
+        return new Response(null, { status: 204 });
+      },
+    }),
+  });
+  const post = (env, k, id, at, user) => {
+    env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key, counted)
+      VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, 1)`).run(id, k, at, `slack:E1:${user}`);
+    env.DB.sqlite.prepare('UPDATE threads SET last_at = ?, any_at = ? WHERE thread = ?').run(at, at, k);
+  };
+  const row = (env, k) => env.DB.rows(`SELECT logical_thread, logical_via, logical_p FROM threads
+    WHERE thread = ?`, k)[0];
+  const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+
+  /**
+   * A conversation (a customer's question, Adobe's answers), then another customer's new root
+   * that @-mentions whoever answered last about a related problem, which Clef folds into it.
+   */
+  async function folded(extra = {}) {
+    const notified = [];
+    const env = {
+      DB: d1(), CHANNELS: fakeBucket(), ROOMS: rooms(notified), ...fakes({ clefChoice: 'c0', clefP: 0.96 }), ...extra,
+    };
+    const a = await seed(env, '20.0', 'Rolling out the banner to the second locale shows the dates in the wrong format', at(0));
+    const b = await seed(env, '20.5', '@Grace Hi! I heard you are working on the rollout? I cannot roll out to the other site', at(60));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '20.0', at(0), 'U1');
+    post(env, a, '20.1', at(30), 'U3');
+    post(env, a, '20.2', at(50), 'U3');
+    post(env, b, '20.5', at(60), 'U2');
+    await rethread(env, a);
+    assert.deepEqual((await rethread(env, b)).result, 'rethreaded');
+    notified.length = 0;
+    return {
+      env, a, b, notified,
+    };
+  }
+
+  it('splits a folded root back out once it gets replies of its own', async () => {
+    const {
+      env, a, b, notified,
+    } = await folded();
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'clef', logical_p: 0.96 });
+    // Folded, the entry's replies go to the platform thread it was last active in: the other one.
+    assert.equal((await target(env, a)).thread, b);
+    // Nobody answered yet: it stays.
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+
+    post(env, b, '20.6', at(70), 'U3');
+    assert.deepEqual(await dethread(env, b), { result: 'split', group: a, split: [b] });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
+    const root = parse(await (await env.CHANNELS.get('channels/acme/helix/slack-C1/20.5/20.5.md')).text());
+    assert.equal(root.meta.logicalThread, undefined);
+    assert.deepEqual(notified, [{
+      team: 'helix', type: 'thread', thread: a, split: [b],
+    }]);
+    // Each entry's replies go to its own platform thread now.
+    assert.equal((await target(env, a)).thread, a);
+    assert.equal((await target(env, b)).thread, b);
+
+    // For good: once more, a forced re-threading, or the root before it decided again.
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.deepEqual(await rethread(env, b, { force: true }), {
+      result: 'unchanged', logical: null, reason: 'split',
+    });
+    await rethread(env, a, { force: true });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
+    assert.equal(notified.length, 1);
+  });
+
+  it('does not fold a root that has replies of its own when it is decided', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.99 }) };
+    const a = await seed(env, '21.0', 'Rolling out the banner shows the dates in the wrong format', at(0));
+    const b = await seed(env, '21.5', 'I cannot roll out to the other site', at(60));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '21.0', at(0), 'U1');
+    post(env, b, '21.5', at(60), 'U2');
+    post(env, b, '21.6', at(60.2), 'U3');
+    await rethread(env, a);
+    assert.deepEqual(await rethread(env, b), {
+      result: 'new-topic', via: null, p: null, reason: 'has replies of its own',
+    });
+    assert.equal(env.clefCalls.length, 0);
+  });
+
+  it('takes the roots of a burst that followed it along', async () => {
+    const { env, a, b } = await folded();
+    const c = await seed(env, '20.7', 'it says the site is not configured', at(61));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel' WHERE thread = ?").run(c);
+    post(env, c, '20.7', at(61), 'U2');
+    assert.deepEqual((await rethread(env, c)).via, 'burst');
+    assert.equal(row(env, c).logical_thread, a);
+    post(env, b, '20.8', at(70), 'U3');
+    assert.deepEqual((await dethread(env, b)).split, [b, c]);
+    assert.deepEqual(row(env, c), { logical_thread: b, logical_via: 'burst', logical_p: 1 });
+    const file = parse(await (await env.CHANNELS.get('channels/acme/helix/slack-C1/20.7/20.7.md')).text());
+    assert.equal(file.meta.logicalThread, b);
+  });
+
+  it('leaves a burst member and alerts in their group', async () => {
+    const { env, a, b } = await folded();
+    env.DB.sqlite.prepare("UPDATE threads SET logical_via = 'burst' WHERE thread = ?").run(b);
+    post(env, b, '20.6', at(70), 'U3');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'alert', logical_via = 'vector'").run();
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.equal(row(env, b).logical_thread, a);
+  });
+
+  it('only undoes the fold it saw', async () => {
+    const { env, a, b } = await folded();
+    post(env, b, '20.6', at(70), 'U3');
+    // Re-threading decided otherwise between the read and the write.
+    const real = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = (sql) => {
+      if (/SET logical_thread = NULL/.test(sql)) {
+        env.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run('slack:E1:C1:other', b);
+      }
+      return real(sql);
+    };
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.equal(row(env, b).logical_thread, 'slack:E1:C1:other');
+    assert.notEqual(row(env, b).logical_thread, a);
+  });
+
+  it('is not pulled into a burst by the root before it', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const a = await seed(env, '22.0', 'Hi', at(0));
+    const b = await seed(env, '22.1', 'the other site does not roll out', at(1));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '22.0', at(0), 'U2');
+    post(env, b, '22.1', at(1), 'U2');
+    env.DB.sqlite.prepare('UPDATE threads SET logical_via = ?, rethreaded_at = ? WHERE thread = ?').run(SPLIT, at(2), b);
+    await rethread(env, a, { force: true });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
   });
 });
 

@@ -37,12 +37,16 @@ to a newer `version`, and a tombstone is final, so a replay in any order comes o
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
 have arrived.
 
-**Thread grouping.** undecided → new topic, or folded by burst, Clef, vector or skeleton
+**Thread grouping.** undecided → new topic, or folded by burst, Clef, vector or skeleton → (a
+conversation's root folded by Clef that gets a person's reply in its own platform thread) split
 (`threads.logical_*`, `src/rethread.js`). `skeleton_hash` is written before the work that can fail,
 and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
 hash. One that is skipped after a job died on it (its file is gone, or an edit emptied it) gets
-`rethreaded_at`, since asking again finds the same.
+`rethreaded_at`, since asking again finds the same. Split is final: `logical_via = 'split'`,
+`logical_thread` cleared and `rethreaded_at` moved to the split (for the export sweep), and neither
+a forced re-threading nor a burst pulls it in again. The split is conditional on the group the root
+is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw.
 
 **Thread label.** unlabeled → current → stale (`labels.labeled_through`, `src/label.js`). Labeling
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
