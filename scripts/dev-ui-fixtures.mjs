@@ -518,6 +518,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       last_text: last ? previewOf(last.body) : null,
       any_at: ats.length ? ats[ats.length - 1] : null,
       messages: live.length,
+      // Re-threaded into another thread's group (src/rethread.js): that group's first thread.
+      logical_thread: entry.logical || null,
       updated_at: new Date(now).toISOString(),
     };
   }
@@ -1060,6 +1062,27 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A follow-up posted as a new root, folded into the thread it continues (re-threading): one
+  // inbox entry, "2 posts folded into one thread". The live case, a root folded after it was
+  // in the list, is `POST /__dev/rethread` (scripts/dev-ui.mjs).
+  const asked = seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', 300, 'Our sitemap.xml still lists the retired /promo pages.'],
+      ['tom', 280, 'They come from the query index. I will drop them from it.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'request', next_actor: 'us', urgency: 0.5, resolved_p: 0.2, topics: ['seo'],
+    },
+  });
+  const followUp = seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [['ola', 25, 'Any news on the sitemap? Search Console keeps flagging /promo.']],
+  });
+  threads.get(followUp).logical = asked;
+  Object.assign(threads.get(followUp), { row: deriveRow(threads.get(followUp)) });
+
   // With `--admin`: one unread thread filed under Admin, in a channel Dana never posted in,
   // so the end of her personal unread list can name Admin last (it is her smallest team).
   if (admin) {
@@ -1157,6 +1180,19 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
 
     /** A platform message id for a new message, as Slack or Teams would assign it. */
     newId: (key, at = Date.now()) => newId(threads.get(key).ch.source, at),
+
+    /** Re-threads `key` into the group of `into`, as src/rethread.js decides a match. */
+    rethread(key, into) {
+      const entry = threads.get(key);
+      const group = threads.get(into);
+      if (!entry || !group || key === into) {
+        return null;
+      }
+      const first = group.logical || into;
+      entry.logical = first;
+      Object.assign(entry, { row: deriveRow(entry) });
+      return first;
+    },
 
     /** Moves a watermark forward only, like TeamRoom.read. */
     read(person, key, at) {

@@ -33,12 +33,14 @@
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does; with
  * `&mention=1` the message mentions Dana, who gets a notification (once the browser allows it).
+ * `POST /__dev/rethread?into=<key>&after=<ms>` starts a thread in the channel of `into` and
+ * folds it into `into`'s group `after` ms later (30 s by default), as re-threading does.
  *
  * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
  * disk on every request (the Worker imports the same files) as src/page.js puts them together,
  * and the pure helpers `readState`, `waitingOn`, `titleOf`, `previewOf`
- * (src/threads.js) and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the
- * TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
+ * (src/threads.js), `fold` (src/api.js) and `parse`, `render` (src/channels.js). What is
+ * replaced: D1, R2, the TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
  * (dev-ui-fixtures.mjs) and "signed in as Dana".
  *
  * With a production session (see scripts/dev-ui-session.mjs), `/api/*` is proxied to the
@@ -80,6 +82,7 @@ import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
+import { fold } from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -99,6 +102,8 @@ const MEMBER = process.argv.includes('--member');
 // of every team's channels she posted or was mentioned in.
 const NO_TEAM = process.argv.includes('--no-team');
 const SIM_EVERY_MS = 25 * 1000;
+// A new root is re-threaded this long after it arrives (src/rethread.js: 30 s).
+const RETHREAD_MS = 30 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
 // Sending a reply, as production's take: the platform takes it in about 900 ms (POST
 // /api/post), and it comes back through the normalize queue some eight seconds later.
@@ -436,17 +441,22 @@ function inbox(team, before = null, personal = false, only = null) {
   const inScope = (r) => (personal
     ? r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
     : r.team === team);
-  const all = [...store.threads.values()]
+  // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
+  const groupOf = (r) => r.logical_thread || r.thread;
+  const entries = [...store.threads.values()]
     .map((e) => e.row)
-    .filter((r) => inScope(r) && r.kind !== 'ignore' && (!only || only.has(r.thread)))
-    .sort((a, b) => latest(b).localeCompare(latest(a)) || b.thread.localeCompare(a.thread));
+    .filter((r) => inScope(r) && r.kind !== 'ignore' && (!only || only.has(groupOf(r))));
+  const groups = [...Map.groupBy(entries, groupOf)]
+    .map(([g, ms]) => ({ g, latest: ms.map(latest).sort().pop() }))
+    .sort((a, b) => b.latest.localeCompare(a.latest) || b.g.localeCompare(a.g));
   const [at, key] = before ? String(before).split('|') : [null, null];
-  const after = at === null ? all
-    : all.filter((r) => latest(r) < at || (latest(r) === at && r.thread < key));
-  const pageRows = only ? after : after.slice(0, INBOX_PAGE);
-  const lastRow = pageRows[pageRows.length - 1];
-  const page = { next: after.length > INBOX_PAGE && lastRow ? `${latest(lastRow)}|${lastRow.thread}` : null };
-  const rows = pageRows
+  const after = at === null ? groups
+    : groups.filter((x) => x.latest < at || (x.latest === at && x.g < key));
+  const pageGroups = only ? after : after.slice(0, INBOX_PAGE);
+  const lastGroup = pageGroups[pageGroups.length - 1];
+  const page = { next: after.length > INBOX_PAGE && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
+  const onPage = new Set(pageGroups.map((x) => x.g));
+  const rows = entries.filter((r) => onPage.has(groupOf(r)))
     .map((r) => ({
       ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
     }));
@@ -467,13 +477,13 @@ function inbox(team, before = null, personal = false, only = null) {
     }));
   const mentions = store.mentions.filter((m) => keys.has(m.thread) && teamIds.has(m.person));
   const byName = new Map([...store.people.values()].map((p) => [p.name, p]));
-  const threads = readState(rows, marks, mentions, ME)
+  // A re-threaded group is one entry, as src/api.js folds it.
+  const threads = fold(readState(rows, marks, mentions, ME)
     .map((t) => ({
       ...t,
       label: store.labels.get(t.thread) || null,
       tech: store.threads.get(t.thread).ch.tech || [],
       ...people(store.threads.get(t.thread)),
-      members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
       posters: [...new Set(store.threads.get(t.thread).messages
         .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
       mentioned: store.mentions.filter((m) => m.thread === t.thread)
@@ -485,8 +495,9 @@ function inbox(team, before = null, personal = false, only = null) {
         }), {})),
       resolution: resolutionOf(store.threads.get(t.thread)),
       draft: draftSummary(drafts.get(t.thread)) || null,
-    }))
-    .map((t) => ({
+    })))
+    // src/api.js's `resolution` is made from these; here `resolutionOf` did it already.
+    .map(({ resolutionFacts: _, ...t }) => ({
       ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
     }));
   return {
@@ -546,7 +557,8 @@ function search(team, q, personal = false) {
     const score = topic + 0.7 * said + (all ? 0.8 * title + 0.5 * (1 - title) : 0)
       + (fact ? 0.4 : 0);
     hits.push({
-      thread: r.thread,
+      // A re-threaded group is one entry, under its first thread's key, as src/search.js finds it.
+      thread: r.logical_thread || r.thread,
       score: Math.round(score * 1000) / 1000,
       matched: [all && title > 0 && 'title', all && title < 1 && 'place', fact && 'fact', said && 'text', topic && 'topic'].filter(Boolean),
       ...(fact ? { fact: { field: fact.field, value: fact.value } } : {}),
@@ -561,6 +573,9 @@ function search(team, q, personal = false) {
     });
   }
   hits.sort((a, b) => b.score - a.score);
+  // The best hit of each entry.
+  const firsts = hits.filter((h, i) => hits.findIndex((x) => x.thread === h.thread) === i);
+  hits.splice(0, hits.length, ...firsts);
   const view = inbox(team, null, personal, new Set(hits.map((h) => h.thread)));
   const shown = new Set(view.threads.map((t) => t.thread));
   return {
@@ -621,14 +636,24 @@ function channelRefs(source, texts) {
     }));
 }
 
-function thread(key) {
-  const entry = store.threads.get(key);
+/**
+ * An inbox entry, as src/api.js's `thread`: the thread, or the group it was re-threaded into,
+ * with every member's messages. A member's key opens its group: `thread.thread` is the entry's.
+ */
+function thread(asked) {
+  const own = store.threads.get(asked);
+  const entry = own && store.threads.get(own.row.logical_thread || asked);
   if (!entry || !inTeam(entry.row.team)) {
     return null;
   }
+  const key = entry.row.thread;
+  const group = [...store.threads.values()]
+    .filter((e) => e.row.thread === key || e.row.logical_thread === key)
+    .sort((a, b) => String(a.row.root_at).localeCompare(String(b.row.root_at)));
+  const paths = group.map((e) => e.row.path);
   const teamIds = new Set(members(entry.row.team).map((m) => m.id));
   const messages = [...store.files.entries()]
-    .filter(([path]) => path.startsWith(entry.row.path))
+    .filter(([path]) => paths.some((p) => path.startsWith(p)))
     .map(([, body]) => parse(body))
     .filter(Boolean)
     .map(({ meta, body }) => ({
@@ -643,20 +668,23 @@ function thread(key) {
       mine: meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name,
       // As src/api.js's editableAs: the viewer's own (not on Discord), or posted as the app.
       editable: editableOf(meta, entry.row.source),
-      reactions: reactionsOn(key, meta.id),
+      reactions: reactionsOn(meta.thread, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const links = slackLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body));
+  const keys = new Set(group.map((e) => e.row.thread));
   const watermarks = [...store.watermarks.values()]
-    .filter((w) => w.thread === key && teamIds.has(w.person))
-    .map(({ person, read_at: readAt, via }) => ({
-      person, thread: key, read_at: readAt, via,
+    .filter((w) => keys.has(w.thread) && teamIds.has(w.person))
+    .map(({
+      person, thread: t, read_at: readAt, via,
+    }) => ({
+      person, thread: t, read_at: readAt, via,
     }));
   return {
     thread: entry.row,
-    members: [{
-      thread: key, root_at: entry.row.root_at, last_at: entry.row.last_at, any_at: entry.row.any_at,
-    }],
+    members: group.map(({ row: m }) => ({
+      thread: m.thread, root_at: m.root_at, last_at: m.last_at, any_at: m.any_at,
+    })),
     messages,
     profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
     // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
@@ -1748,6 +1776,41 @@ function simulate(key, mention = Math.random() < 0.2) {
   console.log(`[sim] ${sender.name} in ${entry.row.channel_name}`);
 }
 
+/**
+ * A follow-up posted as a new root in the channel of `key` (a random conversation without
+ * it), as src/rethread.js sees one: it arrives as a thread of its own, and `after` ms later
+ * (30 s in production) is folded into `key`'s group, which the room announces with `folded`.
+ * POST /__dev/rethread?into=<key>&after=<ms>; the simulation does it now and then.
+ */
+function rethread(key, after = RETHREAD_MS) {
+  const live = [...store.threads.values()]
+    .filter((e) => e.row.kind === 'channel' && e.row.last_at && !e.row.logical_thread);
+  const into = store.threads.get(key) || live[Math.floor(Math.random() * live.length)];
+  if (!into) {
+    return null;
+  }
+  const { ch } = into;
+  const customers = [...store.people.values()].filter((p) => p.org === into.row.org);
+  const sender = customers[Math.floor(Math.random() * customers.length)]
+    || store.people.get(members(into.row.team)[0].id);
+  const at = new Date();
+  const started = store.startId(ch, at.getTime());
+  const line = LINES[Math.floor(Math.random() * LINES.length)];
+  store.start(ch, started, sender.key, line, at.toISOString());
+  broadcast(ch.team, {
+    type: 'thread', thread: started.key, by: sender.id, author: sender.name, at: at.toISOString(),
+  });
+  console.log(`[sim] ${sender.name} started a thread in ${ch.name}, folded in ${after / 1000}s`);
+  setTimeout(() => {
+    const group = store.rethread(started.key, into.row.thread);
+    if (group) {
+      broadcast(ch.team, { type: 'thread', thread: group, folded: [started.key] });
+      console.log(`[sim] folded ${started.key} into ${group}`);
+    }
+  }, after).unref();
+  return started.key;
+}
+
 // ---- server ----------------------------------------------------------------------------
 
 // Signed out (POST /__dev/signout): /api/* redirects to the sign-in page, as Access does.
@@ -1828,6 +1891,16 @@ const server = createServer(async (req, res) => {
       res.writeHead(app.status, Object.fromEntries(app.headers)).end(await app.text());
       return;
     }
+    if (url.pathname === '/__dev/rethread' && req.method === 'POST') {
+      const after = Number(url.searchParams.get('after') ?? NaN);
+      const started = rethread(url.searchParams.get('into'), after >= 0 ? after : RETHREAD_MS);
+      if (started) {
+        json(res, { thread: started });
+      } else {
+        json(res, { error: 'no thread to fold into' }, 404);
+      }
+      return;
+    }
     if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
       simulate(url.searchParams.get('thread'), url.searchParams.get('mention') === '1');
       res.writeHead(204).end();
@@ -1884,7 +1957,12 @@ watchUi();
 if (SIMULATE) {
   setInterval(() => {
     if (backendState.mode === 'fake') {
-      simulate();
+      // Now and then a follow-up posted as a new root, which re-threading folds a while later.
+      if (Math.random() < 0.15) {
+        rethread();
+      } else {
+        simulate();
+      }
     }
   }, SIM_EVERY_MS).unref();
 }

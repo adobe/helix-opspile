@@ -476,6 +476,103 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['b', 'gap']);
   });
 
+  describe('a thread folded into a group (re-threading)', () => {
+    const entry = (thread, members = [thread]) => ({
+      thread, members: members.map((m) => ({ thread: m })),
+    });
+    const page = (threads, next = null) => ({ team: 'helix', threads, page: { next } });
+    /** The inbox's loading, with `answers` as the pages GET /api/inbox gives, in turn. */
+    function inbox(answers) {
+      const state = { team: 'helix', data: null, scores: new Map() };
+      const got = [...answers];
+      const fns = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox, addPage, foldInto', {
+        state,
+        personal: () => false,
+        scopeKey: () => 'helix',
+        scopeOf: (d) => d.team,
+        get: async () => got.shift(),
+        syncSockets: () => {},
+        checkBells: () => {},
+        mergeProfiles: () => {},
+        renderUser: () => {},
+        coParticipants: () => new Map(),
+        inPass: (f) => f(),
+        smartScore: () => 0,
+        render: () => {},
+        backfill: () => {},
+      });
+      return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
+    }
+
+    it('takes the folded thread\'s own entry off the list when the inbox reloads', async () => {
+      const { keys, loadInbox } = inbox([
+        page([entry('stub'), entry('group'), entry('old')], 'cursor'),
+        // The stub is a member of the group now: the first page has only the group.
+        page([entry('group', ['group', 'stub'])], 'cursor'),
+      ]);
+      await loadInbox();
+      assert.deepEqual(keys(), ['stub', 'group', 'old']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['group', 'old'], 'no stub that opens its group');
+    });
+
+    it('takes it off when an older page brings its group', async () => {
+      const { keys, loadInbox, addPage } = inbox([page([entry('a'), entry('stub')], 'cursor')]);
+      await loadInbox();
+      addPage(page([entry('group', ['group', 'stub']), entry('a')]));
+      assert.deepEqual(keys(), ['a', 'group']);
+    });
+
+    /** `listen` on the inbox of `inbox()`: the room's events, as its socket gets them. */
+    function room(state, foldInto) {
+      const sockets = [];
+      const reloads = [];
+      const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
+        WebSocket: function FakeSocket() { sockets.push(this); },
+        location: { protocol: 'https:', host: 'x' },
+        state: Object.assign(state, {
+          sockets: [], live: 1, open: null, cache: new Map(), me: { id: 1 },
+        }),
+        reloadSoon: (k) => reloads.push(k),
+        noteEvent: () => {},
+        screenTeams: () => ['helix'],
+        foldInto,
+      });
+      listen('helix', 1);
+      return { send: (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) }), reloads };
+    }
+
+    it('takes it off when the room says so, also when its group is on an older page', async () => {
+      const {
+        state, keys, loadInbox, foldInto,
+      } = inbox([page([entry('stub'), entry('a'), entry('group')], 'cursor')]);
+      await loadInbox();
+      const { send, reloads } = room(state, foldInto);
+      send({ type: 'thread', thread: 'group', folded: ['stub'] });
+      assert.deepEqual(keys(), ['a', 'group']);
+      // Until the reload, the group's entry has it, so opening or reading the group covers it.
+      assert.deepEqual(state.data.threads[1].members.map((m) => m.thread), ['group', 'stub']);
+      assert.deepEqual(reloads, ['group']);
+    });
+
+    it('keeps it until its group is in the inbox, so the conversation stays listed', async () => {
+      const {
+        state, keys, loadInbox, addPage, foldInto,
+      } = inbox([
+        page([entry('stub'), entry('a')], 'cursor'),
+        // The group is on an older page, which the reload does not bring.
+        page([entry('a')], 'cursor'),
+      ]);
+      await loadInbox();
+      room(state, foldInto).send({ type: 'thread', thread: 'group', folded: ['stub'] });
+      assert.deepEqual(keys(), ['stub', 'a']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['a', 'stub']);
+      addPage(page([entry('group')]));
+      assert.deepEqual(keys(), ['a', 'group']);
+    });
+  });
+
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
     const {
       sendBar, sendDecides, sendOutcome, sendState,
