@@ -683,7 +683,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .emoji-near { border-bottom: var(--spectrum-border-width-100) dotted currentColor; cursor: help; }
 .moods .em img.emoji { height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); vertical-align: 0; }
 .mentions .glyph img.emoji { height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); vertical-align: calc(-1 * var(--spectrum-spacing-75)); }
-.rx { display: flex; flex-wrap: wrap; margin: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; }
+/* Reactions sit on the bubble's bottom edge, half over it, as in iMessage and Teams; the bubble
+   keeps room under its text for them. */
+.rx { position: relative; z-index: 1; display: flex; flex-wrap: wrap; margin: calc(-1 * var(--spectrum-spacing-200)) var(--spectrum-spacing-200) 0; }
+.msg .bubble:has(+ .rx) { padding-bottom: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-200)); }
 
 .rx button.mine { background: var(--sel); border-color: var(--accent); }
 .msg .col { position: relative; }
@@ -1403,17 +1406,19 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .msg .unsent button { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); background: none; }
 .spectrum .msg .unsent button:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
 
-/* Reactions under a message: small ActionButtons, yours selected in the accent's subtle fill. */
+/* Reactions on a message: small ActionButtons on the layer above the bubble, ringed in the
+   page's background so they stand off its edge; yours selected in the accent's subtle fill. */
 .spectrum .rx { gap: var(--spectrum-spacing-75); }
 .spectrum .rx span, .spectrum .rx button {
   padding: 0 var(--spectrum-spacing-100);
   font-size: var(--spectrum-font-size-100);
   color: var(--spectrum-neutral-content-color-default);
-  background: var(--spectrum-gray-100);
-  border: var(--spectrum-border-width-100) solid transparent;
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
   border-radius: var(--s2-radius);
+  box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--pane);
 }
-.spectrum .rx button:hover { background: var(--spectrum-gray-200); }
+.spectrum .rx button:hover { background: var(--spectrum-gray-100); }
 .spectrum .rx button.mine { background: var(--spectrum-accent-subtle-background-color-default); border-color: var(--spectrum-accent-visual-color); }
 /* The quick reactions and the emoji picker: a Popover holding quiet ActionButtons. */
 .spectrum .msg .quick, .spectrum .picker {
