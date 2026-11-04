@@ -81,6 +81,40 @@ export const memberOf = (me) => (teams) => [].concat(teams || [])
 export const teamless = (me) => Boolean(me) && !(me.teams || []).length;
 
 /**
+ * SQL: thread row `alias` is in a channel that one of the teams in `param` (an SQL parameter, a
+ * JSON array of slugs) owns: filed under it, or shared with it. Ignored channels own nothing.
+ */
+const ownedBy = (alias, param) => `${alias}.kind != 'ignore' AND (
+    ${alias}.team IN (SELECT value FROM json_each(${param}))
+    OR (${alias}.source, ${alias}.channel_id) IN (SELECT source, channel_id FROM channel_teams
+      WHERE team IN (SELECT value FROM json_each(${param}))))`;
+
+const slugsOf = (me) => JSON.stringify(((me && me.teams) || []).map((t) => t.slug));
+
+/**
+ * The customers (org slugs) `me`'s teams own: those with a channel filed under one of them or
+ * shared with one. A team's members read the knowledge bases of the customers it owns. A Set.
+ */
+export async function ownedCustomers(env, me) {
+  if (!me || !(me.teams || []).length) {
+    return new Set();
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT t.org FROM threads t
+    WHERE ${ownedBy('t', '?1')} AND t.org IS NOT NULL`).bind(slugsOf(me)).all();
+  return new Set((results || []).map((r) => r.org));
+}
+
+/** Whether one of `me`'s teams owns customer `org` (see `ownedCustomers`), by `threads_org`. */
+export async function ownsCustomer(env, me, org) {
+  if (!me || !(me.teams || []).length || !org) {
+    return false;
+  }
+  const row = await env.DB.prepare(`SELECT 1 FROM threads t
+    WHERE t.org = ?2 AND ${ownedBy('t', '?1')} LIMIT 1`).bind(slugsOf(me), String(org)).first();
+  return Boolean(row);
+}
+
+/**
  * SQL: the channels person `param` (an SQL parameter) posted or was mentioned in, as rows of
  * `(source, channel_id)`: the channels of their personal view, whichever team they are filed
  * under. Both by index (migrations 0004, 0030).

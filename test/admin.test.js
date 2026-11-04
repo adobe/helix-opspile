@@ -213,15 +213,17 @@ describe('admin: team managers', () => {
       ('kb-org-acme', 'org', 'acme', 'r', 'x')`);
     const me = asBo(bo);
     const r = await as(e, me, 'GET', '/api/kb');
-    assert.deepEqual(r.body.bases.map((b) => b.repo), ['kb-team-helix']);
+    // helix owns acme (a channel of acme's is filed under it): its managers read acme's too.
+    assert.deepEqual(r.body.bases.map((b) => b.repo), ['kb-team-helix', 'kb-org-acme']);
     assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 404);
-    assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+    assert.equal((await as(e, me, 'PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: 'x' })).status, 403);
     assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
     // A member of edge reads edge's, and changes none.
     const cy = await as(e, asMe(CY), 'GET', '/api/kb');
     assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false]]);
-    assert.deepEqual(r.body.bases.map((b) => b.may), [true]);
+    assert.deepEqual(r.body.bases.map((b) => b.may), [true, false]);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-team-helix')).status, 404);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
     assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
   });
 

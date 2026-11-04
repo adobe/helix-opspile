@@ -359,7 +359,10 @@ prompt injection cannot change what later agents are told.
 have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. The other members of a team see its knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`); what they change is only their
+says per knowledge base whether they may change it, `may`). So do the members of a team that
+owns a customer, for the customer's knowledge base: a team owns the customers with a channel
+filed under it or shared with it (`threads.team`, `channel_teams`; ignored channels aside),
+so ownership follows the channels when they are re-filed or shared. What they change is only their
 own settings, whether the agent's thinking shows in their inbox (see *In the inbox*, below). It saves as you type: a pause of a second (or leaving the file, or ⌘S)
 commits the file, authored by the person and stamped `generated: { by: human:<email> }`,
 through the same write path as the agents' (OKF checks, indexes and log written by code).

@@ -765,10 +765,13 @@ async function proxyApi(req, res, url, b) {
 
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
-  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js, and a member
-  // reads their teams'.
-  const mine = new Set(store.me.teams.map((t) => `kb-team-${t.slug}`));
-  const allowed = (repo) => (MEMBER ? mine.has(repo) : !MANAGER || repo === 'kb-team-edge');
+  // Who reads and who changes a knowledge base's files: as src/kbadmin.js lists them (a
+  // manager changes their teams'; a member reads their teams' and their customers').
+  const allowed = async (repo) => {
+    const list = await adminApi.kb({ method: 'GET' }, new URL('http://localhost/api/kb'), null);
+    const base = (await list.json()).bases.find((b) => b.repo === repo);
+    return Boolean(base) && (req.method === 'GET' || base.may);
+  };
   if (MEMBER && req.method !== 'GET') {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
   }
@@ -796,7 +799,7 @@ async function kbApi(req, res, url) {
     return json(res, out, r.status);
   }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
-  if (!kb.has(repo) || !allowed(repo)) {
+  if (!kb.has(repo) || !await allowed(repo)) {
     return json(res, { error: 'no such knowledge base' }, 404);
   }
   if (url.pathname === '/api/kb/files') {

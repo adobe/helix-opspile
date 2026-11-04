@@ -27,6 +27,7 @@ import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
+import { ownsCustomer } from './shares.js';
 
 /**
  * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
@@ -120,13 +121,14 @@ const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && manag
 
 /**
  * The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null.
- * With `read`, of one `me` may look at: a member of its team sees its servers, read-only.
+ * With `read`, of one `me` may look at: a member of its team, or of a team that owns its
+ * customer (src/shares.js), sees its servers, read-only.
  */
 export async function ownerOf(env, me, repo, { read = false } = {}) {
   const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
     .bind(String(repo)).first();
-  const may = base && (mayManage(me, base.kind, base.slug)
-    || (read && base.kind === 'team' && inTeam(me, base.slug)));
+  const may = base && (mayManage(me, base.kind, base.slug) || (read && (base.kind === 'team'
+    ? inTeam(me, base.slug) : await ownsCustomer(env, me, base.slug))));
   return may ? { scope: base.kind, slug: base.slug } : null;
 }
 
