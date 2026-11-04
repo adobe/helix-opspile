@@ -49,10 +49,12 @@ describe('page scripts', () => {
 
   it('share their stylesheets, ui/*.css, inlined where the pages name them', () => {
     for (const name of Object.keys(PAGES)) {
-      assert.match(PAGES[name], /<link rel="stylesheet" href="header.css">/, name);
+      // No styles written into a page: they are Spectrum 2's stylesheets (ui/spectrum*.css).
+      assert.doesNotMatch(PAGES[name], /<style[\s>]/, name);
+      assert.match(PAGES[name], /<link rel="stylesheet" href="spectrum.css">/, name);
       const html = served(name);
       assert.doesNotMatch(html, /<link rel="stylesheet"/, name);
-      assert.ok(html.includes(`<style>\n${SCRIPTS['header.css']}</style>`), name);
+      assert.ok(html.includes(`<style>\n${SCRIPTS['spectrum.css']}</style>`), name);
     }
     const html = page('<link rel="stylesheet" href="a.css">', { 'a.css': 'b::after { content: "</style>"; }\n' });
     assert.equal(html, '<style>\nb::after { content: "<\\/style>"; }\n</style>');

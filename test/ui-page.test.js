@@ -16,7 +16,7 @@ import { transform } from 'esbuild';
 import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { CHANNEL_REF } from '../src/markdown.js';
-import { PAGES, SCRIPTS } from './ui.js';
+import { SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
 
@@ -751,15 +751,15 @@ describe('inbox page', () => {
   });
 
   it('outlines neighboring picked values as one, with no edge between them', () => {
-    const css = PAGES['inbox.html'];
+    const css = SCRIPTS['spectrum-inbox.css'];
     assert.match(css, /\.fr\.on:has\(\+ \.fr\.on\)::after \{ border-bottom: 0; \}/);
     assert.match(css, /\.fr\.on \+ \.fr\.on::after \{ border-top: 0; \}/);
     assert.doesNotMatch(css, /\.fr\.on \{[^}]*box-shadow/);
   });
 
   it('shows every exclusion button of the slid-out rail on a touch screen', () => {
-    const css = PAGES['inbox.html'];
-    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n {2}\}/g)].map((m) => m[1]).join('\n');
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n\}/g)].map((m) => m[1]).join('\n');
     assert.match(touch, /main\.rail\.railopen #filters[^{]*\.fr \.not \{[^}]*pointer-events: auto/);
   });
 
@@ -843,7 +843,6 @@ describe('inbox page', () => {
       viewName: (slug) => state.teams.find((t) => t.slug === slug)?.name || slug,
       platform: (t) => ({ slack: 'Slack' }[t.source]),
       Markdown: { CHANNEL_REF },
-      Header: { path: (p) => p },
     });
     const refs = [
       {

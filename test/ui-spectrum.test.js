@@ -13,34 +13,55 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  inboxPage, page, spectrumColor, spectrumPage, spectrumTokens,
+  fromPreview, inboxPage, page, spectrumColor, spectrumTokens,
 } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
 const NAMES = ['inbox', 'admin', 'kb', 'cogs'];
-const served = (name) => spectrumPage(
-  (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS),
-  name,
-  SCRIPTS,
-);
+const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS);
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 
-describe('Spectrum 2 look (/spectrum)', () => {
-  it('serves every page with the stylesheets after its own, and the root marked', () => {
+describe('Spectrum 2', () => {
+  it('is every page\'s look: its stylesheets, the tokens they use, and nothing else', () => {
     for (const name of NAMES) {
       const html = served(name);
       assert.match(html, /^<!doctype html>\n<html lang="en" class="spectrum">/, name);
-      const own = html.lastIndexOf(SCRIPTS['header.css']);
+      assert.doesNotMatch(PAGES[`${name}.html`], /<style[\s>]|style="/, name);
+      const fonts = html.indexOf(SCRIPTS['spectrum-fonts.css']);
       const shared = html.indexOf(SCRIPTS['spectrum.css']);
       const its = html.indexOf(SCRIPTS[`spectrum-${name}.css`]);
-      assert.ok(own > 0 && shared > own && its > shared, name);
-      assert.ok(html.indexOf(SCRIPTS['spectrum-fonts.css']) < shared, name);
-      assert.ok(shared < html.indexOf('</head>'), name);
+      assert.ok(fonts > 0 && shared > fonts && its > shared, name);
+      assert.ok(its < html.indexOf('</head>'), name);
+      // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
+      const tokens = spectrumTokens(`${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      const at = html.indexOf(tokens);
+      assert.ok(at > fonts && at < shared, name);
+      assert.match(tokens, /--spectrum-background-base-color:/, name);
       // The browser's chrome: Spectrum 2's base background, light and dark.
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark')}" media="(prefers-color-scheme: dark)">`), name);
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light')}" media="(prefers-color-scheme: light)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
     }
-    assert.throws(() => spectrumPage('<html></html>', 'inbox', SCRIPTS), /no <\/head>/);
+  });
+
+  it('keeps zero lengths that calc() adds to lengths, and the filter cards\' overhang', () => {
+    for (const file of STYLESHEETS) {
+      // A custom property set to a unitless 0 breaks every calc() that adds it to a length.
+      assert.doesNotMatch(SCRIPTS[file], /--[a-z0-9-]+:\s*0\s*[;}]/, file);
+    }
+    // The filter cards hang out to the right as they are picked or pointed at (--out), padded
+    // as much, so their contents stay where they are.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /#filters \.card \{[^}]*--out: 0px; margin-right: calc\(-1 \* var\(--out\)\); padding-right: calc\([^;]*\+ var\(--out\)\)/);
+  });
+
+  it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {
+    assert.equal(fromPreview('/spectrum', '?team=t&t=th1'), '/inbox?team=t&t=th1');
+    assert.equal(fromPreview('/spectrum/'), '/inbox');
+    assert.equal(fromPreview('/spectrum/kb', '?repo=r'), '/inbox/kb?repo=r');
+    assert.equal(fromPreview('/spectrum/admin', '?tab=orgs'), '/inbox/admin?tab=orgs');
+    assert.equal(fromPreview('/spectrum/cogs'), '/inbox/cogs');
+    assert.equal(fromPreview('/spectrumx'), null);
+    assert.equal(fromPreview('/spectrum/nope'), null);
+    assert.equal(fromPreview('/inbox'), null);
   });
 
   it('puts in the tokens the stylesheets use and what they are made of, in both schemes and scales', () => {
@@ -76,13 +97,15 @@ describe('Spectrum 2 look (/spectrum)', () => {
 
   it('styles with Spectrum 2 tokens only: no raw colors, lengths or durations', () => {
     for (const file of STYLESHEETS) {
-      // Comments say what the values are; the rules must not have them. A media query's
-      // breakpoint, which no custom property can be, is the page's own.
-      const css = SCRIPTS[file].replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '');
+      // Comments say what the values are; the rules must not have them. A media or container
+      // query's breakpoint, which no custom property can be, is the page's own.
+      const css = SCRIPTS[file].replace(/\/\*[\s\S]*?\*\//g, '').replace(/@(media|container)[^{]*\{/g, '');
       const raw = [
         ...css.matchAll(/#[0-9a-f]{3,8}\b(?![^{]*\{)/gi),
         ...css.matchAll(/\b(?:rgba?|hsla?|oklch|lab|lch)\(\s*[\d.]/gi),
-        ...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|em|ms|s)\b/g),
+        // em is a size relative to the text, as a percentage is. A zero keeps its unit (`0px`):
+        // a unitless 0 is a number, which calc() cannot add to a length.
+        ...[...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|ms|s)\b/g)].filter((m) => !/^-?0*\.?0+[a-z]+$/.test(m[0])),
         ...css.matchAll(/(?<![\w-])(?:white|black|red|blue|green|yellow|gray|grey|orange|purple|pink)\b(?=\s*[;!)])/g),
       ].map((m) => m[0]);
       assert.deepEqual(raw, [], file);

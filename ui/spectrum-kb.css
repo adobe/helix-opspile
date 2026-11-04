@@ -1,5 +1,5 @@
 /*
- * Agents, the knowledge-base editor (ui/kb.html), in Spectrum 2's look under /spectrum:
+ * Agents, the knowledge-base editor (ui/kb.html), in Spectrum 2's look:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css).
  *
@@ -10,6 +10,204 @@
  * a TextArea in Source Code Pro (a code block when read-only), the notes InlineAlerts
  * (subtle fill) and the confirmation an AlertDialog. https://s2.spectrum.adobe.com
  */
+
+/* ==== The page's layout ========================================================================
+   Where everything is and how it moves: the grid, the panes, the sizes that set them, and the
+   states the script sets. Its look, in Spectrum 2's components, follows below. */
+/* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
+   indicator and, on the phone's side, under the camera: the sections scroll their ends out
+   from under it, and the page keeps clear of the sides. The insets are 0 everywhere else. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+/* With the on-screen keyboard open (see the script at the end), the page follows what is left
+   above it, and the keyboard covers the home indicator. */
+:root.keyboard { --safe-bottom: 0px; }
+main > section::after { content: ""; display: block; height: var(--safe-bottom); flex: none; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+button.danger { color: var(--red); }
+/* The header is every page's (ui/header.css). */
+main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 32 + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-100) * 40) 1fr; min-height: 0; }
+main > section { overflow: auto; min-height: 0; }
+#bases { background: var(--bg); }
+#files { background: var(--col); }
+#editor { display: flex; flex-direction: column; min-width: 0; background: var(--card); }
+
+h2:first-child { margin-top: 0; }
+#filter { width: 100%; }
+.row { display: flex; cursor: pointer;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row:hover { background: var(--hover); }
+
+.row .sub { overflow: hidden; text-overflow: ellipsis; }
+.row.dir { color: var(--mute); cursor: default; font-size: var(--spectrum-font-size-100); }
+.row.dir:hover { background: none; }
+
+
+.row .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Customers and vendors: by activity or by name. */
+h2.sorted { display: flex; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; overflow: hidden; flex: none; }
+
+
+.tools { display: flex; flex-wrap: wrap; }
+
+.bar { display: flex; align-items: center; flex-wrap: wrap; }
+.bar .path { font: var(--spectrum-font-size-100) ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1; min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); }
+.bar input.path { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); }
+.bar .title { flex: 1; font-weight: 600; }
+.bar .hash { font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Nothing to say (a concept that was just opened): no empty strip. */
+.note:empty { display: none; }
+.note.warn { color: var(--yellow); }
+.note.err { color: var(--red); }
+.note.ok { color: var(--green); }
+/* The text field, CodeMirror (src/ui-editor.js), fills what the bar and the note leave. */
+.text { flex: 1; min-height: 0; display: flex; }
+.foot { display: flex; gap: var(--spectrum-spacing-100); align-items: center; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); border-top: var(--spectrum-border-width-100) solid var(--line); }
+.foot input { flex: 1; }
+.log { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
+.log .c { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+.log .c .h { font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+.log .c .m { margin-top: var(--spectrum-spacing-50); }
+dialog.confirm { max-width: min(calc(var(--spectrum-spacing-100) * 65), 92vw); background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-300) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+dialog.confirm::backdrop { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+dialog.confirm p { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+dialog.confirm .detail { color: var(--mute); font-size: var(--spectrum-font-size-100); }
+dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-100); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+.note button { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); }
+
+/* Thread agents per channel: one switch per channel. */
+.channels { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-200); overflow: auto; scroll-padding-top: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); }
+.ch { display: flex; gap: var(--spectrum-spacing-200); align-items: center; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50); border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+.ch .who { flex: 1; min-width: 0; }
+.ch .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch .nm .src { font-weight: 400; font-size: var(--spectrum-font-size-50); padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600);
+  border: var(--spectrum-border-width-100) solid var(--line); color: var(--mute); }
+.ch .sub { color: var(--mute); font-size: var(--spectrum-font-size-75); }
+.ch .sub.by { color: var(--faint); }
+.ch .state { font-size: var(--spectrum-font-size-75); color: var(--mute); min-width: var(--spectrum-spacing-400); text-align: right; }
+.ch .state.on { color: var(--green); font-weight: 600; }
+.switch { position: relative; flex: none; width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: 0; border: 0; border-radius: var(--spectrum-corner-radius-700);
+  background: var(--line); }
+.switch::after { content: ''; position: absolute; top: var(--spectrum-spacing-50); left: var(--spectrum-spacing-50); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); border-radius: 50%;
+  background: var(--spectrum-white); box-shadow: 0 var(--spectrum-border-width-100) var(--spectrum-spacing-50) var(--spectrum-transparent-black-400); transition: left var(--spectrum-animation-duration-200); }
+.switch[aria-checked="true"] { background: var(--green); }
+.switch[aria-checked="true"]::after { left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+.switch:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-spacing-50); }
+/* MCP servers of the agents: one row per server, as the channels above, its form below. */
+.ch .tags { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); margin-top: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
+.ch .tags .src { padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600); border: var(--spectrum-border-width-100) solid var(--line); color: var(--mute);
+  font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ch .tags .src.off { opacity: .45; text-decoration: line-through; }
+.ch .acts { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.ch .acts button { padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.ch .nm .src.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+.ch .nm .src.err, .ch .sub.err { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.ch .sub.err { overflow-wrap: anywhere; }
+.mono { font: var(--spectrum-font-size-75) var(--s2-code); }
+.mcpform { display: grid; grid-template-columns: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)) 1fr; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); align-items: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) 0; }
+.mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: var(--spectrum-font-size-75); font-weight: 600; letter-spacing: var(--spectrum-detail-letter-spacing);
+  text-transform: uppercase; color: var(--mute); }
+.mcpform label { color: var(--mute); font-size: var(--spectrum-font-size-100); }
+.mcpform .pair { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.mcpform .pair input:first-child { width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); flex: none; }
+.mcpform .pair input:last-child { flex: 1; min-width: 0; }
+.mcpform .hint { grid-column: 2; color: var(--faint); font-size: var(--spectrum-font-size-75); margin-top: calc(-1 * var(--spectrum-spacing-75)); }
+.mcpform .hint.wide { margin-top: 0; }
+.mcpform .hint .mono { overflow-wrap: anywhere; font-size: var(--spectrum-font-size-50); }
+.mcpform [hidden] { display: none; }
+.mcpform .apply { grid-column: 2; display: flex; gap: var(--spectrum-spacing-100); }
+/* Global MCP servers: opspile's own, switched per team and per channel. */
+.channels h3.group { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) var(--spectrum-spacing-50); font-size: var(--spectrum-font-size-75); font-weight: 600; letter-spacing: var(--spectrum-detail-letter-spacing);
+  text-transform: uppercase; color: var(--mute); }
+.channels h3.group:first-child { margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.ch.global { flex-wrap: wrap; row-gap: 0; }
+/* What you are switching: its name and switch stay on top of its long list of channels (at
+   the edge of the list: a sticky element stays inside the padding of .channels otherwise). */
+.ch.global .head { flex-basis: 100%; min-width: 0; display: flex; gap: var(--spectrum-spacing-200); align-items: center;
+  position: sticky; top: calc(-1 * var(--spectrum-spacing-75)); z-index: 1; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; margin-top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-75))); background: var(--card);
+  container-type: scroll-state; }
+.ch.global .head::after { content: ""; position: absolute; inset: auto 0 0; height: var(--spectrum-border-width-100); }
+@container scroll-state(stuck: top) { .ch.global .head::after { background: var(--line); } }
+.ch.global .head .nm { flex: 1; min-width: 0; }
+.ch.global .per { flex-basis: 100%; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 0; }
+.ch.global .per summary { cursor: pointer; color: var(--mute); font-size: var(--spectrum-font-size-75); }
+.ch.global .per .row2 { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); align-items: center; padding: var(--spectrum-spacing-75) 0 var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); }
+.ch.global .per .row2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch.global .per select { font-size: var(--spectrum-font-size-75); }
+.ch.global .per .na { color: var(--faint); font-style: normal; font-size: var(--spectrum-font-size-75); }
+.ch.global .per .row2[hidden], .ch.global .per .none[hidden] { display: none; }
+.ch.global .per .find { display: block; width: calc(100% - calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); max-width: calc(var(--spectrum-spacing-100) * 40); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); }
+.ch.global .per .none { color: var(--faint); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) 0 var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+/* A customer's: the per-channel switches are all it has, so they are shown, not folded. */
+.ch.global .per.flat { margin-top: var(--spectrum-spacing-300); }
+.ch.global .per.flat .row2, .ch.global .per.flat .none { padding-left: 0; }
+.ch.global .per.flat .find { margin-left: 0; width: 100%; }
+/* A team's thread agents by default, above its channels. */
+.ch.default { background: var(--col); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-600); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-200); margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); }
+/* Your own: whether your inbox shows the agent's thinking, everywhere and in each channel. */
+.ch.mine { border-style: dashed; }
+.ch .sub.mine { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin-top: var(--spectrum-spacing-75); }
+.ch .sub.mine select { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+/* Opened from a thread's agent in the inbox: its channel, for a moment. */
+.ch { transition: background var(--spectrum-animation-duration-1000); }
+.ch.found { background: var(--sel); }
+.empty.ro { color: var(--faint); font-size: var(--spectrum-font-size-75); }
+.ch.global .setup { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); align-items: center; font-size: var(--spectrum-font-size-100);
+  margin-top: var(--spectrum-spacing-300); }
+.ch.global .setup input { width: calc(var(--spectrum-spacing-100) * 25); }
+.ch.global .setup a.btn { border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-400); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); background: var(--card);
+  color: inherit; text-decoration: none; white-space: nowrap; }
+.ch.global .setup a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+/* Extraction rules: one row per rule or technology, as the servers above; the admin team's folded. */
+.ch.rule.off .nm, .ch.rule.replaced .nm { opacity: .55; }
+.ch.rule .sub.pat { overflow-wrap: anywhere; color: var(--mute); }
+.ch .switch-gap { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); flex: none; }
+details.inherited { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 var(--spectrum-spacing-50); }
+details.inherited > summary { cursor: pointer; color: var(--mute); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-50); }
+details.inherited .ch { padding-left: var(--spectrum-spacing-200); }
+.mcpform textarea { width: 100%; resize: vertical; color: inherit; background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-400); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); }
+.mcpform .hint .tags { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); }
+.mcpform .hint .tags .src { padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-600); border: var(--spectrum-border-width-100) solid var(--line); color: var(--ink);
+  font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mcpform .hint .err { color: var(--red); }
+kbd { padding: 0 var(--spectrum-spacing-75); }
+
+/*
+ * Narrower screens. Under 1100px the two lists get narrower. Under 700px (phones, a folded
+ * iPhone Duo) one column at a time, as `main[data-pane]` says: the knowledge bases, one
+ * knowledge base's files, or the editor, each with a button back to the one before.
+ */
+.up { display: none; }
+
+#files > .up + h2 { margin-top: 0; }
+
+@media (max-width: 1099px) {
+  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 21 + var(--spectrum-spacing-50)), 22%) minmax(calc(var(--spectrum-spacing-100) * 25), 27%) minmax(0, 1fr); }
+}
+@media (max-width: 699px) {
+  main { grid-template-columns: 100%; }
+
+  main:not([data-pane="bases"]) #bases, main:not([data-pane="files"]) #files,
+  main:not([data-pane="editor"]) #editor { display: none; }
+  .up { display: inline-flex; align-items: center;
+ }
+
+  .bar .path { min-width: 0; overflow-wrap: anywhere; }
+  .foot input { min-width: 0; }
+}
+/* The parts the script writes: a list's empty note, the note leading the tools and the global
+   servers, and the fields of a form that need less than the whole width. */
+.empty.pad { padding: var(--spectrum-spacing-100); }
+.channels > .sub.intro { color: var(--mute); font-size: var(--spectrum-font-size-75);
+  margin: 0 var(--spectrum-spacing-50) var(--spectrum-spacing-75); }
+.mcpform :is(input, select).short { max-width: calc(var(--spectrum-spacing-100) * 30); }
+.mcpform :is(input, select).long { max-width: calc(var(--spectrum-spacing-100) * 45); }
+
+/* ==== Its look ================================================================================= */
 
 /* Workflow icons (@react-spectrum/s2, S2_Icon_*_20_N), as masks: they take currentColor. */
 :root.spectrum {

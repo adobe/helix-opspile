@@ -201,7 +201,7 @@ const PICK = { teams: 'a team', orgs: 'an org', requests: 'a request' };
 function toUrl() {
   const q = new URLSearchParams({ tab: state.tab });
   if (state.sel) q.set(PARAM[state.tab], state.sel);
-  history.replaceState(null, '', Header.path(`/inbox/admin?${q}`));
+  history.replaceState(null, '', `/inbox/admin?${q}`);
   // Phones show the list or what is picked in it (see the styles).
   document.body.classList.toggle('picked', Boolean(state.sel));
 }
@@ -288,7 +288,7 @@ function drawList() {
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
       <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
       ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
-        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required style="width:110px"><button class="primary">Create</button></form>` : ''}
+        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required><button class="primary">Create</button></form>` : ''}
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     if (!state.me.admin) {
       wireFilter();
@@ -722,7 +722,7 @@ function wireChannelPicker() {
           · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
         <span class="where">${pending(c) ? '<span class="tag open" title="Asked for already: waiting for the admin team">requested</span><br>' : ''}${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
-    }).join('') || '<div class="empty" style="padding:8px">No channel matches.</div>';
+    }).join('') || '<div class="empty pad">No channel matches.</div>';
     picks.hidden = false;
     placePicks(input, picks);
     for (const el of picks.querySelectorAll('[data-i]')) {
@@ -916,7 +916,7 @@ function wireMemberPicker() {
       <span class="name">${p.name ? esc(p.name) : `<i>${esc(p.email)}</i>`} ${p.name ? `<span class="sub mono">${esc(p.email)}</span>` : ''}</span>
       ${p.new ? '<span class="tag">new person</span>' : ''}${p.staff ? '' : '<span class="tag vendor">not staff</span>'}
       ${p.teams && p.teams.length ? `<span class="sub">${esc(p.teams.map(teamLabel).join(', '))}</span>` : ''}</div>`).join('')
-      || '<div class="empty" style="padding:8px">Nobody matches. Type a full email address to add someone new.</div>';
+      || '<div class="empty pad">Nobody matches. Type a full email address to add someone new.</div>';
     picks.hidden = false;
     placePicks(input, picks);
     for (const el of picks.querySelectorAll('[data-i]')) {
@@ -982,7 +982,7 @@ function ruleForm(r = {}) {
     <select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select>
     <input id="rPattern" class="grow mono" placeholder="aem-" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required>
     <select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option></select>
-    <input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" style="width:80px" title="Priority: the lowest matching rule wins">
+    <input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" title="Priority: the lowest matching rule wins">
     <input id="rNote" placeholder="Note" value="${esc(r.note || '')}">
     <button class="primary">${r.id ? 'Save rule' : 'Add rule'}</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}
   </form>`;
@@ -1096,18 +1096,18 @@ async function showTeam(slug) {
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
   const admin = Boolean(state.me.admin);
-  let title = '<h1 style="margin:0;font-size:20px">Unassigned channels</h1>';
+  let title = '<h1>Unassigned channels</h1>';
   if (real) {
     title = admin ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">`
-      : `<h1 style="margin:0;font-size:20px;flex:1">${esc(team.name)}</h1>`;
+      : `<h1 class="fill">${esc(team.name)}</h1>`;
   }
   $('detail').innerHTML = `
     <div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
-      ${real ? `<a href="${Header.path(`/inbox/kb?team=${encodeURIComponent(team.slug)}`)}">Knowledge base</a>` : ''}
+      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}">Knowledge base</a>` : ''}
       ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
     <div class="status" id="status"></div>
-    ${real ? `<div class="card"><label style="display:flex;gap:8px;align-items:center">
+    ${real ? `<div class="card"><label class="inline">
       <input type="checkbox" id="tSelf"${team.self_managed ? ' checked' : ''}${admin ? '' : ' disabled'}>
       <span><b>Self-managed</b>: every member is a team manager and may add and remove members and edit the team's knowledge base.</span></label>
       <p class="hint">${admin ? 'Turning it on makes every member a manager, now and when they join. Turning it off keeps the roles as they are; new members join as members, and managers can be demoted.' : 'Only the admin team changes this.'}</p></div>` : ''}
@@ -1123,7 +1123,7 @@ async function showTeam(slug) {
     ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
       <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
-      <p class="hint" style="margin:0 0 8px">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
+      <p class="hint lead">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
   showStatus();
   renderChannels();
@@ -1323,12 +1323,12 @@ function drawRequest(r, preview) {
   const org = c.org && !c.org.startsWith('_') ? (c.orgName || orgLabel(c.org)) : '';
   const open = r.status === 'open';
   $('detail').innerHTML = `
-    <div class="title">${backButton()}<h1 style="margin:0;font-size:20px;flex:1">${channelName(c)} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
+    <div class="title">${backButton()}<h1 class="fill">${channelName(c)} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
       <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
-      <label>For</label><span><a href="${Header.path(`/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}`)}">${esc(teamLabel(r.team))}</a></span>
+      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
       ${r.note ? `<label>Note</label><span class="note">${esc(r.note)}</span>` : ''}
       ${open ? '' : `<label>Answer</label><span>${decisionText(r)}</span>`}
@@ -1412,7 +1412,7 @@ async function showOrg(slug) {
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
-      <label for="oIcon">Icon</label><span style="display:flex;gap:8px;align-items:center"><input id="oIcon" class="mono" style="flex:1" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
+      <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
       <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
     ${channelsCard('org')}
@@ -1521,7 +1521,7 @@ async function showOrg(slug) {
   Header.user(state.me, Header.role(state.me));
   if (!state.me.admin && !state.me.manages?.length) {
     $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
-    $('detail').innerHTML = `<div class="empty"><a href="${Header.path('/inbox')}">Back to the inbox</a></div>`;
+    $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
     return;
   }
   Header.init(state.me, {
@@ -1543,7 +1543,7 @@ async function showOrg(slug) {
   $('detail').addEventListener('click', (e) => {
     if (e.target.closest('[data-back]')) { unselect(); return; }
     // A link to another team or org here (a request's team) opens it as the header does.
-    const a = e.target.closest(`a[href^="${Header.path('/inbox/admin?')}"]`);
+    const a = e.target.closest('a[href^="/inbox/admin?"]');
     if (a && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       openUrl(a.getAttribute('href'));
