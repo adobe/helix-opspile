@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  clairicFacts, FIELDS, MAX_PRODUCTS,
+  clairicFacts, FIELDS, MAX_PRODUCTS, MAX_QUESTIONS, TOPIC_MIN, TOPICS,
   isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
@@ -110,6 +110,21 @@ describe('kinds and topics', () => {
     assert.equal(topicsOf({ 'topic.cdn': { noul: 0.2 } }), null);
     assert.deepEqual(topicList(null), []);
     assert.deepEqual(topicList('not json'), []);
+  });
+
+  it('reads the topics of a label from before as they are now', () => {
+    // go-live is part of the project; commerce and integrations are products, the tech stack's.
+    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85,"commerce":0.95}'), ['project', 'cdn']);
+    assert.deepEqual(topicList('{"project":0.95,"golive":0.9,"integrations":0.8}'), ['project']);
+  });
+
+  it('asks only about concerns, in the order they were measured in, at one cut', () => {
+    assert.deepEqual(Object.keys(TOPICS), ['authoring', 'auth', 'project', 'cdn', 'domains',
+      'performance', 'publishing', 'seo', 'urls', 'code', 'frontend', 'errors', 'limits',
+      'security', 'roadmap']);
+    assert.equal(TOPIC_MIN, 0.55);
+    // The topics share the first call with QUESTIONS and the first tech questions.
+    assert.ok(Object.keys(QUESTIONS).length + Object.keys(TOPICS).length <= MAX_QUESTIONS);
   });
 });
 

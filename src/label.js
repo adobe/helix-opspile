@@ -38,52 +38,105 @@ export const MAX_QUESTIONS = 24;
 /**
  * What a thread is about, across kinds: an incident and a question can both be about the CDN.
  * Each is one Clef yes/no question in the labeling call; a thread keeps those at or above
- * TOPIC_MIN (labels.topics). `name` is what the inbox shows.
+ * TOPIC_MIN (labels.topics). `name` is what the inbox shows. No product names: the tech stack
+ * says which products a thread is about. Found with the topic map (src/topicmap.js).
  */
 export const TOPICS = {
   authoring: {
-    name: 'Authoring',
-    what: 'authoring content: Universal Editor, Document Authoring, blocks, components or templates',
+    name: 'Authoring and content',
+    what: 'authoring and content: how authors create and edit pages in the editors and authoring'
+      + ' tools (visual editors, documents, spreadsheets, forms), content models, fields and'
+      + ' components, reusable content such as fragments and live copies, or rolling content out'
+      + ' to locales and translating it, not access to them',
   },
   auth: {
     name: 'Sign-in and permissions',
-    what: 'signing in or permissions: login, SSO, IMS, tokens, or an access-denied or unauthorized error',
-  },
-  commerce: {
-    name: 'Commerce',
-    what: 'commerce: products, catalogs, product or listing pages, carts, checkout, or product feeds',
+    what: 'signing in or permissions: login, single sign-on, tokens, API keys or credentials,'
+      + ' roles, or an access-denied or unauthorized error',
   },
   project: {
-    name: 'Project status',
-    what: 'the status of a project: a proof of concept, a plan, next steps, progress or a review',
-  },
-  golive: {
-    name: 'Go-live and migration',
-    what: 'a go-live, launch, cutover or migration to a new site or platform',
+    name: 'Project plan and go-live',
+    what: 'a migration or launch project as a whole: moving a site, pages or domains to a new'
+      + ' platform, a go-live, launch or cutover and its date, a proof of concept, onboarding, or'
+      + ' the project\'s plan, status and next steps, not a single technical question within it',
   },
   cdn: {
-    name: 'CDN and caching',
-    what: 'the CDN, caching, purging, domains, DNS or certificates',
+    name: 'Caching and delivery',
+    what: 'caching and delivery: purging, cache rules and lifetimes, stale content in a cache,'
+      + ' push invalidation, origin routing, or how the CDN in front of the site is set up',
+  },
+  domains: {
+    name: 'Domains and certificates',
+    what: 'domains, DNS, delegation or TLS certificates',
   },
   performance: {
     name: 'Performance',
-    what: 'page performance: Core Web Vitals, Lighthouse, LCP, CLS, INP or loading speed',
+    what: 'page performance: Core Web Vitals, LCP, CLS, INP, loading speed, performance reports or'
+      + ' scores, or preloading and optimizing what loads first',
   },
   publishing: {
     name: 'Preview and publishing',
-    what: 'previewing, publishing or unpublishing content, or content that does not sync or update',
+    what: 'previewing, publishing or unpublishing content, content (not code) that does not update'
+      + ' after publishing, or content overwritten or published by mistake',
   },
   seo: {
     name: 'SEO',
-    what: 'SEO: redirects, sitemaps, robots.txt, indexing, canonical URLs or structured data',
+    what: 'SEO: sitemaps, robots.txt, indexing, canonical URLs, structured data, or how search'
+      + ' engines or AI assistants show or classify pages',
   },
-  integrations: {
-    name: 'Integrations',
-    what: 'an integration with another system: analytics, tag managers, personalization, consent,'
-      + ' translation, search, or a third-party API',
+  urls: {
+    name: 'URLs and redirects',
+    what: 'URLs: redirects, aliases, vanity or legacy URLs, links between pages, or pages that'
+      + ' return 404',
+  },
+  code: {
+    name: 'Code and deployment',
+    what: 'code and deployments: the Git repository, code sync, branches, builds, or code changes'
+      + ' that do not show on the site',
+  },
+  frontend: {
+    name: 'Blocks and front-end code',
+    what: 'the site\'s front-end code: how blocks are built, styled, laid out or rendered, the'
+      + ' header, footer or navigation, server-side rendering, or the JavaScript, CSS, fonts and'
+      + ' icons in the repository',
+  },
+  errors: {
+    name: 'Errors and traffic',
+    what: 'errors and load: 5xx responses, timeouts, outages, error messages from the platform, or'
+      + ' unusual or excessive traffic or load, not a sign-in or permission error',
+  },
+  limits: {
+    name: 'Limits and quotas',
+    what: 'a product limit: a size, length, count or rate limit or quota, or a request to raise'
+      + ' one',
+  },
+  security: {
+    name: 'Security and compliance',
+    what: 'security and compliance: protecting a site or origin, secrets and keys, allowlisting'
+      + ' IPs or redirect URIs, content security policy, vulnerabilities, privacy, or compliance'
+      + ' documents',
+  },
+  roadmap: {
+    name: 'Roadmap and feedback',
+    what: 'a product\'s roadmap or feedback on it: a feature that is not generally available yet'
+      + ' (beta, early access, an experiment or a pilot), when a feature ships or is enabled, a'
+      + ' feature request or suggestion, or feedback on how a product or tool works',
   },
 };
-export const TOPIC_MIN = 0.8;
+/**
+ * A thread keeps the topics Clef gives at least this, one cut for every topic: the best on 225
+ * threads labeled by hand (macro F1 0.82, the same in 5-fold cross-validation; at 0.8 it was
+ * 0.56, with a topic on 41% of the threads that have one). Clef's answers move a little with the
+ * other questions of a call, and these were measured asked as they are: QUESTIONS, these topics
+ * and the first five tech questions (by id) in one call. Keep the order, and measure again when
+ * it changes, a new tech id that sorts before the fifth included.
+ */
+export const TOPIC_MIN = 0.55;
+/**
+ * Topics no longer asked, for the labels from before: the topic that took one over, or null for
+ * one that is a product, which the tech stack says now.
+ */
+const RETIRED_TOPICS = { golive: 'project', commerce: null, integrations: null };
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -183,8 +236,12 @@ export function topicList(stored) {
   } catch {
     parsed = null;
   }
-  return parsed && typeof parsed === 'object'
-    ? Object.entries(parsed).sort((x, y) => y[1] - x[1]).map(([id]) => id) : [];
+  if (!parsed || typeof parsed !== 'object') {
+    return [];
+  }
+  const ids = Object.entries(parsed).sort((x, y) => y[1] - x[1])
+    .map(([id]) => (id in RETIRED_TOPICS ? RETIRED_TOPICS[id] : id)).filter(Boolean);
+  return [...new Set(ids)];
 }
 
 /** The names the inbox shows for topic ids. */

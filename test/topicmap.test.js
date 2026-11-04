@@ -215,7 +215,7 @@ describe('topic map: building', () => {
     assert.deepEqual(map.orgs, {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
-    assert.equal(map.tags.cdn, 'CDN and caching');
+    assert.equal(map.tags.cdn, 'Caching and delivery');
     // The products: Akamai is the tech stack's (migration 0043), Edge Functions a gap, CDN generic.
     assert.deepEqual(map.products, {
       'tech:akamai': { name: 'Akamai', tech: 'akamai' },

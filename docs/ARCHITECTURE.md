@@ -696,11 +696,21 @@ and an unchanged thread is never labeled twice):
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
   or customer. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
-- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`:
-  authoring, sign-in and permissions, commerce, project status, go-live and migration, CDN and
-  caching, performance, preview and publishing, SEO, integrations). The kind says what the
-  thread asks for, the topics what it is about: an incident and a question can both be about
-  the CDN. A thread keeps the topics at 0.8 or above (`labels.topics`).
+- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`):
+  authoring and content, sign-in and permissions, project plan and go-live, caching and
+  delivery, domains and certificates, performance, preview and publishing, SEO, URLs and
+  redirects, code and deployment, blocks and front-end code, errors and traffic, limits and
+  quotas, security and compliance, roadmap and feedback. The kind says what the thread asks for,
+  the topics what concern it is about, and the tech stack (below) which products: an incident
+  and a question can both be about caching, on Akamai or Fastly. Topics name no products. A
+  thread keeps the topics at 0.55 or above (`labels.topics`): the best single cut on 225 threads
+  labeled by hand (macro F1 0.82; the ten topics before, kept at 0.8, had 0.56 and left 59% of
+  the threads with no topic, these 31%, the hand labels 24%). The list came from the
+  [topic map](#topic-maps). Clef's answers move a little with the other questions of a call,
+  and the topics were measured asked with the four questions above and the first five tech
+  questions by id: keep their order, and measure again when it changes. A label from before
+  shows `golive` as `project`, and `commerce` and `integrations`, products now, not at all,
+  until the thread is labeled again.
 - **Extraction rules** (`src/extract.js`) find facts and detect technologies: regular
   expressions, or scripts, which are configuration of the ops teams (`extraction_rules`), not
   code. The admin team's apply to every channel, any other team's to the channels it owns, on
