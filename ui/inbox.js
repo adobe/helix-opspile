@@ -1748,7 +1748,8 @@ function message(m, prev, fresh, followed = false) {
 
 // ---------------------------------------------------------------- the thread agent
 // Its latest turn, under the last message (GET /api/agent): what it is doing while it works,
-// its note for the team once done: its thinking. Asked when a thread opens or changes, and
+// its note for the team once done: its thinking. A finished one comes with the thread
+// (`agent_turn`, keptAgentTurn), so it shows with the messages. Asked when a thread opens or changes, and
 // every few seconds while it works, or while a new message waits for it to start. Not where
 // you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
 // avatar and name open the agent settings of the thread's team, at the thread's channel.
@@ -1812,6 +1813,20 @@ function placeAgent(key) {
   if (near) scroller.scrollTop = scroller.scrollHeight;
 }
 
+/**
+ * The agent's latest finished turn, as the thread came with it (`agent_turn`, kept in D1 when a
+ * turn ends): shown with the messages, not a moment after them. What the agent itself said
+ * (loadAgent) wins when it is about a later turn, or about this one while it still worked.
+ */
+function keptAgentTurn(key, turn) {
+  if (!turn) return;
+  const known = state.agents.get(key);
+  const was = known?.turn;
+  if (was && (was.startedAt > turn.startedAt || (was.startedAt === turn.startedAt && was.state !== 'working'))) return;
+  if (known) known.turn = turn;
+  else state.agents.set(key, { turn, latest: null, timer: null });
+}
+
 /** Asks the thread's agent how its latest turn went; keeps asking while it works. */
 async function loadAgent(key, { latest = null } = {}) {
   const known = state.agents.get(key);
@@ -1832,7 +1847,7 @@ async function loadAgent(key, { latest = null } = {}) {
   };
   let res;
   try {
-    res = await askAgent(key);
+    res = await get(`/api/agent?thread=${encodeURIComponent(key)}`);
   } catch {
     // A blip: the turn on screen may be over by now, so it is not left at that. After a few, the
     // spinner goes, since it no longer says anything.
@@ -1855,54 +1870,6 @@ async function loadAgent(key, { latest = null } = {}) {
   // seconds for more): ask again, while the thread stays open.
   const waiting = res.enabled && last && (!turn || turn.startedAt < last) && Date.now() - Date.parse(last) < AGENT_WAIT_MS;
   if (turn?.state === 'working' || waiting) askAgain(entry);
-}
-
-// The agent's answers being asked for, by key: { at, req, ahead, done }. Asks at the same time
-// share one request. A thread opened without a copy (a fresh page, a thread not fetched ahead)
-// asks its agent alongside the thread (`ahead`), and every render of it waits a moment for that
-// answer: the turn comes in with the messages instead of pushing them up a moment later. An
-// answer asked ahead is kept until loadAgent takes it, if it is not old by then.
-const agentAsks = new Map();
-const AGENT_AHEAD_MS = 800;
-const AGENT_AHEAD_STALE_MS = 10000;
-
-/** GET /api/agent for `key`: the request already out, the answer asked ahead, or a new one. */
-function askAgent(key, { ahead = false } = {}) {
-  const a = agentAsks.get(key);
-  if (a && !(a.done && Date.now() - a.at >= AGENT_AHEAD_STALE_MS)) {
-    // Taken: not kept once it answers.
-    if (!ahead) { a.ahead = false; if (a.done) agentAsks.delete(key); }
-    return a.req;
-  }
-  const entry = { at: Date.now(), ahead, done: false, req: get(`/api/agent?thread=${encodeURIComponent(key)}`) };
-  entry.req.catch(() => {}).finally(() => {
-    entry.done = true;
-    if (!entry.ahead && agentAsks.get(key) === entry) agentAsks.delete(key);
-  });
-  agentAsks.set(key, entry);
-  return entry.req;
-}
-
-/** Asks the agent of `key` ahead of its render (unless it is known, or hidden everywhere). */
-function askAgentAhead(key) {
-  if (!key || state.agents.has(key) || agentAsks.has(key)) return;
-  const s = state.settings;
-  if (s && s.traces === false && !Object.values(s.channelTraces || {}).some((v) => v === true)) return;
-  askAgent(key, { ahead: true });
-}
-
-/** Waits up to AGENT_AHEAD_MS for the answer asked ahead, and keeps its turn to be shown. */
-async function awaitAgentAhead(key) {
-  const a = agentAsks.get(key);
-  if (!a?.ahead || state.agents.has(key) || Date.now() - a.at >= AGENT_AHEAD_STALE_MS) return;
-  let timer;
-  const res = await Promise.race([
-    a.req.catch(() => null),
-    new Promise((resolve) => { timer = setTimeout(resolve, AGENT_AHEAD_MS, null); }),
-  ]);
-  clearTimeout(timer);
-  // loadAgent takes the same answer after the render, and decides whether to ask again.
-  if (res && !state.agents.has(key)) state.agents.set(key, { turn: res.enabled ? res.turn || null : null, latest: null, timer: null });
 }
 
 // ---------------------------------------------------------------- expert finder
@@ -2193,8 +2160,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (!live && !state.cache.get(key)) pane.innerHTML = '<div class="empty">Loading…</div>';
   let data;
   const hit = (!live || cached) && state.cache.get(key);
-  // No copy to show: its agent is asked alongside it (awaitAgentAhead).
-  if (!hit && !live) askAgentAhead(key);
   try {
     // A thread being fetched ahead is waited for, not fetched a second time.
     const ahead = !hit && !live && inflight.get(key);
@@ -2202,12 +2167,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
   } catch (e) {
     pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
     return;
-  }
-  // Every render while its agent's answer asked ahead is out (a copy fetched ahead of a fresh
-  // page, re-rendered as the workspace's emoji arrive, too).
-  if (agentAsks.get(key)?.ahead && !state.agents.has(key)) {
-    await awaitAgentAhead(key);
-    if (state.open !== key) return;
   }
   // Opened from the cache: let the selected row paint first, then render the thread (the
   // click or key press is answered in one frame, not after the whole thread is built).
@@ -2227,8 +2186,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (state.composers.has(key) && !state.composers.has(entryKey)) state.composers.set(entryKey, state.composers.get(key));
     state.composers.delete(key);
     for (const p of state.sending) if (p.thread === key) p.thread = entryKey;
-    // Its agent's turn too (the server answers for the entry either way).
-    if (state.agents.has(key) && !state.agents.has(entryKey)) state.agents.set(entryKey, state.agents.get(key));
     state.open = entryKey;
     toUrl(false);
     // The group has messages the member did not: shown as opened, not as new arrivals.
@@ -2331,6 +2288,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (gap) items.push({ html: `<div class="sys">${gap.toLocaleString()} later ${gap === 1 ? 'post is' : 'posts are'} not shown.</div>` });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
   const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
+  keptAgentTurn(key, data.agent_turn);
   const agent = state.agents.get(key);
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
@@ -5105,8 +5063,6 @@ async function start() {
   // The thread the URL opens is open from the start: settling the URL keeps it, and opening it
   // adds no history entry (Back from here leaves the inbox, to where it came from).
   state.open = initial.open || null;
-  // Its agent is asked alongside the inbox, so its turn is there when the thread is shown.
-  if (!initial.compose) askAgentAhead(state.open);
   syncReading();
   await loadWho();
   toUrl(false);

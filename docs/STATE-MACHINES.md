@@ -104,13 +104,14 @@ comes back, or after a minute.
 retry finds nothing unseen afterwards. Deliveries run one at a time.
 
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
-that stopped half way with no run pending counts as failed after 15 minutes.
+that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
+in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
+after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
+`kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
+progress is never kept.
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
-asks again; after five in a row the spinner goes. A thread opened with no copy (a fresh page) is
-asked ahead (`askAgentAhead`), with the inbox or the thread, and every render of it waits up to
-800 ms for that answer, so the turn shows with the messages. Asks at the same time share one
-request (`askAgent`); an answer asked ahead is kept until `loadAgent` takes it, for ten seconds.
+asks again; after five in a row the spinner goes.
 
 **Injection verdict.** unchecked → passed or flagged (`verdict:<id>`, `src/agent/delivery.js`). A
 failed check is not a verdict: it is not stored, the queue retries the delivery, and reading the

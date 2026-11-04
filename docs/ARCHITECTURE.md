@@ -1086,9 +1086,15 @@ on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spi
 it is doing (reading the thread, checking a web page, updating the draft…); once done, its
 closing note for the team, which the prompt asks for at the end of every turn (1 to 3
 sentences: what it found and what it changed). It is outlined, not filled, since nobody posted
-it. The page asks `GET /api/agent` when the thread opens or changes, and every few seconds
-while the agent works or a new message waits for it; the turn is read from the agent's
-transcript (`src/agent/turn.js`), nothing else is stored. Its avatar and name open the agent
+it. The turn is read from the agent's transcript (`src/agent/turn.js`). A finished one is also
+kept in D1 (`agent_turns`, `src/agent/kept.js`) and comes with the thread (`agent_turn` in
+`GET /api/thread`, and so in the threads the inbox fetches ahead), so it shows with the messages
+instead of from the Durable Object a moment after them. The agent writes it a moment after its
+answer (or a failed request), and whenever `status()` finds a finished turn it has not kept (one
+that stopped half way and counts as failed now). The page asks `GET /api/agent` when the thread
+opens or changes, and every few seconds while the agent works or a new message waits for it;
+what the agent says wins over the kept turn when it is about a later one. A turn in progress is
+only ever the agent's to say, so it comes in after the messages. Its avatar and name open the agent
 settings of the thread's team (Agents, its thread agents, at the thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,

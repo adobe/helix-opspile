@@ -14,6 +14,8 @@ import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { agentStatus, seedAgent, tellDiscarded } from './agent/stub.js';
+import { agentEnabled } from './agent/enabled.js';
+import { keptTurn } from './agent/kept.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -700,7 +702,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
-    { results: appPosts },
+    { results: appPosts }, agentTurn,
   ] = await Promise.all([
     env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND deleted = 0
       AND permalink IS NOT NULL ORDER BY (id = ?) DESC, at LIMIT 1`).bind(key, row.root_id).first(),
@@ -739,6 +741,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // What the viewer posted as the opspile app: theirs to edit, as the app.
     env.DB.prepare(`SELECT thread, id FROM app_posts
       WHERE thread IN (SELECT value FROM json_each(?)) AND person = ?`).bind(keys, me.id).all(),
+    // The agent's latest finished turn (src/agent/kept.js), where the channel has an agent, as
+    // GET /api/agent decides: the inbox shows it with the messages.
+    row.kind === 'channel' ? Promise.all([keptTurn(env, key), agentEnabled(env, row.channel_id, row.team)])
+      .then(([turn, on]) => (on ? turn : null)) : null,
   ]);
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
   row.permalink = link ? link.permalink : null;
@@ -829,6 +835,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     facts: found || [],
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
     draft: draftOf(drafts, entryKeys),
+    agent_turn: agentTurn || null,
   };
 }
 

@@ -35,6 +35,7 @@ import { agentToolsExtension, opspileExtension, staffExtension } from './tools.j
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
 } from '../threadfiles.js';
+import { keepTurn } from './kept.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
@@ -74,15 +75,28 @@ const MAX_POSTED = 50;
 // The model's tokens, from pi's ledger, a little after each model round (the round's commit
 // lands after its hooks), and at most this often for the object's storage.
 const METER_DELAY_MS = 2000;
+// The finished turn is kept for the inbox (src/agent/kept.js) a little after the answer, once its
+// run has ended; asked again a few times while the transcript still says it works.
+const KEEP_DELAY_MS = 2000;
+const KEEP_TRIES = 3;
 const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
 
-/** Meters the agent's model use after each round of tools and each answer. */
+/**
+ * Meters the agent's model use after each round of tools and each answer, and keeps the turn
+ * an answer, or a failed request, ends for the inbox.
+ */
 const cogsExtension = (agent) => defineExtension({
   name: 'opspile-cogs',
   hooks: [hook(GenerationTask, {
     afterTools: () => { agent.meterSoon(); },
+    afterResponse: (message) => {
+      if (message && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
+        agent.keepTurnSoon();
+      }
+    },
     onYield: () => {
       agent.meterSoon();
+      agent.keepTurnSoon();
       return undefined;
     },
   })],
@@ -466,14 +480,62 @@ export class ThreadAgent extends Agent {
     }
   }
 
+  /** The thread's latest turn (src/agent/turn.js), and what is pending. */
+  async latestTurn() {
+    const pending = await this.harness.pending();
+    // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
+    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
+    return { pending, turn: latestTurn(await this.harness.messages().catch(() => []), { busy }) };
+  }
+
+  /**
+   * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
+   * storage, so a woken object does not write it again. A turn in progress keeps nothing.
+   */
+  async keepTurn(turn) {
+    if (this.name.startsWith('kb:') || (turn && turn.state === 'working')) {
+      return;
+    }
+    const sig = JSON.stringify(turn || null);
+    this.keptSig ??= (await this.ctx.storage.get('kept-turn')) || null;
+    if (this.keptSig === sig) {
+      return;
+    }
+    await keepTurn(this.env, this.name, turn);
+    await this.ctx.storage.put('kept-turn', sig);
+    this.keptSig = sig;
+  }
+
+  /** `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. */
+  keepTurnSoon(tries = KEEP_TRIES) {
+    if (this.keepTimer) {
+      return;
+    }
+    this.keepTimer = setTimeout(async () => {
+      this.keepTimer = null;
+      try {
+        const { turn } = await this.latestTurn();
+        if (turn && turn.state === 'working') {
+          if (tries > 1) {
+            this.keepTurnSoon(tries - 1);
+          }
+          return;
+        }
+        await this.keepTurn(turn);
+      } catch (e) {
+        console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
+      }
+    }, KEEP_DELAY_MS);
+  }
+
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
     this.meterModel();
     const catalog = await this.servers.current();
-    const pending = await this.harness.pending();
-    // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
-    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
-    const turn = latestTurn(await this.harness.messages().catch(() => []), { busy });
+    const { pending, turn } = await this.latestTurn();
+    // A finished turn the inbox does not have yet (one that ended before this was deployed, or
+    // one that stopped half way and counts as failed now): kept behind the answer.
+    this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
       model: this.env.AGENT_MODEL || null,

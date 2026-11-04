@@ -636,6 +636,49 @@ function channelRefs(source, texts) {
     }));
 }
 
+const AGENT_NOTE = 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
+  + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
+  + '- Filed *cdn-503-after-config-change* in the ACME knowledge base';
+
+// When GET /api/agent first asked about a thread, by entry.
+const agentAsked = new WeakMap();
+
+/**
+ * The thread agent's latest turn (src/agent/turn.js), made up: undefined where the channel has
+ * no agent (all but ACME's). In ACME's latest thread it works for a few seconds after the thread
+ * is first asked about (`asked`: GET /api/agent), then leaves a note; in the others it finished
+ * a minute after the thread's last message, and that turn is kept (src/agent/kept.js), so it
+ * comes with the thread.
+ */
+function agentTurn(entry, { asked = false } = {}) {
+  if (entry.row.channel_id !== 'C0ACMEAEM') {
+    return undefined;
+  }
+  const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
+    .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
+  if (entry !== latest) {
+    const end = Date.parse(entry.row.last_at) + 75000;
+    return {
+      state: 'done', startedAt: new Date(end - 55000).toISOString(), endedAt: new Date(end).toISOString(), text: AGENT_NOTE,
+    };
+  }
+  if (asked && !agentAsked.has(entry)) {
+    agentAsked.set(entry, Date.now());
+  }
+  const at = agentAsked.get(entry);
+  if (!at) {
+    return null;
+  }
+  const startedAt = new Date(at).toISOString();
+  return Date.now() - at < 8000
+    ? {
+      state: 'working', text: 'Checking a web page', startedAt, endedAt: null,
+    }
+    : {
+      state: 'done', startedAt, endedAt: new Date(at + 8000).toISOString(), text: AGENT_NOTE,
+    };
+}
+
 /**
  * An inbox entry, as src/api.js's `thread`: the thread, or the group it was re-threaded into,
  * with every member's messages. A member's key opens its group: `thread.thread` is the entry's.
@@ -717,6 +760,11 @@ function thread(asked) {
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
+    // As src/api.js: the agent's latest finished turn, kept when it ended.
+    agent_turn: (() => {
+      const t = agentTurn(entry);
+      return t && t.state !== 'working' ? t : null;
+    })(),
   };
 }
 
@@ -1075,30 +1123,12 @@ async function api(req, res, url) {
     return res.end(Buffer.from(f.bytes));
   }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
-    // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
-    // for a few seconds after the thread is first asked about, then leaves a note.
     const entry = store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
-    if (entry.row.channel_id !== 'C0ACMEAEM') {
-      return json(res, { enabled: false });
-    }
-    entry.agentAsked ??= Date.now();
-    const startedAt = new Date(entry.agentAsked).toISOString();
-    const turn = Date.now() - entry.agentAsked < 8000
-      ? {
-        state: 'working', text: 'Checking a web page', startedAt, endedAt: null,
-      }
-      : {
-        state: 'done',
-        startedAt,
-        endedAt: new Date(entry.agentAsked + 8000).toISOString(),
-        text: 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
-          + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
-          + '- Filed *cdn-503-after-config-change* in the ACME knowledge base',
-      };
-    return json(res, { enabled: true, turn });
+    const turn = agentTurn(entry, { asked: true });
+    return json(res, turn === undefined ? { enabled: false } : { enabled: true, turn });
   }
   if (url.pathname === '/api/emoji') {
     // As src/shortcodes.js ranks them, with a Clef that keeps the candidates' order.
