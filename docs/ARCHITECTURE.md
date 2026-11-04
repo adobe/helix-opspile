@@ -1167,10 +1167,12 @@ opspile; the prompt says they are data, not instructions, like customer messages
 'oauth', `src/agent/mcpoauth.js`); opspile is then the OAuth client. Someone who manages the
 server **connects** it in the editor: opspile asks the server without credentials and follows
 its 401 to the protected resource metadata (RFC 9728) and its authorization server's metadata
-(RFC 8414 or OpenID), registers itself there (RFC 7591) unless staff gave a client id, and
-sends the browser to the authorization endpoint with PKCE (S256), a resource indicator and a
-`state` whose hash finds the server again. The callback, `/api/kb/mcp/oauth/callback`, is behind
-Access, and only the person who started may finish, within ten minutes; the grant (client,
+(RFC 8414 or OpenID), and signs in as the client staff gave, else with opspile's client ID
+metadata document (`/oauth/client.json`, public; its URL is the client id) where the
+authorization server advertises `client_id_metadata_document_supported`, else as a client it
+registers there (RFC 7591); it sends the browser to the authorization endpoint with PKCE
+(S256), a resource indicator and a `state` whose hash finds the server again. The callback,
+`/api/kb/mcp/oauth/callback`, is behind Access, and only the person who started may finish, within ten minutes; the grant (client,
 tokens, the authorization server's metadata) is kept sealed in `mcp_servers.oauth`, with who
 connected it and when in plain columns. **The agents act as that person** at the server.
 Agents and the editor's check get the token from the transport's auth provider: the stored one

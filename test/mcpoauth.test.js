@@ -16,7 +16,7 @@ import {
 } from 'node:test';
 import { AgentMcp } from '../src/agent/mcp.js';
 import {
-  freshToken, grantState, keepOAuthAlive, KEEP_ALIVE_MS,
+  clientDocumentResponse, freshToken, grantState, keepOAuthAlive, KEEP_ALIVE_MS,
 } from '../src/agent/mcpoauth.js';
 import { api, personById } from '../src/api.js';
 import { mcp } from '../src/mcp.js';
@@ -52,6 +52,8 @@ function env() {
 let current;
 let seen = [];
 let consenting = ADA.id;
+// When set, what the authorization server's metadata becomes (it has no registration then).
+let changeMetadata = null;
 const realFetch = globalThis.fetch;
 async function worker(input, init) {
   const request = new Request(input, init);
@@ -67,6 +69,10 @@ async function worker(input, init) {
   }
   const who = async () => personById(current, consenting);
   const res = await oauth(request, current, url, { who });
+  if (changeMetadata && res && url.pathname === '/.well-known/oauth-authorization-server') {
+    const { registration_endpoint: _, ...metadata } = await res.json();
+    return Response.json(changeMetadata(metadata));
+  }
   return res || new Response('not found', { status: 404 });
 }
 before(() => {
@@ -79,6 +85,7 @@ beforeEach(() => {
   current = env();
   seen = [];
   consenting = ADA.id;
+  changeMetadata = null;
 });
 
 async function call(me, method, path, body) {
@@ -375,6 +382,55 @@ describe('MCP servers that sign in with OAuth', () => {
     assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n, clients, 'no registration');
     assert.equal(row(server.id).oauth_error, null);
     assert.ok(row(server.id).oauth_by);
+  });
+
+  it('serves its client ID metadata document', async () => {
+    const at = (method) => clientDocumentResponse(
+      new Request(`${ORIGIN}/oauth/client.json`, { method }),
+      current,
+      new URL(`${ORIGIN}/oauth/client.json`),
+    );
+    const res = at('GET');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/json');
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    assert.deepEqual(await res.json(), {
+      client_id: `${ORIGIN}/oauth/client.json`,
+      client_name: 'opspile agents',
+      client_uri: ORIGIN,
+      redirect_uris: [`${ORIGIN}/api/kb/mcp/oauth/callback`],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      application_type: 'web',
+    });
+    assert.equal(await at('HEAD').text(), '');
+    assert.equal(at('POST').status, 405);
+    const other = new Request(`${ORIGIN}/oauth/other.json`);
+    assert.equal(clientDocumentResponse(other, current, new URL(other.url)), null);
+    current.PUBLIC_ORIGIN = '';
+    assert.equal(at('GET'), null);
+  });
+
+  it('signs in with its client ID metadata document where the server takes one', async () => {
+    changeMetadata = (m) => ({ ...m, client_id_metadata_document_supported: true });
+    const server = await added();
+    const clients = current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n;
+    const started = await call(admin, 'POST', '/api/kb/mcp/oauth/start', { id: server.id });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    const auth = new URL(started.body.authorizationUrl);
+    assert.equal(auth.searchParams.get('client_id'), `${ORIGIN}/oauth/client.json`);
+    assert.equal(auth.searchParams.get('redirect_uri'), `${ORIGIN}/api/kb/mcp/oauth/callback`);
+    assert.equal(auth.searchParams.get('code_challenge_method'), 'S256');
+    assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n, clients, 'no registration');
+  });
+
+  it('asks for a client id when the server takes neither registrations nor documents', async () => {
+    changeMetadata = (m) => m;
+    const server = await added();
+    const started = await call(admin, 'POST', '/api/kb/mcp/oauth/start', { id: server.id });
+    assert.notEqual(started.status, 200);
+    assert.match(JSON.stringify(started.body), /register one there .*give its client id/);
   });
 
   it('forgets the grant when the URL or the client changes, or on disconnect, which revokes it', async () => {

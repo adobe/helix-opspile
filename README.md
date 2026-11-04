@@ -76,6 +76,7 @@ still answer.
 | `GET /api/settings`, `PUT /api/settings` | The signed-in person's settings (also in `GET /api/me` as `settings`): `mentions` (notify of messages that mention them; on by default), `threads` (notify of messages in threads they posted in, were mentioned in or put 👀 on; on by default), `bells` (views that notify of new messages: `{ view, sel, not }`, one of their teams or `~personal` with the filters picked and excluded by facet; at most 20), `traces` (show the thread agent's thinking under threads; on by default) and `channelTraces` (`{ <channel id>: true \| false }`, where a channel differs from `traces`; at most 500). `PUT` changes what the body has; `channelTraces` changes the channels it names, `null` drops one. Kept in D1 (`person_settings`). |
 | `POST /mcp` | An MCP server (Streamable HTTP, protocol `2026-07-28`; 2025 clients via `initialize`), with its own OAuth (open client registration, consent behind Access). See "MCP server" below. |
 | `/.well-known/oauth-*`, `/oauth/authorize`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET /api/oauth/consent/…`, `POST /api/oauth/authorize` | OAuth for MCP clients. |
+| `GET /oauth/client.json` | opspile's client ID metadata document, as the OAuth client of the agents' MCP servers: its client id at authorization servers that take one (`client_id_metadata_document_supported`), which fetch it. Public. |
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs, and its latest `turn`: `{ state: working \| done \| failed, text, startedAt, endedAt }`, which the inbox shows under the thread's last message); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. `kb` (`team` or `org`, on either form) chooses the knowledge base, and the agent cannot write the other; `{ team, kb: "team", text }` needs no customer. Without it the agent decides. Only in their teams. See "Thread agents". |
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, `kb:<team>:<org>`, or `kb:<team>:` for no customer), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET`, `POST /diag/dead` | The queue jobs that used up their retries, guarded by `x-opspile-diag`: `GET` lists them and counts them by kind; `POST` sends them out again, the oldest 100 or those of `{ "ids": […] }` |
@@ -280,11 +281,13 @@ knowledge base; whoever may edit it): a name, the server's `https://` Streamable
 it is for, its credentials, and optionally the only tools agents may call. Credentials are
 either request headers (sealed with `TOKEN_KEY`, never shown again) or an **OAuth** sign-in:
 **Connect** sends whoever manages the server to the server's own sign-in (opspile finds its
-authorization server, registers itself there unless a client id is given, and uses PKCE), and
+authorization server, signs in there with its client ID metadata document
+`<PUBLIC_ORIGIN>/oauth/client.json` where the server takes one, else registers itself, unless a
+client id is given, and uses PKCE), and
 the agents then call the server **as that person**, with what they may do there, until someone
 disconnects it. Tokens are refreshed as they expire, one refresh at a time for all agents, and
 the cron refreshes grants unused for a week so that refresh tokens stay alive. For a server that
-does not let clients register themselves, register one with the redirect URI
+takes neither, register a client there with the redirect URI
 `<PUBLIC_ORIGIN>/api/kb/mcp/oauth/callback` and give its client id (and secret). Adding a server
 connects to it and lists its tools. An agent gets the servers of its thread's team and customer,
 and calls them only from code mode scripts (`await tools.mcp__<name>__<tool>(args)`); see

@@ -35,7 +35,7 @@ import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { syncAccessQuietly } from './accesssync.js';
-import { keepOAuthAlive } from './agent/mcpoauth.js';
+import { clientDocumentResponse, keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
@@ -195,6 +195,12 @@ const handlers = {
     }
     if (pathname === '/mcp') {
       return mcp(request, env);
+    }
+    // opspile's client ID metadata document, for the authorization servers of the agents' MCP
+    // servers: public, they fetch it.
+    const clientDocument = clientDocumentResponse(request, env, url);
+    if (clientDocument) {
+      return clientDocument;
     }
     // OAuth for MCP clients: discovery, registration and tokens are public; the consent page
     // is under /api, behind Access.
