@@ -2246,11 +2246,21 @@ async function openThread(key, { live = false, cached = false } = {}) {
   ], kinds);
   // The feed, one element per item; `enter` marks the messages that just arrived.
   const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before the inbox started listening.</div>' }];
+  // A very large group shows some of its posts only (the server's MAX_READ_MEMBERS): where
+  // posts are left out, and how many, is said before the next post that is shown.
+  const gaps = new Map();
+  let gap = 0;
+  for (const m of members) {
+    if (m.left_out) gap += 1;
+    else if (gap) { gaps.set(m.thread, gap); gap = 0; }
+  }
+  const leftOut = (n) => ({ html: `<div class="sys">${n.toLocaleString()} ${n === 1 ? 'post' : 'posts'} in between ${n === 1 ? 'is' : 'are'} not shown.</div>` });
   let prev = null;
   let day = null;
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
   let last = null;
   shown.forEach((m, i) => {
+    if (gaps.has(m.thread) && (!i || m.thread !== shown[i - 1].thread)) { items.push(leftOut(gaps.get(m.thread))); gaps.delete(m.thread); }
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
     if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post">new post · ${clock(m.at)}</div>` }); prev = null; }
     if (!group && i === 1 && thread.root_at && messages.length > 1) { items.push({ html: `<div class="divider">${messages.length - 1} ${messages.length === 2 ? 'reply' : 'replies'}</div>` }); prev = null; }
@@ -2260,6 +2270,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     last = { item, m, prev };
     prev = m;
   });
+  if (gap) items.push({ html: `<div class="sys">${gap.toLocaleString()} later ${gap === 1 ? 'post is' : 'posts are'} not shown.</div>` });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
   const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
   const agent = state.agents.get(key);
@@ -5550,6 +5561,7 @@ const WEBMCP_TOOLS = [
       return out({
         thread, title: clip(t.title || '(no text)', 120), customer: t.org, channel: t.channel_name, platform: platform(t).toLowerCase(),
         resolution: data.resolution?.state || resolvedOf(teamThread(thread)) || 'open', earlier_messages: Math.max(0, data.messages.length - n),
+        ...(data.earlier_posts ? { earlier_posts_not_loaded: data.earlier_posts } : {}),
         can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, can_post_as_bot: Boolean(data.can_post_as_bot), messages: msgs,
         ...(data.draft ? { shared_draft: { by: draftBy(data.draft), saved: data.draft.updated_at, text: data.draft.body, sources: data.draft.sources } } : {}),
       });

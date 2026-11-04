@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
-import { api, inbox } from '../src/api.js';
+import { api, inbox, MAX_READ_MEMBERS } from '../src/api.js';
 import { render } from '../src/channels.js';
 import { AGENT_EMAIL } from '../src/drafts.js';
 import { seal } from '../src/post.js';
@@ -308,6 +308,55 @@ describe('shared drafts', () => {
     const alone = await (await call(e, BO, 'GET', `/api/thread?thread=${FOLLOW}`)).json();
     assert.equal(alone.thread.thread, FOLLOW);
     assert.deepEqual(alone.members.map((m) => m.thread), [FOLLOW]);
+  });
+
+  it('reads the latest posts of a very large group, with its first and the asked one', async () => {
+    const e = env();
+    // An alert channel folds thousands of posts into one entry; every post is a folder, and an
+    // invocation may make 10,000 calls: reading them all answered 500.
+    const n = MAX_READ_MEMBERS + 3;
+    const insert = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+      root_id, org, team, path, root_at, last_at, any_at, messages, updated_at, logical_thread)
+      VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix', ?, ?, ?, ?, 1, ?, ?)`);
+    const keyOf = (i) => `slack:E1:C1:${10 + i}.1`;
+    await e.CHANNELS.put('p/1.1/1.1.md', render({
+      source: 'slack', thread: ROOT, id: '1.1', at: '2026-10-21T10:00:00Z',
+    }, 'the first alert'));
+    for (let i = 0; i < n; i += 1) {
+      const root = `${10 + i}.1`;
+      const at = new Date(Date.parse('2026-10-22T00:00:00Z') + i * 60000).toISOString();
+      insert.run(keyOf(i), root, `p/${root}/`, at, at, at, at, ROOT);
+      // eslint-disable-next-line no-await-in-loop
+      await e.CHANNELS.put(`p/${root}/${root}.md`, render({
+        source: 'slack', thread: keyOf(i), id: root, at,
+      }, `alert ${i}`));
+    }
+    const listed = [];
+    const { list } = e.CHANNELS;
+    e.CHANNELS.list = (opts) => {
+      listed.push(opts.prefix);
+      return list(opts);
+    };
+    const res = await call(e, BO, 'GET', `/api/thread?thread=${keyOf(0)}`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    // Every member is named; the messages of MAX_READ_MEMBERS of them are read.
+    assert.equal(data.members.length, n + 1);
+    assert.equal(listed.length, MAX_READ_MEMBERS);
+    assert.equal(data.earlier_posts, n + 1 - MAX_READ_MEMBERS);
+    // Which ones, so the page says where posts are missing: the oldest but the first and asked.
+    const out = data.members.flatMap((m, i) => (m.left_out ? [i] : []));
+    assert.equal(out.length, data.earlier_posts);
+    assert.deepEqual([out[0], out.at(-1)], [2, data.earlier_posts + 1]);
+    const bodies = data.messages.map((m) => m.body);
+    // The group's first post, the asked one (the oldest alert) and the latest.
+    assert.equal(bodies[0], 'the first alert');
+    assert.equal(bodies[1], 'alert 0');
+    assert.equal(bodies.at(-1), `alert ${n - 1}`);
+    assert.ok(!bodies.includes('alert 1'));
+    // A small group reads every post.
+    assert.equal((await (await call(e, BO, 'GET', `/api/thread?thread=${FOLLOW}`)).json())
+      .earlier_posts, 0);
   });
 
   it('marks threads with a draft in the inbox and the thread', async () => {

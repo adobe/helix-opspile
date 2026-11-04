@@ -308,6 +308,8 @@ async function getThread(env, me, args) {
     data: {
       ...threadHead(key, data),
       earlier_messages: Math.max(0, data.messages.length - limit),
+      // A very large group of re-threaded posts: the oldest are not read at all.
+      ...(data.earlier_posts ? { earlier_posts_not_loaded: data.earlier_posts } : {}),
       messages,
       draft: draftOut(data.draft),
       can_post_as_bot: !app.problem,
