@@ -14,6 +14,7 @@ import {
   FILES_SCOPE, checkFiles, hasScope, personRule, slackUpload, teamsAttachments,
 } from './attach.js';
 import { json } from './http.js';
+import { invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { suggestMentions } from './mention-match.js';
@@ -897,8 +898,10 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  * POST /api/post `{ thread, text, mentions? }`, and `files` (src/attach.js): replies in the
  * thread as the signed-in person. `mentions` are account ids from /api/mentionable; each
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
- * notified. Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the
- * answer is the reply as sent. Files go with the text, in the same message. The reply then
+ * notified. On Slack, the Adobe people among them who are not in the channel are added to it
+ * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
+ * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
+ * the reply as sent. Files go with the text, in the same message. The reply then
  * arrives like any other message, through the platform's events.
  *
  * With `channel` (as `channelPlace` reads it) instead of `thread`, the message starts a thread
@@ -922,7 +925,7 @@ export async function post(env, me, request, inTeam, files = []) {
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
   }
-  const { token, scope } = await personalToken(env, me.id, t.source) || {};
+  const { token, scope, userId } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
@@ -942,6 +945,9 @@ export async function post(env, me, request, inTeam, files = []) {
   // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
   const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
   if (t.source === 'slack') {
+    // Colleagues mentioned who are not in the channel are added first, so the mention reaches
+    // them (src/invite.js).
+    const invited = invitedFields(await inviteMentioned(env, t, mentions, { except: userId }));
     if (files.length) {
       const up = await slackUpload(token, {
         channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
@@ -960,7 +966,7 @@ export async function post(env, me, request, inTeam, files = []) {
       }
       // Slack names the files, not the message, which arrives through the events.
       return json({
-        ok: true, platform: 'slack', id: null, files: up.files, text: sent,
+        ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
       });
     }
     const res = await fetch('https://slack.com/api/chat.postMessage', {
@@ -976,7 +982,7 @@ export async function post(env, me, request, inTeam, files = []) {
       return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
     }
     return json({
-      ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts),
+      ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
     });
   }
   if (!t.group_id) {

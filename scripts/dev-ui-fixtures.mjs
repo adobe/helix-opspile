@@ -73,6 +73,11 @@ const MEMBERS = [
   {
     key: 'kira', name: 'Kira Selby', login: 'kselby', email: 'kselby@example.com', staff: true,
   },
+  // In no channel yet: a Slack reply that mentions her adds her to its channel first
+  // (src/invite.js), and the inbox says so.
+  {
+    key: 'noor', name: 'Noor Haddad', login: 'nhaddad', email: 'nhaddad@example.com', staff: true,
+  },
 ];
 
 /** The `partner_domains` table: mail domain -> partner name. */

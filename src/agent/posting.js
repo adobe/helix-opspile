@@ -12,6 +12,7 @@
 
 import { botImages, discordForm, slackUpload } from '../attach.js';
 import { discordApi, discordEnabled } from '../discord.js';
+import { invitedFields, inviteMentioned } from '../invite.js';
 import {
   discordMessage, slackMarkdown, slackText, target as replyTarget, teamsBotMessage,
 } from '../post.js';
@@ -42,7 +43,8 @@ import { editInTeams, postToTeams } from '../teamsbot.js';
 export const MAX_POST = { slack: 8000, discord: 2000, teams: 8000 };
 
 /**
- * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`.
+ * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`; on
+ * Slack, with who was added to the channel for a mention (`invited`, `uninvited`: src/invite.js).
  * `options.files` (src/attach.js, checked against `appRule` already) go in the same message;
  * `options.mentions` are the accounts each `@Name` of which is a mention (src/post.js
  * `knownMentions`).
@@ -64,6 +66,8 @@ export async function postAsApp(env, key, text, options = {}) {
     if (!env.SLACK_BOT_TOKEN) {
       return { error: 'the opspile Slack app is not set up here' };
     }
+    // Colleagues mentioned who are not in the channel are added first (src/invite.js).
+    const invited = invitedFields(await inviteMentioned(env, t, mentions));
     if (files.length) {
       // The text as the files' message, in mrkdwn: files.completeUploadExternal takes no blocks.
       const up = await slackUpload(env.SLACK_BOT_TOKEN, {
@@ -76,7 +80,9 @@ export async function postAsApp(env, key, text, options = {}) {
             : `Slack: ${up.error}`,
         };
       }
-      return { ok: true, platform: 'slack', id: null };
+      return {
+        ok: true, platform: 'slack', id: null, ...invited,
+      };
     }
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
@@ -98,7 +104,9 @@ export async function postAsApp(env, key, text, options = {}) {
       // No answer from Slack itself: nobody can say whether it took the post.
       return { error: `Slack: ${data.error || res.status}`, unknown: !data.error && res.status >= 500 };
     }
-    return { ok: true, platform: 'slack', id: data.ts };
+    return {
+      ok: true, platform: 'slack', id: data.ts, ...invited,
+    };
   }
   if (t.source === 'discord') {
     if (!discordEnabled(env)) {

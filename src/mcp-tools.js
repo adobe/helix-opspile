@@ -20,6 +20,7 @@ import {
   connections, mentionable, post, reactable, writtenMentions,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
+import { invitedNote } from './invite.js';
 import { PICKER, react, resolve } from './react.js';
 import { QUESTIONS, topicNames, vocab } from './label.js';
 import {
@@ -432,7 +433,7 @@ async function postAsUser(env, me, args) {
   const used = await useDraft(env, me, w.key, args.draft);
   return {
     data: {
-      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${used}`,
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,
     },
   };
 }
@@ -459,7 +460,7 @@ async function postAsBot(env, me, args) {
   const used = await useDraft(env, me, w.key, args.draft);
   return {
     data: {
-      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${used}`,
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,
     },
   };
 }

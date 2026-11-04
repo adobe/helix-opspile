@@ -35,6 +35,7 @@ import { findMember } from './members.js';
 import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
 import { writtenMentions } from '../post.js';
 import { MAX_POST, postAsApp } from './posting.js';
+import { invitedNote } from '../invite.js';
 import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
 } from './repos.js';
@@ -728,7 +729,7 @@ export function agentToolsExtension(ctx, tools) {
           const d = await discardDraft(env, me, { thread: t.key, base: args.draft }, () => true);
           used = d.status === 409 ? ' The draft changed since, so it was kept.' : ' The draft is used up.';
         }
-        return text(`posted on ${platformName(res.platform)} (message ${res.id}).${used}`);
+        return text(`posted on ${platformName(res.platform)} (message ${res.id}).${invitedNote(res)}${used}`);
       },
     }));
   }
