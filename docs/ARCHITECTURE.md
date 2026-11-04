@@ -410,8 +410,8 @@ filter when there are many; in a customer's they are all there is, so they are s
 Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**
 and **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and
 instructions) for every member of a team, **Teams** too for team managers, and for the admin
-team **Orgs** and **Requests** too, the sections of `/inbox/admin`, and **COGS** (`/inbox/cogs`,
-[below](#cogs)). Each opens as it was left in that
+team **Orgs** and **Requests** too, the sections of `/inbox/admin`, **Topics** (`/inbox/topics`,
+[below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)). Each opens as it was left in that
 browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
 **Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
 **Agents** with its knowledge base and file, and each admin section with what was picked in it.
@@ -726,6 +726,36 @@ current labels nobody has reviewed, least confident first, and per question the 
 answer. A review is calibration data (Clef's agreement rate and most common corrections per
 question) and overrides the model's answer for that label version; when the thread changes
 and is labeled again, the model answers again and the old review only counts as history.
+
+### Topic maps
+
+Clef's topics are asked: each is a question someone wrote, and a thread about something nobody
+asked about gets none. A **topic map** (`src/topicmap.js`, the **Topics** page) finds what the
+threads are about from what was said in them instead, for the admin team, to see the common
+themes, who works on which and for whom, and where Clef's topics miss: what to ask Clef next.
+
+- The threads: channel threads with a `CONTENT` thread vector, at least three messages, and not
+  a `meeting` or `people` thread (whose vectors say "let's meet" more than what about). Their
+  vectors are centred (the mean taken away, then of unit length again): bge's vectors share a
+  large common part, and without it k-means makes a few big clusters and many of one thread.
+- **k-means** (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same
+  threads make the same map) into about one topic per twelve threads, at most 30. A few hundred
+  threads take a quarter of a second.
+- The language model of the titles names each topic (two to five words) and says in a sentence
+  what its customers need, from the titles of its fifteen most typical threads (nearest its
+  centre). It names no customer, and a name it gives twice gets a number.
+- With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
+  messages), the customer (`orgs`), and Clef's topics (`labels.topics`), the **tags** on the page.
+- The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
+  of `topic_maps` each (the map as JSON), the newest five kept.
+
+The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
+person, topic, tag and customer, as big as its threads, a line between two that share threads,
+thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
+customer; the topics are the hubs). The filters are a team, the kinds shown and the threads a
+line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
+without a pick, the topics are listed with the share of their threads Clef tagged at all, the
+fewest first on a click: the topics Clef rarely tags are what its topic questions miss.
 
 ## Replying
 

@@ -12,6 +12,7 @@
 
 import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
+import { buildTopicMap, latestTopicMap } from './topicmap.js';
 import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
@@ -967,6 +968,18 @@ async function orgIcons(env, slug, fresh) {
   return json({ icons });
 }
 
+/**
+ * POST /api/admin/topics: builds a topic map now (src/topicmap.js), which takes a while (half a
+ * minute for a few hundred threads), and answers with it as GET /api/admin/topics does.
+ */
+async function buildTopics(env, me) {
+  const built = await buildTopicMap(env, { by: (me && me.name) || 'admin' });
+  if (built.error) {
+    return json({ error: built.error }, env.CONTENT && env.AI ? 400 : 503);
+  }
+  return json({ latest: await latestTopicMap(env), available: true });
+}
+
 // ---- routes -----------------------------------------------------------------------------
 
 /** Routes `/api/admin/*` for a member of the admin team. Returns null for other paths. */
@@ -1042,6 +1055,10 @@ export async function admin(request, env, url, me) {
     case 'GET favicon': return faviconProxy(q('domain'));
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
+    case 'GET topics': return json({
+      latest: await latestTopicMap(env), available: Boolean(env.CONTENT && env.AI),
+    });
+    case 'POST topics': return buildTopics(env, me);
     default: return json({ error: 'not found' }, 404);
   }
 }
