@@ -843,8 +843,14 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['ravi', 15, '@Dana Ops same on the staging host, logs attached.'],
     ],
     reads: { dana: 170 },
+    // Many tags: the header's last row of them makes room for the expert finder from the start,
+    // so they do not move when its list arrives (`npm run ui:dev -- --latency=800` shows it).
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.2, topics: ['cdn', 'seo'],
+      kind: 'incident',
+      next_actor: 'us',
+      urgency: 1.6,
+      resolved_p: 0.2,
+      topics: ['cdn', 'seo', 'publishing', 'performance', 'golive', 'authoring', 'integrations', 'auth'],
     },
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });

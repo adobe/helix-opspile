@@ -1861,9 +1861,13 @@ async function loadAgent(key, { latest = null } = {}) {
 // Bottom right of the thread's header: the colleague most worth pulling in and why (GET
 // /api/experts, src/experts.js), with more in a dropdown. Picking one mentions them in the reply
 // box, as picking them after @ does; what is sent stays the person's to write.
+// Until the list comes, an empty pill holds its place, so the header's tags (which make room
+// for it) do not move when it arrives.
 const expertLine = (e) => (e.suggested ? `Agent suggests ${e.name}` : `${e.name} ${e.reasons[0] || ''}`);
+const EXPERTS_PENDING = '<div class="experts pending" id="experts" aria-hidden="true"><span class="top"><span class="av"></span><span>&nbsp;</span></span></div>';
 
 function expertsHtml(key) {
+  if (!state.experts.has(key)) return EXPERTS_PENDING;
   const list = state.experts.get(key);
   if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
   const open = state.expertsOpen === key;
@@ -1879,6 +1883,9 @@ function expertsHtml(key) {
 /** Puts the list on screen without touching the rest of the header. */
 function placeExperts(key) {
   if (state.open !== key) return;
+  // Nobody to pull in after all: the place held for them stays empty until the header is drawn
+  // again, as giving it back now would move the header's tags and everything below them.
+  if ($('experts')?.classList.contains('pending') && !state.experts.get(key)?.length) return;
   $('experts')?.replaceWith(toNode(expertsHtml(key)));
   wireExperts(key);
 }

@@ -378,6 +378,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .experts { position: absolute; right: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); display: flex; align-items: stretch; max-width: min(46%, calc(var(--spectrum-spacing-100) * 46 + var(--spectrum-spacing-50)));
  }
 .experts button { font: inherit; border: 0; background: none; }
+/* Its place, held while the list loads (and kept, empty, if nobody is found). */
+.experts.pending { visibility: hidden; }
 .experts .top { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
 .experts .top span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .experts .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); font-size: var(--spectrum-spacing-100); }
