@@ -231,5 +231,10 @@ the latest question.
 **Knowledge-base editor.** clean → editing → saving → saved, or conflict, unnamed or problem
 (`fileState` in `ui/kb.js`). One save at a time, and a save names the blob it was written from.
 
+**Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
+`ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
+text, and loaded is part of the key of what is rendered, so the list and the open thread render
+again with it. A failed import is not final: a code block a minute later tries again.
+
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.

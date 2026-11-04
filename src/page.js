@@ -12,6 +12,7 @@
 
 import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from './emoji.js';
 import EDITOR from './ui-editor.bundle.js';
+import HIGHLIGHT, { etag as HIGHLIGHT_ETAG } from './ui-highlight.bundle.js';
 import MARKDOWN from './ui-markdown.bundle.js';
 import TOKENS from './ui-spectrum.bundle.js';
 
@@ -127,6 +128,34 @@ export function inboxPage(html, scripts) {
   }
   const emoji = JSON.stringify({ names: SLACK_EMOJI, skin: SKIN_TONES, aliases: EMOJI_ALIASES });
   return served.replace(PLACEHOLDER, () => emoji);
+}
+
+/** Where the inbox imports its code highlighter from (ui/inbox.js, `highlightCode`). */
+export const HIGHLIGHT_PATH = '/inbox/highlight.js';
+
+/**
+ * The code highlighter (src/ui-highlight.js, with @pierre/highlights) as an ES module, for a
+ * GET or HEAD of `HIGHLIGHT_PATH`, or null. It is not in the page, which it would make some
+ * 400 KB larger: the inbox imports it with the first code block it shows. The browser keeps
+ * it, and asks whether it changed with its hash.
+ *
+ * @param {{ method: string, headers: Headers }} request
+ * @param {string} pathname
+ */
+export function highlightScript(request, pathname) {
+  if (pathname !== HIGHLIGHT_PATH || !['GET', 'HEAD'].includes(request.method)) {
+    return null;
+  }
+  const headers = {
+    'content-type': 'text/javascript; charset=utf-8',
+    'cache-control': 'no-cache',
+    etag: HIGHLIGHT_ETAG,
+  };
+  const seen = (request.headers.get('if-none-match') || '').split(/\s*,\s*/);
+  if (seen.includes(HIGHLIGHT_ETAG) || seen.includes(`W/${HIGHLIGHT_ETAG}`)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(request.method === 'HEAD' ? null : HIGHLIGHT, { headers });
 }
 
 /**

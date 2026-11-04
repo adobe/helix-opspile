@@ -44,6 +44,7 @@
     "@earendil-works/pi-durable": "1.4.0",
     "@lezer/highlight": "1.2.5",
     "@modelcontextprotocol/client": "2.3.1",
+    "@pierre/highlights": "0.3.0",
     "agents": "0.30.0",
     "isomorphic-git": "1.44.3",
     "just-bash": "3.6.0",

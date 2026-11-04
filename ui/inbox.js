@@ -526,16 +526,37 @@ const proxied = (u, thread) => (MEDIA.test(u) ? `/api/media?u=${encodeURICompone
 // renders only the messages that are new or changed.
 const rendered = new Map();
 const RENDERED_MAX = 4000;
+// Code blocks are highlighted (src/ui-highlight.js, served at /inbox/highlight.js) once the
+// highlighter has loaded: it loads with the first code block shown, which is plain text until
+// then. A load that fails is tried again with a code block a minute later.
+const HIGHLIGHTER = '/inbox/highlight.js';
+const HIGHLIGHT_RETRY_MS = 60_000;
+const highlighter = { module: null, loading: false, failedAt: 0 };
+function highlightCode(code, lang) {
+  if (highlighter.module) return highlighter.module.highlight(code, lang);
+  if (!highlighter.loading && Date.now() - highlighter.failedAt > HIGHLIGHT_RETRY_MS) {
+    highlighter.loading = true;
+    import(HIGHLIGHTER).then((module) => {
+      highlighter.module = module;
+      render();
+      if (state.open) openThread(state.open, { live: true, cached: true });
+    }, () => {
+      highlighter.failedAt = Date.now();
+    }).finally(() => { highlighter.loading = false; });
+  }
+  return null;
+}
 // `thread`: the message's own, for its images.
 function md(src, thread = '') {
-  const k = `${ownEmoji.version}\u0000${mentionSet}\u0000${channelSet}\u0000${slackSet}\u0000${thread}\u0000${src}`;
+  const lit = highlighter.module ? 1 : 0;
+  const k = `${ownEmoji.version}\u0000${lit}\u0000${mentionSet}\u0000${channelSet}\u0000${slackSet}\u0000${thread}\u0000${src}`;
   let html = rendered.get(k);
   if (html === undefined) {
     const proxy = (u) => proxied(u, thread);
     // A message's video and audio files play in the page, through the Worker (src/fileview.js).
     const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl, slack: slackOf,
+      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl, slack: slackOf, highlight: highlightCode,
     }).replace(/data-quote-author="([^"]*)"/g, (_, name) => {
       const key = profileKey(null, { name: attrText(name), platform: 'slack' });
       return `data-p="${esc(key)}"`;

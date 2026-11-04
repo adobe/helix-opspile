@@ -1357,7 +1357,29 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-100);
 }
 .spectrum .msg.mine .bubble pre { background: var(--spectrum-transparent-black-200); }
+/* A block's code is no chip: no padding of its own (which would indent its first line), and
+   no fill on your own bubble. */
+.spectrum .bubble pre code,
+.spectrum .msg.mine .bubble pre code { padding: 0px; border-radius: 0px; background: none; }
 .spectrum .msg.agent .bubble pre { background: var(--s2-hover); }
+/* Highlighted code (src/ui-highlight.js): the token groups, in the 1200 shades, which keep
+   4.5:1 on a code block in either color scheme (test/ui-highlight.test.js). On your own
+   bubble's accent the code stays its white. */
+.spectrum .bubble pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
+.spectrum .bubble pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
+.spectrum .bubble pre.hl .hl-string,
+.spectrum .bubble pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
+.spectrum .bubble pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
+.spectrum .bubble pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
+.spectrum .bubble pre.hl .hl-function,
+.spectrum .bubble pre.hl .hl-link { color: var(--spectrum-blue-1200); }
+.spectrum .bubble pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
+.spectrum .bubble pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
+.spectrum .bubble pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
+.spectrum .bubble pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
+.spectrum .bubble pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble pre.hl .hl-emphasis { font-style: italic; }
+.spectrum .msg.mine .bubble pre.hl [class^="hl-"] { color: inherit; }
 .spectrum .bubble blockquote.quote { border-radius: var(--spectrum-corner-radius-75) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-75); }
 .spectrum .bubble blockquote.quote > p.quote-by { font-size: var(--spectrum-font-size-75); }
 .spectrum .bubble blockquote.quote .quote-by b[role="button"] { font-weight: var(--spectrum-bold-font-weight); }

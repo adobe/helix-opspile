@@ -23,6 +23,7 @@
  *   whose name has what was typed (the composer's `:` suggestions)
  * - `suggestMentions` (src/mention-match.js): the composer's `@` suggestions from a thread's
  *   pool, ranked as the Worker ranks them
+ * - code blocks highlighted by what the page gives `render` (`highlight`, src/ui-highlight.js)
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
@@ -483,6 +484,16 @@ function fileCards({ links, unseen }, fileUrl) {
   return shown.length ? `<div class="files">${shown.join('')}</div>` : '';
 }
 
+/** A fenced code block as micromark writes it: the fence's language, and the text. */
+const FENCED = /<pre><code(?: class="language-([^"]*)")?>([\s\S]*?)<\/code><\/pre>/g;
+
+/** The code blocks of `html`, highlighted where `highlight` gives them HTML (see render). */
+const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
+  : html.replace(FENCED, (block, lang, code) => {
+    const lit = highlight(decode(code), lang ? decode(lang) : '');
+    return typeof lit === 'string' ? `<pre class="hl"><code>${lit}</code></pre>` : block;
+  }));
+
 /**
  * Markdown to HTML, safe to put in the page.
  *
@@ -504,10 +515,13 @@ function fileCards({ links, unseen }, fileUrl) {
  *   author?: string, authorKey?: string, at?: string, preview?: string }|undefined)}
  *   [options.slack] a Slack message permalink opspile has, for the viewer: `href` opens it
  *   here. Without a hit the link stays a link to Slack
+ * @param {(code: string, lang: string) => string|null} [options.highlight] a code block's text
+ *   as HTML, highlighted (src/ui-highlight.js), for its text and the fence's language ('' when
+ *   it names none); null leaves it plain text
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
-  channel = () => undefined, fileUrl = () => undefined, slack = null,
+  channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -522,7 +536,7 @@ export function render(src, {
     : String(src || '').replaceAll(BREAK, '');
   const quoted = new Set();
   const lookup = typeof slack === 'function' ? slack : null;
-  const html = cards(toHtml(body, '<br />\n'), lookup, quoted);
+  const html = highlighted(cards(toHtml(body, '<br />\n'), lookup, quoted), highlight);
   const channelLink = (m, before, token) => {
     const c = channel(token);
     if (!c || !c.href) {

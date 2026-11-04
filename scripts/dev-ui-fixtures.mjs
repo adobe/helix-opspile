@@ -973,6 +973,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // Code blocks, highlighted (src/ui-highlight.js): Slack's, which name no language (the
+  // highlighter guesses JSON, the log and the command), and one that names it.
+  seed({
+    ch: CHANNELS.aemAcme,
+    messages: [
+      ['sam', 90, 'The site config we push, and what preview logs right after:\n\n```\n{\n  "source": {\n    "type": "markup",\n    "url": "https://content.example.com/acme",\n    "retries": 3,\n    "paused": false\n  },\n  "owner": "acme",\n  "repo": "acme-web"\n}\n```\n\n```\n2026-10-21 10:02:11.204 *ERROR* [preview-7] content.Source Failed to fetch /en/index: 503\n2026-10-21 10:02:12.380 *WARN* [preview-7] content.Source Retrying (1 of 3)\n```', { subject: 'Preview fails after the config push' }],
+      ['dana', 85, 'Thanks. Can you run this and send what it prints?\n\n```\ncurl -sS -H "Authorization: Bearer $TOKEN" https://admin.example.com/status/acme/acme-web/main/en/index | jq .preview\n```'],
+      ['sam', 80, 'Our rewrite does this, in case it matters:\n\n```js\n// Maps legacy paths before the CDN asks the origin.\nexport function rewrite(url) {\n  const path = url.pathname.replace(/^\\/content\\/acme/, \'\');\n  return path.endsWith(\'.html\') ? path.slice(0, -5) : path;\n}\n```'],
+    ],
+    reads: { dana: 85 },
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
+    },
+  });
+
   seed({
     ch: CHANNELS.forum,
     messages: [
