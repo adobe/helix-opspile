@@ -176,16 +176,30 @@ window.Header = (() => {
     sync();
   }
 
-  /** You, at the right end: your face, your name, and under it `sub`; and your menu. */
+  /** You, at the right end: your face (picture over initials), your name, `sub` under it; your menu. */
   function user(me, sub = '') {
     const name = me.name || me.email || '';
     let h = 0;
     for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
     for (const id of ['userAv', 'menuAv']) {
-      $(id).textContent = initials;
-      $(id).style.background = COLORS[h % COLORS.length];
-      $(id).dataset.hue = String(h % COLORS.length);
+      const av = $(id);
+      av.style.background = COLORS[h % COLORS.length];
+      av.dataset.hue = String(h % COLORS.length);
+      // Every render calls this: the face is only built again when it changes.
+      const face = `${initials} ${me.avatar || ''}`;
+      if (av.dataset.face === face) continue;
+      av.dataset.face = face;
+      av.textContent = initials;
+      // The picture on top; one that does not load (Gravatar's 404) leaves the initials.
+      if (me.avatar) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        img.onerror = () => img.remove();
+        img.src = me.avatar;
+        av.append(img);
+      }
     }
     $('me').textContent = name;
     $('userSub').textContent = sub;

@@ -29,7 +29,7 @@ import {
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
-import { isSignInDomain, isStaffDomain } from './lookup.js';
+import { gravatar, isSignInDomain, isStaffDomain } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { react, resolve } from './react.js';
 import {
@@ -206,6 +206,20 @@ export async function viewer(request, env, options) {
     }
   }
   return me;
+}
+
+/**
+ * The viewer's picture, for the header: an account of theirs with one (Slack's first, a
+ * platform's own picture before Gravatar's), else Gravatar's for their email, which answers
+ * 404 where there is none (the header keeps the initials then).
+ */
+async function avatarOf(env, me) {
+  const row = await env.DB.prepare(`SELECT avatar FROM identities
+    WHERE (person = ? OR email = ?) AND kind = 'person' AND avatar IS NOT NULL AND avatar != ''
+    ORDER BY avatar LIKE 'https://gravatar.com/%',
+      CASE source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, fetched_at DESC
+    LIMIT 1`).bind(me.id, me.email || null).first();
+  return row?.avatar || await gravatar(me.email) || null;
 }
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
@@ -917,6 +931,8 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return json({
       ...me,
       ...(stats ? { stats } : {}),
+      // Their face in the header.
+      avatar: await avatarOf(env, me),
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
       // Whose tokens may edit their own messages (src/edit.js).
