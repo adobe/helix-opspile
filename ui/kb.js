@@ -248,10 +248,10 @@ function renderFiles() {
     ${b.kind === 'team' ? `<div class="row${state.view === 'extraction' ? ' on' : ''}" id="extraction" title="What labeling finds in the threads of ${esc(b.slug === 'admin' ? 'every channel' : `${b.name}'s channels`)}: facts and the tech stack">
       <span>Extraction rules</span>${extractionTag()}</div>` : ''}
     <h2>Files</h2>
-    ${rows.join('') || '<div class="empty" style="padding:8px">Empty so far.</div>'}
-    ${state.truncated ? '<div class="empty" style="padding:8px">Only the first 400 entries are shown.</div>' : ''}
+    ${rows.join('') || '<div class="empty pad">Empty so far.</div>'}
+    ${state.truncated ? '<div class="empty pad">Only the first 400 entries are shown.</div>' : ''}
     <div class="tools">${mayEdit() ? '<button id="new">New file</button>' : ''}<button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>
-    ${mayEdit() ? '' : `<div class="empty ro" style="padding:8px">Read-only: ${esc(whoEdits())} change it.</div>`}`;
+    ${mayEdit() ? '' : `<div class="empty ro pad">Read-only: ${esc(whoEdits())} change it.</div>`}`;
   for (const el of $('files').querySelectorAll('[data-path]')) {
     el.onclick = () => openFile(el.dataset.path);
   }
@@ -730,7 +730,7 @@ function toolsSection() {
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
   const note = b.kind === 'team' ? `Built-in tools: off until they are turned on for every channel of ${b.name}, or for one of its channels (a channel's own switch wins).`
     : `Built-in tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
-  return `<h3 class="group">Tools</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
+  return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }
 
 /** The handlers of the built-in tools' switches. */
@@ -869,13 +869,13 @@ function ruleForm(r = {}) {
   return `<form class="mcpform" id="ruleForm" autocomplete="off">
     <h3>${r.id ? `Edit ${esc(r.name)}` : 'Add a rule'}</h3>
     <label for="rName">Name</label><input id="rName" placeholder="What it finds, e.g. Order ids" value="${esc(r.name || '')}" required>
-    <label for="rKind">Kind</label><select id="rKind" style="max-width:360px">${opt('regex', kind, 'Regular expression')}${opt('script', kind, 'Script: JavaScript, without network access')}</select>
-    <label for="rTarget" data-kind="regex"${hide('regex')}>Finds</label><select id="rTarget" data-kind="regex" style="max-width:360px"${hide('regex')}>${opt('fact', r.target || 'fact', 'A fact: its field and value')}${opt('tech', r.target, 'A technology the customer uses')}</select>
-    <label for="rField" data-kind="regex"${hide('regex')}>Field or tech id</label><input id="rField" data-kind="regex" class="mono" placeholder="site, ticket, … or akamai" value="${esc(r.field || '')}" style="max-width:240px"${hide('regex')}>
+    <label for="rKind">Kind</label><select id="rKind" class="long">${opt('regex', kind, 'Regular expression')}${opt('script', kind, 'Script: JavaScript, without network access')}</select>
+    <label for="rTarget" data-kind="regex"${hide('regex')}>Finds</label><select id="rTarget" data-kind="regex" class="long"${hide('regex')}>${opt('fact', r.target || 'fact', 'A fact: its field and value')}${opt('tech', r.target, 'A technology the customer uses')}</select>
+    <label for="rField" data-kind="regex"${hide('regex')}>Field or tech id</label><input id="rField" data-kind="regex" class="mono short" placeholder="site, ticket, … or akamai" value="${esc(r.field || '')}"${hide('regex')}>
     <label for="rPattern" data-kind="regex"${hide('regex')}>Pattern</label><input id="rPattern" data-kind="regex" class="mono" placeholder="\\bORD-(\\d{6})\\b" value="${esc(r.pattern || '')}"${hide('regex')}>
-    <label for="rFlags" data-kind="regex"${hide('regex')}>Flags</label><input id="rFlags" data-kind="regex" class="mono" placeholder="i, m, s, u (always global)" value="${esc(r.flags || '')}" style="max-width:240px"${hide('regex')}>
-    <label for="rValue" data-kind="regex"${hide('regex')}>Value</label><input id="rValue" data-kind="regex" class="mono" placeholder="$0, the match; $1… its groups, e.g. $2/$1" value="${esc(r.value || '')}" style="max-width:360px"${hide('regex')}>
-    <label for="rTransform" data-kind="regex"${hide('regex')}>Case</label><select id="rTransform" data-kind="regex" style="max-width:240px"${hide('regex')}>${opt('', r.transform, 'As written')}${opt('lower', r.transform, 'lower case')}${opt('upper', r.transform, 'UPPER CASE')}</select>
+    <label for="rFlags" data-kind="regex"${hide('regex')}>Flags</label><input id="rFlags" data-kind="regex" class="mono short" placeholder="i, m, s, u (always global)" value="${esc(r.flags || '')}"${hide('regex')}>
+    <label for="rValue" data-kind="regex"${hide('regex')}>Value</label><input id="rValue" data-kind="regex" class="mono long" placeholder="$0, the match; $1… its groups, e.g. $2/$1" value="${esc(r.value || '')}"${hide('regex')}>
+    <label for="rTransform" data-kind="regex"${hide('regex')}>Case</label><select id="rTransform" data-kind="regex" class="short"${hide('regex')}>${opt('', r.transform, 'As written')}${opt('lower', r.transform, 'lower case')}${opt('upper', r.transform, 'UPPER CASE')}</select>
     <label for="rExclude" data-kind="regex"${hide('regex')}>Not</label><input id="rExclude" data-kind="regex" class="mono" placeholder="optional: values this matches are dropped" value="${esc(r.exclude || '')}"${hide('regex')}>
     <label for="rScript" data-kind="script"${hide('script')}>Script</label><textarea id="rScript" data-kind="script" class="mono" rows="9" placeholder="export default function (thread) {&#10;  // thread: { text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }&#10;  return [{ field: 'order', value: '123456' }, { tech: 'akamai' }];&#10;}"${hide('script')}>${esc(r.script || '')}</textarea>
     ${kind === 'script' && !state.extraction.scripts ? '<span class="hint" data-kind="script">This deployment has no Worker Loader (LOADER): scripts are kept, but do not run.</span>' : ''}
@@ -889,8 +889,8 @@ function techForm(t = {}) {
   const editing = Boolean(t.tech && state.extraction.tech.some((y) => y.tech === t.tech));
   return `<form class="mcpform" id="techForm" autocomplete="off">
     <h3>${editing ? `Edit ${esc(t.name)}` : t.tech ? `Change ${esc(t.name)} for ${esc(base().name)}` : 'Add a technology'}</h3>
-    <label for="tId">Id</label><input id="tId" class="mono" placeholder="akamai" value="${esc(t.tech || '')}" required pattern="[a-z][a-z0-9_]*" style="max-width:240px"${t.tech ? ' readonly' : ''}>
-    <label for="tName">Name</label><input id="tName" placeholder="What ${esc(state.extraction.global ? 'the inbox' : `${base().name}'s inbox`)} shows, e.g. Akamai" value="${esc(t.name || '')}" required style="max-width:360px">
+    <label for="tId">Id</label><input id="tId" class="mono short" placeholder="akamai" value="${esc(t.tech || '')}" required pattern="[a-z][a-z0-9_]*"${t.tech ? ' readonly' : ''}>
+    <label for="tName">Name</label><input id="tName" placeholder="What ${esc(state.extraction.global ? 'the inbox' : `${base().name}'s inbox`)} shows, e.g. Akamai" value="${esc(t.name || '')}" required class="long">
     <label for="tDesc">Clef is asked</label><input id="tDesc" placeholder="Akamai as CDN" value="${esc(t.description || '')}" required>
     <span class="hint">"Does this thread show that the customer uses <i>…</i>?", about every thread of ${esc(state.extraction.global ? 'every channel' : `${base().name}'s channels`)}.</span>
     <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>
@@ -1101,10 +1101,10 @@ function mcpForm(s = {}) {
   const hide = (kind) => (auth === kind ? '' : ' hidden');
   return `<form class="mcpform" id="mcpForm" autocomplete="off">
     <h3>${s.id ? `Edit ${esc(s.name)}` : 'Add a server'}</h3>
-    <label for="mName">Name</label><input id="mName" class="mono" placeholder="docs" value="${esc(s.name || '')}" required pattern="[a-z][a-z0-9_\\-]*" style="max-width:240px">
+    <label for="mName">Name</label><input id="mName" class="mono short" placeholder="docs" value="${esc(s.name || '')}" required pattern="[a-z][a-z0-9_\\-]*">
     <label for="mUrl">URL</label><input id="mUrl" class="mono" placeholder="https://mcp.example.com/mcp" value="${esc(s.url || '')}" required>
     <label for="mDesc">What it is for</label><input id="mDesc" placeholder="Told to the agents, e.g. Product documentation search" value="${esc(s.description || '')}">
-    <label for="mAuth">Sign-in</label><select id="mAuth" style="max-width:360px">
+    <label for="mAuth">Sign-in</label><select id="mAuth" class="long">
       <option value="headers"${auth === 'headers' ? ' selected' : ''}>Request headers: an API key or a token</option>
       <option value="oauth"${auth === 'oauth' ? ' selected' : ''}>OAuth: someone signs in at the server</option></select>
     <label for="mHdrName" data-auth="headers"${hide('headers')}>Header</label><span class="pair" data-auth="headers"${hide('headers')}><input id="mHdrName" class="mono" placeholder="Authorization"><input id="mHdrValue" class="mono" type="password" placeholder="Bearer …"></span>
@@ -1177,7 +1177,7 @@ function renderMcp(shownNote) {
     $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
-    <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
+    <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub intro">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}

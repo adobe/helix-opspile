@@ -22,18 +22,18 @@ const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.ht
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 
 describe('Spectrum 2', () => {
-  it('is every page\'s look: its stylesheets after the page\'s own, with their tokens', () => {
+  it('is every page\'s look: its stylesheets, the tokens they use, and nothing else', () => {
     for (const name of NAMES) {
       const html = served(name);
       assert.match(html, /^<!doctype html>\n<html lang="en" class="spectrum">/, name);
-      const own = html.indexOf('</style>');
+      assert.doesNotMatch(PAGES[`${name}.html`], /<style[\s>]|style="/, name);
       const fonts = html.indexOf(SCRIPTS['spectrum-fonts.css']);
       const shared = html.indexOf(SCRIPTS['spectrum.css']);
       const its = html.indexOf(SCRIPTS[`spectrum-${name}.css`]);
-      assert.ok(own > 0 && fonts > own && shared > fonts && its > shared, name);
+      assert.ok(fonts > 0 && shared > fonts && its > shared, name);
       assert.ok(its < html.indexOf('</head>'), name);
       // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
-      const tokens = spectrumTokens(`${SCRIPTS['header.css']}\n${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      const tokens = spectrumTokens(`${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);
@@ -87,13 +87,14 @@ describe('Spectrum 2', () => {
 
   it('styles with Spectrum 2 tokens only: no raw colors, lengths or durations', () => {
     for (const file of STYLESHEETS) {
-      // Comments say what the values are; the rules must not have them. A media query's
-      // breakpoint, which no custom property can be, is the page's own.
-      const css = SCRIPTS[file].replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '');
+      // Comments say what the values are; the rules must not have them. A media or container
+      // query's breakpoint, which no custom property can be, is the page's own.
+      const css = SCRIPTS[file].replace(/\/\*[\s\S]*?\*\//g, '').replace(/@(media|container)[^{]*\{/g, '');
       const raw = [
         ...css.matchAll(/#[0-9a-f]{3,8}\b(?![^{]*\{)/gi),
         ...css.matchAll(/\b(?:rgba?|hsla?|oklch|lab|lch)\(\s*[\d.]/gi),
-        ...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|em|ms|s)\b/g),
+        // em is a size relative to the text, as a percentage is.
+        ...css.matchAll(/(?<![\w-])-?\d*\.?\d+(?:px|rem|ms|s)\b/g),
         ...css.matchAll(/(?<![\w-])(?:white|black|red|blue|green|yellow|gray|grey|orange|purple|pink)\b(?=\s*[;!)])/g),
       ].map((m) => m[0]);
       assert.deepEqual(raw, [], file);

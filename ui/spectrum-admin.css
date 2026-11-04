@@ -19,6 +19,147 @@
  * - "Pick a team." and the like: IllustratedMessage, without the illustration.
  */
 
+/* ==== The page's layout ========================================================================
+   Where everything is and how it moves: the grid, the panes, the sizes that set them, and the
+   states the script sets. Its look, in Spectrum 2's components, follows below. */
+/* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
+   indicator and, on the phone's side, under the camera: the sections scroll their ends out
+   from under it, and the page keeps clear of the sides. The insets are 0 everywhere else. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0); }
+/* With the on-screen keyboard open (see the script at the end), the page follows what is left
+   above it, and the keyboard covers the home indicator. */
+:root.keyboard { --safe-bottom: 0; }
+main > section::after { content: ""; display: block; height: var(--safe-bottom); flex: none; }
+button { white-space: nowrap; }
+button:disabled { opacity: .45; cursor: default; }
+
+
+
+code, .mono { font: var(--spectrum-font-size-75) var(--s2-code); }
+/* The header is every page's (ui/header.css). */
+main { flex: 1; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 40) 1fr; min-height: 0; }
+main > section { overflow: auto; min-height: 0; }
+
+
+
+
+.search { width: 100%; }
+.row { display: flex; align-items: center; cursor: pointer; }
+.row:hover { background: var(--hover); }
+
+.row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ico { flex: none; }
+
+label.only { display: flex; align-items: center; }
+/* An org's icon suggestions: one button each, most likely first. */
+.icons { display: flex; flex-wrap: wrap; align-items: stretch; }
+.iconpick { display: flex; flex-direction: column; align-items: center; width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-100)); }
+.iconpick img { object-fit: contain; }
+.iconpick .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.iconpick.weak { opacity: .55; }
+.iconpick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 var(--spectrum-border-width-100) var(--accent) inset; opacity: 1; }
+.icons .again { align-self: center; }
+.tag { white-space: nowrap; }
+.tag.partner { color: var(--purple); border-color: var(--purple); }
+
+
+
+.title { display: flex; align-items: center; }
+.title input.big { flex: 1; }
+.title input.big:hover, .title input.big:focus { border-color: var(--line); background: var(--card); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; }
+
+
+td.n { text-align: right; }
+td input { width: 100%; }
+.form { display: flex; flex-wrap: wrap; align-items: center; }
+.form input { min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)); }
+.form input.grow { flex: 1; }
+.hint { margin: var(--spectrum-spacing-75) 0 0; }
+.seg { display: inline-flex; overflow: hidden; }
+.seg button { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); }
+
+.field { display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 14) 1fr; align-items: center; }
+
+
+.status.ok { color: var(--green); } .status.err { } .status.warn { color: var(--yellow); }
+.picker { position: relative; }
+.picks { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; max-height: calc(var(--spectrum-spacing-100) * 35); overflow: auto;
+ }
+.picks.up { top: auto; bottom: 100%; margin: 0 0 var(--spectrum-spacing-75); box-shadow: 0 calc(-1 * var(--spectrum-spacing-100)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); }
+.picks .row { border-radius: 0; }
+.picks .pickrow { align-items: flex-start; padding: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+.picks .pickrow .name { white-space: normal; display: flex; flex-direction: column; gap: var(--spectrum-border-width-100); }
+.picks .pickrow .ch { font-weight: 600; }
+.picks .pickrow .where { flex: none; text-align: right; font-size: var(--spectrum-font-size-100); padding-top: var(--spectrum-border-width-100); }
+mark { padding: 0 var(--spectrum-border-width-100); }
+
+td.nw { white-space: nowrap; }
+td .sub .mono { overflow-wrap: anywhere; }
+tr.left td { opacity: .55; }
+
+
+.tag.clef.yes { border-color: var(--green); }
+.person { display: inline-block; white-space: nowrap; }
+
+
+.count[hidden] { display: none; }
+
+.tag.confirmed { color: var(--green); border-color: var(--green); }
+
+.note { white-space: pre-wrap; overflow-wrap: break-word; }
+#requestsTable td.note { min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); }
+.preview { margin: 0 0 var(--spectrum-spacing-75); }
+.preview ul { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 0; }
+#membersTable, #rulesTable, #channelsTable, #requestsTable { overflow-x: auto; }
+
+/*
+ * Narrower screens. Under 1100px the list gets narrower. Under 700px (phones, a folded iPhone
+ * Duo) the list and what is picked in it take turns (`body.picked` while something is), the
+ * picked team or org has a back button, and tables scroll sideways in their card.
+ */
+.title .back { display: none; }
+/* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
+   size (17px), on a touch screen. */
+@media (hover: none) and (pointer: coarse) {
+  input:is([type="checkbox"], [type="radio"]) { font-size: var(--spectrum-font-size-100); }
+}
+@media (max-width: 1099px) {
+  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 30), 34%) minmax(0, 1fr); }
+
+}
+@media (max-width: 699px) {
+  main { grid-template-columns: 100%; }
+  body.picked #list, body:not(.picked) #detail { display: none; }
+
+
+  .title { flex-wrap: wrap; }
+  .title .back { display: grid; place-items: center; padding: 0; border: 0;
+    background: none; }
+
+  .title input.big { flex: 1 1 60%; min-width: 0; }
+
+  .card > table { display: block; overflow-x: auto; }
+  /* Too many columns for a phone: the requests scroll sideways in their card. */
+  #requestsTable table { min-width: calc(var(--spectrum-spacing-100) * 80); }
+  .field { grid-template-columns: 1fr; }
+
+  .seg { flex-wrap: wrap; }
+}
+/* The parts the script writes: the title's heading, a row of a field and its button, a hint
+   leading a card, a list's empty note, the new team's slug and a rule's priority. */
+.title h1 { margin: 0; }
+.fill { flex: 1; }
+.inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
+.hint.lead { margin: 0 0 var(--spectrum-spacing-100); }
+.empty.pad { padding: var(--spectrum-spacing-100); }
+#ntSlug { width: calc(var(--spectrum-spacing-100) * 14); }
+#rPriority { width: var(--spectrum-spacing-900); }
+
+/* ==== Its look ================================================================================= */
+
 /* ---- the frame --------------------------------------------------------------------------- */
 
 .spectrum #list {
@@ -112,7 +253,7 @@
 .spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-75); }
 .spectrum .title h1 {
   color: var(--spectrum-heading-color);
-  font-size: var(--spectrum-heading-size-m) !important; /* over its style="font-size:20px" */
+  font-size: var(--spectrum-heading-size-m);
   font-weight: var(--spectrum-heading-sans-serif-font-weight);
   line-height: var(--spectrum-heading-line-height);
 }
@@ -317,6 +458,6 @@
   }
   .spectrum .title .back svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
   .spectrum .title input.big { font-size: var(--spectrum-heading-size-s); }
-  .spectrum .title h1 { font-size: var(--spectrum-heading-size-s) !important; }
+  .spectrum .title h1 { font-size: var(--spectrum-heading-size-s); }
   .spectrum .field > label { margin-top: var(--spectrum-spacing-100); }
 }

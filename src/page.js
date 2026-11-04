@@ -84,11 +84,12 @@ export function spectrumColor(name, scheme, tokens = TOKENS) {
 /**
  * A page of ui/ as served: its scripts, ui/*.js, `markdown.js` (the markdown renderer,
  * src/ui-markdown.js, as the global `Markdown`) and `editor.js` (the knowledge-base editor's
- * text field, src/ui-editor.js, as the global `Editor`), and its shared stylesheets, ui/*.css,
+ * text field, src/ui-editor.js, as the global `Editor`), and its stylesheets, ui/*.css,
  * inlined where the page names them. `spectrum-tokens.css` is none of those: it is the
- * Spectrum 2 tokens the page's other stylesheets use (`spectrumTokens`). The scripts live in
- * their own files, which lint checks, and what every page shares (the header, ui/header.*,
- * Spectrum 2's look, ui/spectrum.css) is written once, but the page stays one request.
+ * Spectrum 2 tokens the page's other stylesheets use (`spectrumTokens`). The scripts and
+ * styles live in their own files, which lint and test/ui-spectrum.test.js check, and what
+ * every page shares (the header, ui/header.js and ui/spectrum.css) is written once, but the
+ * page stays one request.
  *
  * @param {string} html the page, ui/<name>.html
  * @param {Record<string, string>} scripts ui/*.js and ui/*.css by file name

@@ -196,13 +196,16 @@ Slack app's redirect URLs and the Entra app's web redirect URIs.
 ### Spectrum 2
 
 The pages are in Adobe's [Spectrum 2](https://s2.spectrum.adobe.com) design. Each `ui/<page>.html`
-(`<html class="spectrum">`) links, after its own styles (layout, sizes, states): Spectrum 2's
-typeface, Adobe Clean Spectrum VF (`ui/spectrum-fonts.css`, from Adobe Fonts);
-`spectrum-tokens.css`, which `src/page.js` builds from the Spectrum 2 design tokens the page's
-stylesheets use (`@spectrum-css/tokens`, light and dark, with the large scale on touch screens);
-`ui/spectrum.css` (what every page shares: the colors the pages name, the controls, the header);
-and `ui/spectrum-<page>.css` (the page's own). Those stylesheets set colors, sizes, spaces, radii
-and durations with tokens only (`test/ui-spectrum.test.js`). The browser's chrome
+(`<html class="spectrum">`) has no styles of its own; it links Spectrum 2's typeface, Adobe
+Clean Spectrum VF (`ui/spectrum-fonts.css`, from Adobe Fonts); `spectrum-tokens.css`, which
+`src/page.js` builds from the Spectrum 2 design tokens the page's stylesheets use
+(`@spectrum-css/tokens`, light and dark, with the large scale on touch screens);
+`ui/spectrum.css` (what every page shares: the base, the header, the colors the pages name, the
+controls); and `ui/spectrum-<page>.css` (the page's own: its layout, then its look). Those
+stylesheets set colors, sizes, spaces, radii and durations with tokens only
+(`test/ui-spectrum.test.js`): spaces from the spacing scale (a value between two steps as their
+sum, an odd pixel as the hairline border width), text on the type ramp, the layout's larger
+sizes on its 8px grid (`calc(var(--spectrum-spacing-100) * n)`). The browser's chrome
 (`theme-color`) is Spectrum 2's base background.
 
 Until it was every page's look it was a preview under `/spectrum`; those addresses redirect to the

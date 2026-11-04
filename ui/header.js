@@ -11,7 +11,7 @@
  */
 
 /*
- * The header of every page (ui/header.css), as the global `Header`. It runs right after the
+ * The header of every page (its styles in ui/spectrum.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
  * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
