@@ -631,7 +631,12 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     env,
     mcpUrl,
     admins,
-  )), githubApp).then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+  )), githubApp).then(() => {
+    // The ticket tracker is off in one of platform's channels, on its own.
+    DB.sqlite.exec(`INSERT INTO mcp_server_switches (server_id, channel, enabled, changed_by, changed_at)
+      SELECT id, 'C0INITECH1', 0, 'Dana', '2026-10-26T09:00:00Z' FROM mcp_servers
+      WHERE scope = 'team' AND slug = 'platform' AND name = 'tickets'`);
+  }).then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
     toRequest({ method: 'POST' }, checkUrl, { server }),
     env,
     checkUrl,

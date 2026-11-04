@@ -123,6 +123,12 @@ sessions and never an unpinned one.
 **MCP tool catalog.** unknown → checked → stale or error (`src/agent/mcp.js`). A failed check keeps
 the servers the agent had. A change of configuration, or an hour, asks again.
 
+**MCP server in a channel.** follows the server → on or off on its own → follows again (a row in
+`mcp_server_switches`, or none, over `mcp_servers.enabled`; `src/mcpadmin.js`). Not stored as a
+state: `serversFor` works it out per channel, and `serverWithHeaders` asks again on every connect,
+so a catalog from before a switch cannot reach a server that is off. Deleting the server deletes its
+switches.
+
 ## Credentials
 
 **MCP OAuth grant.** none → signing in → connected → rejected (`grantState` in

@@ -24,6 +24,7 @@ import {
   withNamespaces,
 } from '../src/agent/mcp.js';
 import { api } from '../src/api.js';
+import { serversFor, serverWithHeaders } from '../src/agent/mcpclient.js';
 import { d1 } from './d1.js';
 import { fakeMcpServers } from './mcp-server.js';
 import { quiet } from './fakes.js';
@@ -330,5 +331,96 @@ describe('MCP servers in thread agents', () => {
     const res = await quiet(() => tool.execute({ query: 'x' }, {}, {}));
     assert.equal(res.isError, true);
     assert.match(res.output[0].text, /^docs: /);
+  });
+});
+
+describe('MCP servers per channel', () => {
+  const admin = asMe(ADA);
+  const manager = asMe(BO, { helix: 'manager' });
+  const member = asMe(CY);
+
+  /** configured(), and channels: C1 and C2 of helix (for acme), C3 of edge, A1 an alert channel. */
+  async function withChannels() {
+    const e = await configured();
+    const thread = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+        root_id, org, team, kind, channel_name, path, last_at, updated_at) VALUES (?, 'slack', 'E1',
+        ?, '1.0', ?, ?, ?, ?, 'p/', '2026-10-25T10:00:00Z', '2026-10-25T10:00:00Z')`);
+    thread.run('slack:E1:C1:1.0', 'C1', 'acme', 'helix', 'channel', 'aem-acme');
+    thread.run('slack:E1:C2:1.0', 'C2', 'acme', 'helix', 'channel', 'aem-acme-2');
+    thread.run('slack:E1:C3:1.0', 'C3', 'other', 'edge', 'channel', 'aem-other');
+    thread.run('slack:E1:A1:1.0', 'A1', 'acme', 'helix', 'alerts', 'aem-acme-alerts');
+    const sql = 'SELECT id FROM mcp_servers WHERE scope = ? AND slug = ?';
+    const id = (scope, slug) => e.DB.rows(sql, scope, slug)[0].id;
+    return { e, team: id('team', 'helix'), org: id('org', 'acme') };
+  }
+  const names = async (e, channelId) => (await serversFor(e, { team: 'helix', org: 'acme', channelId }))
+    .map((s) => `${s.scope}:${s.name}`);
+
+  it('switches a team\'s server for one of its channels, for its managers', async () => {
+    const { e, team } = await withChannels();
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/mcp/channel', { id: team, ...body });
+    assert.equal((await put(manager, { channel: 'C1', enabled: 'yes' })).status, 400);
+    assert.notEqual((await put(member, { channel: 'C1', enabled: false })).status, 200);
+    assert.equal((await put(manager, { channel: 'C3', enabled: false })).status, 404, 'edge\'s');
+    assert.equal((await put(manager, { channel: 'A1', enabled: false })).status, 404, 'no agents');
+    assert.equal((await put(manager, { channel: 'C9', enabled: false })).status, 404);
+
+    const off = await put(manager, { channel: 'C1', enabled: false });
+    assert.equal(off.status, 200, JSON.stringify(off.body));
+    assert.deepEqual(off.body.switch && off.body.switch.enabled, false);
+    assert.equal(off.body.server.channels.C1.by, 'Bo');
+    assert.deepEqual(await names(e, 'C1'), ['org:docs']);
+    assert.deepEqual(await names(e, 'C2'), ['team:docs', 'org:docs']);
+    assert.equal(await serverWithHeaders(e, team, { channelId: 'C1' }), null);
+
+    // Off for the team, on in C2 only: the agents of C2 have it, and the editor still checks it.
+    await call(e, manager, 'PUT', '/api/kb/mcp', { id: team, enabled: false });
+    await put(manager, { channel: 'C2', enabled: true });
+    assert.deepEqual(await names(e, 'C2'), ['team:docs', 'org:docs']);
+    assert.deepEqual(await names(e, 'C1'), ['org:docs']);
+    assert.deepEqual(await names(e, undefined), ['org:docs']);
+    assert.ok(await serverWithHeaders(e, team, { channelId: 'C2' }));
+    const checked = await call(e, manager, 'POST', '/api/kb/mcp/check', { id: team });
+    assert.equal(checked.body.server.checkError, null);
+    const listed = (await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.servers[0];
+    assert.deepEqual(Object.keys(listed.channels).sort(), ['C1', 'C2']);
+
+    // Back to the server's switch, and gone with the server.
+    const reset = await put(manager, { channel: 'C2', enabled: null });
+    assert.equal(reset.body.switch, null);
+    assert.deepEqual(Object.keys(reset.body.server.channels), ['C1']);
+    assert.deepEqual(await names(e, 'C2'), ['org:docs']);
+    await call(e, manager, 'DELETE', '/api/kb/mcp', { id: team });
+    assert.equal(e.DB.rows('SELECT * FROM mcp_server_switches').length, 0);
+  });
+
+  it('switches a customer\'s server in its channels, in every team', async () => {
+    const { e, org } = await withChannels();
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/mcp/channel', { id: org, ...body });
+    assert.equal((await put(admin, { channel: 'C3', enabled: false })).status, 404, 'another customer\'s');
+    // helix owns acme now (its channels), so helix's managers manage acme's servers too.
+    assert.equal((await put(manager, { channel: 'C2', enabled: false })).status, 200);
+    assert.deepEqual(await names(e, 'C2'), ['team:docs']);
+    assert.deepEqual(await names(e, 'C1'), ['team:docs', 'org:docs']);
+    // A manager of another team does not switch helix's channels.
+    const edge = asMe({ ...BO, teams: ['edge'] }, { edge: 'manager' });
+    assert.equal((await put(edge, { channel: 'C1', enabled: false })).status, 404);
+  });
+
+  it('calls a server switched on for the agent\'s channel only', async () => {
+    const { e, team } = await withChannels();
+    await call(e, admin, 'PUT', '/api/kb/mcp', { id: team, enabled: false });
+    await call(e, admin, 'PUT', '/api/kb/mcp/channel', { id: team, channel: 'C2', enabled: true });
+    const where = { team: 'helix', org: 'acme', channelId: 'C2' };
+    // A call before the first refresh, as after an eviction: the target says the channel.
+    const fresh = new AgentMcp(e, memoryStorage(), { target: async () => where });
+    const { catalog } = await new AgentMcp(e, memoryStorage()).refresh(where);
+    const docs = catalog.servers.find((s) => s.scope === 'team');
+    assert.deepEqual(docs.tools.map((t) => t.name), ['search_docs']);
+    const res = await fresh.call(docs, 'search_docs', { query: 'purge' });
+    assert.match(res.content[0].text, /3 pages about purge/);
+    // In C1 it is off: a stale catalog cannot reach it.
+    const elsewhere = new AgentMcp(e, memoryStorage(), { target: async () => ({ ...where, channelId: 'C1' }) });
+    await assert.rejects(quiet(() => elsewhere.call(docs, 'search_docs', { query: 'x' })), /turned off/);
   });
 });

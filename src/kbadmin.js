@@ -115,11 +115,14 @@ async function agentCounts(env) {
 /**
  * How many tools and MCP servers the agents of each knowledge base's threads have turned on,
  * by `<kind>:<slug>`, as the editor's "Tools and MCP servers" counts them: the switchable
- * tools and the global servers on for the team or in any of its channels, and its own servers.
+ * tools and the global servers on for the team or in any of its channels, and its own servers
+ * on for it or in any of its channels.
  */
 async function toolCounts(env) {
   const [{ results: servers }, { results: switches }] = await Promise.all([
-    env.DB.prepare('SELECT scope, slug, id FROM mcp_servers WHERE enabled = 1').all(),
+    // On for the server, or in one of its channels.
+    env.DB.prepare(`SELECT scope, slug, id FROM mcp_servers WHERE enabled = 1
+      OR id IN (SELECT server_id FROM mcp_server_switches WHERE enabled = 1)`).all(),
     env.DB.prepare(`SELECT 'tool:' || tool AS name, scope, target FROM agent_tool_switches WHERE enabled = 1
       UNION ALL SELECT 'mcp:' || server, scope, target FROM mcp_global_switches WHERE enabled = 1`).all(),
   ]);

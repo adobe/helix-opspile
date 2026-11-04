@@ -1155,8 +1155,10 @@ budget), every call it makes is a nested tool call, and a script interrupted by 
 resumes where it was without making its finished calls again. Each ops team and each customer
 can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
 per-channel switch; credentials are request headers sealed with `TOKEN_KEY`, or an OAuth
-grant, below). An agent gets the enabled servers of its thread's team and
-customer: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
+grant, below). Each server is on or off for every channel of its team or customer, and a
+channel can have a switch of its own that wins (`mcp_server_switches`), as the global servers'
+do. An agent gets the servers of its thread's team and customer that are on in its channel, and
+connects only to those: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
 offered to the model as a tool of its own, and each server is a code mode namespace that
 `describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
 prompt a few lines, and a script can call several and filter what they return. A server's

@@ -34,28 +34,38 @@ const CONNECT_TIMEOUT_MS = 15_000;
 export const CALL_TIMEOUT_MS = 120_000;
 
 /**
- * The enabled servers of a team and an org, team first, then the global servers on for the
- * team or the channel; without their headers.
+ * The servers of a team and an org on in channel `channelId` (its own switch, else the server's),
+ * team first, then the global servers on for the team or the channel; without their headers.
  */
 export async function serversFor(env, { team, org, channelId }) {
-  const { results } = await env.DB.prepare(`SELECT id, scope, slug, name, url, description, allow,
-      updated_at FROM mcp_servers
-    WHERE enabled = 1 AND ((scope = 'team' AND slug = ?) OR (scope = 'org' AND slug = ?))
-    ORDER BY CASE scope WHEN 'team' THEN 0 ELSE 1 END, name`).bind(team || '', org || '').all();
+  const { results } = await env.DB.prepare(`SELECT s.id, s.scope, s.slug, s.name, s.url,
+      s.description, s.allow, s.updated_at FROM mcp_servers s
+      LEFT JOIN mcp_server_switches w ON w.server_id = s.id AND w.channel = ?
+    WHERE COALESCE(w.enabled, s.enabled) = 1
+      AND ((s.scope = 'team' AND s.slug = ?) OR (s.scope = 'org' AND s.slug = ?))
+    ORDER BY CASE s.scope WHEN 'team' THEN 0 ELSE 1 END, s.name`)
+    .bind(channelId || '', team || '', org || '').all();
   return [...(results || []), ...await globalServersFor(env, { team, channelId })];
 }
 
 /**
  * One server with its request headers, unsealed, or for an OAuth server the `authProvider`
- * that gives the transport its tokens; null when it is gone or disabled. Throws for an OAuth
- * server nobody connected, or whose grant stopped working.
+ * that gives the transport its tokens; null when it is gone or off: in channel `channelId` (its
+ * own switch, else the server's), or, with `anywhere` (the editor's check), in every channel.
+ * Throws for an OAuth server nobody connected, or whose grant stopped working.
  */
-export async function serverWithHeaders(env, id, { fetch: fetchFn } = {}) {
+export async function serverWithHeaders(env, id, {
+  fetch: fetchFn, channelId, anywhere = false,
+} = {}) {
   if (String(id).startsWith('global:')) {
     return globalConnection(env, id);
   }
   const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, auth, oauth_by,
-      oauth_error, updated_at FROM mcp_servers WHERE id = ? AND enabled = 1`).bind(id).first();
+      oauth_error, updated_at FROM mcp_servers s WHERE id = ?
+      AND (COALESCE((SELECT w.enabled FROM mcp_server_switches w WHERE w.server_id = s.id
+        AND w.channel = ?), s.enabled) = 1
+      OR (? = 1 AND EXISTS (SELECT 1 FROM mcp_server_switches w WHERE w.server_id = s.id
+        AND w.enabled = 1)))`).bind(id, channelId || '', anywhere ? 1 : 0).first();
   if (!row) {
     return null;
   }
