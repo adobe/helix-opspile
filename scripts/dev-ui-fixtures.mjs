@@ -1191,6 +1191,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       return { id, key: threadKey(ch, id) };
     },
 
+    /** The key of the thread message `rootId` starts in `ch`, and an id for a reply in it. */
+    replyIn(ch, rootId, at) {
+      return { key: threadKey(ch, rootId), id: newId(ch.source, at) };
+    },
+
     /** Starts thread `key` with message `id`, as its first message arriving would. */
     start(ch, { id, key }, who, body, at = new Date().toISOString()) {
       const entry = {

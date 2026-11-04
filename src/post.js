@@ -593,6 +593,9 @@ export async function channelPlace(env, ref) {
     ORDER BY t.any_at DESC LIMIT 1`).bind(id.join(':'), source, tenant).first();
 }
 
+// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id.
+const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/ };
+
 /**
  * The inbox entry a message `id` starts in channel `t`, as src/normalize.js will key it (the
  * entry shows up once the message has come back through the platform's events).
@@ -906,19 +909,26 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  *
  * With `channel` (as `channelPlace` reads it) instead of `thread`, the message starts a thread
  * there, and the answer's `thread` is its inbox entry, where the platform names the message.
+ * With `channel` and `root`, the id the platform gave such a message, it is a reply in that
+ * thread, which the inbox may not have yet: it comes back through the platform's events.
  */
 export async function post(env, me, request, inTeam, files = []) {
   const {
-    thread: key, channel, text, mentions: ids,
+    thread: key, channel, text, mentions: ids, root,
   } = request || {};
   const body = String(text || '').trim();
   if ((!body && !files.length) || body.length > MAX_TEXT) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
-  const t = key ? await target(env, key) : await channelPlace(env, channel);
-  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+  const place = key ? await target(env, key) : await channelPlace(env, channel);
+  if (!place || !await inTeam(await teamsOf(env, place), place)) {
     return json({ error: 'not found' }, 404);
   }
+  if (!key && root !== undefined && !ROOT_ID[place.source]?.test(String(root))) {
+    return json({ error: 'not a thread of this channel' }, 400);
+  }
+  // A reply in a thread started in the channel, before the inbox has it.
+  const t = key || root === undefined ? place : { ...place, root_id: String(root) };
   if (!isStaffDomain(env, me.email)) {
     return json({ error: 'only staff can reply' }, 403);
   }
@@ -941,7 +951,7 @@ export async function post(env, me, request, inTeam, files = []) {
     }, again ? 409 : 400);
   }
   const mentions = await knownMentions(env, t, ids);
-  const started = (id) => (key ? {} : { thread: threadOf(t, id) });
+  const started = (id) => (t === place && !key ? { thread: threadOf(t, id) } : {});
   // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
   const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
   if (t.source === 'slack') {
@@ -1005,7 +1015,7 @@ export async function post(env, me, request, inTeam, files = []) {
     }
   }
   const path = `/teams/${encodeURIComponent(t.group_id)}/channels/${encodeURIComponent(t.channel_id)}`
-    + `/messages${key ? `/${encodeURIComponent(t.root_id)}/replies` : ''}`;
+    + `/messages${t === place && !key ? '' : `/${encodeURIComponent(t.root_id)}/replies`}`;
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },

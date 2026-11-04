@@ -106,9 +106,10 @@ const SIM_EVERY_MS = 25 * 1000;
 const RETHREAD_MS = 30 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
 // Sending a reply, as production's take: the platform takes it in about 900 ms (POST
-// /api/post), and it comes back through the normalize queue some eight seconds later.
+// /api/post), and it comes back through the normalize queue some ten seconds later (half of
+// them; one in ten takes 20 s or more, now and then over a minute: `--arrive=` to try that).
 const SEND_MS = Number(process.argv.find((a) => a.startsWith('--send='))?.slice(7)) || 900;
-const ARRIVE_MS = 8000;
+const ARRIVE_MS = Number(process.argv.find((a) => a.startsWith('--arrive='))?.slice(9)) || 8000;
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
@@ -1344,6 +1345,31 @@ async function api(req, res, url) {
     const {
       thread: key, channel, text: reply, mentions = [], draft: base,
     } = posted;
+    // A reply in a thread started here that the inbox does not have yet (src/post.js `root`):
+    // the platform takes it, and it arrives after the thread does.
+    if (channel && posted.root !== undefined && !app) {
+      const ch = postable().get(channel);
+      if (!ch || !String(reply || '').trim()) {
+        return json(res, { error: 'not found' }, 404);
+      }
+      await new Promise((r) => {
+        setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
+      });
+      const at = new Date();
+      const { key: startedKey, id } = store.replyIn(ch, String(posted.root), at.getTime());
+      const arrive = () => {
+        if (!store.threads.get(startedKey)) {
+          setTimeout(arrive, 500);
+          return;
+        }
+        store.post(startedKey, 'dana', String(reply).trim(), at.toISOString(), id);
+        broadcast(ch.team, { type: 'thread', thread: startedKey });
+      };
+      setTimeout(arrive, ARRIVE_MS);
+      return json(res, {
+        ok: true, platform: ch.source, id, text: String(reply).trim(),
+      });
+    }
     // A thread started in a channel (src/post.js `channelPlace`): it arrives like a reply.
     if (channel && !app) {
       const ch = postable().get(channel);
