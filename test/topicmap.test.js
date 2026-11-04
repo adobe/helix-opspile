@@ -85,7 +85,7 @@ async function setup({ perGroup = 10 } = {}) {
       if (g === 0) {
         // The cache threads name a CDN the tech stack has, one it does not, and generic words.
         DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Edge Functions');
+          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Jira');
         DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
           VALUES (?, 'clairic', 'product', 'CDN', 0.9)`).run(key);
       }
@@ -184,6 +184,28 @@ describe('topic map: products and the tech stack', () => {
   });
 });
 
+describe('the tech stack after the product census (migration 0056)', () => {
+  it('names what the threads were about, and keeps descriptions someone changed', async () => {
+    const DB = d1();
+    const rows = DB.sqlite.prepare("SELECT tech, name, description, changed_by FROM tech_stack WHERE team = 'admin'").all();
+    const index = techIndex(rows);
+    for (const [name, tech] of [['Admin Console', 'adobeims'], ['Edge Functions', 'edgefunctions'],
+      ['Google Tag Manager', 'analytics'], ['Tealium', 'analytics'], ['Preflight', 'aso'],
+      ['Bazaarvoice', 'reviews'], ['Content Fragments', 'aemcontent'], ['Workfront', 'workfront'],
+      ['Dynamic Media', 'dm'], ['Claude', 'aiagents'], ['OpTel', 'rum']]) {
+      assert.equal(coveredBy(name, index), tech, name);
+    }
+    assert.equal(rows.length, 50);
+    // A description changed on the Agents page before stays as it was.
+    const edited = d1();
+    edited.sqlite.exec("UPDATE tech_stack SET description = 'our own words' WHERE tech = 'rum'");
+    const sql = (await import('node:fs')).readFileSync(new URL('../migrations/0056_tech_census.sql', import.meta.url), 'utf8');
+    edited.sqlite.exec(sql);
+    const rum = edited.sqlite.prepare("SELECT description FROM tech_stack WHERE tech = 'rum'").get();
+    assert.equal(rum.description, 'our own words');
+  });
+});
+
 describe('topic map: building', () => {
   it('clusters the threads worth it, names the topics, and keeps who posted and for whom', async () => {
     const env = await setup();
@@ -216,13 +238,13 @@ describe('topic map: building', () => {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
     assert.equal(map.tags.cdn, 'Caching and delivery');
-    // The products: Akamai is the tech stack's (migration 0043), Edge Functions a gap, CDN generic.
+    // The products: Akamai is the tech stack's (migration 0043), Jira a gap, CDN generic.
     assert.deepEqual(map.products, {
       'tech:akamai': { name: 'Akamai', tech: 'akamai' },
-      'new:edge functions': { name: 'Edge Functions', tech: null },
+      'new:jira': { name: 'Jira', tech: null },
     });
     assert.deepEqual(one.products, ['tech:akamai']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:edge functions']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:jira']);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:1.2').products, []);
     assert.equal(map.built_by, 'Ada');
 

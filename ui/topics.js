@@ -592,7 +592,10 @@ function gaps() {
     || a.label.localeCompare(b.label));
   const named = all.reduce((s, n) => s + (n.gap ? 0 : n.threads.length), 0);
   const missed = list.reduce((s, n) => s + n.threads.length, 0);
-  const shown = list.filter((n) => n.threads.length > 1).slice(0, 20);
+  // A name of one customer's threads is likelier theirs (a brand, a system of theirs) than a
+  // product to add: the list is of those two customers or more name.
+  const customers = (n) => new Set(n.threads.map((t) => t.org).filter(isCustomer)).size;
+  const shown = list.filter((n) => n.threads.length > 1 && customers(n) > 1).slice(0, 20);
   const max = Math.max(1, ...shown.map((n) => n.threads.length));
   return `<h3>Not in the tech stack <span class="sub">${list.length}</span></h3>
     <p class="hint">Products the threads are about that no technology of the tech stack names
@@ -601,8 +604,8 @@ function gaps() {
     ${shown.length ? `<ul class="rel">${shown.map((n) => `<li><button class="pickr" data-sel="${esc(n.id)}" data-type="product">
       <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
       <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
-      <span class="n">${n.threads.length}</span></button></li>`).join('')}</ul>` : ''}
-    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more in one thread each</div>` : ''}`;
+      <span class="n" title="${customers(n)} customers">${n.threads.length}</span></button></li>`).join('')}</ul>` : ''}
+    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more, of one thread or one customer each (Find shows them)</div>` : ''}`;
 }
 
 function details(n) {

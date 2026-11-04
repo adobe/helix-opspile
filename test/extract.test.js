@@ -118,7 +118,7 @@ describe('a team\'s rules and tech stack', () => {
     const helix = await techFor(e, 'helix');
     const edge = await techFor(e, 'edge');
     assert.equal(helix.find((t) => t.tech === 'akamai').description, 'Akamai, as CDN or for media');
-    assert.equal(edge.find((t) => t.tech === 'akamai').description, 'Akamai as CDN');
+    assert.equal(edge.find((t) => t.tech === 'akamai').description, 'Akamai as CDN (Property Manager, EdgeWorkers)');
     assert.ok(!helix.some((t) => t.tech === 'gdrive'));
     assert.ok(edge.some((t) => t.tech === 'gdrive'));
     assert.ok(helix.some((t) => t.tech === 'sitecore') && !edge.some((t) => t.tech === 'sitecore'));

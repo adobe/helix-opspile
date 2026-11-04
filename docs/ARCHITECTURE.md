@@ -707,8 +707,9 @@ and an unchanged thread is never labeled twice):
   labeled by hand (macro F1 0.82; the ten topics before, kept at 0.8, had 0.56 and left 59% of
   the threads with no topic, these 31%, the hand labels 24%). The list came from the
   [topic map](#topic-maps). Clef's answers move a little with the other questions of a call,
-  and the topics were measured asked with the four questions above and the first five tech
-  questions by id: keep their order, and measure again when it changes. A label from before
+  so the four questions above and the topics are asked in a call of their own, as they were
+  measured, and the tech stack in calls of its own: an entry added or changed does not move the
+  topics' answers. Measure again when the questions or the topics change. A label from before
   shows `golive` as `project`, and `commerce` and `integrations`, products now, not at all,
   until the thread is labeled again.
 - **Extraction rules** (`src/extract.js`) find facts and detect technologies: regular
@@ -748,14 +749,27 @@ and an unchanged thread is never labeled twice):
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
+  Migration 0056 added what the product census found the threads naming that no entry
+  covered: Adobe IMS and the Admin Console, AI assistants, Content Fragments and AEM's APIs, the
+  customer's own cloud services, AEM's AI features, Dynamic Media, Commerce Optimizer, Google's
+  site tools, MSM, ERP and PIM, Edge Functions, AEM 6.5, script security, CRM, Figma, Workfront,
+  embeds, reviews and the inbox itself; and the names people use to the descriptions of others,
+  where nobody had changed them since migration 0043. They are what Clef's topics about
+  commerce, assets, Sites Optimizer, integrations and the inbox would have been.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
-  the error, a deadline and a go-live date, and the **products** the thread is about, by name
-  (a list: a `product` fact each, at most eight). Only values at or above a confidence threshold
-  are kept (0.8, and 0.6 for the free-text problem). The products are not the tech stack: they
-  are what the threads say, matched against it on the Topics page, so the names nobody put in
-  the tech stack yet show up there.
+  the error, a deadline and a go-live date. Only values at or above a confidence threshold are
+  kept (0.8, and 0.6 for the free-text problem). In the same call it lists the **products** the
+  thread names (`product` facts, at most twelve), for the [topic map](#topic-maps) to match
+  against the tech stack. Clairic lists nearly every name in the state, so only its spans count:
+  not those in the header (the channel, the platform, the customer) or an author line, nor the
+  names of the thread's people and customer, nor fragments under three characters. The list's
+  one confidence says nothing (it shrinks as the list grows) and is not used. The wording and
+  the filter come from a census of all 822 channel threads with a person's message: 94% of the
+  thread–product pairs right after normalizing, 86% recall (it misses host names in URLs). A
+  product name says the thread mentions it; Clef's tech questions still say what the customer
+  uses.
 
 **Label review.** Members of the admin team can review labels in the inbox: a queue of
 current labels nobody has reviewed, least confident first, and per question the right

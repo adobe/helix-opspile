@@ -125,11 +125,11 @@ export const TOPICS = {
 };
 /**
  * A thread keeps the topics Clef gives at least this, one cut for every topic: the best on 225
- * threads labeled by hand (macro F1 0.82, the same in 5-fold cross-validation; at 0.8 it was
+ * threads labeled by hand (macro F1 0.81, the same in 5-fold cross-validation; at 0.8 it was
  * 0.56, with a topic on 41% of the threads that have one). Clef's answers move a little with the
- * other questions of a call, and these were measured asked as they are: QUESTIONS, these topics
- * and the first five tech questions (by id) in one call. Keep the order, and measure again when
- * it changes, a new tech id that sorts before the fifth included.
+ * other questions of a call: the topics were measured asked with QUESTIONS only, in this order,
+ * as labelThread asks them. Measure again when QUESTIONS or the topics change; the tech stack is
+ * asked in calls of its own and can change freely.
  */
 export const TOPIC_MIN = 0.55;
 /**
@@ -193,16 +193,20 @@ const techQuestions = (tech) => Object.fromEntries(tech.map((t) => [`tech.${t.te
 }]));
 
 /**
- * Clef on `state`, `questions` asked in calls of at most MAX_QUESTIONS at the same time: the
- * answers of them all, as one answer.
+ * Clef on `state`: each group of questions asked in calls of its own, of at most MAX_QUESTIONS,
+ * all at the same time; the answers of them all, as one answer. A group keeps the questions it is
+ * asked with whatever the other groups have (Clef's answers move a little with the other
+ * questions of a call).
  */
-export async function askClef(env, state, questions) {
-  const entries = Object.entries(questions);
+export async function askClef(env, state, ...groups) {
   const calls = [];
-  for (let i = 0; i < entries.length; i += MAX_QUESTIONS) {
-    calls.push(env.AI.run(CLEF, {
-      model: 'clef', state, questions: Object.fromEntries(entries.slice(i, i + MAX_QUESTIONS)),
-    }));
+  for (const questions of groups) {
+    const entries = Object.entries(questions);
+    for (let i = 0; i < entries.length; i += MAX_QUESTIONS) {
+      calls.push(env.AI.run(CLEF, {
+        model: 'clef', state, questions: Object.fromEntries(entries.slice(i, i + MAX_QUESTIONS)),
+      }));
+    }
   }
   const all = await Promise.all(calls);
   return {
@@ -253,13 +257,17 @@ export const vocab = async (env, team = null) => ({
   tech: await techNames(env, team), topics: topicNames(),
 });
 
-/** Clairic's `products` field (tuned in the product census; see docs/ARCHITECTURE.md). */
-export const PRODUCTS_INSTRUCTIONS = 'The products, services, tools or technologies this thread'
-  + ' is about, Adobe\'s and other companies\', by name (for example a CDN, an authoring tool, an'
-  + ' identity provider, an analytics or consent service, a commerce platform): not generic terms'
-  + ' such as API, website, JSON or cache, and not the customer or a person';
+/**
+ * Clairic's `products` field: the wording of the product census (docs/ARCHITECTURE.md, "Labels
+ * and facts"), the fewest stray words of five at nearly the best recall. Clairic lists nearly
+ * every name in the state, the header's and the authors' too, so productFacts reads its spans.
+ */
+export const PRODUCTS_INSTRUCTIONS = 'Names of software products, cloud services, platforms and'
+  + ' developer tools that the customer uses or asks about, for example AEM Sites, Document'
+  + ' Authoring, Cloudflare, Algolia or GitHub. Not the names of people, customers or the channel,'
+  + ' and not generic words such as API, CDN, website or page.';
 /** At most this many products per thread, each at most MAX_PRODUCT characters. */
-export const MAX_PRODUCTS = 8;
+export const MAX_PRODUCTS = 12;
 const MAX_PRODUCT = 60;
 
 export const FIELDS = {
@@ -374,26 +382,57 @@ async function threadReactions(env, key) {
 }
 
 /**
- * Clairic answers worth keeping: non-null, above the confidence threshold. A list (`products`)
- * is a fact per item, of the field without its plural `s` (`product`), each trimmed, at most
- * MAX_PRODUCTS of them, the same name in another case once.
+ * Clairic answers worth keeping: non-null, above the confidence threshold. Not the products,
+ * whose list has one confidence that says nothing (it shrinks as the list grows): productFacts.
  */
 export function clairicFacts(answers) {
   const facts = [];
   for (const [field, a] of Object.entries(answers || {})) {
     const threshold = FIELD_CONFIDENCE[field] ?? MIN_CONFIDENCE;
-    const sure = a && (a.confidence === undefined || a.confidence >= threshold);
-    if (sure && Array.isArray(a.value)) {
-      const seen = new Set();
-      for (const item of a.value) {
-        const value = String(item ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_PRODUCT);
-        if (value && !seen.has(value.toLowerCase()) && seen.size < MAX_PRODUCTS) {
-          seen.add(value.toLowerCase());
-          facts.push({ field: field.replace(/s$/, ''), value, confidence: a.confidence ?? null });
-        }
-      }
-    } else if (sure && a.value !== null && a.value !== undefined && a.value !== '') {
+    if (field !== 'products' && a && a.value !== null && a.value !== undefined && a.value !== ''
+      && !Array.isArray(a.value) && (a.confidence === undefined || a.confidence >= threshold)) {
       facts.push({ field, value: String(a.value), confidence: a.confidence ?? null });
+    }
+  }
+  return facts;
+}
+
+const PRODUCT_TRIM = /^[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+|[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+$/g;
+/** An author line of the state: `[time] Name (Adobe staff):`, as stateOf writes it. */
+const AUTHOR_LINE = /^\[[^\]\n]+\] ([^\n]*?) \((?:Adobe staff|customer[^)]*|[a-z]+)\):$/gm;
+
+/**
+ * The products Clairic named in a thread (its `products` list), as `product` facts: the names
+ * its spans point at in the messages, not in the header (the channel, the platform, the
+ * customer) or an author line (people and bots), trimmed, without the names of the thread's
+ * people and its customer, those of at least three characters with a letter, each once, at most
+ * MAX_PRODUCTS. Whether one is the tech stack's is for the Topics page to say (src/topicmap.js).
+ */
+export function productFacts(answer, state, thread = {}) {
+  const text = String(state || '');
+  const header = Math.max(0, text.indexOf('\n\n'));
+  const authors = [...text.matchAll(AUTHOR_LINE)];
+  const inAuthor = (at) => authors.some((m) => at >= m.index && at < m.index + m[0].length);
+  const names = new Set(authors.flatMap((m) => [m[1], ...m[1].split(/\s+/)])
+    .map((n) => n.toLowerCase()).filter((n) => n.length > 2));
+  const org = String(thread.org || '').toLowerCase();
+  [org, ...org.split(/[-_.]/)].filter((w) => w.length > 3).forEach((w) => names.add(w));
+  const spans = Array.isArray(answer?.spans) && answer.spans.length ? answer.spans : null;
+  let items = Array.isArray(answer?.value) ? answer.value : [];
+  if (spans) {
+    items = spans.filter(([at]) => at >= header && !inAuthor(at))
+      .map(([at, end]) => text.slice(at, end));
+  }
+  const seen = new Set();
+  const facts = [];
+  for (const item of items) {
+    const value = String(item ?? '').replace(/\s+/g, ' ').replace(PRODUCT_TRIM, '')
+      .slice(0, MAX_PRODUCT);
+    const key = value.toLowerCase();
+    if (value.length >= 3 && /[a-z]/i.test(value) && !value.includes('@') && !names.has(key)
+      && !seen.has(key) && facts.length < MAX_PRODUCTS) {
+      seen.add(key);
+      facts.push({ field: 'product', value, confidence: null });
     }
   }
   return facts;
@@ -583,7 +622,8 @@ export async function labelThread(env, key, now = new Date()) {
 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS, ...techQuestions(tech) }),
+    // The topics on their own, so the tech stack's entries do not move their answers.
+    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS }, techQuestions(tech)),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -623,7 +663,8 @@ export async function labelThread(env, key, now = new Date()) {
     )
     .run();
   await recordTech(env, thread, tech, a, found.tech);
-  const loose = clairicFacts(clairic.answers);
+  const loose = [...clairicFacts(clairic.answers),
+    ...productFacts(clairic.answers?.products, state, thread)];
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
     result: 'labeled',
