@@ -53,7 +53,9 @@ import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
-import { fromPreview, inboxPage, page } from './page.js';
+import {
+  fromPreview, highlightScript, inboxPage, page,
+} from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { ensureSubscription } from './subscription.js';
@@ -228,6 +230,11 @@ const handlers = {
       return new Response(INBOX_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
+    }
+    // The inbox's code highlighter, which it imports with the first code block it shows.
+    const highlighter = highlightScript(request, pathname);
+    if (highlighter) {
+      return highlighter;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);

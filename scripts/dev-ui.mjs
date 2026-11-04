@@ -70,7 +70,9 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { cleanExpertEvent } from '../src/expertevents.js';
 import { suggestMentions } from '../src/mention-match.js';
-import { fromPreview, inboxPage as servedInbox, page as servedPage } from '../src/page.js';
+import {
+  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+} from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
 } from '../src/shortcodes.js';
@@ -1946,6 +1948,13 @@ const server = createServer(async (req, res) => {
     if (ICONS[url.pathname]) {
       const { type, base64 } = ICONS[url.pathname];
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
+      return;
+    }
+    // The code highlighter, as the Worker serves it.
+    const asked = { method: req.method, headers: new Headers(req.headers) };
+    const lit = highlightScript(asked, url.pathname);
+    if (lit) {
+      res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;
     }
     // The manifest and the service worker, as the Worker serves them.
