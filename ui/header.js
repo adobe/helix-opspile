@@ -16,7 +16,7 @@
  *
  * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
  * Teams too for team managers, and Orgs, Requests and COGS (what the inbox costs) too for the
- * admin team (with the number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
+ * admin team (with the number of open requests on Requests), and Topics (the topic map); and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -33,6 +33,7 @@ window.Header = (() => {
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
     { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their topics, found from what was said, with the Adobe people, customers and Clef topics on each', admin: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
     { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
@@ -55,6 +56,7 @@ window.Header = (() => {
     if (u.pathname === '/inbox') return 'inbox';
     if (u.pathname === '/inbox/kb') return 'agents';
     if (u.pathname === '/inbox/cogs') return 'cogs';
+    if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
     return ['orgs', 'requests'].includes(tab) ? tab : 'teams';

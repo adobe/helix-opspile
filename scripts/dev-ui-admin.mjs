@@ -19,6 +19,7 @@ import { consume } from '../src/normalizer.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
 import { seedCogs } from './dev-ui-cogs.mjs';
+import { seedTopicMap } from './dev-ui-topics.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -479,6 +480,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   seedAdminChannels(DB);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);
+  // The Topics page's map (dev-ui-topics.mjs).
+  seedTopicMap(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {

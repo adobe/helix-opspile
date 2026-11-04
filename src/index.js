@@ -14,11 +14,13 @@ import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
 import cogsHtml from '../ui/cogs.html';
+import topicsHtml from '../ui/topics.html';
 // The pages' scripts, as text (src/page.js inlines them).
 import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
 import kbJs from '../ui/kb.js' with { type: 'text' };
 import cogsJs from '../ui/cogs.js' with { type: 'text' };
+import topicsJs from '../ui/topics.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
@@ -30,6 +32,7 @@ import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
 import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
 import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
 import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
+import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
@@ -65,6 +68,7 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepTopicMap } from './topicmap.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
@@ -77,6 +81,7 @@ const SCRIPTS = {
   'admin.js': adminJs,
   'kb.js': kbJs,
   'cogs.js': cogsJs,
+  'topics.js': topicsJs,
   'app.js': appJs,
   'header.js': headerJs,
   'rank.js': rankJs,
@@ -87,11 +92,13 @@ const SCRIPTS = {
   'spectrum-admin.css': spectrumAdminCss,
   'spectrum-kb.css': spectrumKbCss,
   'spectrum-cogs.css': spectrumCogsCss,
+  'spectrum-topics.css': spectrumTopicsCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
 const KB_PAGE = page(kbHtml, SCRIPTS);
 const COGS_PAGE = page(cogsHtml, SCRIPTS);
+const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -223,6 +230,12 @@ const handlers = {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
+    if (pathname === '/inbox/topics') {
+      // The topic map (admin team; the API checks), under /inbox like the others.
+      return new Response(TOPICS_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
     // The Spectrum 2 preview's addresses, from before it was every page's look.
     const preview = fromPreview(pathname, url.search);
     if (preview) {
@@ -270,7 +283,8 @@ const handlers = {
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
  * behind, fill in the latest message's text of threads indexed before it was kept, delete
  * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js), and enqueue the
- * threads whose klickhaus rows are behind; and roll up what the days used, for COGS.
+ * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
+ * what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -329,6 +343,10 @@ const handlers = {
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    // The Topics page's map (src/topicmap.js), once it is a week old.
+    ctx.waitUntil(sweepTopicMap(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', topicMap: 'error', error: e.message }))));
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));

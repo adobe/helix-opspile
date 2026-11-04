@@ -17,7 +17,7 @@ import {
 } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
-const NAMES = ['inbox', 'admin', 'kb', 'cogs'];
+const NAMES = ['inbox', 'admin', 'kb', 'cogs', 'topics'];
 const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS);
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 

@@ -177,6 +177,11 @@ for a week.
 `exported_through`). A sweep compares each with the thread. An edit does not move `any_at`, so a dead
 job for an edit is not swept; it is in `dead_jobs`.
 
+**Topic map.** none → built → a week old → built again (`topic_maps`, `src/topicmap.js`). No state in
+between: the cron or Rebuild builds one in a single request, a row when it is done, and the newest
+five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
+on the page; two at once both write a row, and the newer is shown.
+
 **Lazy fill-ins.** NULL means "not done yet" (`threads.last_text`, `messages.author_kind`,
 `knowledge_bases.entries`). Each has a batch on the cron. NULL must not also mean "nothing there", or
 the same rows stay at the head of the batch.
