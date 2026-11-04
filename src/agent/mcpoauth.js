@@ -22,8 +22,10 @@ import { seal, unseal } from '../post.js';
  *
  * - **Connecting** (the knowledge-base editor, someone who manages the server): discovery as
  *   MCP clients do it (the server's 401 and RFC 9728 protected resource metadata, then RFC 8414
- *   or OpenID metadata of its authorization server), the client registered on its own (RFC
- *   7591) unless staff gave a client id, then authorization code with PKCE (S256) and the
+ *   or OpenID metadata of its authorization server), then the client: the one staff gave, else
+ *   opspile's client ID metadata document (CIMD: the client id is the URL of CLIENT_DOCUMENT_PATH,
+ *   which the authorization server fetches) where the server takes one, else a registration of
+ *   its own (RFC 7591); then authorization code with PKCE (S256) and the
  *   resource indicator (RFC 8707). The browser goes to the authorization server and comes back
  *   to CALLBACK_PATH, behind Access: only the person who started may finish, within ten minutes.
  * - **Using it** (agents, the editor's check): the transport asks `token()` before each request;
@@ -40,6 +42,7 @@ import { seal, unseal } from '../post.js';
  */
 
 export const CALLBACK_PATH = '/api/kb/mcp/oauth/callback';
+export const CLIENT_DOCUMENT_PATH = '/oauth/client.json';
 export const KEEP_ALIVE_MS = 7 * 24 * 3600_000;
 const PENDING_TTL_MS = 10 * 60_000;
 const EXPIRY_MARGIN_MS = 2 * 60_000;
@@ -62,6 +65,45 @@ const sleep = (ms) => new Promise((resolve) => {
 
 /** Where the authorization server sends the browser back. */
 export const redirectUri = (env) => `${origin(env)}${CALLBACK_PATH}`;
+
+/** opspile's client id at authorization servers that take client ID metadata documents. */
+export const clientMetadataUrl = (env) => `${origin(env)}${CLIENT_DOCUMENT_PATH}`;
+
+/**
+ * opspile's client ID metadata document, as an OAuth client of the agents' MCP servers: a public
+ * client (PKCE, no secret) whose only redirect URI is the callback.
+ */
+export const clientDocument = (env) => ({
+  client_id: clientMetadataUrl(env),
+  client_name: CLIENT_NAME,
+  client_uri: origin(env),
+  redirect_uris: [redirectUri(env)],
+  grant_types: ['authorization_code', 'refresh_token'],
+  response_types: ['code'],
+  token_endpoint_auth_method: 'none',
+  application_type: 'web',
+});
+
+/**
+ * Serves the document at CLIENT_DOCUMENT_PATH (public: authorization servers fetch it); null for
+ * any other path, or without an https PUBLIC_ORIGIN.
+ */
+export function clientDocumentResponse(request, env, url) {
+  if (url.pathname !== CLIENT_DOCUMENT_PATH || !/^https:\/\//.test(origin(env))) {
+    return null;
+  }
+  if (!['GET', 'HEAD'].includes(request.method)) {
+    return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
+  }
+  const body = JSON.stringify(clientDocument(env), null, 2);
+  return new Response(request.method === 'HEAD' ? null : body, {
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=3600',
+      'access-control-allow-origin': '*',
+    },
+  });
+}
 
 /** A server that is not (or no longer) connected: someone has to connect it. */
 export class NotConnectedError extends Error {}
@@ -127,8 +169,9 @@ function scopeFor(config, server) {
 }
 
 /**
- * The client to sign in as: the one staff gave, the one registered before at the same
- * authorization server, or a new registration.
+ * The client to sign in as: the one staff gave; opspile's client ID metadata document where the
+ * authorization server takes one; the one registered before at the same authorization server;
+ * or a new registration.
  */
 async function clientFor(env, o, server, scope, fetchFn) {
   const config = o.config || {};
@@ -142,13 +185,24 @@ async function clientFor(env, o, server, scope, fetchFn) {
     };
   }
   const redirect = redirectUri(env);
+  if (server.metadata.client_id_metadata_document_supported === true) {
+    return {
+      client: {
+        client_id: clientMetadataUrl(env),
+        redirect_uris: [redirect],
+        token_endpoint_auth_method: 'none',
+        document: true,
+      },
+      clientIssuer: server.metadata.issuer,
+    };
+  }
   if (o.client && o.clientIssuer === server.metadata.issuer && !o.client.given
-    && (o.client.redirect_uris || []).includes(redirect)) {
+    && !o.client.document && (o.client.redirect_uris || []).includes(redirect)) {
     return { client: o.client, clientIssuer: o.clientIssuer };
   }
   if (!server.metadata.registration_endpoint) {
-    throw new Error('the server does not let clients register themselves: register one there (redirect URI '
-      + `${redirect}) and give its client id`);
+    throw new Error('the server neither lets clients register themselves nor takes client metadata '
+      + `documents: register one there (redirect URI ${redirect}) and give its client id`);
   }
   const methods = server.metadata.token_endpoint_auth_methods_supported || [];
   const method = ['client_secret_basic', 'client_secret_post'].find((m) => methods.includes(m)) || 'none';
