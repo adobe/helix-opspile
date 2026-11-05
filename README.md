@@ -96,6 +96,7 @@ Nothing below is committed; set it on the Worker.
 | --- | --- | --- |
 | `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`, and react with it (`add_reaction`), which needs the bot scope `reactions:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`). A Slack post from the inbox that mentions a colleague who is not in the channel has the app add them first (bot scopes `channels:write.invites` and `groups:write.invites`; without them, nobody is added and the post goes out as before) |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
+| `SLACK_ADMIN_TOKEN` | secret | Optional: a user token of an Enterprise Grid org admin, from an org-wide install of a Slack app with the user scope `admin.users:write`. A colleague mentioned who is in the org but not in the channel's workspace (`org_user_not_in_team`) is added to that workspace (`admin.users.assign`) and then to the channel; without it, the inbox says they will not see the mention. Set `SLACK_ADMIN_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
 | `GRAPH_CLIENT_STATE` | secret | Random value our Graph subscriptions carry as `clientState`; notifications without it are dropped |

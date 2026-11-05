@@ -104,6 +104,10 @@ const SECRETS = [
   // with Browser Run Write only. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BROWSER_RUN_TOKEN'] : []),
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
+  // Slack: an org admin's token, which adds a colleague mentioned to the channel's workspace
+  // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
+  // has `cf` check it exists.
+  ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.

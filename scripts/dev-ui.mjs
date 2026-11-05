@@ -406,7 +406,8 @@ function channelMember(entry) {
 
 /**
  * As src/invite.js answers a Slack post: the Adobe people it mentions who are not in the
- * channel were added to it first (`invited`). They stay out here, so the case shows again.
+ * channel were added to it first (`invited`), but not those of another workspace of the org
+ * (`elsewhere`, `uninvited`). They stay out here, so the case shows again.
  */
 function invitedFor(entry, mentions) {
   if (!entry || entry.row.source !== 'slack') {
@@ -414,10 +415,14 @@ function invitedFor(entry, mentions) {
   }
   const inChannel = channelMember(entry);
   const ids = new Set((mentions || []).map((m) => String(m.id || m)));
-  const invited = [...store.people.values(), ...store.members]
-    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p))
-    .map((p) => ({ id: `slack-${p.key}`, name: p.name }));
-  return invited.length ? { invited } : {};
+  const out = [...store.people.values(), ...store.members]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p));
+  const invited = out.filter((p) => !p.elsewhere).map((p) => ({ id: `slack-${p.key}`, name: p.name }));
+  const uninvited = out.filter((p) => p.elsewhere)
+    .map((p) => ({ id: `slack-${p.key}`, name: p.name, error: 'org_user_not_in_team' }));
+  return {
+    ...(invited.length ? { invited } : {}), ...(uninvited.length ? { uninvited } : {}),
+  };
 }
 
 function myChannels() {

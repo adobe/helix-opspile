@@ -65,15 +65,27 @@ function env() {
 }
 const inTeam = (t) => [].concat(t).includes('helix');
 
-/** A fake Slack: `answers` by user id (an error code, or nothing for added). */
-function slack(answers = {}) {
+/**
+ * A fake Slack: `answers` by user id (an error code, or nothing for added); `assign` by user id,
+ * admin.users.assign's (an error code, or nothing for added to the workspace, after which
+ * conversations.invite adds them).
+ */
+function slack(answers = {}, assign = {}) {
   const calls = [];
+  const joined = new Set();
   const fetch = async (url, init = {}) => {
     const u = String(url);
     const body = init.body ? JSON.parse(init.body) : {};
     calls.push({ u, body, auth: init.headers?.authorization });
+    if (u.endsWith('/admin.users.assign')) {
+      const error = assign[body.user_id];
+      if (!error) {
+        joined.add(body.user_id);
+      }
+      return Response.json(error ? { ok: false, error } : { ok: true });
+    }
     if (u.endsWith('/conversations.invite')) {
-      const error = answers[body.users];
+      const error = joined.has(body.users) ? null : answers[body.users];
       return Response.json(error ? { ok: false, error } : { ok: true, channel: { id: 'C1' } });
     }
     if (u.endsWith('/chat.postMessage')) {
@@ -141,6 +153,50 @@ describe('inviteMentioned', () => {
     assert.equal(await inviteMentioned({ ...e, SLACK_BOT_TOKEN: '' }, T, [{ id: 'U2' }], { fetch: s.fetch }), null);
     assert.equal(await inviteMentioned(e, T, [], { fetch: s.fetch }), null);
     assert.deepEqual(s.calls, []);
+  });
+
+  it('with the admin token, adds someone of the org to the workspace first', async () => {
+    const e = { ...env(), SLACK_ADMIN_TOKEN: 'xoxp-admin-made-up' };
+    e.DB.sqlite.prepare("UPDATE channels SET group_id = 'T1' WHERE channel_id = 'C1'").run();
+    const s = slack({ U2: 'org_user_not_in_team', U4: 'already_in_channel' });
+    const res = await inviteMentioned(e, T, [{ id: 'U2' }, { id: 'U4' }], { fetch: s.fetch });
+    assert.deepEqual(invitedFields(res), {
+      invited: [{ id: 'U2', name: 'Bo Staff', workspace: true }],
+    });
+    const assigned = s.calls.filter((c) => c.u.endsWith('/admin.users.assign'));
+    assert.deepEqual(assigned.map((c) => [c.body, c.auth]), [
+      [{ team_id: 'T1', user_id: 'U2' }, 'Bearer xoxp-admin-made-up'],
+    ]);
+    assert.deepEqual(s.calls.filter((c) => c.u.endsWith('/conversations.invite'))
+      .map((c) => [c.body.users, c.auth]), [
+      ['U2', 'Bearer xoxb-made-up'], ['U4', 'Bearer xoxb-made-up'], ['U2', 'Bearer xoxb-made-up'],
+    ]);
+    assert.match(invitedNote(invitedFields(res)), /Bo Staff \(to the Slack workspace too\)/);
+  });
+
+  it('with the admin token, tells what Slack said of the person, and keeps the rest', async () => {
+    const e = { ...env(), SLACK_ADMIN_TOKEN: 'xoxp-admin-made-up' };
+    e.DB.sqlite.prepare("UPDATE channels SET group_id = 'T1' WHERE channel_id = 'C1'").run();
+    const nope = await inviteMentioned(e, T, [{ id: 'U2' }], {
+      fetch: slack({ U2: 'org_user_not_in_team' }, { U2: 'user_cannot_be_added_to_workspace' }).fetch,
+    });
+    assert.deepEqual(nope.refused.map((p) => p.error), ['user_cannot_be_added_to_workspace']);
+    // The token without the scope: Slack's first answer stands.
+    const scope = await inviteMentioned(e, T, [{ id: 'U2' }], {
+      fetch: slack({ U2: 'org_user_not_in_team' }, { U2: 'missing_scope' }).fetch,
+    });
+    assert.deepEqual(scope.refused.map((p) => p.error), ['org_user_not_in_team']);
+  });
+
+  it('without the admin token or the workspace, asks nobody to add anyone to it', async () => {
+    const e = env();
+    const s = slack({ U2: 'org_user_not_in_team' });
+    const res = await inviteMentioned(e, T, [{ id: 'U2' }], { fetch: s.fetch });
+    assert.deepEqual(res.refused.map((p) => p.error), ['org_user_not_in_team']);
+    // A channel of the whole org (or not looked up yet) has no workspace to add them to.
+    const t = slack({ U2: 'org_user_not_in_team' });
+    await inviteMentioned({ ...e, SLACK_ADMIN_TOKEN: 'xoxp-admin-made-up' }, T, [{ id: 'U2' }], { fetch: t.fetch });
+    assert.deepEqual([...s.calls, ...t.calls].filter((c) => c.u.endsWith('/admin.users.assign')), []);
   });
 
   it('writes a note for agents and MCP clients', () => {
