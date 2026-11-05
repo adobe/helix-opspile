@@ -838,10 +838,22 @@ const FACETS = [
 // kept for the other.
 const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer' || f.id === 'platform');
 const personal = () => state.sort === 'personal';
+/*
+ * The personal view is simple unless you turn the expert view on (the user menu, the `expert`
+ * setting): the expert view is the personal view as it was, with every card and each thread's
+ * status, people and reactions. The simple one filters by customer only (SIMPLE_FACETS), and
+ * `main.simple` is set while it is on screen (see syncRail).
+ */
+const expertOn = () => state.settings?.expert === true;
+const simple = () => personal() && !expertOn();
+const SIMPLE_FACETS = FACETS.filter((f) => f.id === 'customer');
 /** Which inbox is on screen (or `data` is of): a team's slug, or `~personal`. */
 const scopeKey = () => (personal() ? '~personal' : state.team);
 const scopeOf = (data) => (data.personal ? '~personal' : data.team);
-const viewFacets = () => (personal() ? PERSONAL_FACETS : FACETS);
+const viewFacets = () => {
+  if (!personal()) return FACETS;
+  return simple() ? SIMPLE_FACETS : PERSONAL_FACETS;
+};
 const single = (id) => personal() && id === 'customer';
 /** Into the personal view: one customer stays picked, the open thread's if it is one of them. */
 function onePick() {
@@ -4809,7 +4821,7 @@ async function saveSettings(patch) {
     }
   }
   state.settings = next;
-  const shown = () => { renderNotify(); renderTraces(); renderThreads(); };
+  const shown = () => { renderNotify(); renderTraces(); renderExpert(); render(); };
   shown(); syncSockets(); tracesChanged(before);
   const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
   if (res.ok) { state.settings = res.data; shown(); return true; }
@@ -4871,6 +4883,16 @@ function wireTraces() {
   // The open thread's channel, as the menu opens.
   $('menu').addEventListener('beforetoggle', (e) => { if (e.newState === 'open') renderTraces(); });
   renderTraces();
+}
+
+/** The user menu's switch between the simple personal view and the expert view. */
+function renderExpert() {
+  $('expertBox').hidden = Boolean(state.as) || !state.settings;
+  $('expertView').setAttribute('aria-checked', String(expertOn()));
+}
+function wireExpert() {
+  $('expertView').onclick = () => saveSettings({ expert: !expertOn() });
+  renderExpert();
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
@@ -5346,7 +5368,9 @@ let lastPointer = 'mouse';
 function syncRail() {
   const main = document.querySelector('main');
   const force = document.documentElement.dataset.rail;
-  const on = WIDE.matches && (force ? force === 'on' : RAIL_BAND.matches);
+  // The simple personal view has no rail: what it filters by is short enough to show whole.
+  const on = !simple() && WIDE.matches && (force ? force === 'on' : RAIL_BAND.matches);
+  main.classList.toggle('simple', simple());
   main.classList.toggle('rail', on);
   if (!on) main.classList.remove('railopen');
 }
@@ -5686,6 +5710,7 @@ async function start() {
       $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
       await loadWho();
       renderNotify();
+      renderExpert();
       toUrl();
       await loadInbox();
       connect();
@@ -5704,6 +5729,7 @@ async function start() {
   }
   wireNotify();
   wireTraces();
+  wireExpert();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);

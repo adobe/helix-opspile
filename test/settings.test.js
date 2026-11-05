@@ -35,7 +35,7 @@ describe('settings', () => {
   it('notifies of mentions and my threads by default, with no bells, and shows the agent\'s thinking', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
     assert.deepEqual((await call(DB, 'GET')).body, {
-      mentions: true, threads: true, bells: [], traces: true, channelTraces: {},
+      mentions: true, threads: true, bells: [], traces: true, channelTraces: {}, expert: false,
     });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
@@ -56,12 +56,17 @@ describe('settings', () => {
       ],
       traces: true,
       channelTraces: {},
+      expert: false,
     });
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
     assert.deepEqual((await call(DB, 'GET')).body, r.body);
     r = await call(DB, 'PUT', { threads: false });
     assert.deepEqual([r.body.mentions, r.body.threads, r.body.bells.length], [false, false, 2]);
+    // The expert view of the personal view: off until turned on, a switch.
+    r = await call(DB, 'PUT', { expert: true });
+    assert.deepEqual([r.body.expert, r.body.threads], [true, false]);
+    assert.equal((await call(DB, 'PUT', { expert: 'yes' })).status, 400);
   });
 
   it('turns my threads on for those whose settings were stored before it existed', () => {
