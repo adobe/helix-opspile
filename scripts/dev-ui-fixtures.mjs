@@ -767,7 +767,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['priya', 390, 'Works for us, I updated the invite.'],
     ],
     label: {
-      kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['golive'],
+      kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['project'],
     },
   });
 
@@ -870,7 +870,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       next_actor: 'us',
       urgency: 1.6,
       resolved_p: 0.2,
-      topics: ['cdn', 'seo', 'publishing', 'performance', 'golive', 'authoring', 'integrations', 'auth'],
+      topics: ['cdn', 'seo', 'publishing', 'performance', 'project', 'authoring', 'urls', 'auth'],
     },
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });

@@ -986,6 +986,7 @@ export const TOOLS = [
         tech: { type: 'string', description: 'Id: lower case letters, digits and _, such as akamai' },
         name: { type: 'string', description: 'What the inbox shows' },
         description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
+        product: { type: 'string', description: 'The product it is part of: an Adobe product by its name on business.adobe.com/products (e.g. "Experience Manager Sites"), or a category for other companies\' (e.g. "CDN")' },
         enabled: { type: 'boolean' },
       },
       required: ['team', 'tech'],

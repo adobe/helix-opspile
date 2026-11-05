@@ -38,52 +38,105 @@ export const MAX_QUESTIONS = 24;
 /**
  * What a thread is about, across kinds: an incident and a question can both be about the CDN.
  * Each is one Clef yes/no question in the labeling call; a thread keeps those at or above
- * TOPIC_MIN (labels.topics). `name` is what the inbox shows.
+ * TOPIC_MIN (labels.topics). `name` is what the inbox shows. No product names: the tech stack
+ * says which products a thread is about. Found with the topic map (src/topicmap.js).
  */
 export const TOPICS = {
   authoring: {
-    name: 'Authoring',
-    what: 'authoring content: Universal Editor, Document Authoring, blocks, components or templates',
+    name: 'Authoring and content',
+    what: 'authoring and content: how authors create and edit pages in the editors and authoring'
+      + ' tools (visual editors, documents, spreadsheets, forms), content models, fields and'
+      + ' components, reusable content such as fragments and live copies, or rolling content out'
+      + ' to locales and translating it, not access to them',
   },
   auth: {
     name: 'Sign-in and permissions',
-    what: 'signing in or permissions: login, SSO, IMS, tokens, or an access-denied or unauthorized error',
-  },
-  commerce: {
-    name: 'Commerce',
-    what: 'commerce: products, catalogs, product or listing pages, carts, checkout, or product feeds',
+    what: 'signing in or permissions: login, single sign-on, tokens, API keys or credentials,'
+      + ' roles, or an access-denied or unauthorized error',
   },
   project: {
-    name: 'Project status',
-    what: 'the status of a project: a proof of concept, a plan, next steps, progress or a review',
-  },
-  golive: {
-    name: 'Go-live and migration',
-    what: 'a go-live, launch, cutover or migration to a new site or platform',
+    name: 'Project plan and go-live',
+    what: 'a migration or launch project as a whole: moving a site, pages or domains to a new'
+      + ' platform, a go-live, launch or cutover and its date, a proof of concept, onboarding, or'
+      + ' the project\'s plan, status and next steps, not a single technical question within it',
   },
   cdn: {
-    name: 'CDN and caching',
-    what: 'the CDN, caching, purging, domains, DNS or certificates',
+    name: 'Caching and delivery',
+    what: 'caching and delivery: purging, cache rules and lifetimes, stale content in a cache,'
+      + ' push invalidation, origin routing, or how the CDN in front of the site is set up',
+  },
+  domains: {
+    name: 'Domains and certificates',
+    what: 'domains, DNS, delegation or TLS certificates',
   },
   performance: {
     name: 'Performance',
-    what: 'page performance: Core Web Vitals, Lighthouse, LCP, CLS, INP or loading speed',
+    what: 'page performance: Core Web Vitals, LCP, CLS, INP, loading speed, performance reports or'
+      + ' scores, or preloading and optimizing what loads first',
   },
   publishing: {
     name: 'Preview and publishing',
-    what: 'previewing, publishing or unpublishing content, or content that does not sync or update',
+    what: 'previewing, publishing or unpublishing content, content (not code) that does not update'
+      + ' after publishing, or content overwritten or published by mistake',
   },
   seo: {
     name: 'SEO',
-    what: 'SEO: redirects, sitemaps, robots.txt, indexing, canonical URLs or structured data',
+    what: 'SEO: sitemaps, robots.txt, indexing, canonical URLs, structured data, or how search'
+      + ' engines or AI assistants show or classify pages',
   },
-  integrations: {
-    name: 'Integrations',
-    what: 'an integration with another system: analytics, tag managers, personalization, consent,'
-      + ' translation, search, or a third-party API',
+  urls: {
+    name: 'URLs and redirects',
+    what: 'URLs: redirects, aliases, vanity or legacy URLs, links between pages, or pages that'
+      + ' return 404',
+  },
+  code: {
+    name: 'Code and deployment',
+    what: 'code and deployments: the Git repository, code sync, branches, builds, or code changes'
+      + ' that do not show on the site',
+  },
+  frontend: {
+    name: 'Blocks and front-end code',
+    what: 'the site\'s front-end code: how blocks are built, styled, laid out or rendered, the'
+      + ' header, footer or navigation, server-side rendering, or the JavaScript, CSS, fonts and'
+      + ' icons in the repository',
+  },
+  errors: {
+    name: 'Errors and traffic',
+    what: 'errors and load: 5xx responses, timeouts, outages, error messages from the platform, or'
+      + ' unusual or excessive traffic or load, not a sign-in or permission error',
+  },
+  limits: {
+    name: 'Limits and quotas',
+    what: 'a product limit: a size, length, count or rate limit or quota, or a request to raise'
+      + ' one',
+  },
+  security: {
+    name: 'Security and compliance',
+    what: 'security and compliance: protecting a site or origin, secrets and keys, allowlisting'
+      + ' IPs or redirect URIs, content security policy, vulnerabilities, privacy, or compliance'
+      + ' documents',
+  },
+  roadmap: {
+    name: 'Roadmap and feedback',
+    what: 'a product\'s roadmap or feedback on it: a feature that is not generally available yet'
+      + ' (beta, early access, an experiment or a pilot), when a feature ships or is enabled, a'
+      + ' feature request or suggestion, or feedback on how a product or tool works',
   },
 };
-export const TOPIC_MIN = 0.8;
+/**
+ * A thread keeps the topics Clef gives at least this, one cut for every topic: the best on 225
+ * threads labeled by hand (macro F1 0.81, the same in 5-fold cross-validation; at 0.8 it was
+ * 0.56, with a topic on 41% of the threads that have one). Clef's answers move a little with the
+ * other questions of a call: the topics were measured asked with QUESTIONS only, in this order,
+ * as labelThread asks them. Measure again when QUESTIONS or the topics change; the tech stack is
+ * asked in calls of its own and can change freely.
+ */
+export const TOPIC_MIN = 0.55;
+/**
+ * Topics no longer asked, for the labels from before: the topic that took one over, or null for
+ * one that is a product, which the tech stack says now.
+ */
+const RETIRED_TOPICS = { golive: 'project', commerce: null, integrations: null };
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
@@ -140,16 +193,20 @@ const techQuestions = (tech) => Object.fromEntries(tech.map((t) => [`tech.${t.te
 }]));
 
 /**
- * Clef on `state`, `questions` asked in calls of at most MAX_QUESTIONS at the same time: the
- * answers of them all, as one answer.
+ * Clef on `state`: each group of questions asked in calls of its own, of at most MAX_QUESTIONS,
+ * all at the same time; the answers of them all, as one answer. A group keeps the questions it is
+ * asked with whatever the other groups have (Clef's answers move a little with the other
+ * questions of a call).
  */
-export async function askClef(env, state, questions) {
-  const entries = Object.entries(questions);
+export async function askClef(env, state, ...groups) {
   const calls = [];
-  for (let i = 0; i < entries.length; i += MAX_QUESTIONS) {
-    calls.push(env.AI.run(CLEF, {
-      model: 'clef', state, questions: Object.fromEntries(entries.slice(i, i + MAX_QUESTIONS)),
-    }));
+  for (const questions of groups) {
+    const entries = Object.entries(questions);
+    for (let i = 0; i < entries.length; i += MAX_QUESTIONS) {
+      calls.push(env.AI.run(CLEF, {
+        model: 'clef', state, questions: Object.fromEntries(entries.slice(i, i + MAX_QUESTIONS)),
+      }));
+    }
   }
   const all = await Promise.all(calls);
   return {
@@ -183,8 +240,12 @@ export function topicList(stored) {
   } catch {
     parsed = null;
   }
-  return parsed && typeof parsed === 'object'
-    ? Object.entries(parsed).sort((x, y) => y[1] - x[1]).map(([id]) => id) : [];
+  if (!parsed || typeof parsed !== 'object') {
+    return [];
+  }
+  const ids = Object.entries(parsed).sort((x, y) => y[1] - x[1])
+    .map(([id]) => (id in RETIRED_TOPICS ? RETIRED_TOPICS[id] : id)).filter(Boolean);
+  return [...new Set(ids)];
 }
 
 /** The names the inbox shows for topic ids. */
@@ -196,12 +257,33 @@ export const vocab = async (env, team = null) => ({
   tech: await techNames(env, team), topics: topicNames(),
 });
 
+/**
+ * Clairic's `products` field: the wording of the product census (docs/ARCHITECTURE.md, "Labels
+ * and facts"), the fewest stray words of five at nearly the best recall. Clairic lists nearly
+ * every name in the state, the header's and the authors' too, so productFacts reads its spans.
+ */
+export const PRODUCTS_INSTRUCTIONS = 'Names of software products, cloud services, platforms and'
+  + ' developer tools that the customer uses or asks about, for example AEM Sites, Document'
+  + ' Authoring, Cloudflare, Algolia or GitHub. Not the names of people, customers or the channel,'
+  + ' and not generic words such as API, CDN, website or page.';
+/** At most this many products per thread, each at most MAX_PRODUCT characters. */
+export const MAX_PRODUCTS = 12;
+const MAX_PRODUCT = 60;
+
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
   affected_url: { type: 'text', instructions: 'URL of the affected page, site or environment' },
   error: { type: 'text', instructions: 'An error message, status code or failing behaviour quoted in the thread' },
   deadline: { type: 'date', instructions: 'Date by which the customer needs this answered or done' },
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
+  // What the thread is about, by name: the tech stack's vocabulary is a list someone wrote, and
+  // the Topics page (src/topicmap.js) shows the names it does not have yet. One `product` fact
+  // per name.
+  products: {
+    type: 'list',
+    items: 'text',
+    instructions: PRODUCTS_INSTRUCTIONS,
+  },
 };
 
 function who(m) {
@@ -299,14 +381,58 @@ async function threadReactions(env, key) {
   return { by, latest };
 }
 
-/** Clairic answers worth keeping: non-null, above the confidence threshold. */
+/**
+ * Clairic answers worth keeping: non-null, above the confidence threshold. Not the products,
+ * whose list has one confidence that says nothing (it shrinks as the list grows): productFacts.
+ */
 export function clairicFacts(answers) {
   const facts = [];
   for (const [field, a] of Object.entries(answers || {})) {
     const threshold = FIELD_CONFIDENCE[field] ?? MIN_CONFIDENCE;
-    if (a && a.value !== null && a.value !== undefined && a.value !== ''
-      && (a.confidence === undefined || a.confidence >= threshold)) {
+    if (field !== 'products' && a && a.value !== null && a.value !== undefined && a.value !== ''
+      && !Array.isArray(a.value) && (a.confidence === undefined || a.confidence >= threshold)) {
       facts.push({ field, value: String(a.value), confidence: a.confidence ?? null });
+    }
+  }
+  return facts;
+}
+
+const PRODUCT_TRIM = /^[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+|[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+$/g;
+/** An author line of the state: `[time] Name (Adobe staff):`, as stateOf writes it. */
+const AUTHOR_LINE = /^\[[^\]\n]+\] ([^\n]*?) \((?:Adobe staff|customer[^)]*|[a-z]+)\):$/gm;
+
+/**
+ * The products Clairic named in a thread (its `products` list), as `product` facts: the names
+ * its spans point at in the messages, not in the header (the channel, the platform, the
+ * customer) or an author line (people and bots), trimmed, without the names of the thread's
+ * people and its customer, those of at least three characters with a letter, each once, at most
+ * MAX_PRODUCTS. Whether one is the tech stack's is for the Topics page to say (src/topicmap.js).
+ */
+export function productFacts(answer, state, thread = {}) {
+  const text = String(state || '');
+  const header = Math.max(0, text.indexOf('\n\n'));
+  const authors = [...text.matchAll(AUTHOR_LINE)];
+  const inAuthor = (at) => authors.some((m) => at >= m.index && at < m.index + m[0].length);
+  const names = new Set(authors.flatMap((m) => [m[1], ...m[1].split(/\s+/)])
+    .map((n) => n.toLowerCase()).filter((n) => n.length > 2));
+  const org = String(thread.org || '').toLowerCase();
+  [org, ...org.split(/[-_.]/)].filter((w) => w.length > 3).forEach((w) => names.add(w));
+  const spans = Array.isArray(answer?.spans) && answer.spans.length ? answer.spans : null;
+  let items = Array.isArray(answer?.value) ? answer.value : [];
+  if (spans) {
+    items = spans.filter(([at]) => at >= header && !inAuthor(at))
+      .map(([at, end]) => text.slice(at, end));
+  }
+  const seen = new Set();
+  const facts = [];
+  for (const item of items) {
+    const value = String(item ?? '').replace(/\s+/g, ' ').replace(PRODUCT_TRIM, '')
+      .slice(0, MAX_PRODUCT);
+    const key = value.toLowerCase();
+    if (value.length >= 3 && /[a-z]/i.test(value) && !value.includes('@') && !names.has(key)
+      && !seen.has(key) && facts.length < MAX_PRODUCTS) {
+      seen.add(key);
+      facts.push({ field: 'product', value, confidence: null });
     }
   }
   return facts;
@@ -496,7 +622,8 @@ export async function labelThread(env, key, now = new Date()) {
 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS, ...techQuestions(tech) }),
+    // The topics on their own, so the tech stack's entries do not move their answers.
+    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS }, techQuestions(tech)),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -536,7 +663,8 @@ export async function labelThread(env, key, now = new Date()) {
     )
     .run();
   await recordTech(env, thread, tech, a, found.tech);
-  const loose = clairicFacts(clairic.answers);
+  const loose = [...clairicFacts(clairic.answers),
+    ...productFacts(clairic.answers?.products, state, thread)];
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
     result: 'labeled',

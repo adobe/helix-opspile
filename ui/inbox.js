@@ -1133,6 +1133,7 @@ const FACT_LABEL = {
   url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline',
   go_live: 'Go-live', affected_url: 'Affected URL', admin_api: 'Admin API', aemcs_env: 'AEM environment', doc: 'Docs', tool: 'Tool',
   config_file: 'Config file', http_status: 'Status', header: 'Header', case: 'Support case',
+  product: 'Product',
 };
 /** A result's third line: the message that matched, else the fact, else why it matched. */
 function hitLine(hit) {
