@@ -1919,3 +1919,49 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 @media (hover: none) and (pointer: coarse) {
   .spectrum .find input, .spectrum .composer textarea { font-size: var(--spectrum-font-size-100); }
 }
+
+/* ==== The simple personal view =================================================================
+   (`main.simple`, see `simple` in ui/inbox.js.) No filter column: the customers are chips over
+   the list, and each thread is one line. Its one mark is a tint: a thread that mentions you in
+   a message you have not read is tinted red, and so is its customer's chip, the same tint in
+   both places. No counts, no badges; unread is bold. */
+main.simple { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), 34%) 1fr; }
+main.simple #filters, main.simple #threads .count .filt { display: none !important; }
+main.simple #threads { border-left: 0; }
+#threads .count > .chips-box { flex: 1 1 100%; order: 3; min-width: 0; }
+#threads .count > .chips-box:empty { display: none; }
+.chips { display: flex; gap: var(--spectrum-spacing-75); overflow-x: auto; scrollbar-width: none; padding-top: var(--spectrum-spacing-100); }
+.chips::-webkit-scrollbar { display: none; }
+.chips .chip { flex: none; cursor: pointer; white-space: nowrap; }
+main.simple .t { --row-h: var(--spectrum-spacing-700); grid-template-rows: 1fr; padding-top: 0; align-items: center; }
+main.simple .t .l2 { display: none; }
+main.simple .t.hit { --row-h: var(--spectrum-spacing-800); height: var(--row-h); grid-template-rows: auto auto; align-content: center; row-gap: var(--spectrum-spacing-75); contain-intrinsic-size: auto var(--row-h); }
+main.simple .t .l3 { padding-left: 0; }
+/* Customers in a column of their own, so the titles line up. */
+main.simple .t .cust { flex: none; width: calc(var(--spectrum-spacing-100) * 7); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1099px) { main.simple { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 37 + var(--spectrum-spacing-75)), 42%) minmax(0, 1fr); } }
+@media (max-width: 699px) { main.simple { grid-template-columns: 100%; } }
+/* Its look: the chips are quiet ActionButtons, the picked one outlined; the tint is S2's
+   negative subtle background, on a chip and on a row. */
+.spectrum .chips .chip {
+  height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: 0;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  background: var(--spectrum-gray-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  transition: background-color var(--s2-ease);
+}
+.spectrum .chips .chip:hover { background: var(--spectrum-gray-200); }
+.spectrum .chips .chip.new { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .chips .chip[aria-pressed="true"] { box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--spectrum-gray-900); }
+.spectrum .chips .chip.you { background: var(--spectrum-negative-subtle-background-color-default); color: var(--spectrum-negative-content-color-default); }
+.spectrum main.simple .t.you:not(.sel) { --row-bg: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum main.simple .t .cust { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum main.simple .t.unread .cust { font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum main.simple .t.you .cust { color: var(--spectrum-negative-content-color-default); }
+.spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
+.spectrum main.simple .t .drafted { flex: none; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }

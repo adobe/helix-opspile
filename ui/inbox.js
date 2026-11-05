@@ -876,7 +876,7 @@ function valuesOf(f, t) {
 }
 // Unread only keeps every thread the list has shown since it was opened (see syncList), so a
 // row does not vanish when you, or you elsewhere, read it.
-const passes = (t, except) => (!state.unread || keptUnread(t))
+const passes = (t, except) => (!state.unread || simple() || keptUnread(t))
   && (!personal() || t.kind !== 'alert')
   && viewFacets().every((f) => f.id === except || facetPasses(f, t));
 /**
@@ -1068,6 +1068,7 @@ const oneCustomer = () => state.sel.customer?.size === 1;
  * room before the reactions, the latest reply, as Messages does.
  */
 function row(t, hit = null) {
+  if (simple()) return simpleRow(t, hit);
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -1094,6 +1095,57 @@ function row(t, hit = null) {
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+/*
+ * The simple personal view's one mark is a tint: a thread that mentions you, in a message you
+ * have not read, is tinted red, and so is its customer's chip above the list, the same tint in
+ * both places. There are no counts and no badges. Unread is bold, in a row and on a chip.
+ */
+const youTint = (n) => (n ? ' you' : '');
+const youSaid = (n) => (n ? ` aria-description="${n === 1 ? 'a message mentions you' : `${n} messages mention you`}"` : '');
+/** A thread's unread mentions of you. */
+const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * A thread's row in the simple personal view, one line: its customer (unless one is picked),
+ * its title and how long ago. Bold while unread, tinted while it mentions you. No status,
+ * people, counts, previews or reactions: the expert view has them.
+ */
+function simpleRow(t, hit = null) {
+  const n = youCount(t);
+  const cust = oneCustomer() ? '' : `<span class="cust">${esc(orgName(t))}</span>`;
+  const draft = t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">Draft</span>` : '';
+  return `${rowOpen(t, hit, ` simple${youTint(n)}`)}
+    <div class="l1"${youSaid(n)}>${cust}<span class="title">${titleHtml(t, hit)}</span>${draft}
+      <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div><div class="l2"></div>${hit ? hitLine(hit) : ''}</div>`;
+}
+/**
+ * The customers above the simple personal view's list, a chip each, latest activity first:
+ * "All" first, then each customer, bold while it has unread threads, tinted while one of them
+ * mentions you. One is picked at a time.
+ */
+function customerChips() {
+  if (!simple()) return '';
+  const by = new Map();
+  for (const t of listed().filter((x) => passes(x, 'customer'))) {
+    const c = by.get(t.org) || { at: '', unread: false, you: 0 };
+    if (activityOf(t) > c.at) c.at = activityOf(t);
+    c.unread ||= Boolean(t.unread);
+    c.you += youCount(t);
+    by.set(t.org, c);
+  }
+  const on = state.sel.customer || new Set();
+  for (const v of on) if (!by.has(v)) by.set(v, { at: '', unread: false, you: 0 });
+  const chip = (v, label, c, picked) => `<button type="button" class="chip${c.unread ? ' new' : ''}${youTint(c.you)}" data-chip="${esc(v)}" aria-pressed="${picked}"${youSaid(c.you)}>${esc(label)}</button>`;
+  const all = [...by.values()].reduce((a, c) => ({ unread: a.unread || c.unread, you: a.you + c.you }), { unread: false, you: 0 });
+  return `<div class="chips" role="group" aria-label="Customers">${chip('', 'All', all, !on.size)}${[...by]
+    .sort((a, b) => b[1].at.localeCompare(a[1].at)).map(([v, c]) => chip(v, customerName(v), c, on.has(v))).join('')}</div>`;
+}
+/** The chips, written when they change. */
+function placeChips(box) {
+  const el = box.querySelector('.chips-box');
+  const html = customerChips();
+  if (el.__html !== html) { el.innerHTML = html; el.__html = html; }
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -1439,7 +1491,7 @@ const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="c
 /** The list's heading, made once: the search box (kept, as you type in it), then the controls. */
 function listHead(box) {
   if (box.querySelector('.rows')) return;
-  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
+  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div><div class="chips-box"></div></div><div class="rows"></div>`;
   const input = $('q');
   input.value = state.search.q;
   input.addEventListener('input', () => searchSoon(input.value));
@@ -1495,7 +1547,7 @@ function endTeam(view) {
 }
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
 function endNote() {
-  if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
+  if (!personal() || simple() || !state.unread || searching() || state.data?.page?.next) return '';
   if (viewFacets().some((f) => filterCount(f.id))) return '';
   return endHtml(state.data?.elsewhere);
 }
@@ -1505,6 +1557,7 @@ function threadRows() {
   if (!state.data) return;
   listHead(box);
   syncList();
+  placeChips(box);
   if (searching()) { searchRows(box); return; }
   const shown = placeRows(viewSort(state.data.threads.filter(onList)));
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
@@ -1518,7 +1571,9 @@ function threadRows() {
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
   // Start a thread (not while viewing as someone: that is read-only).
   const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
-  const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
+  // The simple personal view keeps a new thread and the views: its chips are its filters.
+  const count = simple() ? `<span class="lead">${post}</span><span class="sort">${sorter}</span>`
+    : `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -5542,6 +5597,12 @@ async function start() {
       endTeam(view);
       switchView(view.dataset.view || null);
       return;
+    }
+    const chip = e.target.closest('[data-chip]');
+    if (chip) {
+      if (chip.dataset.chip) toggleFilter('customer', chip.dataset.chip, false);
+      else delete state.sel.customer;
+      render(); toUrl(); return;
     }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
