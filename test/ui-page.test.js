@@ -331,7 +331,7 @@ describe('inbox page', () => {
       passes: () => false,
       viewFacets: () => [],
       filterCount: () => 0,
-      SLIDERS: '',
+      filtButton: () => '',
       esc: (s) => s,
       viewSwitch: () => '',
       toNode: () => ({}),
