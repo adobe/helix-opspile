@@ -775,7 +775,10 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
 person, topic, tag and customer, as big as its threads, a line between two that share threads,
 thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
-customer; the topics are the hubs). The filters are a team, the kinds shown and the threads a
+customer; the topics are the hubs). One kind shown alone is joined to itself: two people or two
+tags by the threads they share, and two topics or two customers, which never share a thread, by
+the people they share (as many people as the threads a line needs, each with that many threads
+in both). The filters are a team, the kinds shown and the threads a
 line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
 without a pick, the topics are listed with the share of their threads Clef tagged at all, the
 fewest first on a click: the topics Clef rarely tags are what its topic questions miss.

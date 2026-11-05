@@ -16,8 +16,9 @@
  * force-directed graph with the Adobe people who posted in them, Clef's topics on them (the
  * tags, as the inbox's Topic filter has them) and the customers they are for. A line joins two
  * that share threads, thicker the more; the topics are the hubs, so with them shown a line joins
- * a topic to the others, and a person to a customer, and without them any two kinds. A node is as
- * big as its threads.
+ * a topic to the others, and a person to a customer, and without them any two kinds. One kind
+ * alone is joined to itself: people and tags by the threads they share, topics and customers (one
+ * to a thread) by the people they share. A node is as big as its threads.
  *
  * Pointing at a node shows what it is joined to; a click picks it, and the panel beside the graph
  * says what it is: a topic's theme, its people, customers and tags, its threads (each a link into
@@ -122,9 +123,14 @@ function graphOf() {
     return n;
   };
   const hub = shown.includes('topic');
-  const joined = (a, b) => a !== b && (!hub || a === 'topic' || b === 'topic'
-    || (a === 'person' && b === 'org') || (a === 'org' && b === 'person'));
+  // One kind alone: two of it are joined by the threads they share. A thread has one topic and
+  // one customer, so those are joined by the people they share instead (below).
+  const alone = shown.length === 1;
+  const joined = (a, b) => (a === b ? alone : (!hub || a === 'topic' || b === 'topic'
+    || (a === 'person' && b === 'org') || (a === 'org' && b === 'person')));
   const weights = new Map();
+  // Threads per person and node, for joining topics or customers by their people.
+  const through = alone && (shown[0] === 'topic' || shown[0] === 'org') ? new Map() : null;
   for (const t of threads) {
     const on = [node('topic', t.topic, m.topics[t.topic]?.label || `Topic ${t.topic + 1}`)];
     for (const p of Object.keys(t.staff || {})) on.push(node('person', p, m.people[p] || `#${p}`));
@@ -132,6 +138,13 @@ function graphOf() {
     if (isCustomer(t.org)) on.push(node('org', t.org, orgName(t.org)));
     for (const n of on) n.threads.push(t);
     const vis = on.filter((n) => shown.includes(n.type));
+    if (through) {
+      for (const p of Object.keys(t.staff || {})) {
+        if (!through.has(p)) through.set(p, new Map());
+        const counts = through.get(p);
+        for (const n of vis) counts.set(n.id, (counts.get(n.id) || 0) + 1);
+      }
+    }
     for (let i = 0; i < vis.length; i += 1) {
       for (let j = i + 1; j < vis.length; j += 1) {
         if (joined(vis[i].type, vis[j].type)) {
@@ -145,6 +158,25 @@ function graphOf() {
     const [a, b] = key.split('|');
     return { a: all.get(a), b: all.get(b), w };
   });
+  if (through) {
+    // Two topics (or customers) are joined by the people with `min` threads in both, the lines
+    // there would be with the people shown, and only by `min` such people: most people answer
+    // in many topics, and one of them in common says little. The more people, the thicker.
+    const shared = new Map();
+    for (const counts of through.values()) {
+      const ids = [...counts].filter(([, n]) => n >= q.min).map(([id]) => id).sort();
+      for (let i = 0; i < ids.length; i += 1) {
+        for (let j = i + 1; j < ids.length; j += 1) {
+          const key = `${ids[i]}|${ids[j]}`;
+          shared.set(key, (shared.get(key) || 0) + 1);
+        }
+      }
+    }
+    for (const [key, w] of [...shared].filter(([, n]) => n >= q.min)) {
+      const [a, b] = key.split('|');
+      edges.push({ a: all.get(a), b: all.get(b), w });
+    }
+  }
   const neighbors = new Map();
   for (const e of edges) {
     if (!neighbors.has(e.a.id)) neighbors.set(e.a.id, new Set());
@@ -153,7 +185,7 @@ function graphOf() {
     neighbors.get(e.b.id).add(e.a.id);
   }
   const nodes = [...all.values()].filter((n) => shown.includes(n.type)
-    && (neighbors.has(n.id) || n.type === 'topic' || shown.length === 1));
+    && (neighbors.has(n.id) || n.type === 'topic'));
   // The people and customers with a name on the graph: those of the most threads.
   for (const type of ['person', 'org']) {
     nodes.filter((n) => n.type === type).sort((a, b) => b.threads.length - a.threads.length)
@@ -620,6 +652,10 @@ function renderBar() {
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
   $('min').innerHTML = MINS.map((n) => `<option value="${n}"${n === state.q.min ? ' selected' : ''}>${n}+</option>`).join('');
   $('min').disabled = !m;
+  const [only] = shownTypes();
+  $('min').title = shownTypes().length === 1 && (only === 'topic' || only === 'org')
+    ? `Join two ${TYPE[only].label.toLowerCase()} when this many people have this many threads in both`
+    : 'Draw a line between two only when this many threads have both';
   $('find').disabled = !m;
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(TYPE[n.type].one)}</option>`).join('') : '';
   const built = state.latest;
