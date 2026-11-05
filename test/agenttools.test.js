@@ -500,6 +500,10 @@ describe('the agent\'s switchable tools', () => {
       blocks: [{ type: 'markdown', text: '<@U2>, purges take up to 5 minutes.' }],
     }, { channel: 'C1', timestamp: '1792584000.000100', name: 'tada' }]);
     assert.deepEqual(posted, ['1792584999.000900']);
+    // A post that sent no draft is counted as the agent's own (src/draftevents.js).
+    assert.deepEqual(e.DB.rows('SELECT thread, draft, action, how, by_agent FROM draft_events'), [{
+      thread: SLACK, draft: '', action: 'posted', how: 'agent', by_agent: 1,
+    }]);
     assert.equal(ws.runs[0].options.cwd, '/workspace');
   });
 

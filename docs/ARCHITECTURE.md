@@ -1591,6 +1591,20 @@ hours cannot truncate the daily rows the totals come from. The same days, replac
 and up to three of the last seven before yesterday without hours yet; hours older than eight
 days are deleted.
 
+**The agents' drafts** (`src/draftevents.js`, `draft_events`, migration 0058). Every save, send
+and discard of a shared draft (`src/drafts.js`) is recorded with who did it, the entry's customer
+and team, and the draft it was about (its `created_at`, which stays through its versions). A draft
+remembers who saved its first version (`origin`) and the latest text that person saved
+(`origin_body`); a send says how it went out (as the person, as the opspile app, by the agent's
+`post_message`) and how much the text sent differs from that, by word (`changed`, 0 to 1). So an
+agent's draft a person sent is **accepted**: as it was (`changed` 0) or edited (in the reply box,
+or saved over by a colleague first). One a person discarded is **discarded**, one the agent
+discarded itself (`discard_draft`) **withdrawn**. An Undo saves the same text again: a save with no
+draft, by the person who discarded one with that text (its hash, never the text) in the minute
+before, deletes the discard's event and goes on as that draft, with its origin. The agent's
+`post_message` that used no draft up is recorded as `posted`. The report reads the events as they
+are (they are few), per customer and team; nothing is rolled up.
+
 **The report** (`src/cogs/report.js`). Flow costs what the period used; per message and per thread
 it is divided by the period's messages and new threads of what is selected. These estimates, and
 a month at this rate, count from the first whole day of the source that started last (each
@@ -1603,7 +1617,11 @@ filters apply, so a customer's cost includes its share. The chart has about as m
 whatever the period: by the hour for a week or less (from `cogs_hours`, while it has them, up to
 the current hour), by the day up to 45 days, by the week (from Monday, cut to the period) for
 longer; the totals and tables always come from the days. Where Cloudflare's analytics and the meter
-count the same metric on the same day, Cloudflare's count is used. Costs are at the margin: the
+count the same metric on the same day, Cloudflare's count is used. Per accepted draft (the flow
+over the agents' drafts a person sent) and per agent reply (over those and the agents' own posts)
+count from the first whole day of the drafts' events as well (`drafts.estimate`), so that a period
+before they were recorded does not divide by none; a service's per accepted draft is its own flow,
+so Bedrock's is what the agents' model cost per accepted draft. Costs are at the margin: the
 allowances of a plan are listed with the prices, not subtracted.
 
 ## People

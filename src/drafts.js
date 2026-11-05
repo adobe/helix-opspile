@@ -14,6 +14,9 @@ import { json } from './http.js';
 import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
+import {
+  AGENT_EMAIL, changeOf, recordDraftEvent, textHash, undoneDiscard,
+} from './draftevents.js';
 
 /**
  * Shared drafts: an inbox entry carries at most one unsent reply, which everyone in the teams
@@ -25,7 +28,7 @@ import { cleanSources, lookAt, sourcesOf } from './sources.js';
  */
 
 /** The person drafts by thread agents are saved as (src/agent/tools.js agentPerson). */
-export const AGENT_EMAIL = 'agent@opspile.invalid';
+export { AGENT_EMAIL };
 
 const MAX_TEXT = 8000;
 const MAX_MENTIONS = 20;
@@ -36,7 +39,7 @@ const PREVIEW = 140;
  * inbox has it (a shared channel's too), and every member thread.
  */
 export async function entryOf(env, key) {
-  const row = key && await env.DB.prepare(`SELECT thread, team, logical_thread, source, channel_id
+  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, channel_id
     FROM threads WHERE thread = ?`).bind(String(key)).first();
   if (!row) {
     return null;
@@ -46,6 +49,7 @@ export async function entryOf(env, key) {
     .bind(k, k).all();
   return {
     key: k,
+    org: row.org,
     team: row.team,
     // The channel, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
@@ -69,6 +73,8 @@ const shape = (r) => ({
   mentions: mentionsOf(r.mentions),
   sources: sourcesOf(r.sources),
   by: { id: r.person, name: r.name || null },
+  // Who saved its first version (src/draftevents.js).
+  origin: r.origin ?? null,
   created_at: r.created_at,
   updated_at: r.updated_at,
 });
@@ -119,6 +125,16 @@ function nextVersion(previous) {
   return now.toISOString();
 }
 
+/** The latest text the first author of `draft` saved (null when the draft is gone). */
+async function originBody(env, draft) {
+  if (!draft) {
+    return null;
+  }
+  const row = await env.DB.prepare('SELECT origin_body FROM drafts WHERE thread = ? AND updated_at = ?')
+    .bind(draft.thread, draft.updated_at).first();
+  return row ? row.origin_body : null;
+}
+
 /**
  * GET /api/draft?thread=…: the entry's draft, or null.
  */
@@ -166,28 +182,39 @@ export async function saveDraft(env, me, request, inTeam) {
   const version = nextVersion(current && current.updated_at);
   const picked = JSON.stringify(cleanMentions(mentions));
   const cited = JSON.stringify(given ? given.sources : (current?.sources || []));
+  // Undo of a discard saves the same text again: the draft goes on as the one it was.
+  const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
+  // Who saved the first version, and the latest text they saved: what is sent is compared with it.
+  const origin = undone?.origin ?? current?.origin ?? me.id;
+  const created = undone?.draft || current?.created_at || version;
   let changes;
   if (current && current.thread === e.key) {
     ({ meta: { changes } } = await env.DB.prepare(`UPDATE drafts SET body = ?, mentions = ?,
-        sources = ?, person = ?, updated_at = ? WHERE thread = ? AND updated_at = ?`)
-      .bind(body, picked, cited, me.id, version, e.key, current.updated_at).run());
+        sources = ?, person = ?, updated_at = ?,
+        origin_body = CASE WHEN origin = ? THEN ? ELSE origin_body END
+      WHERE thread = ? AND updated_at = ?`)
+      .bind(body, picked, cited, me.id, version, me.id, body, e.key, current.updated_at).run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
     // group's key.
+    const proposed = origin === me.id || undone ? body : await originBody(env, current);
     if (current) {
       await env.DB.prepare('DELETE FROM drafts WHERE thread = ? AND updated_at = ?')
         .bind(current.thread, current.updated_at).run();
     }
     ({ meta: { changes } } = await env.DB.prepare(`INSERT INTO drafts (thread, body, mentions,
-        sources, person, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        sources, person, created_at, updated_at, origin, origin_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (thread) DO NOTHING`)
-      .bind(e.key, body, picked, cited, me.id, (current && current.created_at) || version, version)
+      .bind(e.key, body, picked, cited, me.id, created, version, origin, proposed)
       .run());
   }
   if (!changes) {
     // Somebody else saved in between.
     return conflict(draftOf(await draftsFor(env, e.keys), e.keys) || current);
   }
+  await recordDraftEvent(env, e, {
+    action: 'saved', draft: created, version, person: me.id, origin,
+  });
   // At most one draft per entry.
   await env.DB.prepare(`DELETE FROM drafts WHERE thread IN (SELECT value FROM json_each(?))
     AND thread != ?`).bind(JSON.stringify(e.keys), e.key).run();
@@ -198,9 +225,11 @@ export async function saveDraft(env, me, request, inTeam) {
 
 /**
  * DELETE /api/draft `{ thread, base? }`: discards the entry's draft. With `base`, only that
- * version: a colleague's newer draft is kept (409). Sending a reply uses this too.
+ * version: a colleague's newer draft is kept (409). Sending a reply uses this too, with `sent`:
+ * `{ how, text }`, how it went out (`me`, `app`, `agent`) and what was sent, which records the
+ * draft as sent rather than discarded (src/draftevents.js).
  */
-export async function discardDraft(env, me, request, inTeam) {
+export async function discardDraft(env, me, request, inTeam, { sent = null } = {}) {
   const { thread: key, base = null } = request || {};
   const e = await entryOf(env, key);
   if (!e || !await inTeam(e.teams, e)) {
@@ -213,10 +242,21 @@ export async function discardDraft(env, me, request, inTeam) {
   if (base && current.updated_at !== base) {
     return conflict(current);
   }
+  const proposed = sent ? await originBody(env, current) : null;
   const { meta: { changes } } = await env.DB.prepare(`DELETE FROM drafts
     WHERE thread IN (SELECT value FROM json_each(?)) AND (? IS NULL OR updated_at = ?)`)
     .bind(JSON.stringify(e.keys), base, base).run();
   if (changes) {
+    await recordDraftEvent(env, e, {
+      action: sent ? 'sent' : 'discarded',
+      draft: current.created_at,
+      version: current.updated_at,
+      how: sent ? sent.how : null,
+      person: me.id,
+      origin: current.origin,
+      changed: sent ? changeOf(proposed ?? current.body, sent.text) : null,
+      hash: sent ? null : await textHash(current.body),
+    });
     await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   }
   return json({ ok: true, discarded: Boolean(changes), draft: current });

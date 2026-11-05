@@ -368,12 +368,17 @@ async function mentionsOf(env, me, key, text, names) {
   };
 }
 
-/** A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went. */
-async function useDraft(env, me, key, version) {
+/**
+ * A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went.
+ * `sent`: how it went out (`me`, `app`) and its text.
+ */
+async function useDraft(env, me, key, version, sent) {
   if (typeof version !== 'string' || !version) {
     return '';
   }
-  const res = await discardDraft(env, me, { thread: key, base: version }, mayWork(env, me));
+  const res = await discardDraft(env, me, { thread: key, base: version }, mayWork(env, me), {
+    sent,
+  });
   return res.status === 409 ? ' The shared draft changed since, so it was kept.'
     : ' The shared draft is used up.';
 }
@@ -431,7 +436,7 @@ async function postAsUser(env, me, args) {
   if (res.error) {
     return res;
   }
-  const used = await useDraft(env, me, w.key, args.draft);
+  const used = await useDraft(env, me, w.key, args.draft, { how: 'me', text: w.text });
   return {
     data: {
       ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,
@@ -458,7 +463,7 @@ async function postAsBot(env, me, args) {
   if (res.error) {
     return res;
   }
-  const used = await useDraft(env, me, w.key, args.draft);
+  const used = await useDraft(env, me, w.key, args.draft, { how: 'app', text: w.text });
   return {
     data: {
       ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,

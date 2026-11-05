@@ -15,8 +15,9 @@ import { createBashTool } from '@earendil-works/pi-durable/tools';
 import { Type } from 'typebox';
 import { platformName } from '../platforms.js';
 import {
-  AGENT_EMAIL, discardDraft, draftOf, draftsFor, saveDraft,
+  AGENT_EMAIL, discardDraft, draftOf, draftsFor, entryOf, saveDraft,
 } from '../drafts.js';
+import { recordDraftEvent } from '../draftevents.js';
 import { COMPUTER_CWD } from './computer.js';
 import { UPLOADS_DIR } from '../threadfiles.js';
 import {
@@ -739,10 +740,21 @@ export function agentToolsExtension(ctx, tools) {
           route: 'agent', action: 'post', platform: res.platform, team: t.team,
         }));
         let used = '';
+        const me = { id: await agentPerson(env) };
+        let sentDraft = false;
         if (args.draft) {
-          const me = { id: await agentPerson(env) };
-          const d = await discardDraft(env, me, { thread: t.key, base: args.draft }, () => true);
+          const d = await discardDraft(env, me, { thread: t.key, base: args.draft }, () => true, {
+            sent: { how: 'agent', text: args.text },
+          });
           used = d.status === 409 ? ' The draft changed since, so it was kept.' : ' The draft is used up.';
+          sentDraft = d.ok && (await d.json()).discarded;
+        }
+        // A post that used no draft up is counted on its own (src/draftevents.js).
+        if (!sentDraft) {
+          const e = await entryOf(env, t.key);
+          if (e) {
+            await recordDraftEvent(env, e, { action: 'posted', how: 'agent', person: me.id });
+          }
         }
         return text(`posted on ${platformName(res.platform)} (message ${res.id}${taggedNote(mentions)}).${invitedNote(res)}${used}`);
       },
