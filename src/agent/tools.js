@@ -65,6 +65,9 @@ const SOURCE = Type.Object({
 });
 const text = (t) => ({ output: [{ type: 'text', text: t }] });
 const fail = (t) => ({ output: [{ type: 'text', text: t }], isError: true });
+// Whom the `@Name`s of a reply or draft mention (src/post.js `writtenMentions`), for its answer:
+// an `@Name` that is not named there stays text, and nobody is notified.
+const taggedNote = (mentions) => `, tags ${mentions.map((m) => m.name).join(', ') || 'nobody'}`;
 
 /** A thread other than the agent's as it reads it; `place` says where the thread is. */
 async function otherThread(ctx, entry, place) {
@@ -511,8 +514,8 @@ export function opspileExtension(ctx) {
           if (!res.ok) {
             return fail(body.error || `failed (${res.status})`);
           }
-          const tagged = mentions.map((m) => m.name).join(', ');
-          return text(`saved (version ${body.draft.updated_at}${tagged ? `, tags ${tagged}` : ''})`);
+          const tagged = taggedNote(mentions);
+          return text(`saved (version ${body.draft.updated_at}${tagged})`);
         },
       }),
       defineTool({
@@ -556,6 +559,7 @@ const POSTING = `The team turned on post_message for this channel: you may post 
 - Do not answer Adobe staff who are handling the thread, and do not post when the last message is your own.
 - Your posts come back to you as new messages from the opspile app; never answer them, and never post the same thing twice.
 - When you post what the draft said, give its version (get_draft) as \`draft\`, so the draft is used up.
+- To mention someone, write @ and their name as the thread shows it. The answer says whom the post tags; anyone else you wrote with @ was not notified.
 - Say in your note for the team that you posted, and what.`;
 
 /** How the agent reacts, by platform: where it may post, it may react, but not on Teams. */
@@ -740,7 +744,7 @@ export function agentToolsExtension(ctx, tools) {
           const d = await discardDraft(env, me, { thread: t.key, base: args.draft }, () => true);
           used = d.status === 409 ? ' The draft changed since, so it was kept.' : ' The draft is used up.';
         }
-        return text(`posted on ${platformName(res.platform)} (message ${res.id}).${invitedNote(res)}${used}`);
+        return text(`posted on ${platformName(res.platform)} (message ${res.id}${taggedNote(mentions)}).${invitedNote(res)}${used}`);
       },
     }));
     list.push(defineTool({
