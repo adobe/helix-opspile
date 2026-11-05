@@ -17,8 +17,9 @@
  * tags, as the inbox's Topic filter has them), the products they are about (Clairic's, outlined
  * when no tech stack entry names them: the gaps) and the customers they are for. A line joins two
  * that share threads, thicker the more; the topics are the hubs, so with them shown a line joins
- * a topic to the others, and a person to a customer, and without them any two kinds. A node is as
- * big as its threads.
+ * a topic to the others, and a person to a customer, and without them any two kinds. One kind
+ * alone is joined to itself: people, tags and products by the threads they share, topics and
+ * customers (one to a thread) by the people they share. A node is as big as its threads.
  *
  * Pointing at a node shows what it is joined to; a click picks it, and the panel beside the graph
  * says what it is: a topic's theme, its people, customers and tags, its threads (each a link into
@@ -27,9 +28,10 @@
  * kinds shown, the threads a line needs) and the pick are the page's address; the header brings
  * it back as it was left. Rebuild clusters the threads again (POST /api/admin/topics).
  *
- * The layout is the page's own: d3-force's model (many-body repulsion, links as springs, a pull
- * to the centre, collision), in a loop of animation frames; it settles before it is first drawn,
- * and keeps where every node was when the filters change.
+ * The graph's data is ui/topicgraph.js (its global `TopicGraph`). The layout is the page's own:
+ * d3-force's model (many-body repulsion, links as springs, a pull to the centre, collision), in a
+ * loop of animation frames; it settles before it is first drawn, and keeps where every node was
+ * when the filters change.
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -100,90 +102,23 @@ const map = () => state.latest?.map;
 /** The map's products (maps from before them have none). */
 const products = () => map().products || {};
 /** A thread's product id as the graph has it: the product its entry is part of, or itself. */
-const productOf = (id) => (products()[id]?.product ? `group:${products()[id].product}` : id);
-/** The products the entries are part of, as products() has entries: `group:<name>` → `{ name, group }`. */
-function productGroups() {
-  const out = {};
-  for (const p of Object.values(products())) {
-    if (p.product) out[`group:${p.product}`] = { name: p.product, group: true };
-  }
-  return out;
-}
-const isCustomer = (slug) => slug && !slug.startsWith('_') && map().orgs[slug]?.type !== 'internal';
+const productOf = (id) => TopicGraph.productOf(map(), id);
+const isCustomer = (slug) => TopicGraph.isCustomer(map(), slug);
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
 
-/**
- * The nodes and lines for the filters: every person, topic, tag and customer of the team's
- * threads (`all`, for the panel), those of the kinds shown with a line (`nodes`; topics even
- * without one), the lines of at least `min` threads, and who is joined to whom.
- */
+/** The graph for the filters (ui/topicgraph.js), the people, customers and products of most
+ * threads named. */
 function graphOf() {
-  const m = map();
   const { q } = state;
-  const shown = shownTypes();
-  const threads = m.threads.filter((t) => !q.team || t.team === q.team);
-  const all = new Map();
-  const node = (type, key, label) => {
-    const id = `${type}:${key}`;
-    let n = all.get(id);
-    if (!n) {
-      n = {
-        id, type, key: String(key), label, threads: [],
-      };
-      all.set(id, n);
-    }
-    return n;
-  };
-  const hub = shown.includes('topic');
-  const joined = (a, b) => a !== b && (!hub || a === 'topic' || b === 'topic'
-    || (a === 'person' && b === 'org') || (a === 'org' && b === 'person'));
-  const weights = new Map();
-  for (const t of threads) {
-    const on = [node('topic', t.topic, m.topics[t.topic]?.label || `Topic ${t.topic + 1}`)];
-    for (const p of Object.keys(t.staff || {})) on.push(node('person', p, m.people[p] || `#${p}`));
-    for (const g of t.tags || []) on.push(node('tag', g, m.tags[g] || g));
-    // A tech stack entry as the product it is part of (Experience Manager Sites for Universal
-    // Editor, CDN for Akamai), its entries the product's features; a gap as itself.
-    for (const key of new Set((t.products || []).map(productOf))) {
-      const p = products()[key] || productGroups()[key];
-      const product = node('product', key, p?.name || key);
-      product.gap = !p?.tech && !p?.group;
-      on.push(product);
-    }
-    if (isCustomer(t.org)) on.push(node('org', t.org, orgName(t.org)));
-    for (const n of on) n.threads.push(t);
-    const vis = on.filter((n) => shown.includes(n.type));
-    for (let i = 0; i < vis.length; i += 1) {
-      for (let j = i + 1; j < vis.length; j += 1) {
-        if (joined(vis[i].type, vis[j].type)) {
-          const key = [vis[i].id, vis[j].id].sort().join('|');
-          weights.set(key, (weights.get(key) || 0) + 1);
-        }
-      }
-    }
-  }
-  const edges = [...weights].filter(([, w]) => w >= q.min).map(([key, w]) => {
-    const [a, b] = key.split('|');
-    return { a: all.get(a), b: all.get(b), w };
-  });
-  const neighbors = new Map();
-  for (const e of edges) {
-    if (!neighbors.has(e.a.id)) neighbors.set(e.a.id, new Set());
-    if (!neighbors.has(e.b.id)) neighbors.set(e.b.id, new Set());
-    neighbors.get(e.a.id).add(e.b.id);
-    neighbors.get(e.b.id).add(e.a.id);
-  }
-  const nodes = [...all.values()].filter((n) => shown.includes(n.type)
-    && (neighbors.has(n.id) || n.type === 'topic' || shown.length === 1));
+  const g = TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
+  const { nodes } = g;
   // The people and customers with a name on the graph: those of the most threads.
   for (const type of ['person', 'org', 'product']) {
     nodes.filter((n) => n.type === type).sort((a, b) => b.threads.length - a.threads.length)
       .slice(0, NAMED).forEach((n) => { n.named = true; });
   }
-  return {
-    all, nodes, edges, neighbors, threads,
-  };
+  return g;
 }
 
 // ---- the layout: d3-force's model -------------------------------------------------------
@@ -693,6 +628,10 @@ function renderBar() {
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
   $('min').innerHTML = MINS.map((n) => `<option value="${n}"${n === state.q.min ? ' selected' : ''}>${n}+</option>`).join('');
   $('min').disabled = !m;
+  const [only] = shownTypes();
+  $('min').title = shownTypes().length === 1 && (only === 'topic' || only === 'org')
+    ? `Join two ${TYPE[only].label.toLowerCase()} when this many people have this many threads in both`
+    : 'Draw a line between two only when this many threads have both';
   $('find').disabled = !m;
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(TYPE[n.type].one)}</option>`).join('') : '';
   const built = state.latest;
