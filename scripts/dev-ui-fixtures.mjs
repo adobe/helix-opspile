@@ -78,6 +78,11 @@ const MEMBERS = [
   {
     key: 'noor', name: 'Noor Haddad', login: 'nhaddad', email: 'nhaddad@example.com', staff: true,
   },
+  // In the Enterprise org but not in the channels' workspace: Slack will not let the bot add
+  // him (`org_user_not_in_team`), and the note says so until it is dismissed.
+  {
+    key: 'mateo', name: 'Mateo Ruiz', login: 'mruiz', email: 'mruiz@example.com', staff: true, elsewhere: true,
+  },
 ];
 
 /** The `partner_domains` table: mail domain -> partner name. */

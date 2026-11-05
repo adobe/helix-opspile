@@ -2828,7 +2828,7 @@ async function sendDraft(key, asApp) {
     const sendIt = async (again = false) => {
       const sent = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [], again });
       if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
-      else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '));
+      else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
     await sendIt();
   } else {
@@ -3099,7 +3099,7 @@ async function deliver(p) {
   });
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
-  if (invited) toast(invited);
+  if (invited) toast(invited, null, { stay: missedMention(data) });
   if (p.status === 'delivered' || reworded) showSending(p.thread);
   if (p.status !== 'delivered') animateSending();
   return true;
@@ -3186,7 +3186,8 @@ const appKeys = new Map();
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
  * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
  * mentions, as when you send it. `again` sends it under a new key, knowing it may go out twice.
- * Resolves to `{ invited }` (what `invitedSaying` says, or ''), or to `{ error, unsure }`;
+ * Resolves to `{ invited, missed }` (what `invitedSaying` says, or '', and `missedMention`), or
+ * to `{ error, unsure }`;
  * `unsure` when nobody knows whether it went out.
  */
 async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), files = [], again = false } = {}) {
@@ -3207,7 +3208,7 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   }
   if (base && state.cache.get(key)?.data?.draft?.updated_at === base) setCachedDraft(key, null);
   openThread(key, { live: true });
-  return { invited: invitedSaying(res.data) };
+  return { invited: invitedSaying(res.data), missed: missedMention(res.data) };
 }
 
 // ---------------------------------------------------------------- new threads
@@ -3677,12 +3678,13 @@ async function postNew() {
   // Slack names the files of a post, not the message: it shows in the inbox when it arrives.
   if (!key) s.note = 'Posted. It shows in the inbox as soon as it arrives.';
   // Somewhere else by now: that stays on screen.
-  if (state.compose !== c) { toast(said); return; }
+  const stay = { stay: missedMention(res.data) };
+  if (state.compose !== c) { toast(said, null, stay); return; }
   Object.assign(state, { compose: null, awaiting: key });
   syncReading();
   toUrl(false);
   renderThreads();
-  if ((TAKING_TURNS.matches && !key) || invited) toast(said);
+  if ((TAKING_TURNS.matches && !key) || invited) toast(said, null, stay);
   renderStarted();
   animateSending();
   if (key) awaitStarted(key);
@@ -4273,22 +4275,48 @@ function mentionsIn(key, body) {
 }
 
 /**
+ * Why Slack would not add someone to the channel (an `uninvited` entry's `error`, src/invite.js),
+ * as a sentence ending in what that means for the mention.
+ */
+const NOT_ADDED = {
+  org_user_not_in_team: (who, are) => `${who} ${are} not in this channel's Slack workspace, so the bot could not add them to the channel: they will not see the mention.`,
+  user_is_restricted: (who, are) => `${who} ${are} a Slack guest the bot cannot add to the channel: they may not see the mention.`,
+  cant_invite: (who, are) => `${who} ${are} not in the channel, and Slack would not let the bot add them: they may not see the mention.`,
+};
+
+/**
  * What a post's answer says about the colleagues it mentioned who were not in the Slack
- * channel (src/invite.js): who the bot added to it, and whom Slack would not let it add, or ''.
+ * channel (src/invite.js): who the bot added to it (and to the workspace), and whom Slack would
+ * not let it add, or ''.
  */
 function invitedSaying(data) {
   const names = (list) => list.map((p) => p.name || 'someone').join(', ');
-  const added = data?.invited?.length ? `Added ${names(data.invited)} to the channel, so they see the mention.` : '';
-  const refused = data?.uninvited?.length ? `${names(data.uninvited)} ${data.uninvited.length === 1 ? 'is' : 'are'} not in the channel, and the bot could not add them: they may not see the mention.` : '';
-  return [added, refused].filter(Boolean).join(' ');
+  const joined = (data?.invited || []).filter((p) => p.workspace);
+  const added = (data?.invited || []).filter((p) => !p.workspace);
+  const why = (p) => (NOT_ADDED[p.error] ? p.error : 'cant_invite');
+  const refused = [...new Set((data?.uninvited || []).map(why))].map((w) => {
+    const list = data.uninvited.filter((p) => why(p) === w);
+    return NOT_ADDED[w](names(list), list.length > 1 ? 'are' : 'is');
+  });
+  return [
+    added.length ? `Added ${names(added)} to the channel, so they see the mention.` : '',
+    joined.length ? `Added ${names(joined)} to the Slack workspace and the channel, so they see the mention.` : '',
+    ...refused,
+  ].filter(Boolean).join(' ');
 }
 
-/** A short note at the bottom; `action` adds a link (`href`) or a button (`run`). */
-function toast(text, action) {
+/** Whether a post's answer says someone mentioned will not see it: worth more than a moment. */
+const missedMention = (data) => Boolean(data?.uninvited?.length);
+
+/**
+ * A short note at the bottom; `action` adds a link (`href`) or a button (`run`). With `stay`, it
+ * stays until it is dismissed (or the next note), for what someone has to read and act on.
+ */
+function toast(text, action, { stay = false } = {}) {
   document.querySelector('.toast')?.remove();
   const el = document.createElement('div');
   el.className = 'toast';
-  el.setAttribute('role', 'status');
+  el.setAttribute('role', stay ? 'alert' : 'status');
   el.textContent = text;
   if (action) {
     const a = document.createElement(action.href ? 'a' : 'button');
@@ -4297,8 +4325,13 @@ function toast(text, action) {
     else a.onclick = () => { el.remove(); action.run(); };
     el.append(a);
   }
+  if (stay) {
+    const close = document.createElement('button');
+    close.textContent = 'Dismiss';
+    close.onclick = () => el.remove();
+    el.append(close);
+  } else setTimeout(() => el.remove(), action ? 8000 : 5000);
   document.body.append(el);
-  setTimeout(() => el.remove(), action ? 8000 : 5000);
 }
 
 // ---------------------------------------------------------------- reactions, resolving

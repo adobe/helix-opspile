@@ -61,6 +61,7 @@ jobs:
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
       TEAMS_APP_ID: ${{ secrets.TEAMS_APP_ID }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
+      SLACK_ADMIN_TOKEN_REQUIRED: ${{ secrets.SLACK_ADMIN_TOKEN_REQUIRED }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
       DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}
