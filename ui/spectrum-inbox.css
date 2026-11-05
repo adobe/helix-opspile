@@ -744,41 +744,41 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 
 .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
 
-/* The thread's shared draft, on its own line under the reply box: a dashed card that
-   shows who saved it and how it starts (all of it, with View draft), and sends it as it is. */
+/* The thread's shared draft, on its own line under the reply box: a dashed card. Its first row
+   says who saved it and when, then its tools (icons: view, edit, discard) and, past a hairline,
+   the ways to send it; under them how it starts (all of it, viewed), and its sources. In a
+   narrow card, the sends get a row of their own at the bottom, side by side. */
 .composer { flex-wrap: wrap; }
-.draftbar { flex-basis: 100%; display: flex; align-items: center; min-width: 0;
- padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
- }
+.draftbar { flex-basis: 100%; min-width: 0; container: draft / inline-size;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .draftbar[hidden] { display: none; }
-.draftbar .pen { flex: none; }
-.draftbar .pv { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
-  padding: var(--spectrum-spacing-50) 0; }
-.draftbar .pv .by { margin-right: .5em; }
-
-/* Viewed: who and the actions on the first row, all of the draft under them. */
-.draftbar.open { flex-wrap: wrap; }
-.draftbar.open .pv { order: 1; flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
-.draftbar.open .pv .by { display: block; }
-/* All of it, rendered as the message it will be: its Markdown, on the card instead of a bubble. */
-.draftbar .pv .md.bubble { white-space: normal; max-width: none; padding: var(--spectrum-spacing-50) 0 0; border-radius: 0;
-  background: none; color: inherit; font-size: var(--spectrum-font-size-100); }
-.draftbar.open .view { margin-left: auto; }
-.draftbar button { flex: none; }
-
-.draftbar .act { display: flex; flex-wrap: wrap; justify-content: flex-end; flex: none; }
-
-
+.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tools sends" "text text text" "srcs srcs srcs";
+  align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.draftbar .head { grid-area: head; display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+.draftbar .pen { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.draftbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.draftbar .tools { grid-area: tools; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.draftbar .sends { grid-area: sends; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
+  padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-100) solid var(--line); }
+.draftbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+.draftbar button svg { flex: none; }
+.draftbar .pv { grid-area: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: var(--spectrum-spacing-100); }
+/* Viewed: all of it, rendered as the message it will be (its Markdown), on the card, not a bubble. */
+.draftbar.open .pv { white-space: normal; max-height: 30vh; overflow: auto; }
+.draftbar .pv .md.bubble { max-width: none; padding: 0; border-radius: 0; background: none; color: inherit; }
 .draftbar button:disabled { opacity: .5; cursor: default; }
+@container draft (max-width: 560px) {
+  .draftbar .dl { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tools" "text text" "srcs srcs" "sends sends"; }
+  .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
+  .draftbar .sends button { flex: 1; }
+}
 /* The draft shown in the reply box while one of its sources is shown beside it. */
 .composer textarea.previewing { border-style: dashed; border-color: var(--accent); color: var(--mute);
   background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
 /* Long drafts are read here, so the box may take most of the pane while it shows one. */
 .composer textarea.previewing, .composer.checking textarea { max-height: min(62vh, calc(100dvh - calc(var(--spectrum-spacing-100) * 30))); }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
-.draftbar:has(.srcs) { flex-wrap: wrap; }
-.draftbar:has(.srcs):not(.open) .pv { flex-basis: 0; }
-.draftbar .srcs { order: 2; flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
+.draftbar .srcs { grid-area: srcs; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
 .draftbar .srcs .lb { cursor: help; }
 .draftbar .src { max-width: calc(var(--spectrum-spacing-100) * 30); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
  text-decoration: none; }
@@ -1028,9 +1028,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .msg .who, .msg .meta { margin-left: var(--spectrum-spacing-100); margin-right: var(--spectrum-spacing-100); }
 
   .composer { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-100) + var(--safe-bottom)); }
-  /* A phone: the draft's actions go under it. */
-  .draftbar { flex-wrap: wrap; }
-  .draftbar .act { flex-basis: 100%; }
 
 
   .rv { margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
@@ -1765,11 +1762,14 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
 }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .draftbar .pv { border-radius: var(--spectrum-corner-radius-75); background: none; }
-.spectrum .draftbar .pv .by { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .draftbar .pv .tx { color: var(--spectrum-neutral-content-color-default); }
-.spectrum .draftbar .act { gap: var(--spectrum-spacing-75); }
+.spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .draftbar .by { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .draftbar .pv { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .draftbar .sends { border-left-color: var(--spectrum-gray-300); }
+/* The sends: S2 Buttons, small, an icon before the label; "as me" the accent one, "as the bot"
+   outlined. The tools: quiet ActionButtons, icon only, square; View draft held down while open. */
 .spectrum .draftbar button {
+  gap: var(--spectrum-spacing-75);
   min-height: var(--spectrum-component-height-75);
   padding: 0 var(--spectrum-component-pill-edge-to-text-75);
   border: var(--spectrum-border-width-200) solid transparent;
@@ -1777,11 +1777,28 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-bold-font-weight);
 }
+.spectrum .draftbar button.ico {
+  width: var(--spectrum-component-height-75);
+  padding: 0;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+}
+.spectrum .draftbar button.ico:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .draftbar button.ico:active:not(:disabled) { background: var(--s2-down); }
+.spectrum .draftbar button.ico[aria-expanded="true"] { color: var(--spectrum-accent-content-color-default); background: var(--s2-down); }
 .spectrum .draftbar button.asme { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
 .spectrum .draftbar button.asme:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
 .spectrum .draftbar button.asbot { color: var(--spectrum-accent-content-color-default); background: transparent; border-color: var(--spectrum-accent-visual-color); }
 .spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
 .spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
+.spectrum .draftbar button.ico:disabled { background: none; }
+/* A finger needs more than the pointer: the line's buttons grow to the next control height. */
+@media (hover: none) and (pointer: coarse) {
+  .spectrum .draftbar button { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
+  .spectrum .draftbar button.ico { width: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-100); }
+}
 .spectrum .draftbar .srcs .lb { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* The draft's sources: S2 Tags (gray, a hairline), linked. */
 .spectrum .draftbar .src {

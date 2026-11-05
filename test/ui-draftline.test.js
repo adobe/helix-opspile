@@ -53,7 +53,7 @@ const draft = { body: 'Thanks, <b>we</b> are on it.\n\nMore below.', updated_at:
 describe('draft line', () => {
   it('offers View draft, closed, and shows how the draft starts', () => {
     const html = draftLine(draft, { editable: true });
-    assert.match(html, /<button class="view" data-draft="view" aria-expanded="false" aria-controls="draft-text"[^>]*>View draft<\/button>/);
+    assert.match(html, /<button class="ico view" data-draft="view" aria-label="View draft" title="[^"]+" aria-expanded="false" aria-controls="draft-text"><svg/);
     assert.match(html, /<div class="pv" id="draft-text">/);
     assert.ok(html.includes('<span class="tx">Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
     assert.doesNotMatch(html, /class="tx md/);
@@ -62,7 +62,7 @@ describe('draft line', () => {
   it('says Hide draft once viewed, and shows all of it as the message will be', () => {
     rendered.length = 0;
     const html = draftLine(draft, { open: true, thread: 'slack:T:C:1' });
-    assert.match(html, /aria-expanded="true"[^>]*>Hide draft<\/button>/);
+    assert.match(html, /aria-label="Hide draft"[^>]*aria-expanded="true"/);
     assert.deepEqual(rendered, [[draft.body, 'slack:T:C:1']]);
     assert.ok(html.includes('<div class="tx md bubble"><p>md:Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
   });
@@ -71,18 +71,24 @@ describe('draft line', () => {
     const html = draftLine(draft, {});
     assert.match(html, /data-draft="view"/);
     assert.doesNotMatch(html, /data-draft="(edit|me|bot|discard)"/);
+    assert.doesNotMatch(html, /class="sends"/);
   });
 
-  it('takes the draft in with a button of its own, never by clicking its text', () => {
+  it('has its tools as labelled icons, and the sends labelled, as me last', () => {
     const html = draftLine(draft, {
       editable: true, asMe: true, asBot: true, discard: true,
     });
-    const pv = html.match(/<div class="pv"[^>]*>/)[0];
-    assert.doesNotMatch(pv, /data-draft|title=/);
+    const tools = html.match(/<span class="tools">(.*?)<\/span>/)[1];
+    assert.deepEqual([...tools.matchAll(/data-draft="(\w+)" aria-label="([^"]+)"/g)].map((m) => [m[1], m[2]]), [['view', 'View draft'], ['edit', 'Edit'], ['discard', 'Discard']]);
+    const sends = html.match(/<span class="sends">(.*)<\/span>/)[1];
+    assert.deepEqual([...sends.matchAll(/data-draft="(\w+)"[^>]*><svg.*?<\/svg><span>([^<]+)<\/span>/g)].map((m) => [m[1], m[2]]), [['bot', 'Send as bot'], ['me', 'Send as me']]);
+    assert.match(draftLine(draft, { editable: true, own: true }), /data-draft="edit" aria-label="Add to reply"/);
+  });
+
+  it('takes the draft in with a button of its own, never by clicking its text', () => {
+    const html = draftLine(draft, { editable: true, asMe: true });
+    assert.doesNotMatch(html.match(/<div class="pv"[^>]*>/)[0], /data-draft|title=/);
     assert.equal(html.match(/data-draft="edit"/g).length, 1);
-    assert.match(html, /<button data-draft="edit"[^>]*>Edit<\/button>/);
-    assert.match(draftLine(draft, { editable: true, own: true }), /<button data-draft="edit"[^>]*>Add to reply<\/button>/);
-    ['me', 'bot', 'discard'].forEach((act) => assert.match(html, new RegExp(`data-draft="${act}"`)));
   });
 
   it('listens to clicks and keys, not to the pointer resting on it or the focus moving', () => {
