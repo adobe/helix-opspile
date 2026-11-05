@@ -548,6 +548,7 @@ function gaps() {
   const shown = several.filter((n) => customers(n) > 1).slice(0, 20);
   const one = several.filter((n) => customers(n) <= 1).slice(0, 30);
   const once = list.length - several.length;
+  const past = several.length - shown.length - one.length;
   const max = Math.max(1, ...[...shown, ...one].map((n) => n.threads.length));
   const rows = (nodes) => `<ul class="rel">${nodes.map((n) => `<li><button class="pickr" data-sel="${esc(n.id)}" data-type="product">
       <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
@@ -559,6 +560,7 @@ function gaps() {
       entry's aliases, on the Agents page, and Clef asks about them.</p>
     ${shown.length ? rows(shown) : '<p class="sub">None that two customers name.</p>'}
     ${one.length ? `<details class="gaps"><summary>Named by one customer <span class="sub">${one.length}</span></summary>${rows(one)}</details>` : ''}
+    ${past ? `<div class="sub more">and ${past} more named in several threads (Find shows them)</div>` : ''}
     ${once ? `<div class="sub more">and ${once} named in one thread each (Find shows them)</div>` : ''}`;
 }
 

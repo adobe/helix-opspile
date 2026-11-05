@@ -54,6 +54,8 @@ export const KEEP = 5;
 const GET_BATCH = 20;
 /** Titles the namer reads per topic, the most typical first. */
 const NEAREST = 15;
+/** How long the agents' model may take to name every topic. */
+const NAME_TIMEOUT_MS = 60000;
 const RESTARTS = 4;
 const ITERATIONS = 40;
 const MAX_LABEL = 60;
@@ -412,6 +414,8 @@ async function nameAll(env, user) {
           system: NAMER_ALL,
           messages: [{ role: 'user', content: user }],
         }),
+        // A stalled gateway falls back to Workers AI instead of holding up the build.
+        signal: AbortSignal.timeout(NAME_TIMEOUT_MS),
       });
       const body = await res.json().catch(() => ({}));
       const text = (body.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
