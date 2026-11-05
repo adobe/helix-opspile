@@ -1527,7 +1527,8 @@ exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
 its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
 One that does is sent with the values in place of the placeholders (in the URL, the headers, a
 Basic `Authorization`, a textual body up to 1 MiB; percent-encoded in the URL and a form body,
-escaped in JSON and XML, so a `+` does not arrive as a space), only over HTTPS to a host the secret lists,
+escaped in JSON and XML, a "form" that parses as JSON as JSON, which is what `curl -d` sends
+without a content type; so a `+` does not arrive as a space), only over HTTPS to a host the secret lists,
 and with `redirect: manual`, so a redirect comes back to the shell and its next request is
 checked again; what comes back has the values replaced by their placeholders, in its headers and
 its body, as it is or escaped (`scrubber`, which also finds a value split between chunks). The

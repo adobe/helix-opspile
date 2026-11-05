@@ -292,11 +292,23 @@ const ESCAPE = {
   xml: (v) => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
 };
 
-/** The escape of a body of `type` (a content type). */
-function bodyEscape(type) {
+/** Whether `text` is a JSON object or array. */
+const isJson = (text) => {
+  try {
+    return /^\s*[{[]/.test(text) && Boolean(JSON.parse(text));
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The escape of a body of `type` (a content type), `text`. curl sends `-d` as a form unless
+ * told otherwise, so a "form" that is JSON is JSON.
+ */
+function bodyEscape(type, text) {
   const t = String(type || '').toLowerCase();
   if (t.startsWith('application/x-www-form-urlencoded')) {
-    return 'url';
+    return isJson(text) ? 'json' : 'url';
   }
   if (/^application\/([a-z0-9.+-]*\+)?json\b/.test(t)) {
     return 'json';
@@ -358,7 +370,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
   const init = { method: request.method, headers, redirect: 'manual' };
   if (request.body) {
     if (body !== null && namesIn(body).length) {
-      init.body = put(body, bodyEscape(request.headers.get('content-type')));
+      init.body = put(body, bodyEscape(request.headers.get('content-type'), body));
       headers.delete('content-length');
     } else {
       init.body = request.body;

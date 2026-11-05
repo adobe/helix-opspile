@@ -251,6 +251,9 @@ describe('the secret gateway', () => {
     body = net.sent[1].body;
     assert.equal(JSON.parse(body).secret, odd);
     assert.ok(!(await res.text()).includes('made+up'));
+    // curl -d without a content type: JSON sent as a form.
+    await ask('application/x-www-form-urlencoded', JSON.stringify({ secret: placeholder('ACME_API_KEY') }));
+    assert.equal(JSON.parse(net.sent[2].body).secret, odd);
   });
 
   it('sends a body it does not read as it is', async () => {
