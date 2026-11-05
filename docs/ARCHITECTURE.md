@@ -1182,8 +1182,9 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   an offer to overwrite it. A discard does the same. A save from a draft that is gone (discarded
   or sent) saves nothing either, and offers to save it as a new one.
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
-  you, or the thread agent), when, and how it starts. **View draft** opens the line to all of it
-  and **Hide draft** closes it again, with a click or a tap alike; nothing shows on hover, since
+  you, or the thread agent), when, and how it starts. **View draft** opens the line to all of it,
+  rendered as the message will be (its Markdown, mentions and emoji, as in the thread), and
+  **Hide draft** closes it again, with a click or a tap alike; nothing shows on hover, since
   a draft shown under a resting pointer moved the line away from it and hid again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.

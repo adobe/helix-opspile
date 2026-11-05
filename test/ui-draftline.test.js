@@ -38,8 +38,14 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
+// The thread's Markdown, as a stub that says what it was given.
+const rendered = [];
+const md = (src, thread) => {
+  rendered.push([src, thread]);
+  return `<p>md:${esc(src)}</p>`;
+};
 const { draftLine } = piece('const viewedDraft', '/** The draft line: who saved', 'draftLine', {
-  esc, draftBy: () => 'opspile agent', ago: () => '8m', sourcesLine: () => '',
+  esc, md, draftBy: () => 'opspile agent', ago: () => '8m', sourcesLine: () => '',
 });
 
 const draft = { body: 'Thanks, <b>we</b> are on it.\n\nMore below.', updated_at: '2026-11-05T10:00:00Z' };
@@ -49,12 +55,16 @@ describe('draft line', () => {
     const html = draftLine(draft, { editable: true });
     assert.match(html, /<button class="view" data-draft="view" aria-expanded="false" aria-controls="draft-text"[^>]*>View draft<\/button>/);
     assert.match(html, /<div class="pv" id="draft-text">/);
-    assert.ok(html.includes('Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
+    assert.ok(html.includes('<span class="tx">Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
+    assert.doesNotMatch(html, /class="tx md/);
   });
 
-  it('says Hide draft once viewed', () => {
-    const html = draftLine(draft, { open: true });
+  it('says Hide draft once viewed, and shows all of it as the message will be', () => {
+    rendered.length = 0;
+    const html = draftLine(draft, { open: true, thread: 'slack:T:C:1' });
     assert.match(html, /aria-expanded="true"[^>]*>Hide draft<\/button>/);
+    assert.deepEqual(rendered, [[draft.body, 'slack:T:C:1']]);
+    assert.ok(html.includes('<div class="tx md bubble"><p>md:Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
   });
 
   it('keeps View draft even when nothing else may be done', () => {

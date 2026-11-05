@@ -3077,19 +3077,21 @@ function wireSources(el) {
 }
 
 /**
- * The draft as "View draft" shows it, all of it. As it was written, for now: to show it as the
- * thread will (Markdown, as `md` renders a message), return that here and style `.draftbar .pv .md`.
+ * The draft as "View draft" shows it, all of it, as the thread will once it is sent: Markdown,
+ * rendered as a message is (`md`, with the images of thread `thread`). Closed, the line shows
+ * how it starts, as it was written.
  */
-const viewedDraft = (d) => esc(d.body);
+const viewedDraft = (d, thread) => `<div class="tx md bubble">${md(d.body, thread)}</div>`;
 
 /**
  * The draft line's markup: who saved draft `d`, when, and how it starts, or all of it once
  * viewed (`open`); "View draft" opens and closes it. What to do with it are buttons of their
  * own: `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text),
  * `asMe` (Send as me), `asBot` (Send as bot) and `discard`; `note` says where the draft stands.
+ * `thread` is the draft's, for the images it shows.
  */
 function draftLine(d, {
-  open = false, own = false, note = '', editable = false, asMe = false, asBot = false, discard = false,
+  thread = '', open = false, own = false, note = '', editable = false, asMe = false, asBot = false, discard = false,
 } = {}) {
   const acts = [];
   if (editable) acts.push(`<button data-draft="edit" title="${own ? 'Add the draft after what you wrote, to edit it' : 'Put the draft in the reply box, to edit it'}">${own ? 'Add to reply' : 'Edit'}</button>`);
@@ -3097,7 +3099,7 @@ function draftLine(d, {
   if (asBot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot">Send as bot</button>');
   if (discard) acts.push('<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button>');
   return `<span class="pen">✎ Draft</span>
-      <div class="pv" id="draft-text"><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span><span class="tx">${open ? viewedDraft(d) : esc(d.body)}</span></div>
+      <div class="pv" id="draft-text"><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span>${open ? viewedDraft(d, thread) : `<span class="tx">${esc(d.body)}</span>`}</div>
       <button class="view" data-draft="view" aria-expanded="${open}" aria-controls="draft-text" title="${open ? 'Show only how the draft starts' : 'Show all of the draft, here'}">${open ? 'Hide draft' : 'View draft'}</button>
       ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}${sourcesLine(d)}`;
 }
@@ -3121,6 +3123,7 @@ function renderDraftBar(key, force = false) {
     if (took) note = c.text === d.body ? ' · in the reply box' : ' · in the reply box, edited';
     else if (c?.base && box && c.text.trim()) note = ' · changed since you took it';
     html = draftLine(d, {
+      thread: key,
       open: draftOpen.has(key),
       own: Boolean(box && !took && c?.text.trim()),
       note,
