@@ -577,6 +577,22 @@ export async function target(env, key) {
 }
 
 /**
+ * Before a reply to inbox entry `key` goes to `t`, its latest platform thread: when that is a
+ * folded root's and not the entry's own, the inbox chose it, so the group's conversation goes on
+ * there, and the root stays in its group from now on (`routed_at`, src/rethread.js). Written
+ * before the post, so the reply cannot arrive first, and not undone when the post fails: a root
+ * kept in its group is no harm, and a post whose fate is unknown may have gone out.
+ */
+export async function routeReply(env, key, t) {
+  if (!key || !t || !t.thread || t.thread === key) {
+    return;
+  }
+  await env.DB.prepare(`UPDATE threads SET routed_at = ?
+    WHERE thread = ? AND logical_thread = ? AND routed_at IS NULL`)
+    .bind(new Date().toISOString(), t.thread, key).run();
+}
+
+/**
  * A channel as `POST /api/post` and `GET /api/mentionable` name it, and `GET /api/channels`
  * lists it, `source:tenant:channelId`, for a thread that does not exist yet: where it would go,
  * with no `root_id`, so what is posted starts a thread. Only channels of conversations: nothing
@@ -1051,6 +1067,11 @@ export async function post(env, me, request, inTeam, files = []) {
   const started = (id) => (t === place && !key ? { thread: threadOf(t, id) } : {});
   // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
   const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
+  if (t.source === 'teams' && !t.group_id) {
+    return json({ error: 'the Teams team of this channel is not known yet' }, 409);
+  }
+  // A group's reply in a folded root's platform thread keeps that root in the group.
+  await routeReply(env, key, t);
   if (t.source === 'slack') {
     // Colleagues mentioned who are not in the channel are added first, so the mention reaches
     // them (src/invite.js).
@@ -1091,9 +1112,6 @@ export async function post(env, me, request, inTeam, files = []) {
     return json({
       ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
     });
-  }
-  if (!t.group_id) {
-    return json({ error: 'the Teams team of this channel is not known yet' }, 409);
   }
   const message = teamsMessage(sent, mentions);
   if (files.length) {

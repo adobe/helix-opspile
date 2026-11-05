@@ -15,7 +15,7 @@ import { discordApi, discordEnabled } from '../discord.js';
 import { entryOf } from '../drafts.js';
 import { invitedFields, inviteMentioned } from '../invite.js';
 import {
-  discordMessage, slackMarkdown, slackText, target as replyTarget, teamsBotMessage,
+  discordMessage, routeReply, slackMarkdown, slackText, target as replyTarget, teamsBotMessage,
 } from '../post.js';
 import { isResolvedEmoji, signalOf } from '../resolve.js';
 import { emojiChar, slackEmojiName } from '../shortcodes.js';
@@ -70,6 +70,8 @@ export async function postAsApp(env, key, text, options = {}) {
   if (MAX_POST[t.source] && body.length > MAX_POST[t.source]) {
     return { error: `too long: ${t.source} takes up to ${MAX_POST[t.source]} characters` };
   }
+  // A group's reply in a folded root's platform thread keeps that root in the group.
+  await routeReply(env, key, t);
   if (t.source === 'slack') {
     if (!env.SLACK_BOT_TOKEN) {
       return { error: 'the opspile Slack app is not set up here' };

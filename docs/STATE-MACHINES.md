@@ -46,7 +46,12 @@ hash. One that is skipped after a job died on it (its file is gone, or an edit e
 `rethreaded_at`, since asking again finds the same. Split is final: `logical_via = 'split'`,
 `logical_thread` cleared and `rethreaded_at` moved to the split (for the export sweep), and neither
 a forced re-threading nor a burst pulls it in again. The split is conditional on the group the root
-is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. A deleted root takes no
+is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. Routed is final the other way:
+a folded root whose platform thread got one of its group's replies (the entry's latest, `target` in
+`src/post.js`) gets `routed_at`, set once (`routed_at IS NULL`) and before the post goes out, so the
+reply cannot arrive first and split it. It is never cleared, also not when the post fails: a root
+kept in its group is no harm, and a lost answer may have been posted. Neither `dethread` nor a
+forced re-threading moves it, nor does a split take it along in a burst. A deleted root takes no
 one in (no burst joins it), but a group whose first root is deleted later keeps its key: the inbox
 reads its entry from the members that are still there (`latestMember`, `fold` in `src/api.js`).
 

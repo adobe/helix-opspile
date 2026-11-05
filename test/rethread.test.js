@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { fold } from '../src/api.js';
 import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
-import { target } from '../src/post.js';
+import { routeReply, target } from '../src/post.js';
 import {
   ago, dethread, rethread, skeleton, SPLIT,
 } from '../src/rethread.js';
@@ -556,6 +556,29 @@ describe('de-threading', () => {
     await rethread(env, a, { force: true });
     assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
     assert.equal(notified.length, 1);
+  });
+
+  it('keeps a folded root in its group once the inbox replied for the group in its thread', async () => {
+    const {
+      env, a, b, notified,
+    } = await folded();
+    // The entry's own thread, or a member's key: nothing to keep.
+    await routeReply(env, a, { thread: a });
+    await routeReply(env, b, await target(env, b));
+    assert.equal(env.DB.rows('SELECT COUNT(*) AS n FROM threads WHERE routed_at IS NOT NULL')[0].n, 0);
+    // A reply to the group goes to the member it was last active in.
+    await routeReply(env, a, await target(env, a));
+    // The inbox's reply there, and the customer answering it there, split nothing.
+    post(env, b, '20.6', at(70), 'U3');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    post(env, b, '20.7', at(71), 'U2');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.deepEqual(await rethread(env, b, { force: true }), {
+      result: 'unchanged', logical: a, reason: 'routed',
+    });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'clef', logical_p: 0.995 });
+    assert.equal((await target(env, a)).thread, b);
+    assert.deepEqual(notified, []);
   });
 
   it('does not fold a root that has replies of its own when it is decided', async () => {
