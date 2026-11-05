@@ -555,31 +555,40 @@ export async function writeTitle(env, state, alert, thread) {
 }
 
 /**
- * The channel's technologies, from Clef's answers about `tech` and what the rules `detected`
- * (as sure as can be): each keeps the highest probability any thread showed.
+ * The technologies a thread shows, as `{ id: probability }`: Clef's answers about `tech` at or
+ * above TECH_MIN, and what the rules `detected` (as sure as can be, 1).
  */
-async function recordTech(env, thread, tech, answers, detected = []) {
+export function techOf(tech, answers, detected = []) {
+  const out = {};
   for (const id of tech.map((t) => t.tech)) {
-    const p = detected.includes(id) ? 1 : answers[`tech.${id}`]?.noul;
+    const p = detected.includes(id) ? 1 : answers && answers[`tech.${id}`]?.noul;
     if (typeof p === 'number' && p >= TECH_MIN) {
-      // eslint-disable-next-line no-await-in-loop
-      await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (source, tenant, channel_id, tech) DO UPDATE SET
-          p = MAX(channel_tech.p, excluded.p),
-          thread = CASE WHEN excluded.p > channel_tech.p THEN excluded.thread ELSE channel_tech.thread END,
-          updated_at = excluded.updated_at`)
-        .bind(
-          thread.source,
-          thread.tenant,
-          thread.channel_id,
-          id,
-          p,
-          thread.thread,
-          new Date().toISOString(),
-        )
-        .run();
+      out[id] = Math.round(p * 1000) / 1000;
     }
+  }
+  return out;
+}
+
+/** The channel's technologies, from those `found` in a thread: each keeps the highest. */
+async function recordTech(env, thread, found) {
+  for (const [id, p] of Object.entries(found)) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (source, tenant, channel_id, tech) DO UPDATE SET
+        p = MAX(channel_tech.p, excluded.p),
+        thread = CASE WHEN excluded.p > channel_tech.p THEN excluded.thread ELSE channel_tech.thread END,
+        updated_at = excluded.updated_at`)
+      .bind(
+        thread.source,
+        thread.tenant,
+        thread.channel_id,
+        id,
+        p,
+        thread.thread,
+        new Date().toISOString(),
+      )
+      .run();
   }
 }
 
@@ -681,12 +690,14 @@ export async function labelThread(env, key, now = new Date()) {
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
   const topics = topicsOf(a);
+  const shown = techOf(tech, a, found.tech);
   await env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at, title, topics)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
       urgency = excluded.urgency, resolved_p = excluded.resolved_p, topics = excluded.topics,
+      tech = excluded.tech,
       labeled_through = excluded.labeled_through, model = excluded.model,
       labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
@@ -702,9 +713,10 @@ export async function labelThread(env, key, now = new Date()) {
       now.toISOString(),
       title,
       topics ? JSON.stringify(topics) : null,
+      JSON.stringify(shown),
     )
     .run();
-  await recordTech(env, thread, tech, a, found.tech);
+  await recordTech(env, thread, shown);
   const loose = [...clairicFacts(clairic.answers),
     ...productFacts(clairic.answers?.products, state, thread, tech)];
   await replaceFacts(env.DB, key, 'clairic', loose);

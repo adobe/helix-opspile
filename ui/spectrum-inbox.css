@@ -374,18 +374,49 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .sub img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
 .ph .sub.stack { margin-top: var(--spectrum-spacing-75); }
 .ph { position: relative; }
-.ph:has(> .experts:not([hidden])) > .sub:nth-last-child(2) { padding-right: min(46%, calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75))); }
-.experts { position: absolute; right: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); display: flex; align-items: stretch; max-width: min(46%, calc(var(--spectrum-spacing-100) * 46 + var(--spectrum-spacing-50)));
- }
+/* A thread's header. Line 1: the customer's icon with the platform's on it, the title, and the
+   channel at the end where it fits (fitHead hides it when it wraps). */
+.ph .l1 { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--spectrum-spacing-300); }
+.ph .lead { display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; }
+.ph .l1 h2 { display: block; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ph .chan { margin-left: auto; white-space: nowrap; }
+.ph .src { position: relative; flex: none; display: grid; width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); padding: 0; border: 0; background: none; cursor: pointer; }
+.ph span.src { cursor: default; }
+.ph .src .org { width: 100%; height: 100%; object-fit: cover; }
+.ph .src .av { width: 100%; height: 100%; font-size: var(--spectrum-font-size-50); }
+.ph .src .plat { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
+ border: var(--spectrum-border-width-200) solid var(--pane); }
+/* Line 2: the dropdowns (tech stack, links, experts), each a pill; a split one acts on its
+   first item, its ▾ opens the list. */
+.ph .l2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.ph .l2:empty { display: none; }
+.ph .hm { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
+.ph .hm button, .ph .hm a.top { font: inherit; color: inherit; border: 0; background: none; text-decoration: none; }
+.ph .hmb, .ph .hm a.top { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200); }
+.ph .hm .lb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ph .hm .n, .ph .hm .chev { flex: none; }
+.ph .hm .more { flex: none; padding: 0 var(--spectrum-spacing-100); }
+.ph .hmpop { position: absolute; left: 0; top: calc(100% + var(--spectrum-spacing-75)); z-index: 6; width: max-content; min-width: calc(var(--spectrum-spacing-100) * 30); max-width: min(calc(var(--spectrum-spacing-100) * 56), calc(100vw - var(--spectrum-spacing-500)));
+ max-height: calc(var(--spectrum-spacing-100) * 52); overflow: auto; padding: var(--spectrum-spacing-75); }
+.ph .hmpop[hidden] { display: none; }
+.ph .hms + .hms { margin-top: var(--spectrum-spacing-75); padding-top: var(--spectrum-spacing-75); }
+.ph .hmh, .ph .hmnote { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-50); }
+.ph .hmi { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); text-decoration: none; }
+.ph .hmi span { min-width: 0; overflow-wrap: anywhere; }
+.ph .hmi small { flex: none; }
+.ph .hmi.member { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0px; }
+.ph .hm .lb { max-width: calc(var(--spectrum-spacing-100) * 44); }
+.experts { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
 .experts button { font: inherit; border: 0; background: none; }
 /* Its place, held while the list loads (and kept, empty, if nobody is found). */
 .experts.pending { visibility: hidden; }
+.experts[hidden] { display: none; }
 .experts .top { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
 .experts .top span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .experts .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); font-size: var(--spectrum-spacing-100); }
 .experts .top:hover, .experts .more:hover { background: var(--hover); color: var(--ink); }
 .experts .more { flex: none; padding: 0 var(--spectrum-spacing-100); }
-.expertlist { position: absolute; right: 0; top: calc(100% + var(--spectrum-spacing-75)); width: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); max-width: calc(100vw - var(--spectrum-spacing-500)); margin: 0; padding: var(--spectrum-spacing-75);
+.expertlist { position: absolute; left: 0; top: calc(100% + var(--spectrum-spacing-75)); width: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); max-width: calc(100vw - var(--spectrum-spacing-500)); margin: 0; padding: var(--spectrum-spacing-75);
   list-style: none; background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); z-index: 6; }
 .expertlist button { display: flex; align-items: flex-start; gap: var(--spectrum-spacing-100); width: 100%; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-400); text-align: left; }
 .expertlist button:hover, .expertlist button:focus-visible { background: var(--sel); }
@@ -802,8 +833,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .chans .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chans .hint { margin-left: auto; flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--spectrum-font-size-75); }
 .compose-error { margin: var(--spectrum-spacing-300) 0 0; color: var(--red); text-align: center; }
-.ph .resolved { color: var(--green); }
-.ph .reopened { color: var(--yellow); }
 .toast button, .toast a { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); color: var(--link); }
 .sys { text-align: center; color: var(--faint); font-size: var(--spectrum-font-size-75); margin: var(--spectrum-spacing-100) 0; }
 /* The thread agent's latest turn, after the last message: on the Adobe side, outlined, as it
@@ -982,9 +1011,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
   .ph > :not(.close) { grid-column: 2; }
   .ph .close { display: grid; grid-row: 1 / span 4; margin-top: calc(-1 * var(--spectrum-spacing-75)); }
-  .ph:has(> .experts:not([hidden])) > .sub:nth-last-child(2) { padding-right: 0; }
-  .experts { position: relative; right: auto; bottom: auto; justify-self: start; max-width: 100%; margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
-  .expertlist { right: auto; left: 0; }
   .ph h2 { flex-wrap: wrap; }
   .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
   .msg { gap: var(--spectrum-spacing-100); }
@@ -1285,25 +1311,40 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph { border-bottom-color: var(--line); }
 .spectrum .ph h2 { gap: var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
 .spectrum .ph .sub { gap: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .ph .resolved { color: var(--spectrum-positive-visual-color); }
-.spectrum .ph .reopened { color: var(--spectrum-notice-visual-color); }
+.spectrum .ph .chan { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .src .org, .spectrum .ph .src .av { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .ph .src .plat { border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-white); border-color: var(--pane); }
+.spectrum .ph .src:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .ph button.src:hover .org, .spectrum .ph a.src:hover .org { filter: brightness(.92); }
 .spectrum .back { font-size: var(--spectrum-font-size-75); color: var(--spectrum-accent-content-color-default); }
 .spectrum .back:hover { color: var(--spectrum-accent-content-color-hover); }
 /* Back to the threads (narrow screens): a quiet ActionButton. */
 .spectrum .ph .close { border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
 .spectrum .ph .close:hover { background: var(--spectrum-gray-200); }
 .spectrum .ph .close svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
-/* The experts: an ActionGroup of two quiet buttons on a gray pill, their list a Menu. */
-.spectrum .experts {
+/* The header's dropdowns and the experts: an ActionGroup of quiet buttons on a gray pill, their
+   lists Menus (S2's Popover, below). */
+.spectrum :is(.ph .l2 .hm, .experts) {
   font-size: var(--spectrum-font-size-75);
   color: var(--spectrum-neutral-content-color-default);
   background: var(--spectrum-gray-100);
   border: 0;
   border-radius: var(--s2-pill);
 }
-.spectrum .experts .top { border-radius: var(--s2-pill); }
-.spectrum .experts .more { border-left: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: 0 var(--s2-pill) var(--s2-pill) 0; }
-.spectrum .experts .top:hover, .spectrum .experts .more:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum :is(.experts .top, .ph .hmb, .ph .hm a.top) { border-radius: var(--s2-pill); }
+.spectrum :is(.experts, .ph .hm) .more { border-left: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: 0 var(--s2-pill) var(--s2-pill) 0; }
+.spectrum .ph .hm.split a.top { border-radius: var(--s2-pill) 0 0 var(--s2-pill); }
+.spectrum :is(.experts .top, .experts .more, .ph .hmb, .ph .hm a.top, .ph .hm .more):hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .ph .hm.open > :is(.hmb, .more) { background: var(--s2-down); }
+.spectrum .ph .hm :is(.hmb, a.top, .more):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .ph .hm .n, .spectrum .ph .hm .chev { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hmh { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hmnote { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hms + .hms { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .ph .hmi { min-height: var(--s2-ctl); border-radius: var(--spectrum-corner-radius-100); font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .ph a.hmi:hover, .spectrum .ph a.hmi:focus-visible { background: var(--s2-down); color: var(--spectrum-neutral-content-color-hover); outline: none; }
+.spectrum .ph a.hmi:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .ph .hmi small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 
 /* The feed's landmarks: the day as a subtle neutral Badge, dividers and events subdued. */
 .spectrum .day span {
@@ -1649,7 +1690,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* Every floating list the inbox opens (mentions, channels, experts, a quote's links, a
    source, a profile): S2's Popover (layer 2, a hairline, the large radius, elevated), and
    their options Menu items (the gray overlay under the pointer or the keyboard). */
-.spectrum :is(.mentions, .chans, .expertlist, .linkpick, .srcpop, .pcard) {
+.spectrum :is(.mentions, .chans, .expertlist, .linkpick, .srcpop, .pcard, .ph .hmpop) {
   color: var(--spectrum-neutral-content-color-default);
   background: var(--s2-popover);
   border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);

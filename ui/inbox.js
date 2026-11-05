@@ -20,7 +20,7 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
-  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, expertLists: new Map(), expertsSeen: null, composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, expertLists: new Map(), expertsSeen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -1699,14 +1699,6 @@ const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt 
 const canEdit = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt
   && (m.editable === 'app' || (m.editable === 'user' && Boolean(state.me?.edit?.[m.source])));
 
-/** What the ✅ says, for the thread header's second line. */
-function resolveNote(r) {
-  const names = (r?.by || []).join(', ');
-  let note = '';
-  if (r?.state === 'resolved') note = `<span class="resolved" title="${esc(new Date(r.at).toLocaleString())}">✅ Resolved by ${esc(names || 'Adobe')}</span>`;
-  else if (r?.state === 'reopened') note = `<span class="reopened" title="✅ by ${esc(names || 'Adobe')}, then the customer wrote again${r.verdict ? '' : '; Clef decides again'}">Reopened: the customer wrote after the ✅</span>`;
-  return note ? `· ${note}` : '';
-}
 /** The ✅ button: resolve, or take your ✅ off again. */
 function resolveButton(thread, r) {
   // Without the first message there is nothing to put the ✅ on.
@@ -1896,6 +1888,213 @@ async function loadAgent(key, { latest = null } = {}) {
   if (turn?.state === 'working' || waiting) askAgain(entry);
 }
 
+// ---------------------------------------------------------------- the thread's header
+// Line 1: the customer's icon with the platform's on it, which opens the thread on the platform
+// (a group of folded posts: a list of them, each to open), the title, and the channel where
+// the line has room for it. Line 2: three dropdowns, each named by what matters most for the
+// thread: its tech stack, the links found in it, and the colleagues to pull in.
+const HEAD_POSTS = 12; // the posts a group's list shows: its first and the latest
+// Hosts that documentation and code live on: a link there is a reference, not the customer's
+// page (a site's own host, `main--site--org.aem.live`, has `--` in it).
+const REFERENCE_HOST = /(?:^|\.)(?:aem\.live|github\.com|adobe\.com)$/;
+const ID_FIELDS = { ticket: 'Ticket', cve: 'CVE', case: 'Support case' };
+const LINK_GROUPS = {
+  mentioned: 'Mentioned in the thread', site: 'Site', reference: 'References', id: 'Tickets and ids',
+};
+
+const urlHost = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
+/** A URL as the header shows it: without the scheme and a trailing slash. */
+const shortUrl = (u) => String(u).replace(/^https?:\/\//i, '').replace(/\/$/, '');
+/** A fact's value as a URL: Clairic may leave out the scheme (`site.com/page`); else null. */
+function asUrl(v) {
+  const s = String(v || '').trim();
+  if (/^https?:\/\/\S+$/i.test(s)) return s;
+  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]\S*)?$/i.test(s) ? `https://${s}` : null;
+}
+
+/**
+ * The links of a thread's facts, the most relevant first: the pages mentioned in it (the one
+ * Clairic says is affected first), then each Edge Delivery site's production URL, then links to
+ * documentation and code, then tickets, CVEs and support cases. `{ group, href, text, note }`.
+ */
+function headLinks(facts = []) {
+  const out = [];
+  const seen = new Set();
+  const add = (group, href, text, note = '') => {
+    const k = (href || text).toLowerCase().replace(/\/$/, '');
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({
+      group, href, text, note,
+    });
+  };
+  const urls = [...facts.filter((f) => f.field === 'affected_url'), ...facts.filter((f) => f.field === 'url')]
+    .map((f) => ({ href: asUrl(f.value), affected: f.field === 'affected_url' }))
+    .filter((u) => u.href);
+  const reference = (u) => {
+    const host = urlHost(u);
+    return !host.includes('--') && REFERENCE_HOST.test(host);
+  };
+  for (const u of urls) if (!reference(u.href)) add('mentioned', u.href, shortUrl(u.href), u.affected ? 'Affected page' : '');
+  for (const f of facts.filter((x) => x.field === 'site')) {
+    const [org, site] = String(f.value).split('/');
+    if (org && site) add('site', `https://main--${site}--${org}.aem.live/`, `main--${site}--${org}.aem.live`, 'Production');
+  }
+  for (const u of urls) if (reference(u.href)) add('reference', u.href, shortUrl(u.href));
+  for (const [field, name] of Object.entries(ID_FIELDS)) {
+    for (const f of facts.filter((x) => x.field === field)) {
+      add('id', field === 'cve' ? `https://www.cve.org/CVERecord?id=${encodeURIComponent(f.value)}` : null, f.value, name);
+    }
+  }
+  return out;
+}
+
+/**
+ * The thread's tech stack, from what the thread view says: what the thread shows (`thread_tech`),
+ * likeliest first, then the rest of the channel's (`tech`), then Clef's topics of the thread.
+ * The label is the first of them.
+ */
+function headTech(data) {
+  const name = (kind, id) => data.vocab?.[kind]?.[id] || id;
+  const here = (data.thread_tech || []).map((t) => ({ id: t.tech, name: name('tech', t.tech), p: t.p }));
+  const shown = new Set(here.map((t) => t.id));
+  const also = (data.tech || []).filter((t) => !shown.has(t.tech)).map((t) => ({ id: t.tech, name: name('tech', t.tech), p: t.p }));
+  const topics = (data.topics || []).map((id) => ({ id, name: name('topics', id) }));
+  const first = here[0] || also[0] || topics[0];
+  return {
+    here, also, topics, label: first ? first.name : '', count: here.length + also.length + topics.length,
+  };
+}
+
+/** The posts a group's list shows: the first and the latest, and how many are left out. */
+function headPosts(members) {
+  if (members.length <= HEAD_POSTS) return { posts: members, skipped: 0 };
+  return { posts: [members[0], ...members.slice(-(HEAD_POSTS - 1))], skipped: members.length - HEAD_POSTS };
+}
+
+const pct = (p) => `${Math.round(p * 100)}%`;
+/** A dropdown of the header: its button (or `main`, a link with the button beside it) and list. */
+function headMenu(name, { button, main = '', label, list }) {
+  const toggle = main
+    ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}">▾</button>`
+    : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev" aria-hidden="true">▾</span></button>`;
+  return `<div class="hm${main ? ' split' : ''}" data-hm="${name}">${toggle}<div class="hmpop" role="group" aria-label="${esc(label)}" hidden>${list}</div></div>`;
+}
+
+const hmSection = (title, rows) => (rows.length ? `<div class="hms"><div class="hmh">${esc(title)}</div>${rows.join('')}</div>` : '');
+
+function techMenu(data) {
+  const { here, also, topics, label, count } = headTech(data);
+  if (!count) return '';
+  const item = (t) => `<div class="hmi"><span>${esc(t.name)}</span>${t.p != null ? `<small>${pct(t.p)}</small>` : ''}</div>`;
+  const customer = orgName(data.thread) && !String(orgName(data.thread)).startsWith('_') ? orgName(data.thread) : 'the customer';
+  const list = hmSection('In this thread', here.map(item))
+    + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
+    + hmSection('Topics of the thread', topics.map(item));
+  const more = count > 1 ? `<span class="n">+${count - 1}</span>` : '';
+  return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
+}
+
+function linksMenu(facts) {
+  const links = headLinks(facts);
+  if (!links.length) return '';
+  const item = (l) => (l.href
+    ? `<a class="hmi" href="${esc(l.href)}" target="_blank" rel="noopener noreferrer" title="${esc(l.href)}"><span>${esc(l.text)}</span>${l.note ? `<small>${esc(l.note)}</small>` : ''}</a>`
+    : `<div class="hmi"><span>${esc(l.text)}</span>${l.note ? `<small>${esc(l.note)}</small>` : ''}</div>`);
+  const list = Object.entries(LINK_GROUPS).map(([g, title]) => hmSection(title, links.filter((l) => l.group === g).map(item))).join('');
+  const [top] = links;
+  const more = links.length > 1 ? `<span class="n">+${links.length - 1}</span>` : '';
+  const label = links.length > 1 ? `All ${links.length} links and ids in the thread` : 'About this link';
+  const main = top.href
+    ? `<a class="top" href="${esc(top.href)}" target="_blank" rel="noopener noreferrer" title="${esc(top.href)}${top.note ? ` (${esc(top.note)})` : ''}"><span class="lb">${esc(top.text)}</span>${more}</a>`
+    : '';
+  return headMenu('links', {
+    main, button: `<span class="lb">${esc(top.text)}</span>${more}`, label, list,
+  });
+}
+
+/**
+ * Line 1's icon: the customer's (else their initials), the platform's on it. It opens the
+ * thread on the platform; a group of folded posts lists them instead, each to open.
+ */
+function headSource(thread, members, entry) {
+  const name = orgName(thread) || '';
+  const type = ORG_TYPE[thread.org_type];
+  const icon = orgIcon({ ...entry, ...thread });
+  const face = icon ? `<img class="org" src="${esc(favicon(icon))}" alt="">` : avatar(name || '?', null, 'org');
+  const p = platform(thread);
+  const badge = `<img class="plat" src="${esc(favicon(PLATFORM_SITE[p]))}" alt="">`;
+  const who = [name, type].filter(Boolean).join(' · ');
+  const linked = members.filter((m) => m.permalink);
+  if (members.length > 1 && linked.length > 1) {
+    const { posts, skipped } = headPosts(members);
+    const rows = posts.map((m, i) => {
+      const when = m.root_at ? `${SHORT_DATE(new Date(m.root_at))}, ${clock(m.root_at)}` : '';
+      const text = `<span>${emojify(channelNames(m.title) || '(no text)')}</span><small>${esc(when)}</small>`;
+      const gap = skipped && i === 1 ? `<div class="hmnote">${skipped.toLocaleString()} more ${skipped === 1 ? 'post' : 'posts'} in between</div>` : '';
+      return gap + (m.permalink
+        ? `<a class="hmi member" href="${esc(m.permalink)}" target="_blank" rel="noopener" title="Open this post in ${p}">${text}</a>`
+        : `<div class="hmi member">${text}</div>`);
+    });
+    const label = `${members.length.toLocaleString()} posts folded into one thread: open one in ${p}`;
+    return `<div class="hm" data-hm="posts"><button class="src" data-hm-toggle="posts" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(`${who ? `${who}: ` : ''}${members.length.toLocaleString()} posts folded into one thread`)}">${face}${badge}</button>`
+      + `<div class="hmpop" role="group" aria-label="${esc(label)}" hidden><div class="hms"><div class="hmh">${members.length.toLocaleString()} posts folded into one thread</div>${rows.join('')}</div></div></div>`;
+  }
+  const link = thread.permalink || linked[0]?.permalink;
+  const title = `${who ? `${who} · ` : ''}${link ? `Open in ${p}` : p}`;
+  return link
+    ? `<a class="src" href="${esc(link)}" target="_blank" rel="noopener" title="${esc(title)}" aria-label="${esc(title)}">${face}${badge}</a>`
+    : `<span class="src" title="${esc(title)}">${face}${badge}</span>`;
+}
+
+// The dropdown open in the header, `{ key, name }`: it stays open while the thread updates.
+function syncHeadMenus() {
+  const open = state.headOpen?.key === state.open ? state.headOpen.name : null;
+  for (const el of document.querySelectorAll('#pane > .ph [data-hm]')) {
+    const on = el.dataset.hm === open;
+    el.classList.toggle('open', on);
+    el.querySelector('.hmpop').hidden = !on;
+    el.querySelector('[data-hm-toggle]')?.setAttribute('aria-expanded', String(on));
+  }
+}
+function closeHeadMenus(focus = false) {
+  const name = state.headOpen?.name;
+  if (!name) return;
+  state.headOpen = null;
+  syncHeadMenus();
+  if (focus) document.querySelector(`#pane > .ph [data-hm-toggle="${CSS.escape(name)}"]`)?.focus();
+}
+function toggleHeadMenu(name) {
+  const was = state.headOpen?.key === state.open && state.headOpen.name === name;
+  closeHeadMenus();
+  if (state.expertsOpen) closeExperts(state.expertsOpen);
+  if (!was) {
+    state.headOpen = { key: state.open, name };
+    syncHeadMenus();
+    document.querySelector(`#pane > .ph [data-hm="${CSS.escape(name)}"] .hmpop a.hmi`)?.focus();
+  }
+}
+/** Arrow keys move through an open dropdown's links. */
+function headMenuKey(e) {
+  if (!state.headOpen || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return false;
+  const rows = [...document.querySelectorAll('#pane > .ph [data-hm].open .hmpop a.hmi')];
+  if (!rows.length) return false;
+  e.preventDefault();
+  const i = rows.indexOf(document.activeElement);
+  rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
+  return true;
+}
+
+/** The channel's name shows on line 1 only where it fits beside the title. */
+function fitHead() {
+  const line = document.querySelector('#pane > .ph > .l1');
+  const chan = line?.querySelector(':scope > .chan');
+  if (!chan) return;
+  chan.hidden = false;
+  const lead = line.firstElementChild;
+  chan.hidden = chan.offsetTop >= lead.offsetTop + lead.offsetHeight;
+}
+
 // ---------------------------------------------------------------- expert finder
 // Bottom right of the thread's header: the colleague most worth pulling in and why (GET
 // /api/experts, src/experts.js), with more in a dropdown. Picking one mentions them in the reply
@@ -1922,9 +2121,17 @@ function expertsHtml(key) {
 /** Puts the list on screen without touching the rest of the header. */
 function placeExperts(key) {
   if (state.open !== key) return;
-  // Nobody to pull in after all: the place held for them stays empty until the header is drawn
-  // again, as giving it back now would move the header's tags and everything below them.
-  if ($('experts')?.classList.contains('pending') && !state.experts.get(key)?.length) return;
+  // Nobody to pull in after all: the place held for them goes where that leaves the header as
+  // tall as it is (the end of line 2), else it stays empty until the header is drawn again, as
+  // giving it back now would move everything below it.
+  const held = $('experts');
+  if (held?.classList.contains('pending') && !state.experts.get(key)?.length) {
+    const ph = held.closest('.ph');
+    const tall = ph.offsetHeight;
+    held.hidden = true;
+    if (ph.offsetHeight !== tall) held.hidden = false;
+    return;
+  }
   $('experts')?.replaceWith(toNode(expertsHtml(key)));
   wireExperts(key);
 }
@@ -2325,29 +2532,19 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
-  // Sites as links (main--site--org.aem.live), tickets and CVEs as chips, and the tech the
-  // channel is known to use.
-  const sites = facts.filter((f) => f.field === 'site').map((f) => {
-    const [org, site] = f.value.split('/');
-    const host = `main--${site}--${org}.aem.live`;
-    return `<a class="back" href="https://${esc(host)}/" target="_blank" rel="noopener">${esc(host)}</a>`;
-  }).join(' ');
-  const chips = facts.filter((f) => f.field === 'ticket' || f.field === 'cve').map((f) => `<span class="tag">${esc(f.value)}</span>`).join('');
-  const stack = [
-    ...(data.topics || []).map((x) => `<span class="tag topic" title="Topic">${esc(data.vocab?.topics?.[x] || x)}</span>`),
-    ...(data.tech || []).map((x) => `<span class="tag tech" title="${Math.round(x.p * 100)}%">${esc(data.vocab?.tech?.[x.tech] || x.tech)}</span>`),
-  ].join('');
-  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(thread.title) || '(no text)')} ${backlink(thread, `Open in ${platform(thread)} ↗`)}</h2>
-      <div class="sub">${orgIcon({ ...t, ...thread }) ? `<img src="${esc(favicon(orgIcon({ ...t, ...thread })))}" alt="">` : ''}<span>${esc(orgName(thread))}</span>${ORG_TYPE[thread.org_type] ? ` <span class="tag">${ORG_TYPE[thread.org_type]}</span>` : ''} ·
-        <span>${esc(thread.channel_name || '')}</span>
-        ${group ? `· <span class="tag">${members.length} posts folded into one thread</span>` : ''}
-        ${sites ? `· ${sites}` : ''} ${chips} ${resolveNote(resolution)}</div>
-      ${stack ? `<div class="sub stack">${stack}</div>` : ''}${expertsHtml(key)}</div>`;
+  // Line 1: where it is and what it is about; line 2: its tech stack, links and experts.
+  const lead = `<div class="lead">${headSource(thread, members, t)}<h2>${emojify(channelNames(thread.title) || '(no text)')}</h2></div>`;
+  const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(thread.channel_name)}</span>` : '';
+  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
+      <div class="l1">${lead}${chan}</div>
+      <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = composer(thread, resolveButton(thread, resolution));
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
+  syncHeadMenus();
+  fitHead();
   restorePreviews(pane);
   state.shownIds = ids;
   cardGone();
@@ -3455,9 +3652,11 @@ function renderStarted() {
   const caret = focused ? [box.selectionStart, box.selectionEnd] : null;
   // The customer's icon and name, as the thread's header will show them.
   const like = state.data?.threads.find((t) => t.org === channel.org && orgIcon(t)) || {};
-  const icon = orgIcon(like) ? `<img src="${esc(favicon(orgIcon(like)))}" alt="">` : channelIcon(channel);
-  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button><h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2>
-    <div class="sub">${icon}<span>${esc(channel.orgName || channel.org || '')}</span> · <span>${esc(channel.name)}</span></div></div>`;
+  const source = headSource({
+    ...like, org: channel.org, org_name: channel.orgName, source: channel.source, permalink: null,
+  }, [], like);
+  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
+    <div class="l1"><div class="lead">${source}<h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2></div><span class="chan" title="Channel">${esc(channel.name)}</span></div></div>`;
   // As openThread lays a thread out: a run of one author's messages has the avatar by its last.
   const items = [`<div class="day"><span>${esc(dayLabel(p.at))}</span></div>`];
   let last = null;
@@ -3482,6 +3681,7 @@ function renderStarted() {
   pane.innerHTML = `${head}${feed}${reply}`;
   pane.__key = null;
   pane.__started = s;
+  fitHead();
   const now = pane.querySelector('.scroller');
   now.scrollTop = top === null || top + now.clientHeight >= now.scrollHeight - 80 ? now.scrollHeight : top;
   const box2 = $('reply');
@@ -5538,6 +5738,10 @@ async function start() {
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
+    const hm = e.target.closest('[data-hm-toggle]');
+    if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
+    // A link picked from a dropdown opens in a new tab; the dropdown closes.
+    if (e.target.closest('.ph .hmpop a')) closeHeadMenus();
     const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button;
     const choice = e.target.closest('a[data-pile]');
     if (choice && !modified) { e.preventDefault(); openSlackChoice(choice); return; }
@@ -5607,6 +5811,8 @@ async function start() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { closeSlackChoice(); return; }
+    if (e.key === 'Escape' && state.headOpen) { closeHeadMenus(true); return; }
+    if (headMenuKey(e)) return;
     if (e.key === 'Escape' && state.filtering) { setFiltering(false); return; }
     if (e.key === 'Escape' && document.querySelector('.picker')) {
       const button = document.querySelector('.picker').closest('.col')?.querySelector('[data-picker]');
@@ -5623,6 +5829,9 @@ async function start() {
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
   document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
+  document.addEventListener('click', (e) => { if (state.headOpen && !e.target.closest('[data-hm]')) closeHeadMenus(); });
+  // The header's line 1 shows the channel where it fits: again as the pane changes width.
+  if (window.ResizeObserver) new ResizeObserver(() => fitHead()).observe($('pane'));
   // Leaving the page with the expert finder's ▾ list open: nobody was picked from it.
   addEventListener('pagehide', () => dismissExperts());
   // The Send button's menu closes on a tap or click anywhere else.

@@ -746,7 +746,9 @@ and an unchanged thread is never labeled twice):
   asked in its channels too, and one with the id of an admin team's replaces it there (turned
   off, it is not asked there). Clef gets at most 24 questions per call; the rest are asked in
   calls of their own, at the same time. The channel keeps the highest probability any thread
-  showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
+  showed (a rule's detection counts as 1), so every thread of a customer shows their stack;
+  the label keeps what the thread itself showed (`labels.tech`, migration 0059), so its header
+  can name that first.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
@@ -1020,7 +1022,27 @@ keeps a thread's pool for the page's life, and asks for it again in the backgrou
 two minutes old. The Worker reads the thread's place first, then whether the viewer may see
 it and all the suggestions need at once: one round trip to D1 after the place, not up to four.
 
-**Expert finder.** The bottom right of a thread's header names the colleague most worth pulling
+**The thread's header.** Line 1 is the customer's icon with the platform's on it, the title,
+and the channel's name at the end where the line has room for it. The icon opens the thread on
+the platform; a re-threaded group lists its posts instead (the first and the latest eleven of a
+large one), each with its root's link. Hovering it names the customer and its type. Line 2 has
+three dropdowns, each named by what matters most for the thread:
+
+- **Tech stack:** what the thread shows (`labels.tech` of its members, the likeliest first),
+  then the rest of the channel's (`channel_tech`), then Clef's topics of the thread. A thread
+  labeled before labels kept their technologies counts those it set the channel's highest
+  probability for (`channel_tech.thread`), until it is labeled again.
+- **Links:** the pages mentioned in the thread (Clairic's `affected_url` first, then the
+  rules' `url` facts), then each Edge Delivery site's production URL
+  (`main--<site>--<org>.aem.live`), then links to documentation and code (`aem.live`,
+  `github.com`, `adobe.com` hosts without `--`), then tickets, CVEs (linked to cve.org) and
+  support cases. The first one is the dropdown's name and opens with a click; ▾ lists them all.
+- **Experts:** the expert finder, below.
+
+A dropdown is left out when it has nothing to list. Whether the thread is resolved is not in
+the header: the ✅ on its root says so, and so do the list and the Send button's menu.
+
+**Expert finder.** Line 2 of a thread's header names the colleague most worth pulling
 in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in about 4 hours"
 (`GET /api/experts`, `src/experts.js`). Clicking it mentions them in the reply box, as picking
 them after `@` does, and ▾ lists up to eight, each with all of its reasons. Nothing is sent: the

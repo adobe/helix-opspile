@@ -54,6 +54,8 @@ reads its entry from the members that are still there (`latestMember`, `fold` in
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
 after their label. `labeled_through` means that Clef read the thread, so nothing else writes it: a
 thread whose files are missing is recorded in `dead_jobs`, and the sweep leaves it for a day.
+A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then goes by
+`channel_tech.thread` until the thread is labeled again.
 
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).

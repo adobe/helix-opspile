@@ -1000,6 +1000,8 @@ describe('backfill, mentions and labels', () => {
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
+    // And the thread's own (labels.tech), for its header.
+    assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);
     assert.deepEqual(r.topics, ['cdn']);
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
