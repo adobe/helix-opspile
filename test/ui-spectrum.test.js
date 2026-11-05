@@ -48,9 +48,10 @@ describe('Spectrum 2', () => {
       // A custom property set to a unitless 0 breaks every calc() that adds it to a length.
       assert.doesNotMatch(SCRIPTS[file], /--[a-z0-9-]+:\s*0\s*[;}]/, file);
     }
-    // The filter cards hang out to the right as they are picked or pointed at (--out), padded
-    // as much, so their contents stay where they are.
+    // The filter cards hang out to the right as they are picked (--out), padded as much, so
+    // their contents stay where they are; pointing at one moves nothing.
     assert.match(SCRIPTS['spectrum-inbox.css'], /#filters \.card \{[^}]*--out: 0px; margin-right: calc\(-1 \* var\(--out\)\); padding-right: calc\([^;]*\+ var\(--out\)\)/);
+    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /#filters \.card(\.active)?:hover \{[^}]*--out/);
   });
 
   it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {
