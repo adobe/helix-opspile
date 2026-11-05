@@ -21,7 +21,7 @@ import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durab
 import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
-import { postAsApp } from '../src/agent/posting.js';
+import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
@@ -301,6 +301,103 @@ describe('posting as the opspile app', () => {
   });
 });
 
+describe('reacting as the opspile app', () => {
+  const realFetch = globalThis.fetch;
+  let sent;
+  let answer;
+  beforeEach(() => {
+    sent = [];
+    answer = {};
+    globalThis.fetch = async (url, init = {}) => {
+      const u = new URL(url);
+      sent.push({
+        method: init.method || 'GET',
+        path: decodeURIComponent(u.pathname),
+        auth: init.headers && init.headers.authorization,
+        body: init.body ? JSON.parse(init.body) : null,
+      });
+      if (u.pathname === '/api/reactions.add') {
+        return Response.json(answer.slack || { ok: true });
+      }
+      if (u.pathname === '/api/v10/channels/920/messages/921') {
+        // 920 is a message, not a Discord thread.
+        return Response.json({ code: 10003 }, { status: 404 });
+      }
+      if (u.pathname === '/api/v10/channels/910/messages/921') {
+        return Response.json({ id: '921' });
+      }
+      if (u.pathname.startsWith('/api/v10/channels/910/messages/921/reactions/')) {
+        return answer.discord || new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const message = (e, key, source, tenant, channel, id) => e.DB.sqlite.prepare(`INSERT INTO
+      messages (source, tenant, channel_id, id, thread, at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(source, tenant, channel, id, key, '2026-10-21T10:05:00Z');
+
+  it('takes a Slack name in any spelling or the emoji, and leaves the inbox\'s own to people', () => {
+    assert.deepEqual(appReaction('slack', ':thumbs-up:'), { emoji: 'thumbsup' });
+    assert.deepEqual(appReaction('slack', '🎉'), { emoji: 'tada' });
+    // Maybe one of the workspace's own.
+    assert.deepEqual(appReaction('slack', ':shipit:'), { emoji: 'shipit' });
+    assert.deepEqual(appReaction('discord', 'tada'), { emoji: '🎉' });
+    assert.deepEqual(appReaction('discord', '👍🏽'), { emoji: '👍🏽' });
+    assert.match(appReaction('discord', 'shipit').error, /not an emoji/);
+    assert.match(appReaction('slack', 'Not one!').error, /not an emoji/);
+    for (const e of ['eyes', '👀', 'pray', '🙏', 'ring_buoy', 'white_check_mark', '✅', '✔️']) {
+      assert.match(appReaction('slack', e).error, /left to people/, e);
+      assert.match(appReaction('discord', e).error, /left to people/, e);
+    }
+  });
+
+  it('reacts on Slack with the bot token', async () => {
+    const e = env();
+    message(e, SLACK, 'slack', 'E1', 'C1', '1792584100.000200');
+    const res = await reactAsApp(e, SLACK, '1792584100.000200', '🚀');
+    assert.deepEqual(res, { ok: true, platform: 'slack', emoji: 'rocket' });
+    assert.deepEqual(sent, [{
+      method: 'POST',
+      path: '/api/reactions.add',
+      auth: 'Bearer xoxb-made-up',
+      body: { channel: 'C1', timestamp: '1792584100.000200', name: 'rocket' },
+    }]);
+    answer.slack = { ok: false, error: 'already_reacted' };
+    assert.equal((await reactAsApp(e, SLACK, '1792584100.000200', 'rocket')).ok, true);
+    answer.slack = { ok: false, error: 'missing_scope' };
+    assert.match((await reactAsApp(e, SLACK, '1792584100.000200', 'rocket')).error, /reactions:write/);
+  });
+
+  it('reacts on Discord as the bot, where the message is', async () => {
+    const e = env();
+    message(e, DISCORD, 'discord', '900', '910', '921');
+    const res = await reactAsApp(e, DISCORD, '921', '+1');
+    assert.deepEqual(res, { ok: true, platform: 'discord', emoji: '👍' });
+    assert.deepEqual(sent.map((x) => `${x.method} ${x.path}`), [
+      'GET /api/v10/channels/920/messages/921',
+      'GET /api/v10/channels/910/messages/921',
+      'PUT /api/v10/channels/910/messages/921/reactions/👍/@me',
+    ]);
+    assert.equal(sent[2].auth, 'Bot made-up-discord-token');
+    answer.discord = Response.json({ code: 50013 }, { status: 403 });
+    assert.match((await reactAsApp(e, DISCORD, '921', '+1')).error, /Add Reactions/);
+  });
+
+  it('cannot react on Teams, to another thread\'s message, or with the inbox\'s own', async () => {
+    const e = env(TEAMS_BOT);
+    message(e, TEAMS, 'teams', 'TN1', '19:abc@thread.tacv2', '1792584000000');
+    message(e, DISCORD, 'discord', '900', '910', '921');
+    assert.match((await reactAsApp(e, TEAMS, '1792584000000', '+1')).error, /Teams lets no bot react/);
+    assert.match((await reactAsApp(e, SLACK, '921', '+1')).error, /no such message/);
+    assert.match((await reactAsApp(e, DISCORD, '921', '🙏')).error, /left to people/);
+    assert.equal(sent.length, 0);
+  });
+});
+
 /** A Cloudflare Computer workspace in memory: just-bash over one filesystem that stays. */
 function fakeWorkspace() {
   const fs = new InMemoryFs();
@@ -330,6 +427,8 @@ describe('the agent\'s switchable tools', () => {
     const e = env();
     e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
       VALUES ('slack', 'E1', 'U2', 'person', 'Cy Customer', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at)
+      VALUES ('slack', 'E1', 'C1', '1792584000.000100', ?, '2026-10-21T10:00:00Z')`).run(SLACK);
     const posts = [];
     globalThis.fetch = async (url, init) => {
       posts.push(JSON.parse(init.body));
@@ -376,6 +475,7 @@ describe('the agent\'s switchable tools', () => {
       capture(step('bash', { command: 'cut -d, -f2 data.csv | sort -r; ls' })),
       capture(step('bash', { command: 'cat missing.txt' })),
       capture(step('post_message', { text: '@Cy Customer, purges take up to 5 minutes.' })),
+      capture(step('add_reaction', { message: '1792584000.000100', emoji: ':tada:' })),
       capture(fauxAssistantMessage('Posted the purge time.')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -383,20 +483,22 @@ describe('the agent\'s switchable tools', () => {
     await harness.close(ctx);
 
     assert.match(system, /<posting>\nThe team turned on post_message/);
+    assert.match(system, /You may react to a message with an emoji instead \(add_reaction\)/);
     assert.match(system, /<computer>\nYou have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    const [pwd, sum, missing, post] = results;
+    const [pwd, sum, missing, post, reacted] = results;
     assert.equal(pwd.text.trim(), '/workspace');
     // The file is still there for the next command.
     assert.equal(sum.text.trim(), '2\n1\ndata.csv');
     assert.ok(missing.error);
     assert.match(missing.text, /missing\.txt/);
     assert.match(post.text, /^posted on Slack \(message 1792584999\.000900, tags [^)]+\)\./);
+    assert.equal(reacted.text, 'reacted with :tada: on Slack.');
     assert.deepEqual(posts, [{
       channel: 'C1',
       thread_ts: '1792584000.000100',
       text: '<@U2>, purges take up to 5 minutes.',
       blocks: [{ type: 'markdown', text: '<@U2>, purges take up to 5 minutes.' }],
-    }]);
+    }, { channel: 'C1', timestamp: '1792584000.000100', name: 'tada' }]);
     assert.deepEqual(posted, ['1792584999.000900']);
     assert.equal(ws.runs[0].options.cwd, '/workspace');
   });
@@ -425,5 +527,7 @@ describe('the agent\'s switchable tools', () => {
     assert.deepEqual((ext.tools || []).map((t) => t.name), []);
     const seed = agentToolsExtension({ env: env(), hasThread: false }, ['post_message', 'computer']);
     assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash']);
+    const on = agentToolsExtension({ env: env(), hasThread: true }, ['post_message']);
+    assert.deepEqual((on.tools || []).map((t) => t.name), ['post_message', 'add_reaction']);
   });
 });

@@ -19,7 +19,7 @@ import { emojiLookup, matchEmoji, squash } from '../src/emojinames.js';
 import { CLEF } from '../src/label.js';
 import {
   candidates, closestEmoji, COMMON, emojiChar, forget, MAX_ASK, rankEmoji, resolveShortcodes,
-  workspaceEmoji,
+  slackEmojiName, workspaceEmoji,
 } from '../src/shortcodes.js';
 import { d1 } from './d1.js';
 
@@ -54,6 +54,18 @@ describe('emoji aliases', () => {
     // An emoji without tones keeps none.
     assert.equal(lookup('rocket::skin-tone-3'), 'rocket');
     assert.equal(emojiChar('thumbsup::skin-tone-4'), '👍🏽');
+  });
+
+  it('names an emoji as Slack does, from a name in any spelling or the character', () => {
+    assert.equal(slackEmojiName(':thumbs-up:'), 'thumbsup');
+    assert.equal(slackEmojiName('raised_hands'), 'raised_hands');
+    assert.equal(slackEmojiName('🚀'), 'rocket');
+    assert.equal(slackEmojiName('❤'), 'heart');
+    assert.equal(slackEmojiName('❤️'), 'heart');
+    assert.equal(slackEmojiName(emojiChar('+1::skin-tone-4')), '+1::skin-tone-4');
+    assert.equal(slackEmojiName('🚀🏽'), 'rocket');
+    assert.equal(slackEmojiName('completed'), undefined);
+    assert.equal(slackEmojiName('ü'), undefined);
   });
 
   it('knows nothing it should not', () => {

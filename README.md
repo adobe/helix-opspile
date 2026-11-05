@@ -94,7 +94,7 @@ Nothing below is committed; set it on the Worker.
 
 | Name | Kind | What |
 | --- | --- | --- |
-| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`). A Slack post from the inbox that mentions a colleague who is not in the channel has the app add them first (bot scopes `channels:write.invites` and `groups:write.invites`; without them, nobody is added and the post goes out as before) |
+| `SLACK_BOT_TOKEN` | secret | Bot token of the opspile Slack app. Agents with `post_message` on post with it, which needs the bot scope `chat:write`, and react with it (`add_reaction`), which needs the bot scope `reactions:write`. Replies and the inbox read the workspace's custom emoji with it (bot scope `emoji:read`). A Slack post from the inbox that mentions a colleague who is not in the channel has the app add them first (bot scopes `channels:write.invites` and `groups:write.invites`; without them, nobody is added and the post goes out as before) |
 | `SLACK_SIGNING_SECRET` | secret | Signing secret of the opspile Slack app |
 | `MS_CLIENT_SECRET` | secret | Client secret of the opspile Entra app registration |
 | `DIAG_TOKEN` | secret | Random value required in `x-opspile-diag` for `/diag/*` |
@@ -128,7 +128,7 @@ Nothing below is committed; set it on the Worker.
 | `BEDROCK_API_KEY` | secret | Amazon Bedrock API key (bearer token). Required when `AGENT_MODEL` is set |
 | `AI_GATEWAY_TOKEN` | secret | Optional: a token for an authenticated gateway, sent as `cf-aig-authorization`; set `AI_GATEWAY_TOKEN_REQUIRED=1` at deploy so `cf` checks it exists |
 | `DISCORD_GUILDS` | var | Optional, comma-separated: the Discord servers (guild ids) to read. With it (and `DISCORD_BOT_TOKEN`), the `DISCORD` object polls them; see "Discord" below |
-| `DISCORD_BOT_TOKEN` | secret | The opspile Discord app's bot token. Required when `DISCORD_GUILDS` is set. Agents with `post_message` on post with it, which needs the Send Messages and Send Messages in Threads permissions |
+| `DISCORD_BOT_TOKEN` | secret | The opspile Discord app's bot token. Required when `DISCORD_GUILDS` is set. Agents with `post_message` on post with it, which needs the Send Messages and Send Messages in Threads permissions, and react with it (`add_reaction`), which needs Add Reactions |
 | `DISCORD_STAFF_ROLES` | var | Optional, comma-separated role ids: members with one of them count as staff (Discord shares no email, so the mail domain cannot say) |
 | `DISCORD_HISTORY_DAYS` | var | Optional: how many days back the first poll reads, default 30 |
 | `DISCORD_POLL_SECONDS` | var | Optional: how often the poller asks Discord for new messages, default 60 (at least 15) |
@@ -343,10 +343,12 @@ turn them on, the same way and on the same page (**Tools and MCP servers**, grou
 for the team, or for one channel (**Per channel**; a channel's switch wins over its team's):
 
 - **`post_message`**: the agent posts a reply in its thread right away, as the opspile bot of
-  the platform, next to keeping the draft. The Slack app needs the bot scope `chat:write`
-  (reinstall it after adding the scope), the Discord bot the *Send Messages* and *Send
-  Messages in Threads* permissions; Teams needs the opspile Teams bot (below). A platform
-  whose bot is not set up does not get the tool.
+  the platform, next to keeping the draft, and reacts to messages with an emoji
+  (`add_reaction`). The Slack app needs the bot scopes `chat:write` and `reactions:write`
+  (reinstall it after adding a scope), the Discord bot the *Send Messages*, *Send Messages
+  in Threads* and *Add Reactions* permissions; Teams needs the opspile Teams bot (below),
+  which cannot react: Teams lets no bot. A platform whose bot is not set up does not get the
+  tool.
 - **`computer`**: pi's `bash` tool, on [Cloudflare Computer](https://github.com/cloudflare/computer):
   a just-bash shell in a Dynamic Worker (the `LOADER` binding) over a working directory per
   thread that keeps its files, with `jq` and `curl`. The shell reaches the internet without a
