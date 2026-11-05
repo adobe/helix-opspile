@@ -20,8 +20,9 @@ import { teamsBotEnabled } from '../teamsbot.js';
  * (src/agent/globals.js), but these are the agent's own tools, not reached through code mode.
  *
  * - `post_message`: the agent posts a reply in its thread right away, as the opspile app (the
- *   Slack bot, the Teams bot, the Discord bot), next to `update_draft`. A platform whose bot is
- *   not set up in this deployment does not get it.
+ *   Slack bot, the Teams bot, the Discord bot), next to `update_draft`, and reacts to messages
+ *   with an emoji (`add_reaction`; not on Teams, where no bot can). A platform whose bot is not
+ *   set up in this deployment does not get it.
  * - `computer`: pi's `bash` tool, run on Cloudflare Computer (src/agent/computer.js): a
  *   just-bash shell in a Dynamic Worker over a filesystem in the agent's own Durable Object,
  *   so each thread keeps its files from one turn to the next, with network access and curl.
@@ -39,12 +40,13 @@ export const AGENT_TOOLS = [
   {
     tool: 'post_message',
     title: 'Post messages',
-    names: ['post_message'],
+    names: ['post_message', 'add_reaction'],
     description: 'The agent posts its reply in the thread right away, as the bot,'
-      + ' instead of only keeping the draft a person sends',
-    note: 'As the bot of each platform: the Slack app (bot scope chat:write), the Teams'
-      + ' bot (installed in a team on its first post there), the Discord bot (Send Messages,'
-      + ' Send Messages in Threads).',
+      + ' instead of only keeping the draft a person sends, and reacts to messages with emoji',
+    note: 'As the bot of each platform: the Slack app (bot scopes chat:write and'
+      + ' reactions:write), the Teams bot (installed in a team on its first post there; it'
+      + ' cannot react, Teams lets no bot), the Discord bot (Send Messages, Send Messages in'
+      + ' Threads, Add Reactions).',
     platforms: ['slack', 'teams', 'discord'],
   },
   {

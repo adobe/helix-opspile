@@ -58,9 +58,9 @@ import { latestTurn } from './turn.js';
  * thread, so a script that computes holds up only its own agent, and only up to the
  * interrupt budget.
  *
- * Tools the team turns on (src/agent/agenttools.js): `post_message`, and `computer`, pi's bash
- * tool on Cloudflare Computer, whose Workspace lives in this object's SQLite (src/agent/
- * computer.js). Its shell, in a Dynamic Worker, reaches the files back through
+ * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
+ * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
+ * SQLite (src/agent/computer.js). Its shell, in a Dynamic Worker, reaches the files back through
  * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that).
  */
 

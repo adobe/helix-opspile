@@ -157,6 +157,38 @@ export function emojiChar(name) {
   return [first, String.fromCodePoint(0x1f3fb + Number(tone) - 2), ...rest].join('');
 }
 
+// Slack's name of each emoji character, without variation selectors: the first name wins.
+let charNames = null;
+const bare = (c) => c.replace(/\uFE0F/g, '');
+
+/**
+ * Slack's name of an emoji as someone writes it: a name in any platform's spelling, with or
+ * without colons (`:thumbs-up:` is `+1`), or the character itself (👍, 👍🏽 is
+ * `+1::skin-tone-4`). Undefined for anything Slack has no standard emoji for.
+ */
+export function slackEmojiName(emoji) {
+  const e = String(emoji || '').trim();
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\x00-\x7f]/.test(e)) {
+    return lookup(e.replace(/^:(.*):$/, '$1'));
+  }
+  if (!charNames) {
+    charNames = new Map();
+    for (const [name, c] of Object.entries(SLACK_EMOJI)) {
+      if (!charNames.has(bare(c))) {
+        charNames.set(bare(c), name);
+      }
+    }
+  }
+  const tone = /[\u{1F3FB}-\u{1F3FF}]/u.exec(e);
+  const name = charNames.get(bare(e.replace(/[\u{1F3FB}-\u{1F3FF}]/u, '')));
+  if (!name || !tone) {
+    return name;
+  }
+  return SKIN_TONES.includes(name)
+    ? `${name}::skin-tone-${tone[0].codePointAt(0) - 0x1f3fb + 2}` : name;
+}
+
 // Names to compare a typed name with, and words, per emoji (its Slack name).
 let index = null;
 function emojiIndex() {

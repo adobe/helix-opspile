@@ -1257,6 +1257,7 @@ written by people outside its control.
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
+| `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
@@ -1432,6 +1433,17 @@ to post only what the team would send as it is, and to keep anything uncertain o
 the draft. A post may name the draft version it sends, which uses the draft up. The reply comes
 back through the platform's events like any message; the agent keeps the ids of its latest
 posts and is not told about them, so it never answers itself.
+
+With `post_message` the agent also reacts (`add_reaction`, `reactAsApp` in
+`src/agent/posting.js`) to a message of its entry, as the app: on Slack `reactions.add` with the
+bot token (bot scope `reactions:write`), on Discord `PUT …/reactions/<emoji>/@me` as the bot
+(Add Reactions), in the channel or Discord thread the message is in. It names an emoji by its
+Slack name in any platform's spelling or as the character; Slack also takes a workspace's
+own, Discord gets the character. Not on Teams: Graph's `setReaction` is delegated only, and the
+Bot Framework has no call for a bot to react, so the prompt tells an agent on Teams it cannot.
+👀, 🙏, 🛟 and ✅ (✔️) are refused: they steer the inbox or resolve a thread, and a bot's 🙏
+would clear "waiting on us". The reaction comes back through the platform's events like any
+other; the agent is not told about reactions.
 
 **`computer`.** pi's own `bash` tool, run on [Cloudflare Computer](https://github.com/cloudflare/computer)
 (`@cloudflare/computer`, `src/agent/computer.js`). The ThreadAgent object holds a Workspace: a
