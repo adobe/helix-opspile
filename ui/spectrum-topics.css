@@ -207,6 +207,8 @@ tr.pick { cursor: pointer; }
 .spectrum .panel .theme { margin: var(--spectrum-spacing-200) 0 0; line-height: var(--spectrum-line-height-200); }
 .spectrum .panel .facts { margin: var(--spectrum-spacing-100) 0 0; }
 .spectrum .panel .hint.gap { margin: var(--spectrum-spacing-200) 0 0; color: var(--spectrum-orange-900); }
+.spectrum .panel details.gaps { margin-top: var(--spectrum-spacing-200); }
+.spectrum .panel details.gaps > summary { cursor: pointer; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .panel .more { margin-top: var(--spectrum-spacing-75); }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
 .spectrum .panel .pickr {
