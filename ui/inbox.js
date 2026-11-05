@@ -2102,6 +2102,35 @@ const LINK_GROUPS = {
 const urlHost = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
 /** A URL as the header shows it: without the scheme and a trailing slash. */
 const shortUrl = (u) => String(u).replace(/^https?:\/\//i, '').replace(/\/$/, '');
+const decoded = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+/**
+ * A link as its line in the list shows it, in two parts: `lead`, the host and the path up to its
+ * last segment, which is cut off first where the line has no room, and `tail`, that segment
+ * (with the query and fragment), which names the page and so is kept. Decoded (`%20` a space).
+ */
+function urlParts(href) {
+  let u;
+  try { u = new URL(href); } catch { return { lead: shortUrl(href), tail: '' }; }
+  const path = decoded(u.pathname).trim().replace(/\/$/, '');
+  const cut = path.lastIndexOf('/');
+  const rest = decoded(`${u.search}${u.hash}`);
+  if (cut < 0) return { lead: u.hostname, tail: rest ? `/${rest}` : '' };
+  return { lead: u.hostname + path.slice(0, cut), tail: path.slice(cut) + rest };
+}
+/**
+ * What makes two links one: the scheme, the host's case, encoding and a trailing slash (or a
+ * space, or the full stop of a sentence) do not. A link Clairic cut off (`…` at its end) is the
+ * start of one, `{ key, cut }`.
+ */
+function linkKey(href) {
+  let s = decoded(String(href).trim()).replace(/^https?:\/\//i, '');
+  const cut = /(?:…|\.\.\.)$/.test(s);
+  if (cut) s = s.replace(/(?:…|\.\.\.)$/, '');
+  s = s.replace(/[\s.,;:!?]+$/, '').replace(/\/+$/, '');
+  const slash = s.search(/[/?#]/);
+  const key = slash < 0 ? s.toLowerCase() : s.slice(0, slash).toLowerCase() + s.slice(slash);
+  return { key, cut };
+}
 /** A fact's value as a URL: Clairic may leave out the scheme (`site.com/page`); else null. */
 function asUrl(v) {
   const s = String(v || '').trim();
@@ -2112,22 +2141,29 @@ function asUrl(v) {
 /**
  * The links of a thread's facts, the most relevant first: the pages mentioned in it (the one
  * Clairic says is affected first), then each Edge Delivery site's production URL, then links to
- * documentation and code, then tickets, CVEs and support cases. `{ group, href, text, note }`.
+ * documentation and code, then tickets, CVEs and support cases. `{ group, href, host, text, note }`,
+ * each once: a link that only differs in how it is written, or that Clairic cut off where the
+ * whole of it is there too, is left out.
  */
 function headLinks(facts = []) {
   const out = [];
   const seen = new Set();
   const add = (group, href, text, note = '') => {
-    const k = (href || text).toLowerCase().replace(/\/$/, '');
+    const k = href ? linkKey(href).key : text.toLowerCase();
     if (seen.has(k)) return;
     seen.add(k);
     out.push({
-      group, href, text, note,
+      group, href, host: href ? urlHost(href) : '', text, note,
     });
   };
-  const urls = [...facts.filter((f) => f.field === 'affected_url'), ...facts.filter((f) => f.field === 'url')]
+  const found = [...facts.filter((f) => f.field === 'affected_url'), ...facts.filter((f) => f.field === 'url')]
     .map((f) => ({ href: asUrl(f.value), affected: f.field === 'affected_url' }))
     .filter((u) => u.href);
+  const whole = found.map((u) => linkKey(u.href)).filter((k) => !k.cut).map((k) => k.key);
+  const urls = found.filter((u) => {
+    const { key, cut } = linkKey(u.href);
+    return !cut || !whole.some((w) => w.startsWith(key));
+  });
   const reference = (u) => {
     const host = urlHost(u);
     return !host.includes('--') && REFERENCE_HOST.test(host);
@@ -2192,21 +2228,36 @@ function techMenu(data) {
   return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
 }
 
+/** A link's favicon (Google's, as the customers' icons are), for the header's links. */
+const linkIcon = (l) => (l.host ? `<img class="fav" src="${esc(favicon(l.host))}" alt="" loading="lazy">` : '<span class="fav"></span>');
+
+/**
+ * The links dropdown: the pill names the first link's host (its whole address is the tooltip),
+ * the list has a line for each, its favicon, then the address, cut in the middle where it is long.
+ */
 function linksMenu(facts) {
   const links = headLinks(facts);
   if (!links.length) return '';
+  const text = (l) => {
+    // An id is named as it is (a CVE's link is to its record).
+    if (!l.href || l.group === 'id') return `<span class="url"><span class="path">${esc(l.text)}</span></span>`;
+    const { lead, tail } = urlParts(l.href);
+    return `<span class="url"><span class="path">${esc(lead)}</span>${tail ? `<span class="page">${esc(tail)}</span>` : ''}</span>`;
+  };
+  const note = (l) => (l.note ? `<small>${esc(l.note)}</small>` : '');
   const item = (l) => (l.href
-    ? `<a class="hmi" href="${esc(l.href)}" target="_blank" rel="noopener noreferrer" title="${esc(l.href)}"><span>${esc(l.text)}</span>${l.note ? `<small>${esc(l.note)}</small>` : ''}</a>`
-    : `<div class="hmi"><span>${esc(l.text)}</span>${l.note ? `<small>${esc(l.note)}</small>` : ''}</div>`);
+    ? `<a class="hmi link" href="${esc(l.href)}" target="_blank" rel="noopener noreferrer" title="${esc(l.href)}">${linkIcon(l)}${text(l)}${note(l)}</a>`
+    : `<div class="hmi link" title="${esc(l.text)}">${linkIcon(l)}${text(l)}${note(l)}</div>`);
   const list = Object.entries(LINK_GROUPS).map(([g, title]) => hmSection(title, links.filter((l) => l.group === g).map(item))).join('');
   const [top] = links;
   const more = links.length > 1 ? `<span class="n">+${links.length - 1}</span>` : '';
   const label = links.length > 1 ? `All ${links.length} links and ids in the thread` : 'About this link';
+  const name = top.group === 'id' ? top.text : top.host || top.text;
   const main = top.href
-    ? `<a class="top" href="${esc(top.href)}" target="_blank" rel="noopener noreferrer" title="${esc(top.href)}${top.note ? ` (${esc(top.note)})` : ''}"><span class="lb">${esc(top.text)}</span>${more}</a>`
+    ? `<a class="top" href="${esc(top.href)}" target="_blank" rel="noopener noreferrer" title="${esc(top.href)}${top.note ? ` (${esc(top.note)})` : ''}">${linkIcon(top)}<span class="lb">${esc(name)}</span>${more}</a>`
     : '';
   return headMenu('links', {
-    main, button: `<span class="lb">${esc(top.text)}</span>${more}`, label, list,
+    main, button: `<span class="lb">${esc(name)}</span>${more}`, label, list,
   });
 }
 

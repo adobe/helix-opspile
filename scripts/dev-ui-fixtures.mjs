@@ -699,12 +699,18 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       topics: ['cdn', 'publishing'],
       tech: { akamai: 0.93, eds: 1 },
     },
-    // The header's links: the page the customer named first, then the site, then the ids.
+    // The header's links: the page the customer named first, then the site, then the ids. The
+    // pill names the first one's host; the list has long addresses (cut in the middle), one
+    // written twice and one Clairic cut off (each shown once).
     facts: [
       ['ticket', 'OPS-1042'], ['site', 'acme/acme-preview'], ['cve', 'CVE-2026-1234'],
       ['url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
       ['url', 'https://www.aem.live/docs/cdn-guide'],
       ['affected_url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
+      ['url', 'https://acme.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/CDN%20cutover%20runbook.pdf'],
+      ['url', 'https://acme.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/Cache%20keys.xlsx'],
+      ['url', 'http://ACME.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/Cache%20keys.xlsx/'],
+      ['url', 'https://main--acme-preview--acme.aem.page/en/ind…'],
     ],
     // Written by the thread agent, long enough to fold: the draft line shows its first line.
     draft: {

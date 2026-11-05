@@ -408,6 +408,18 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .hmi span { min-width: 0; overflow-wrap: anywhere; }
 .ph .hmi small { flex: none; }
 .ph .hmi.member { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0px; }
+/* A link: its favicon, then its address on one line, cut in the middle (the path before its last
+   segment goes first, the page it names stays), then its note. */
+.ph .hmi.link { align-items: center; justify-content: flex-start; gap: var(--spectrum-spacing-100); }
+.ph .hmi.link small { margin-left: auto; padding-left: var(--spectrum-spacing-100); }
+.ph .hm .fav { flex: none; width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); object-fit: contain; }
+.ph .hm a.top .fav { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.ph .hmi .url { display: flex; min-width: 0; white-space: nowrap; }
+.ph .hmi .url > span { overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+/* The path gives way, the page only where it is longer than the line (a page that shrank at all,
+   even by a fraction of a pixel, would lose its last characters to the ellipsis). */
+.ph .hmi .url .path { flex: 0 1 auto; min-width: var(--spectrum-spacing-300); }
+.ph .hmi .url .page { flex: none; max-width: calc(100% - var(--spectrum-spacing-300)); }
 .ph .hm .lb { max-width: calc(var(--spectrum-spacing-100) * 44); }
 .experts { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
 .experts button { font: inherit; border: 0; background: none; }
