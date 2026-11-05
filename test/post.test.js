@@ -15,7 +15,8 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  channelPlace, checkState, connections, finishAuth, learnMembers, makeState, mentionable, post,
+  channelPlace, checkState, connections, finishAuth, knownMentions, learnMembers, makeState,
+  mentionable, post,
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/markdown.js';
@@ -220,6 +221,31 @@ describe('mentions', () => {
       VALUES ('slack', 'E1', 'U8', 'person', 'Ada', '2026-10-21T10:00:00Z')`).run();
     member.run('C1', 'U8');
     assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), []);
+  });
+
+  it('suggests one account a person: the one a mention reaches', async () => {
+    const e = withAccounts(env());
+    // Ada (person 1) also has a guest account in another workspace, in no channel here.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, home,
+      fetched_at) VALUES ('slack', 'E1', 'U0', 'person', 'ada', 1, 'T-ELSE', '2026-10-21T10:00:00Z')`).run();
+    const member = e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id,
+      user_id) VALUES ('slack', 'E1', ?, ?)`);
+    const adaIds = async () => {
+      const { people, pool } = await (await mentionable(e, 'slack:E1:C1:1.1', 'ad', inTeam, { pool: true })).json();
+      return [people.filter((p) => p.name === 'Ada').map((p) => p.id),
+        pool.accounts.filter((p) => p.name === 'Ada').map((p) => p.id)];
+    };
+    // Neither in a channel: one of them all the same.
+    assert.deepEqual(await adaIds(), [['U0'], ['U0']]);
+    // Hers, in the channel.
+    member.run('C1', 'U1');
+    assert.deepEqual(await adaIds(), [['U1'], ['U1']]);
+
+    // Mentioning the other one mentions the one in the channel, once.
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    assert.deepEqual(await knownMentions(e, t, [{ id: 'U0' }, { id: 'U1' }, { id: 'U2' }]), [
+      { id: 'U1', name: 'Ada', kind: 'person' }, { id: 'U2', name: 'Bob Builder', kind: 'person' },
+    ]);
   });
 
   // Made-up: a colleague who never posted in the thread, with a login unlike her name.

@@ -644,17 +644,75 @@ export async function postableChannels(env, me) {
 }
 
 /**
+ * Who counts as a member of the thread's channel: whoever is listed in it or posted there; on
+ * Teams, in any channel of its team (`?4`, its Teams team, or '' for none). One query, so the
+ * suggestions wait for one round trip less.
+ */
+const CHANNEL_PEOPLE = `WITH chans(id) AS (SELECT ?3 UNION SELECT channel_id FROM channels
+    WHERE ?4 != '' AND source = 'teams' AND tenant = ?2 AND group_id = ?4)
+  SELECT user_id FROM channel_members
+    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
+  UNION SELECT DISTINCT SUBSTR(author_key, LENGTH(source || ':' || tenant || ':') + 1) FROM messages
+    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
+      AND author_key IS NOT NULL`;
+
+/** `CHANNEL_PEOPLE`'s ?1 to ?4 for the thread or channel `t`. */
+const placeArgs = (t) => [
+  t.source, t.tenant, t.channel_id, t.source === 'teams' && t.group_id ? t.group_id : '',
+];
+
+/**
+ * The accounts of the people `persons` (a query of `person`s, with `CHANNEL_PEOPLE`'s ?1 to ?4)
+ * who have more than one in the thread's workspace or tenant: people with a second account in
+ * another workspace of a Slack Enterprise Grid, or as a guest of another one. Each with whether
+ * it is in the thread's channel (`here`) and how many channels it is listed in (`channels`).
+ */
+const TWINS = (persons) => `SELECT i.user_id AS id, i.person,
+    i.user_id IN (${CHANNEL_PEOPLE}) AS here,
+    (SELECT COUNT(*) FROM channel_members m
+      WHERE m.source = ?1 AND m.tenant = ?2 AND m.user_id = i.user_id) AS channels
+  FROM identities i
+  WHERE i.source = ?1 AND i.tenant = ?2 AND i.kind = 'person' AND i.person IN (
+    SELECT person FROM identities WHERE source = ?1 AND tenant = ?2 AND kind = 'person'
+      AND person IN (${persons}) GROUP BY person HAVING COUNT(*) > 1)`;
+
+/**
+ * Of each person's accounts (`TWINS` rows), the one a mention reaches, as `mentionsByName`
+ * picks it: the one in the channel, else the one in the most channels. A map from every one
+ * of their accounts to that one.
+ */
+function reachedAccounts(twins) {
+  const byPerson = new Map();
+  for (const r of twins || []) {
+    byPerson.set(r.person, [...(byPerson.get(r.person) || []), r]);
+  }
+  const out = new Map();
+  for (const accounts of byPerson.values()) {
+    const [best] = accounts.sort((a, b) => Number(b.here) - Number(a.here)
+      || Number(b.channels) - Number(a.channels) || String(a.id).localeCompare(String(b.id)));
+    accounts.forEach((a) => out.set(a.id, best.id));
+  }
+  return out;
+}
+
+/**
  * The accounts a reply mentions, as opspile knows them: only platform accounts already in
  * D1, in the thread's workspace or tenant, can be mentioned, and on Teams the bots seen in
  * the thread's Teams team. The name is D1's, so the text of a mention is the same `@Name`
  * the message shows when it comes back.
  */
 export async function knownMentions(env, t, ids) {
-  const wanted = [...new Set((Array.isArray(ids) ? ids : [])
+  const asked = [...new Set((Array.isArray(ids) ? ids : [])
     .map((m) => String((m && m.id) || m || '')).filter(Boolean))].slice(0, MAX_MENTIONS);
-  if (!wanted.length) {
+  if (!asked.length) {
     return [];
   }
+  // A person's other account where it is the one the mention reaches (`TWINS`).
+  const { results: twins } = await env.DB.prepare(TWINS(`SELECT person FROM identities
+    WHERE source = ?1 AND tenant = ?2 AND user_id IN (SELECT value FROM json_each(?5))
+      AND person IS NOT NULL`)).bind(...placeArgs(t), JSON.stringify(asked)).all();
+  const reached = reachedAccounts(twins);
+  const wanted = [...new Set(asked.map((id) => reached.get(id) || id))];
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
     AND i.user_id IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
@@ -675,19 +733,6 @@ const MAX_MEMBER_LOOKUPS = 60;
 const MEMBER_LOOKUPS_AT_ONCE = 4;
 // Accounts of one workspace or tenant considered for a suggestion; far more than there are.
 const MAX_ACCOUNTS = 5000;
-
-/**
- * Who counts as a member of the thread's channel: whoever is listed in it or posted there; on
- * Teams, in any channel of its team (`?4`, its Teams team, or '' for none). One query, so the
- * suggestions wait for one round trip less.
- */
-const CHANNEL_PEOPLE = `WITH chans(id) AS (SELECT ?3 UNION SELECT channel_id FROM channels
-    WHERE ?4 != '' AND source = 'teams' AND tenant = ?2 AND group_id = ?4)
-  SELECT user_id FROM channel_members
-    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
-  UNION SELECT DISTINCT SUBSTR(author_key, LENGTH(source || ':' || tenant || ':') + 1) FROM messages
-    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
-      AND author_key IS NOT NULL`;
 
 /**
  * Lists the members of the thread's channel when that is a week old or was never done, and
@@ -893,13 +938,10 @@ export async function mentionable(env, key, q, inTeam, {
     key ? env.DB.prepare(`SELECT DISTINCT author_key FROM messages
       WHERE thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)`)
       .bind(key, key).all() : { results: [] },
-    env.DB.prepare(CHANNEL_PEOPLE).bind(
-      t.source,
-      t.tenant,
-      t.channel_id,
-      t.source === 'teams' && t.group_id ? t.group_id : '',
-    ).all(),
+    env.DB.prepare(CHANNEL_PEOPLE).bind(...placeArgs(t)).all(),
     me && key ? threadExperts(env, key, { me: me.id }) : null,
+    env.DB.prepare(TWINS(`SELECT person FROM identities
+      WHERE source = ?1 AND tenant = ?2 AND person IS NOT NULL`)).bind(...placeArgs(t)).all(),
   ]);
   // Awaited below once the viewer may see it; not an unhandled rejection before that.
   found.catch(() => {});
@@ -913,8 +955,11 @@ export async function mentionable(env, key, q, inTeam, {
   }
   const [
     { results: botRows }, { results: accounts }, { results: posters }, { results: members },
-    experts,
+    experts, { results: twins },
   ] = await found;
+  // One suggestion a person: the account a mention reaches (two of one name, and the wrong one
+  // picked, mention someone where they never look).
+  const reached = reachedAccounts(twins);
   const prefix = `${t.source}:${t.tenant}:`;
   const affinity = (r) => (!experts || !r.staff || (me && r.person === me.id) ? 0 : Math.max(
     experts.authors.get(`${prefix}${r.id}`) || 0,
@@ -924,13 +969,14 @@ export async function mentionable(env, key, q, inTeam, {
     .filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)));
   const inChannel = new Set((members || []).map((r) => r.user_id));
   const all = {
-    accounts: (accounts || []).map((r) => poolAccount({
-      ...r,
-      aliases: otherNames(r),
-      here: here.has(r.id),
-      member: inChannel.has(r.id),
-      affinity: affinity(r),
-    })),
+    accounts: (accounts || []).filter((r) => (reached.get(r.id) || r.id) === r.id)
+      .map((r) => poolAccount({
+        ...r,
+        aliases: otherNames(r),
+        here: here.has(r.id),
+        member: inChannel.has(r.id),
+        affinity: affinity(r),
+      })),
     bots: (botRows || []).map((r) => ({
       id: r.id,
       name: r.name,
