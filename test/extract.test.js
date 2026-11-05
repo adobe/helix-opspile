@@ -125,6 +125,10 @@ describe('a team\'s rules and tech stack', () => {
     assert.ok(edge.some((t) => t.tech === 'gdrive'));
     assert.ok(helix.some((t) => t.tech === 'sitecore') && !edge.some((t) => t.tech === 'sitecore'));
     assert.equal(helix.find((t) => t.tech === 'sitecore').product, 'Content sources');
+    // The names it also goes by: trimmed, each once (migration 0057 seeds the admin team's).
+    await saveTech(e, 'helix', { tech: 'sitecore', aliases: ' Sitecore XM ,sitecore xm,  XM Cloud ' }, 'Bo');
+    assert.equal((await techFor(e, 'helix')).find((t) => t.tech === 'sitecore').aliases, 'Sitecore XM, XM Cloud');
+    assert.match(edge.find((t) => t.tech === 'akamai').aliases, /EdgeWorkers/);
     // A team's change to one of the admin team's keeps the product it is part of.
     assert.equal(helix.find((t) => t.tech === 'akamai').product, 'CDN');
     assert.equal((await techNames(e)).akamai, 'Akamai');
