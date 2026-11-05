@@ -1346,7 +1346,7 @@ function searchRows(box) {
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
   // The view switch stays: a search is of the view on screen, a team's or the personal one.
-  const ctl = `<span class="path">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
+  const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== ctl) { head.innerHTML = ctl; head.__html = ctl; }
   const list = box.querySelector('.rows');
@@ -1671,7 +1671,7 @@ function threadRows() {
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
   // Start a thread (not while viewing as someone: that is read-only).
   const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
-  const count = `<span class="path">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
+  const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
