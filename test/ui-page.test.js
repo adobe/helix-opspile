@@ -904,7 +904,7 @@ describe('inbox page', () => {
   });
 
   describe('the thread\'s header', () => {
-    const header = () => piece('const HEAD_POSTS', 'const pct =', 'headLinks, headTech, headPosts');
+    const header = () => piece('const HEAD_POSTS', 'const pct =', 'headLinks, headTech, headPosts, urlParts');
     const fact = (field, value) => ({ field, value });
 
     it('names the links by the page mentioned, else the site\'s production URL', () => {
@@ -934,6 +934,38 @@ describe('inbox page', () => {
       assert.equal(links.find((l) => l.group === 'id' && l.href).href, 'https://www.cve.org/CVERecord?id=CVE-2026-1234');
       // What is no URL, and a site that is no `org/site`, are left out.
       assert.deepEqual(headLinks([fact('affected_url', 'the homepage'), fact('site', 'acme')]), []);
+      assert.equal(links[0].host, 'main--www--acme.aem.page');
+      assert.equal(links.find((l) => l.text === 'OPS-1').host, '');
+    });
+
+    it('lists a link once, however it is written, and not cut off where it is there whole', () => {
+      const { headLinks } = header();
+      const doc = 'https://acme.example/sites/web/Shared%20Documents/Plan.pdf';
+      const links = headLinks([
+        fact('url', doc),
+        fact('url', 'http://ACME.example/sites/web/Shared%20Documents/Plan.pdf/'),
+        fact('url', `${doc}%20`),
+        fact('url', `${doc}.`),
+        fact('url', 'https://acme.example/sites/web/Shared%20Doc…'),
+        fact('url', 'https://acme.example/sites/web/Shared%20Documents/Plan.PDF'),
+        fact('url', 'https://da.example/edit#…'),
+        fact('url', 'https://da.example/edit#…'),
+      ]);
+      assert.deepEqual(links.map((l) => l.href), [
+        doc,
+        'https://acme.example/sites/web/Shared%20Documents/Plan.PDF',
+        'https://da.example/edit#…',
+      ]);
+    });
+
+    it('splits a link\'s address into its path and the page it names, decoded', () => {
+      const { urlParts } = header();
+      assert.deepEqual(urlParts('https://acme.example/sites/web/Shared%20Documents/Plan%20A.pdf'), {
+        lead: 'acme.example/sites/web/Shared Documents', tail: '/Plan A.pdf',
+      });
+      assert.deepEqual(urlParts('https://acme.example/en/?q=a%20b#top'), { lead: 'acme.example', tail: '/en?q=a b#top' });
+      assert.deepEqual(urlParts('https://acme.example/'), { lead: 'acme.example', tail: '' });
+      assert.deepEqual(urlParts('https://da.example/#/org/site'), { lead: 'da.example', tail: '/#/org/site' });
     });
 
     it('names the tech stack by what the thread shows, then the customer\'s, then its topics', () => {
