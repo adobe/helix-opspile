@@ -892,7 +892,8 @@ async function kbApi(req, res, url) {
   const body = req.method === 'GET' ? {} : await readJson(req);
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools, and the teams' extraction rules: src/kbadmin.js itself.
-  if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools'].includes(url.pathname)
+  if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools', '/api/kb/tools/secrets']
+    .includes(url.pathname)
     || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')
     || url.pathname === '/api/kb/extraction' || url.pathname.startsWith('/api/kb/extraction/')) {
     const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);

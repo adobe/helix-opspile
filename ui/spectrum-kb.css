@@ -145,6 +145,13 @@ dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spe
 .ch.global .per.flat { margin-top: var(--spectrum-spacing-300); }
 .ch.global .per.flat .row2, .ch.global .per.flat .none { padding-left: 0; }
 .ch.global .per.flat .find { margin-left: 0; width: 100%; }
+/* The computer's secrets: below its description, a row each, and the form to add one. */
+.ch.global .secrets { flex-basis: 100%; min-width: 0; margin-top: var(--spectrum-spacing-300); }
+.ch.global .secrets > .sub { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-bottom: var(--spectrum-spacing-75); }
+.ch.global .secrets .srow { display: flex; gap: var(--spectrum-spacing-200); align-items: center; min-height: calc(var(--spectrum-component-height-75) + var(--spectrum-spacing-75)); font-size: var(--spectrum-font-size-75); }
+.ch.global .secrets .srow .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch.global .secrets .none { color: var(--faint); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-75) 0; }
+.ch.global .secrets .mcpform { margin-left: 0; margin-right: 0; }
 /* A team's thread agents by default, above its channels. */
 .ch.default { background: var(--col); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-600); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-200); margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); }
 /* Your own: whether your inbox shows the agent's thinking, everywhere and in each channel. */

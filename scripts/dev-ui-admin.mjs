@@ -263,6 +263,19 @@ const SEED_MCP = [
   },
 ];
 
+// The computer's secrets (src/agent/secrets.js): platform ops' own two, and one of ACME's.
+const SEED_SECRETS = [
+  {
+    repo: 'kb-team-platform', name: 'TICKETS_API_KEY', value: 'made-up-preview-key', hosts: 'tickets.internal.example', description: 'The ticket tracker\'s REST API, as a bearer token',
+  },
+  {
+    repo: 'kb-team-platform', name: 'CDN_TOKEN', value: 'made-up-preview-token', hosts: 'api.cdn.example, *.cdn.example', description: 'Purge and cache status',
+  },
+  {
+    repo: 'kb-org-acme', name: 'ACME_STATUS_KEY', value: 'made-up-preview-status', hosts: 'status.acme.example',
+  },
+];
+
 /**
  * Channels the admin team holds (the fallback rule files them there), for the suggestions on
  * a team's page: who of the fake teams posts, reacts or is a member in them, and what Clef
@@ -629,6 +642,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   const admins = { ...store.me, admin: true, teams: [{ slug: 'admin', name: 'Admin' }] };
   const mcpUrl = new URL('http://localhost/api/kb/mcp');
   const checkUrl = new URL('http://localhost/api/kb/mcp/global/check');
+  const secretsUrl = new URL('http://localhost/api/kb/tools/secrets');
   const seeded = SEED_MCP.reduce((done, body) => done.then(() => kbAdmin(
     toRequest({ method: 'POST' }, mcpUrl, body),
     env,
@@ -639,12 +653,18 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     DB.sqlite.exec(`INSERT INTO mcp_server_switches (server_id, channel, enabled, changed_by, changed_at)
       SELECT id, 'C0INITECH1', 0, 'Dana', '2026-10-26T09:00:00Z' FROM mcp_servers
       WHERE scope = 'team' AND slug = 'platform' AND name = 'tickets'`);
-  }).then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
-    toRequest({ method: 'POST' }, checkUrl, { server }),
+  }).then(() => SEED_SECRETS.reduce((done, body) => done.then(() => kbAdmin(
+    toRequest({ method: 'POST' }, secretsUrl, body),
     env,
-    checkUrl,
+    secretsUrl,
     admins,
-  ))));
+  )), Promise.resolve()))
+    .then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+      toRequest({ method: 'POST' }, checkUrl, { server }),
+      env,
+      checkUrl,
+      admins,
+    ))));
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;
