@@ -4698,6 +4698,19 @@ function openPicker(button) {
 /** A thread as seen from the open team's inbox (a shared channel is in several). */
 const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team && !personal() ? `&team=${encodeURIComponent(state.team)}` : ''}`;
 const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
+/**
+ * Whether your read `ev` (`{ thread, at }`, from a room) changes what this page shows: the
+ * entry it is of is unread here, and the read reaches that thread's last message. The tab that
+ * read it marked it read already (markRead); another tab or device has not.
+ */
+function readHere(ev) {
+  const t = state.data?.threads.find((x) => x.thread === ev.thread
+    || x.members?.some((m) => m.thread === ev.thread));
+  if (!t?.unread) return false;
+  const m = t.members?.find((x) => x.thread === ev.thread) || t;
+  const at = memberLast(m, t.kind);
+  return Boolean(at) && ev.at >= at;
+}
 function markRead(t) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
   // A folded entry is several platform threads: each one is read up to its own end.
@@ -5047,7 +5060,12 @@ function listen(team, live, { again = false } = {}) {
     if (ev.type === 'thread' && ev.thread && ev.thread === state.awaiting) awaitStarted(ev.thread, { now: true });
     // A room only the notifications listen to: the inbox on screen is not its.
     if (!screenTeams().includes(team)) return;
-    if (ev.type === 'read' && ev.person === state.me.id) return;
+    // Your own read, from this tab (already shown) or another tab or device: only a read that
+    // makes something here read reloads, so another device's reads show here too.
+    if (ev.type === 'read' && ev.person === state.me.id) {
+      if (readHere(ev)) reloadSoon(ev.thread);
+      return;
+    }
     if (ev.type === 'read') reloadSoon(ev.thread);
     // Threads folded into a group (re-threading): the open one, if it is among them, reopens as
     // its group; cached copies of them and of the group are out of date.
