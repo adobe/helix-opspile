@@ -738,17 +738,44 @@ const parseAliases = (s) => {
 };
 
 /**
+ * Whether each of the accounts `ids` is in the thread's channel (`here`, as `CHANNEL_PEOPLE`
+ * has it) and how many channels of its workspace or tenant it is listed in (`channels`), by id.
+ */
+async function accountStanding(env, t, ids) {
+  const { results } = await env.DB.prepare(`SELECT j.value AS id,
+      j.value IN (${CHANNEL_PEOPLE}) AS here,
+      (SELECT COUNT(*) FROM channel_members m
+        WHERE m.source = ?1 AND m.tenant = ?2 AND m.user_id = j.value) AS channels
+    FROM json_each(?5) j`).bind(
+    t.source,
+    t.tenant,
+    t.channel_id,
+    t.source === 'teams' && t.group_id ? t.group_id : '',
+    JSON.stringify([...new Set(ids)]),
+  ).all();
+  return new Map((results || []).map((r) => [r.id, {
+    here: Boolean(r.here), channels: Number(r.channels) || 0,
+  }]));
+}
+
+/**
  * Accounts by the names an earlier version of a message mentioned them by (`@Name` in its
  * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
  * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
+ *
+ * A name that stands for several accounts is still one mention when only one of them is in the
+ * thread's channel (`CHANNEL_PEOPLE`), or when all of them are one person's (people with a
+ * second account in another workspace of a Slack Enterprise Grid): then the account in the
+ * channel, else the one in the most channels. Different people of one name, none or several
+ * of them in the channel, stay text: nobody is guessed.
  */
 export async function mentionsByName(env, t, names) {
   const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
   if (!wanted.length) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
-    AND ${NAME} IN (SELECT value FROM json_each(?))`)
+  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name,
+    i.person ${ACCOUNTS} AND ${NAME} IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
   const { results: bots } = t.source === 'teams' && t.group_id
     ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name ${BOTS}
@@ -759,12 +786,36 @@ export async function mentionsByName(env, t, names) {
     ...(results || []).map((r) => ({ ...r, kind: 'person' })),
     ...(bots || []).map((r) => ({ ...r, kind: 'bot' })),
   ];
-  const count = new Map();
+  const byName = new Map();
   for (const a of found) {
-    count.set(a.name, new Set([...(count.get(a.name) || []), a.id]));
+    const ids = byName.get(a.name) || new Map();
+    if (!ids.has(a.id)) {
+      ids.set(a.id, a);
+    }
+    byName.set(a.name, ids);
   }
-  const seen = new Set();
-  return found.filter((a) => count.get(a.name).size === 1 && !seen.has(a.name) && seen.add(a.name));
+  const tied = [...byName.values()].filter((ids) => ids.size > 1)
+    .flatMap((ids) => [...ids.values()]).filter((a) => a.kind === 'person').map((a) => a.id);
+  const standing = tied.length ? await accountStanding(env, t, tied) : new Map();
+  const pick = (ids) => {
+    const accounts = [...ids.values()];
+    if (accounts.length === 1) {
+      return accounts[0];
+    }
+    const here = accounts.filter((a) => standing.get(a.id)?.here);
+    if (here.length === 1) {
+      return here[0];
+    }
+    const person = accounts[0].person ?? null;
+    if (person === null || accounts.some((a) => a.kind !== 'person' || a.person !== person)) {
+      return null;
+    }
+    const channels = (a) => standing.get(a.id)?.channels || 0;
+    return [...(here.length ? here : accounts)]
+      .sort((a, b) => channels(b) - channels(a) || a.id.localeCompare(b.id))[0];
+  };
+  return [...byName.values()].map(pick).filter(Boolean)
+    .map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
 }
 
 /**

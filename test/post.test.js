@@ -187,6 +187,39 @@ describe('mentions', () => {
     e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
       VALUES ('slack', 'E1', 'U9', 'person', 'Bob Builder', '2026-10-21T10:00:00Z')`).run();
     assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), []);
+    // Unless only one of them is in the channel.
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U9')`).run();
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), [{ ...bob, id: 'U9' }]);
+  });
+
+  it('mentions the account a person uses when they have two of one name', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const add = e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      person, fetched_at) VALUES ('slack', 'E1', ?, 'person', 'Ada', 1, '2026-10-21T10:00:00Z')`);
+    const member = e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id,
+      user_id) VALUES ('slack', 'E1', ?, ?)`);
+    // Ada (person 1) has a second account, from another workspace of the grid.
+    add.run('U7');
+    const adaAs = (id) => [{ id, name: 'Ada', kind: 'person' }];
+    // Neither is in the channel: the one in more channels.
+    member.run('C2', 'U7');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U7'));
+    member.run('C2', 'U1');
+    member.run('C3', 'U1');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U1'));
+    // The one in the channel.
+    member.run('C1', 'U7');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U7'));
+    // Both in it: again the one in more channels.
+    member.run('C1', 'U1');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U1'));
+    // Someone else of that name, in the channel too: nobody.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U8', 'person', 'Ada', '2026-10-21T10:00:00Z')`).run();
+    member.run('C1', 'U8');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), []);
   });
 
   // Made-up: a colleague who never posted in the thread, with a login unlike her name.
