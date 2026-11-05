@@ -367,7 +367,11 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 
 /* Messages: bubbles, customers left, Adobe right. */
 #pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane); }
-#pane .scroller { flex: 1; overflow: auto; overscroll-behavior: contain; }
+/* The thread scrolls only up and down: its bubbles wrap, and code blocks and tables scroll on
+   their own. Something wider (a hover's quick reactions) must not add a scrollbar, which with
+   scroll bars always shown takes room, moves the thread and the message out from under the
+   pointer, hides the reactions again, and so on, flickering. */
+#pane .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
 .ph { padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); border-bottom: var(--spectrum-border-width-100) solid var(--line); background: var(--pane); flex: none; }
 .ph h2 { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); display: flex; align-items: baseline; }
 .ph .sub { display: flex; flex-wrap: wrap; align-items: center; }
