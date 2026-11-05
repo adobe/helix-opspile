@@ -133,6 +133,8 @@ export class ThreadAgent extends Agent {
         models.setProvider(agentProvider(env));
         const agent = {
           env,
+          // The object's name, which the computer's gateway knows it by (src/agent/secrets.js).
+          name: this.name,
           hasThread: !this.name.startsWith('kb:'),
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),

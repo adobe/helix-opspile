@@ -24,13 +24,14 @@ import { unseal } from '../post.js';
  *
  * - a request that names no secret goes out as it is;
  * - one that names secrets, in its URL, its headers (a Basic `Authorization` decoded too) or a
- *   textual body of up to 1 MiB, gets their values in place of the placeholders, but only over
+ *   textual body of up to 1 MiB, gets their values in place of the placeholders, escaped as the
+ *   place needs (percent-encoded in the URL and a form, in a JSON string or XML), but only over
  *   HTTPS to the hosts each secret lists, and without following redirects, so that the shell
  *   asks again, through here, for wherever it is sent next;
  * - one that names a secret it may not send there, or one there is none of, is refused (403)
  *   and nothing is sent;
  * - what comes back has the values replaced by their placeholders again, in its headers and
- *   its body, should the host repeat them.
+ *   its body, as they are or escaped, should the host repeat them.
  *
  * The gateway knows the agent by name only (its props, set by the ThreadAgent object) and reads
  * its team's and customer's secrets from D1 on every request that names one, so a change, or a
@@ -158,7 +159,7 @@ export function secretsNote(list) {
     return '';
   }
   const lines = list.map((s) => `- $${s.name}, sent to ${s.hosts.join(', ')}${s.description ? `: ${s.description}` : ''}`);
-  return `Secrets: the team keeps API keys for you, as variables of your shell. Use them as they are, quoted, where the API wants the key: in a header (curl -H "Authorization: Bearer $NAME"), the URL, a JSON or form body, or curl -u. Your shell only has a placeholder (${PREFIX}NAME): the value is put in on the way out, in HTTPS requests to the hosts listed and nowhere else, and taken out again from what comes back. A request that names a secret for another host is refused, and nothing is sent. You never see a value, so do not try to find one out or ask anyone for it, and never write a placeholder into a draft or a note.
+  return `Secrets: the team keeps API keys for you, as variables of your shell. Use them as they are, quoted, where the API wants the key: in a header (curl -H "Authorization: Bearer $NAME"), the URL, a JSON or form body, or curl -u, as $NAME and not encoded: the value is escaped for where it goes (the URL, a form, a JSON string). Your shell only has a placeholder (${PREFIX}NAME): the value is put in on the way out, in HTTPS requests to the hosts listed and nowhere else, and taken out again from what comes back. A request that names a secret for another host is refused, and nothing is sent. You never see a value, so do not try to find one out or ask anyone for it, and never write a placeholder into a draft or a note.
 ${lines.join('\n')}`;
 }
 
@@ -280,6 +281,29 @@ export function scrubber(pairs) {
   });
 }
 
+/**
+ * How a value is written where its placeholder was: as it is in a header, percent-encoded in
+ * the URL and in a form body (a `+` would arrive as a space), escaped in a JSON string or XML.
+ */
+const ESCAPE = {
+  raw: (v) => v,
+  url: (v) => encodeURIComponent(v),
+  json: (v) => JSON.stringify(v).slice(1, -1),
+  xml: (v) => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
+};
+
+/** The escape of a body of `type` (a content type). */
+function bodyEscape(type) {
+  const t = String(type || '').toLowerCase();
+  if (t.startsWith('application/x-www-form-urlencoded')) {
+    return 'url';
+  }
+  if (/^application\/([a-z0-9.+-]*\+)?json\b/.test(t)) {
+    return 'json';
+  }
+  return /xml\b/.test(t) ? 'xml' : 'raw';
+}
+
 const refuse = (host, why) => new Response(
   `opspile: nothing was sent to ${host}: ${why.join('; ')}.\n`,
   { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8', 'x-opspile-secrets': 'refused' } },
@@ -322,7 +346,8 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
     // eslint-disable-next-line no-await-in-loop
     values.set(name, await unseal(env, rows.get(name).value));
   }
-  const put = (s) => s.replace(FIND, (m, name) => (values.has(name) ? values.get(name) : m));
+  const put = (s, how = 'raw') => s.replace(FIND, (m, name) => (values.has(name)
+    ? ESCAPE[how](values.get(name)) : m));
   const headers = new Headers();
   for (const [k, v] of headerList) {
     headers.append(k, put(v));
@@ -333,7 +358,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
   const init = { method: request.method, headers, redirect: 'manual' };
   if (request.body) {
     if (body !== null && namesIn(body).length) {
-      init.body = put(body);
+      init.body = put(body, bodyEscape(request.headers.get('content-type')));
       headers.delete('content-length');
     } else {
       init.body = request.body;
@@ -341,8 +366,11 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
     }
   }
   console.log(JSON.stringify({ route: 'gateway', secrets: [...named], sent: true }));
-  const res = await send(new Request(put(request.url), init));
-  const back = [...values].map(([name, value]) => [value, placeholder(name)]);
+  const res = await send(new Request(put(request.url, 'url'), init));
+  // The value, and how it may come back escaped: the longest first, as they may overlap.
+  const back = [...values].flatMap(([name, value]) => [...new Set(Object.values(ESCAPE)
+    .map((e) => e(value)))].map((v) => [v, placeholder(name)]))
+    .sort((x, y) => y[0].length - x[0].length);
   const scrub = (s) => back.reduce((out, [value, ph]) => out.split(value).join(ph), s);
   const out = new Headers();
   for (const [k, v] of res.headers) {

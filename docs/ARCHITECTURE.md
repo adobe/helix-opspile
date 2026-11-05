@@ -1526,10 +1526,13 @@ exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
 `globalOutbound`: every `fetch` of the shell, curl's too, arrives there, with the agent's name in
 its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
 One that does is sent with the values in place of the placeholders (in the URL, the headers, a
-Basic `Authorization`, a textual body up to 1 MiB), only over HTTPS to a host the secret lists,
+Basic `Authorization`, a textual body up to 1 MiB; percent-encoded in the URL and a form body,
+escaped in JSON and XML, so a `+` does not arrive as a space), only over HTTPS to a host the secret lists,
 and with `redirect: manual`, so a redirect comes back to the shell and its next request is
 checked again; what comes back has the values replaced by their placeholders, in its headers and
-its body (`scrubber`, which also finds a value split between chunks). A placeholder for another
+its body, as it is or escaped (`scrubber`, which also finds a value split between chunks). The
+prompt and the shell's variables come from the agent's team and customer as they are now too,
+not from its cached target. A placeholder for another
 host, over HTTP, or for a secret the agent's team and customer do not have is refused with a 403,
 and nothing is sent. The gateway reads the secrets from D1 on each such request, by the agent's
 team and customer as they are now, so a deleted secret or a moved thread counts at once. What it

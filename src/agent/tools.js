@@ -28,7 +28,9 @@ import { threadMessages } from '../label.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
 import { toolsFor } from './agenttools.js';
-import { secretsFor, secretsNote, shellEnv } from './secrets.js';
+import {
+  agentScope, secretsFor, secretsNote, shellEnv,
+} from './secrets.js';
 import {
   channelThreads, MAX_LIST, resolveAnyThread, resolveThread,
 } from './history.js';
@@ -784,8 +786,12 @@ export function agentToolsExtension(ctx, tools) {
   if (on.has('computer')) {
     // The secrets of the team and the customer: told by name, and in the shell as placeholders
     // that the Worker's gateway replaces on the way out (src/agent/secrets.js). Asked again for
-    // each command, so a secret added or deleted counts at once.
-    const secrets = async () => secretsFor(env, await ctx.target()).catch(() => []);
+    // each command, of the team and customer as they are now (as the gateway does, not the
+    // cached `target`), so a secret added or deleted, or a thread moved, counts at once.
+    const secrets = async () => secretsFor(
+      env,
+      ctx.name ? await agentScope(env, ctx.name) : await ctx.target(),
+    ).catch(() => []);
     sections.push(section('computer', async () => {
       const note = secretsNote(await secrets());
       return note ? `${COMPUTER}\n\n${note}` : COMPUTER;

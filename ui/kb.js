@@ -745,7 +745,7 @@ function secretForm(s) {
     <h3>${s.id ? `Edit ${esc(s.name)}` : 'Add a secret'}</h3>
     <label for="sName">Variable</label><input id="sName" class="mono short" placeholder="ACME_API_KEY" value="${esc(s.name || '')}" required pattern="[A-Z][A-Z0-9_]+">
     <label for="sValue">Value</label><input id="sValue" class="mono" type="password" placeholder="${s.id ? 'set; fill in to replace it' : 'the API key or token'}"${s.id ? '' : ' required'}>
-    <span class="hint">Stored encrypted, and never shown again, not even to the agents.</span>
+    <span class="hint">As it is, not encoded. Stored encrypted, and never shown again, not even to the agents.</span>
     <label for="sHosts">Sent only to</label><input id="sHosts" class="mono" placeholder="api.example.com, *.example.com" value="${esc((s.hosts || []).join(', '))}" required>
     <span class="hint">Hosts, over HTTPS; *.example.com is any host below example.com. A request that names it for another host is refused.</span>
     <label for="sDesc">What it is for</label><input id="sDesc" placeholder="Told to the agents, e.g. The ticket API, as a bearer token" value="${esc(s.description || '')}">

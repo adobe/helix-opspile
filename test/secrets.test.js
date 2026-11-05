@@ -229,6 +229,30 @@ describe('the secret gateway', () => {
     assert.match(text, new RegExp(`${placeholder('ACME_API_KEY')}"\\}$`));
   });
 
+  it('escapes a value for the URL, a form and JSON, and finds it escaped in what comes back', async () => {
+    const e = await withSecrets();
+    const odd = 'made+up/key==&"x\\';
+    await call(e, manager, 'PUT', '/api/kb/tools/secrets', {
+      id: e.DB.rows("SELECT id FROM agent_secrets WHERE scope = 'team'")[0].id, value: odd,
+    });
+    const net = network(async (r) => new Response(`${new URL(r.url).search} ${await r.text()}`));
+    const ask = (type, body) => quietly(() => forward(e, { agent: SLACK }, new Request(
+      `https://api.acme.example/token?key=${placeholder('ACME_API_KEY')}`,
+      { method: 'POST', headers: { 'content-type': type, 'x-key': placeholder('ACME_API_KEY') }, body },
+    ), { fetch: net.fetch }));
+    let res = await ask('application/x-www-form-urlencoded', `client_secret=${placeholder('ACME_API_KEY')}`);
+    const { request: out } = net.sent[0];
+    let { body } = net.sent[0];
+    assert.equal(new URL(out.url).searchParams.get('key'), odd);
+    assert.equal(new URLSearchParams(body).get('client_secret'), odd);
+    assert.equal(out.headers.get('x-key'), odd);
+    assert.equal(await res.text(), `?key=${placeholder('ACME_API_KEY')} client_secret=${placeholder('ACME_API_KEY')}`);
+    res = await ask('application/json', JSON.stringify({ secret: placeholder('ACME_API_KEY') }));
+    body = net.sent[1].body;
+    assert.equal(JSON.parse(body).secret, odd);
+    assert.ok(!(await res.text()).includes('made+up'));
+  });
+
   it('sends a body it does not read as it is', async () => {
     const e = await withSecrets();
     const net = network();
@@ -307,9 +331,11 @@ describe('the agent\'s computer', () => {
     const registry = createRegistry();
     const agent = {
       env: e,
+      name: SLACK,
       hasThread: true,
+      // Cached from before the thread moved to helix: the secrets are of its team as it is now.
       target: async () => ({
-        key: SLACK, team: 'helix', org: 'acme', channelId: 'C1', source: 'slack', threads: [SLACK],
+        key: SLACK, team: 'edge', org: 'globex', channelId: 'C1', source: 'slack', threads: [SLACK],
       }),
     };
     registry.install(agentToolsExtension(agent, ['computer']));
