@@ -250,9 +250,6 @@ back has missed what its room said, so the inbox and the open thread reload.
 **Background catch-up.** live ↔ collecting changes (`changed`, `reload`). A hidden tab notes what
 changed and reloads when it is shown.
 
-**Expert list.** shown → open → pick, reject or dismiss (`state.expertsOpen`, `expertEvent`). `shown`
-is sent once per list per opening, and `dismiss` when the ▾ list is left with nobody picked.
-
 **Thread list.** fresh → held in place → re-sorted (`state.list`). While `listKey` is the same, the
 rows stay where they are.
 

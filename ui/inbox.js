@@ -20,7 +20,7 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
-  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, expertLists: new Map(), expertsSeen: null, composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -2088,8 +2088,8 @@ async function loadAgent(key, { latest = null } = {}) {
 // ---------------------------------------------------------------- the thread's header
 // Line 1: the customer's icon with the platform's on it, which opens the thread on the platform
 // (a group of folded posts: a list of them, each to open), the title, and the channel where
-// the line has room for it. Line 2: three dropdowns, each named by what matters most for the
-// thread: its tech stack, the links found in it, and the colleagues to pull in.
+// the line has room for it. Line 2: two dropdowns, each named by what matters most for the
+// thread: its tech stack and the links found in it, then whom the thread's agent suggests.
 const HEAD_POSTS = 12; // the posts a group's list shows: its first and the latest
 // Hosts that documentation and code live on: a link there is a reference, not the customer's
 // page (a site's own host, `main--site--org.aem.live`, has `--` in it).
@@ -2292,107 +2292,45 @@ function fitHead() {
   chan.hidden = chan.offsetTop >= lead.offsetTop + lead.offsetHeight;
 }
 
-// ---------------------------------------------------------------- expert finder
-// Bottom right of the thread's header: the colleague most worth pulling in and why (GET
-// /api/experts, src/experts.js), with more in a dropdown. Picking one mentions them in the reply
-// box, as picking them after @ does; what is sent stays the person's to write.
-// Until the list comes, an empty pill holds its place, so the header's tags (which make room
-// for it) do not move when it arrives.
-const expertLine = (e) => (e.suggested ? `Agent suggests ${e.name}` : `${e.name} ${e.reasons[0] || ''}`);
-const EXPERTS_PENDING = '<div class="experts pending" id="experts" aria-hidden="true"><span class="top"><span class="av"></span><span>&nbsp;</span></span></div>';
+// ---------------------------------------------------------------- the agent's suggestions
+// Bottom right of the thread's header: a colleague the thread agent suggested pulling in
+// (`suggest_expert`) and its reason (GET /api/experts?suggested=1, src/experts.js), with more in
+// a dropdown when it suggested several. Picking one mentions them in the reply box, as picking
+// them after @ does; what is sent stays the person's to write. The expert finder's own ranking
+// is not shown (docs/ARCHITECTURE.md, "Expert finder"): only whom an agent picked, for a reason.
 
 function expertsHtml(key) {
-  if (!state.experts.has(key)) return EXPERTS_PENDING;
   const list = state.experts.get(key);
   if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
   const open = state.expertsOpen === key;
   const top = list[0];
-  // ✕ only where a reject can be recorded, and then ▾ even for one, so each can be rejected.
-  const rejectable = expertsRecordable(key);
-  const more = list.length > 1 || rejectable ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="${list.length > 1 ? 'More colleagues to pull in' : 'About this colleague'}" title="${list.length > 1 ? 'More colleagues' : 'Why them, or not the right person'}">▾</button>` : '';
-  const reject = (e, i) => (rejectable ? `<button class="reject" data-expert-reject="${i}" title="Not the right person for this thread" aria-label="${esc(e.name)} is not the right person for this thread">✕</button>` : '');
-  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues to pull in">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${e.suggested ? `Agent: ${esc(e.reasons[0])}` : esc(e.reasons.join(' · '))}</small></span></button>${reject(e, i)}</li>`).join('')}</ul>` : '';
-  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(expertLine(top))}</span></button>${more}${rows}</div>`;
+  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests">▾</button>` : '';
+  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
 }
 
-/** Puts the list on screen without touching the rest of the header. */
+/** Puts the suggestions on screen without touching the rest of the header. */
 function placeExperts(key) {
   if (state.open !== key) return;
-  // Nobody to pull in after all: the place held for them goes where that leaves the header as
-  // tall as it is (the end of line 2), else it stays empty until the header is drawn again, as
-  // giving it back now would move everything below it.
-  const held = $('experts');
-  if (held?.classList.contains('pending') && !state.experts.get(key)?.length) {
-    const ph = held.closest('.ph');
-    const tall = ph.offsetHeight;
-    held.hidden = true;
-    if (ph.offsetHeight !== tall) held.hidden = false;
-    return;
-  }
   $('experts')?.replaceWith(toNode(expertsHtml(key)));
   wireExperts(key);
 }
 
-/**
- * A better finder learns from what is done with its lists (POST /api/experts/event,
- * src/expertevents.js): each list the Worker computed has an id (`list`), and the page says when
- * it is `shown` in the open thread, its ▾ list is `open`ed, someone is `pick`ed, and when the ▾
- * list is closed or left with nobody picked (`dismiss`). Not while viewing as someone else.
- */
-function expertEvent(key, action, account) {
-  const list = state.expertLists.get(key);
-  if (!expertsRecordable(key)) return Promise.resolve(false);
-  return fetch('/api/experts/event', {
-    method: 'POST',
-    credentials: 'same-origin',
-    keepalive: true,
-    body: JSON.stringify({ list, action, ...(account ? { account } : {}) }),
-  }).then((res) => res.ok, () => false);
-}
-
-/** Whether what is done with the thread's list can be recorded: it has an id, and I am me. */
-function expertsRecordable(key) {
-  return !state.as && !state.data?.me?.readonly && Boolean(state.expertLists?.get(key));
-}
-
-/** Says a list is on screen: once each time a thread is opened, and again when it changes. */
-function expertsShown(key) {
-  const seen = `${key}|${state.expertLists.get(key)}`;
-  if (state.open !== key || !state.experts.get(key)?.length || state.expertsSeen === seen) return;
-  state.expertsSeen = seen;
-  expertEvent(key, 'shown');
-}
-
-/** `fresh` when the thread was just opened (not a new message in it). */
-async function loadExperts(key, fresh = false) {
-  // Left for another thread with the ▾ list open: nobody was picked.
-  if (state.expertsOpen && state.expertsOpen !== key) dismissExperts();
-  if (fresh) state.expertsSeen = null;
+/** Asks for the thread's suggestions, again only once there is something new in it. */
+async function loadExperts(key) {
+  if (state.expertsOpen && state.expertsOpen !== key) state.expertsOpen = null;
   wireExperts(key);
-  if (state.experts.has(key) && state.expertsAt?.get(key) === threadRow(key)?.last_at) {
-    expertsShown(key);
-    return;
-  }
+  if (state.experts.has(key) && state.expertsAt.get(key) === threadRow(key)?.last_at) return;
   let res;
   try {
-    res = await get(`/api/experts?thread=${encodeURIComponent(key)}`);
+    res = await get(`/api/experts?thread=${encodeURIComponent(key)}&suggested=1`);
   } catch {
     return; // the header works without it
   }
   const same = JSON.stringify(state.experts.get(key)) === JSON.stringify(res.experts);
   state.experts.set(key, res.experts);
   state.expertsAt.set(key, threadRow(key)?.last_at);
-  state.expertLists.set(key, res.list || null);
   if (!same) placeExperts(key);
-  expertsShown(key);
-}
-
-/** The ▾ list goes away with nobody picked from it. */
-function dismissExperts() {
-  const key = state.expertsOpen;
-  if (!key) return;
-  state.expertsOpen = null;
-  expertEvent(key, 'dismiss');
 }
 
 /** Writes @Name into the reply box, where the caret is, and remembers the account. */
@@ -2416,32 +2354,9 @@ function pullExpert(key, e) {
   box.focus();
 }
 
-/**
- * "Not the right person": they leave the list, and the finder leaves them out of my lists of
- * this thread from then on (a `reject`, which the training learns from too).
- */
-async function rejectExpert(key, i, button) {
-  const expert = state.experts.get(key)?.[i];
-  if (!expert || button?.disabled) return;
-  if (button) button.disabled = true;
-  // Only once the Worker has it: until then, they would be back on the next load.
-  if (!await expertEvent(key, 'reject', expert.id)) {
-    if (button) button.disabled = false;
-    toast(`Couldn’t save that ${expert.name} is not the right person. Try again.`);
-    return;
-  }
-  const rest = (state.experts.get(key) || []).filter((e) => e.id !== expert.id);
-  state.experts.set(key, rest);
-  if (!rest.length) state.expertsOpen = null;
-  placeExperts(key);
-  const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
-  (rows[Math.min(i, rows.length - 1)] || document.querySelector('#experts .top'))?.focus();
-  toast(`${expert.name} won’t be suggested to you for this thread again.`);
-}
-
 function closeExperts(key, focus = false) {
   if (state.expertsOpen !== key) return;
-  dismissExperts();
+  state.expertsOpen = null;
   placeExperts(key);
   if (focus) document.querySelector('#experts .more')?.focus();
 }
@@ -2451,16 +2366,8 @@ function wireExperts(key) {
   if (!el) return;
   el.onclick = (e) => {
     const pick = e.target.closest('[data-expert]');
-    const reject = e.target.closest('[data-expert-reject]');
-    if (reject) {
-      rejectExpert(key, Number(reject.dataset.expertReject), reject);
-    } else if (e.target.closest('[data-experts-more]')) {
-      if (state.expertsOpen === key) {
-        dismissExperts();
-      } else {
-        state.expertsOpen = key;
-        expertEvent(key, 'open');
-      }
+    if (e.target.closest('[data-experts-more]')) {
+      state.expertsOpen = state.expertsOpen === key ? null : key;
       placeExperts(key);
       const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
       (rows[1] || rows[0])?.focus();
@@ -2468,10 +2375,7 @@ function wireExperts(key) {
       const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
       state.expertsOpen = null;
       placeExperts(key);
-      if (expert) {
-        expertEvent(key, 'pick', expert.id);
-        pullExpert(key, expert);
-      }
+      if (expert) pullExpert(key, expert);
     }
   };
   el.onkeydown = (e) => {
@@ -2730,7 +2634,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
-  // Line 1: where it is and what it is about; line 2: its tech stack, links and experts.
+  // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
+  // suggests.
   const lead = `<div class="lead">${headSource(thread, members, t)}<h2>${emojify(channelNames(thread.title) || '(no text)')}</h2></div>`;
   const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(thread.channel_name)}</span>` : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
@@ -2747,7 +2652,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
-  loadExperts(key, switching);
+  loadExperts(key);
   const scroller = pane.querySelector('.scroller');
   // Shown for the first time (a fresh page, where the first render is a live one, for the
   // workspace's emoji): placed where it opens, not scrolled down from the top.
@@ -5751,7 +5656,7 @@ const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="cu
 const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
-  dismissExperts();
+  state.expertsOpen = null;
   if (history.state?.list) { history.back(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null });
   closeMentions();
@@ -6075,8 +5980,6 @@ async function start() {
   document.addEventListener('click', (e) => { if (state.headOpen && !e.target.closest('[data-hm]')) closeHeadMenus(); });
   // The header's line 1 shows the channel where it fits: again as the pane changes width.
   if (window.ResizeObserver) new ResizeObserver(() => fitHead()).observe($('pane'));
-  // Leaving the page with the expert finder's ▾ list open: nobody was picked from it.
-  addEventListener('pagehide', () => dismissExperts());
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
@@ -6096,7 +5999,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { dismissExperts(); state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();

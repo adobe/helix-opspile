@@ -392,7 +392,7 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .src .av { width: 100%; height: 100%; font-size: var(--spectrum-font-size-50); }
 .ph .src .plat { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
  border: var(--spectrum-border-width-200) solid var(--pane); }
-/* Line 2: the dropdowns (tech stack, links, experts), each a pill; a split one acts on its
+/* Line 2: the dropdowns (tech stack, links, the agent's suggestions), each a pill; a split one acts on its
    first item, its ▾ opens the list. */
 .ph .l2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
 .ph .l2:empty { display: none; }
@@ -414,8 +414,6 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .hm .lb { max-width: calc(var(--spectrum-spacing-100) * 44); }
 .experts { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
 .experts button { font: inherit; border: 0; background: none; }
-/* Its place, held while the list loads (and kept, empty, if nobody is found). */
-.experts.pending { visibility: hidden; }
 .experts[hidden] { display: none; }
 .experts .top { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
 .experts .top span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -430,9 +428,6 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .expertlist b { display: block; font-weight: 500; color: var(--ink); }
 .expertlist small { display: block; font-size: var(--spectrum-font-size-50); color: var(--mute); }
 .expertlist li { display: flex; align-items: flex-start; }
-.expertlist button.reject { flex: none; width: auto; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); color: var(--mute); opacity: .45; }
-.expertlist li:hover button.reject, .expertlist button.reject:focus-visible { opacity: 1; }
-.expertlist button.reject:hover { color: var(--ink); }
 
 .feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); }
 .day { text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-100); }
@@ -1327,7 +1322,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph .close { border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
 .spectrum .ph .close:hover { background: var(--spectrum-gray-200); }
 .spectrum .ph .close svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
-/* The header's dropdowns and the experts: an ActionGroup of quiet buttons on a gray pill, their
+/* The header's dropdowns and the agent's suggestions: an ActionGroup of quiet buttons on a gray pill, their
    lists Menus (S2's Popover, below). */
 .spectrum :is(.ph .l2 .hm, .experts) {
   font-size: var(--spectrum-font-size-75);
@@ -1692,7 +1687,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #pane .dropzone.refused { border-color: var(--spectrum-negative-visual-color); }
 .spectrum #pane .dropzone.refused svg { color: var(--spectrum-negative-visual-color); }
 
-/* Every floating list the inbox opens (mentions, channels, experts, a quote's links, a
+/* Every floating list the inbox opens (mentions, channels, the agent's suggestions, a quote's links, a
    source, a profile): S2's Popover (layer 2, a hairline, the large radius, elevated), and
    their options Menu items (the gray overlay under the pointer or the keyboard). */
 .spectrum :is(.mentions, .chans, .expertlist, .linkpick, .srcpop, .pcard, .ph .hmpop) {
@@ -1721,8 +1716,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum :is(.mentions, .chans) .hint { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .expertlist b { font-weight: var(--spectrum-medium-font-weight); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .expertlist small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .expertlist button.reject { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .expertlist button.reject:hover { color: var(--spectrum-neutral-content-color-hover); }
 /* The channel search of a new thread: a TextField over its list. */
 .spectrum .chanpick input { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); }
 .spectrum .ph.newthread .sub b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }

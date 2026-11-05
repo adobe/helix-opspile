@@ -1149,7 +1149,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return postableChannels(env, me);
   }
   if (url.pathname === '/api/experts') {
-    return experts(env, url.searchParams.get('thread'), seeing, { me, waitUntil });
+    return experts(env, url.searchParams.get('thread'), seeing, {
+      me, waitUntil, suggestedOnly: url.searchParams.has('suggested'),
+    });
   }
   if (url.pathname === '/api/emoji') {
     const emoji = await rankEmoji(env, url.searchParams.get('q'), undefined, { waitUntil });

@@ -497,15 +497,46 @@ export async function findExperts(env, key, {
 }
 
 /**
+ * The thread agents' suggestions for inbox entry `key` alone, as `{ platform, experts }`, or null
+ * when there is no such entry: what the inbox's header shows, as the finder's own ranking is not
+ * shown (docs/ARCHITECTURE.md, "Expert finder"). Nothing is ranked or recorded. `me` (a person
+ * id) is left out, and so is whom they said is not the right person for the entry.
+ */
+export async function agentSuggestions(env, key, { me = null } = {}) {
+  const t = key && await target(env, key);
+  const rows = t ? await entryRows(env, key) : [];
+  if (!rows.length) {
+    return null;
+  }
+  const threads = rows.map((r) => r.thread);
+  const keys = [...new Set([key, ...threads])];
+  const [pins, rejected] = await Promise.all([
+    suggested(env, t, keys, threads),
+    rejectedBy(env, me, keys).catch(() => new Set()),
+  ]);
+  const mine = pins.filter((s) => s.person !== me && !rejected.has(s.id));
+  const members = mine.length ? await membersOf(env, t, mine.map((s) => s.id)) : null;
+  return {
+    platform: t.source,
+    experts: mine.slice(0, MAX_EXPERTS)
+      .map((s) => shape({ ...s, member: inChannel(members, s.id, false) })),
+  };
+}
+
+/**
  * GET /api/experts?thread=…: the thread's expert finder. It lists the channel's members in the
  * background when that is a week old, as the mention suggestions do, for what it says of them.
  * The list is recorded for the viewer (src/expertevents.js), and `list` is its id, for what
- * the page then says of it; not while viewing as someone else.
+ * the page then says of it; not while viewing as someone else. With `suggested` (the inbox's
+ * header), only the thread agents' suggestions (`agentSuggestions`), unrecorded.
  */
-export async function experts(env, key, canSee, { me, waitUntil } = {}) {
+export async function experts(env, key, canSee, { me, waitUntil, suggestedOnly = false } = {}) {
   const e = await entryOf(env, key);
   if (!e || !await canSee(e.teams, e)) {
     return json({ error: 'not found' }, 404);
+  }
+  if (suggestedOnly) {
+    return json(await agentSuggestions(env, e.key, { me: me ? me.id : null }));
   }
   if (waitUntil) {
     const t = await target(env, e.key);

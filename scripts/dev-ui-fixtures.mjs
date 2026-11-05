@@ -884,8 +884,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['ravi', 15, '@Dana Ops same on the staging host, logs attached.'],
     ],
     reads: { dana: 170 },
-    // Many tags: the header's last row of them makes room for the expert finder from the start,
-    // so they do not move when its list arrives (`npm run ui:dev -- --latency=800` shows it).
+    // Many tags: the header's tech stack dropdown names the first and counts the rest.
     label: {
       kind: 'incident',
       next_actor: 'us',

@@ -36,6 +36,12 @@ describe('inbox page', () => {
     await transform(html, { loader: 'js', format: 'esm' });
   });
 
+  it('shows only the thread agents\' suggestions, not the expert finder\'s own list', () => {
+    const asked = html.match(/(?<=(?:get|fetch)\(\s*[`'"])\/api\/experts[^`'"]*/g);
+    assert.equal(asked.length, 1, asked.join(', '));
+    assert.match(asked[0], /^\/api\/experts\?thread=.*&suggested=1$/);
+  });
+
   describe('the channel of a new thread', () => {
     const CHANNELS = [
       {
@@ -698,7 +704,7 @@ describe('inbox page', () => {
     const state = { open: 't', agents: new Map() };
     let down = false;
     const placed = [];
-    const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- expert finder', 'loadAgent', {
+    const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- the thread\'s header', 'loadAgent', {
       state,
       get: async () => {
         if (down) {

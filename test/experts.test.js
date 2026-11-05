@@ -285,6 +285,30 @@ describe('expert finder', () => {
     assert.deepEqual(names(found), ['Ada']);
   });
 
+  it('gives the inbox\'s header only the agents\' suggestions, unranked and unrecorded', async () => {
+    const e = env();
+    e.member(5);
+    e.addThread('slack:E1:C1:1.1');
+    e.addMessage('slack:E1:C1:1.1', 'x1', 1, DAYS);
+    const only = async (me) => (await experts(e, THREAD, () => true, {
+      me, suggestedOnly: true,
+    })).json();
+    // Nobody suggested: nobody, though the finder has Ada.
+    assert.deepEqual(await only({ id: 2 }), { platform: 'slack', experts: [] });
+    await suggestExpert(e, THREAD, { id: 'U5', reason: 'Fixed this before', by: 'opspile-agent/test' });
+    const body = await only({ id: 2 });
+    assert.deepEqual(
+      body.experts.map((x) => [x.name, x.reasons, x.member, Boolean(x.suggested)]),
+      [['Ed', ['Fixed this before'], true, true]],
+    );
+    assert.equal(body.list, undefined);
+    assert.equal(e.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM expert_events').get().n, 0);
+    // Not to themselves, and not once they are in the thread.
+    assert.deepEqual((await only({ id: 5 })).experts, []);
+    e.addMessage(THREAD, 'y1', 5, 1);
+    assert.deepEqual((await only({ id: 2 })).experts, []);
+  });
+
   it('leaves out whom the viewer said is not the right person, for them and that thread', async () => {
     const e = env({ matches: [vector(0.9, 3)] });
     e.addThread('slack:E1:C1:1.1');
