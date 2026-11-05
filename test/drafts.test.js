@@ -16,7 +16,8 @@ import {
 } from 'node:test';
 import { api, inbox, MAX_READ_MEMBERS } from '../src/api.js';
 import { render } from '../src/channels.js';
-import { AGENT_EMAIL } from '../src/drafts.js';
+import { AGENT_EMAIL, discardDraft, saveDraft } from '../src/drafts.js';
+import { changeOf } from '../src/draftevents.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -431,6 +432,78 @@ describe('shared drafts', () => {
       });
       assert.equal(await draftOf(e, ADA), null);
     });
+
+    describe('what became of the agent\'s drafts', () => {
+      const AGENT = 91;
+      /** An env where the agent saved `text` as the draft, and Bo may post as himself. */
+      const withDraft = async (text = 'Purges take up to 5 minutes.') => {
+        const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-made-up' };
+        await connect(e, 2);
+        e.DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (?, ?, 'opspile agent', 0)")
+          .run(AGENT, AGENT_EMAIL);
+        const draft = { thread: ROOT, text, base: null };
+        const res = await saveDraft(e, { id: AGENT }, draft, () => true);
+        return { e, d: (await res.json()).draft };
+      };
+      const events = (e) => e.DB.rows(`SELECT action, how, by_agent, origin_agent, changed,
+        hash IS NOT NULL AS hashed, org, team, draft FROM draft_events ORDER BY id`);
+
+      it('records a draft the agent saved and a person sent as it was', async () => {
+        const { e, d } = await withDraft();
+        await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: d.body, draft: d.updated_at });
+        assert.deepEqual(events(e), [{
+          action: 'saved', how: null, by_agent: 1, origin_agent: 1, changed: null, hashed: 0, org: 'acme', team: 'helix', draft: d.created_at,
+        }, {
+          action: 'sent', how: 'me', by_agent: 0, origin_agent: 1, changed: 0, hashed: 0, org: 'acme', team: 'helix', draft: d.created_at,
+        }]);
+      });
+
+      it('says how much was changed, in the reply box or saved over first', async () => {
+        let { e, d } = await withDraft();
+        await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'Purges take up to 10 minutes.', draft: d.updated_at });
+        // One word of six.
+        assert.equal(events(e).at(-1).changed, 0.167);
+        ({ e, d } = await withDraft());
+        const edited = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'Purges take a minute.', base: d.updated_at })).json()).draft;
+        e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled,
+          changed_by, changed_at) VALUES ('post_message', 'channel', 'C1', 1, 'Ada', '2026-10-21T10:00:00Z')`).run();
+        // Ada's version, sent as it is, is compared with what the agent proposed.
+        await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: edited.body, draft: edited.updated_at });
+        const sent = events(e).at(-1);
+        assert.deepEqual([sent.action, sent.how, sent.origin_agent], ['sent', 'app', 1]);
+        assert.ok(sent.changed > 0.5);
+      });
+
+      it('tells a person\'s discard from the agent\'s, and an Undo from a new draft', async () => {
+        const { e, d } = await withDraft();
+        await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: d.updated_at });
+        assert.deepEqual(events(e).at(-1), {
+          action: 'discarded', how: null, by_agent: 0, origin_agent: 1, changed: null, hashed: 1, org: 'acme', team: 'helix', draft: d.created_at,
+        });
+        // Undo saves the same text again: the discard is gone, and the draft is still the agent's.
+        const back = (await (await call(e, BO, 'PUT', '/api/draft', { thread: ROOT, text: d.body, base: null })).json()).draft;
+        assert.equal(back.created_at, d.created_at);
+        assert.equal(back.origin, AGENT);
+        assert.deepEqual(events(e).map((v) => v.action), ['saved', 'saved']);
+        // The agent withdraws it.
+        await discardDraft(e, { id: AGENT }, { thread: ROOT, base: back.updated_at }, () => true);
+        assert.deepEqual([events(e).at(-1).action, events(e).at(-1).by_agent], ['discarded', 1]);
+        // Another person's new draft is theirs, even with the same text, after the Undo's time.
+        const later = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: d.body, base: null })).json()).draft;
+        assert.notEqual(later.created_at, d.created_at);
+        assert.equal(events(e).at(-1).origin_agent, 0);
+      });
+    });
+  });
+});
+
+describe('a sent draft\'s changes', () => {
+  it('count the words changed, over the longer text', () => {
+    assert.equal(changeOf('Purges take 5 minutes.', ' Purges  take\n5 minutes. '), 0);
+    assert.equal(changeOf('Purges take 5 minutes.', 'Purges take 10 minutes.'), 0.25);
+    assert.equal(changeOf('one two', 'one two three four'), 0.5);
+    assert.equal(changeOf('', 'anything'), 1);
+    assert.equal(changeOf('a b c', 'x y z'), 1);
   });
 });
 

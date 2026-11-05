@@ -292,6 +292,9 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
   line-height: var(--spectrum-heading-line-height);
 }
 .spectrum .kpi .s { margin: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+/* The agents' drafts: a stat panel inside a card, its figures a layer below it. */
+.spectrum .card .kpis { margin-bottom: 0; }
+.spectrum .card .kpi { background: var(--spectrum-background-layer-1-color); }
 
 /* ---- the chart --------------------------------------------------------------------------- */
 

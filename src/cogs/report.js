@@ -14,6 +14,7 @@ import {
   costOf, isStock, metricOf, priceList, serviceOf, SERVICES, unitPrice, VOLUME,
 } from './prices.js';
 import { dayOf, HOUR_DAYS } from './rollup.js';
+import { draftCounts, draftsSince, openDrafts } from '../draftevents.js';
 
 /*
  * The COGS dashboard's numbers (`GET /api/admin/cogs`, the admin team): what the days from `from`
@@ -194,6 +195,27 @@ async function seriesOf(env, from, to) {
   return results || [];
 }
 
+/** What became of the agents' drafts (src/draftevents.js), as `volume` rows of the period. */
+export const DRAFT_METRICS = ['agent_drafts', 'drafts_sent', 'drafts_edited', 'drafts_discarded',
+  'drafts_withdrawn', 'agent_posts'];
+
+async function draftRows(env, from, to) {
+  const counts = await draftCounts(env, new Date(ms(from)).toISOString(), new Date(ms(to) + DAY_MS)
+    .toISOString()).catch(() => []);
+  return counts.flatMap((r) => DRAFT_METRICS.filter((m) => r[m] > 0).map((metric) => ({
+    service: VOLUME, metric, detail: '', org: r.org || '', team: r.team || '', quantity: r[metric], days: 1,
+  })));
+}
+
+/** Every series of the period (`seriesOf`) and its drafts (`draftRows`). */
+async function periodRows(env, from, to) {
+  const [rows, drafts] = await Promise.all([seriesOf(env, from, to), draftRows(env, from, to)]);
+  return [...rows, ...drafts];
+}
+
+/** The agents' drafts a person sent, as they were or edited. */
+const acceptedOf = (d) => (d.drafts_sent || 0) + (d.drafts_edited || 0);
+
 /**
  * The flow per day (`hourly`: and hour) and service, of what is selected: the rows of the
  * customers picked (all, when none are), and the shared ones by team, to be shared out.
@@ -277,11 +299,18 @@ function totalsOf(c, {
       const g = of(r[key]);
       g.messages += r.metric === 'messages' ? r.quantity : 0;
       g.threads += r.metric === 'threads' ? r.quantity : 0;
+      if (DRAFT_METRICS.includes(r.metric)) {
+        g.drafts = g.drafts || {};
+        g.drafts[r.metric] = (g.drafts[r.metric] || 0) + r.quantity;
+      }
     }
     return m;
   };
+  const drafts = Object.fromEntries(DRAFT_METRICS.map((metric) => [metric,
+    sum(vol.filter((r) => r.metric === metric), (r) => r.quantity)]));
   return {
     chosen,
+    drafts,
     flow: sum(chosen.filter((r) => !isStock(r.service, r.metric))),
     stock: sum(chosen.filter((r) => isStock(r.service, r.metric))),
     messages: sum(vol.filter((r) => r.metric === 'messages'), (r) => r.quantity),
@@ -301,14 +330,20 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const teams = csv(url.searchParams.get('team'));
   const spread = url.searchParams.get('allocate') !== 'none';
 
-  const [rows, dayRows, firstDay] = await Promise.all([
-    seriesOf(env, from, to),
+  const [rows, dayRows, firstDay, firstDraft, open] = await Promise.all([
+    periodRows(env, from, to),
     chartRows(env, from, to, orgs, teams, unit === 'hour'),
     env.DB.prepare('SELECT source, MIN(day) AS day FROM cogs_usage GROUP BY source').all()
       .then((r) => r.results || []).catch(() => []),
+    draftsSince(env).catch(() => null),
+    openDrafts(env).catch(() => []),
   ]);
   const since = Object.fromEntries(firstDay.map((r) => [r.source, r.day]));
   const estimate = estimateWindow({ from, to }, since, now);
+  // Per accepted draft counts from the first whole day of the drafts' events too.
+  const draftsDay = firstDraft ? firstDraft.slice(0, 10) : null;
+  const draftEstimate = draftsDay
+    ? estimateWindow({ from, to }, { ...since, drafts: draftsDay }, now) : null;
 
   const pick = (r) => (!orgs.length || orgs.includes(r.org))
     && (!teams.length || teams.includes(r.team));
@@ -320,12 +355,15 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const { weights, unpriced } = c;
   const all = totalsOf(c, select);
   // The estimates' part of the period: the same rows when it is the whole of it.
-  let est = null;
-  if (estimate) {
-    est = estimate.from === from ? all
-      : totalsOf(costed(await seriesOf(env, estimate.from, to), spread), select);
+  const totalsFrom = async (start) => (start === from ? all
+    : totalsOf(costed(await periodRows(env, start, to), spread), select));
+  const est = estimate ? await totalsFrom(estimate.from) : null;
+  let estD = null;
+  if (draftEstimate) {
+    estD = est && draftEstimate.from === estimate.from ? est : await totalsFrom(draftEstimate.from);
   }
   const perOf = (flow, n) => (est ? per(flow, n) : null);
+  const perDraftOf = (flow) => (estD ? per(flow, acceptedOf(estD.drafts)) : null);
   const { chosen, messages, threads } = all;
   const flowUsd = all.flow;
 
@@ -353,6 +391,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       stock: sum(mine.filter((r) => isStock(r.service, r.metric))),
       perMessage: perOf(estFlow, est?.messages),
       perThread: perOf(estFlow, est?.threads),
+      perAcceptedDraft: perDraftOf(estD ? estD.flowBy.get(s.id) || 0 : 0),
       metrics: [...metrics.values()].map((m) => {
         const def = metricOf(s.id, m.metric);
         const p = unitPrice(s.id, m.metric, m.detail);
@@ -397,14 +436,36 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
 
   // Customers and teams: what they cost, of what is selected (but every customer, or team), and
   // per message and thread in the estimates' part of the period.
-  const group = (key) => [...all[key].values()].map((g) => {
+  const group = (key) => [...all[key].values()].map(({ drafts: gd = {}, ...g }) => {
     const e = est ? est[key].get(g.key) : null;
+    const ed = estD ? estD[key].get(g.key) : null;
     return {
       ...g,
+      accepted: acceptedOf(gd),
+      agentPosts: gd.agent_posts || 0,
       perMessage: e ? per(e.flow, e.messages) : null,
       perThread: e ? per(e.flow, e.threads) : null,
+      perAcceptedDraft: ed ? per(ed.flow, acceptedOf(ed.drafts || {})) : null,
     };
   }).sort((a, b) => b.flow - a.flow || b.messages - a.messages);
+
+  // The agents' drafts of what is selected: what became of them in the period, and those open.
+  const dr = all.drafts;
+  const accepted = acceptedOf(dr);
+  const decided = accepted + dr.drafts_discarded + dr.drafts_withdrawn;
+  const drafts = {
+    started: dr.agent_drafts,
+    sent: dr.drafts_sent,
+    edited: dr.drafts_edited,
+    discarded: dr.drafts_discarded,
+    withdrawn: dr.drafts_withdrawn,
+    agentPosts: dr.agent_posts,
+    accepted,
+    decided,
+    acceptance: decided ? accepted / decided : null,
+    open: sum(open.filter(pick), (r) => r.n),
+    estimate: draftEstimate,
+  };
 
   const [orgNames, teamNames] = await Promise.all([
     env.DB.prepare('SELECT slug, name, type FROM orgs').all().then((r) => r.results || []).catch(() => []),
@@ -428,7 +489,11 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       threads,
       perMessage: perOf(est?.flow, est?.messages),
       perThread: perOf(est?.flow, est?.threads),
+      perAcceptedDraft: perDraftOf(estD?.flow),
+      perAgentReply: estD
+        ? per(estD.flow, acceptedOf(estD.drafts) + estD.drafts.agent_posts) : null,
     },
+    drafts,
     services: byService,
     chart: { unit, columns: columns(unit, from, to, costs, now) },
     orgs: group('org').map((g) => ({
@@ -442,7 +507,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
       team: g.key,
       name: g.key === SHARED ? 'No team' : (teamInfo.get(g.key)?.name || g.key),
     })),
-    since,
+    since: { ...since, ...(draftsDay ? { drafts: draftsDay } : {}) },
     unpriced,
     prices: priceList(),
   };

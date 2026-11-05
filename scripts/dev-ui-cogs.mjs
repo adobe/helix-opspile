@@ -12,6 +12,7 @@
 
 import { DIMENSIONS, DO_GB, isStock } from '../src/cogs/prices.js';
 import { HOUR_DAYS } from '../src/cogs/rollup.js';
+import { AGENT_EMAIL } from '../src/draftevents.js';
 
 /**
  * The COGS dashboard's made-up usage for `npm run ui:dev` (`/inbox/cogs`): 120 days of what the
@@ -20,12 +21,67 @@ import { HOUR_DAYS } from '../src/cogs/rollup.js';
  * the agents' customers cost the most (Bedrock), the inbox's lists and the cron are shared, a
  * quiet weekend, storage that grows, and one model without a price. The last HOUR_DAYS days'
  * flow is in `cogs_hours` too, busiest in the European and American working hours, for the chart
- * of a week. Seeded, so every start shows the same numbers. Made-up data only.
+ * of a week. The agents' customers' drafts of the last DRAFT_DAYS days (`draft_events`, as
+ * src/draftevents.js records them): most sent, some edited first, some discarded or withdrawn,
+ * a few posts of the agents' own, and a few drafts open. Seeded, so every start shows the same
+ * numbers. Made-up data only.
  */
 
 const DAYS = 120;
 const DAY_MS = 86400000;
 const AGENTS = new Set(['acme', 'hooli']);
+/** How long the agents' drafts have been counted, for the preview. */
+const DRAFT_DAYS = 40;
+
+/**
+ * The agents' drafts of the last DRAFT_DAYS days, for their customers' threads, a few a day each:
+ * what became of them, and some open now.
+ */
+function seedDrafts(DB, rnd, now) {
+  DB.sqlite.prepare("INSERT OR IGNORE INTO people (email, name, staff) VALUES (?, 'opspile agent', 0)")
+    .run(AGENT_EMAIL);
+  const agent = DB.sqlite.prepare('SELECT id FROM people WHERE email = ?').get(AGENT_EMAIL).id;
+  const person = DB.sqlite.prepare('SELECT id FROM people WHERE id != ? ORDER BY id LIMIT 1').get(agent)?.id
+    ?? agent;
+  const threads = DB.sqlite.prepare('SELECT thread, org, team FROM threads ORDER BY thread').all()
+    .filter((t) => AGENTS.has(t.org));
+  const insert = DB.sqlite.prepare(`INSERT INTO draft_events (thread, draft, version, action, how,
+      person, by_agent, origin, origin_agent, changed, org, team, at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`);
+  for (let i = DRAFT_DAYS - 1; i >= 0; i -= 1) {
+    for (const t of threads) {
+      const n = Math.floor(rnd() * 3);
+      for (let k = 0; k < n; k += 1) {
+        const start = now - i * DAY_MS - rnd() * DAY_MS * 0.9;
+        if (start > now) {
+          // eslint-disable-next-line no-continue
+          continue;
+        }
+        const draft = new Date(start).toISOString();
+        const end = new Date(Math.min(now, start + rnd() * 6 * 3600000)).toISOString();
+        insert.run(t.thread, draft, draft, 'saved', null, agent, 1, agent, null, t.org, t.team, draft);
+        const p = rnd();
+        if (p < 0.45) {
+          insert.run(t.thread, draft, draft, 'sent', 'me', person, 0, agent, 0, t.org, t.team, end);
+        } else if (p < 0.68) {
+          insert.run(t.thread, draft, draft, 'sent', rnd() < 0.3 ? 'app' : 'me', person, 0, agent, 0.05 + rnd() * 0.5, t.org, t.team, end);
+        } else if (p < 0.82) {
+          insert.run(t.thread, draft, draft, 'discarded', null, person, 0, agent, null, t.org, t.team, end);
+        } else if (p < 0.93) {
+          insert.run(t.thread, draft, draft, 'discarded', null, agent, 1, agent, null, t.org, t.team, end);
+        }
+      }
+      if (rnd() < 0.15) {
+        const at = new Date(Math.min(now, now - i * DAY_MS - rnd() * DAY_MS)).toISOString();
+        insert.run(t.thread, '', null, 'posted', 'agent', agent, 1, agent, null, t.org, t.team, at);
+      }
+    }
+  }
+  const open = DB.sqlite.prepare(`INSERT OR IGNORE INTO drafts (thread, body, person, created_at,
+      updated_at, origin, origin_body) VALUES (?, 'Looking into it.', ?, ?, ?, ?, 'Looking into it.')`);
+  const at = new Date(now - 3600000).toISOString();
+  threads.slice(0, 3).forEach((t) => open.run(t.thread, agent, at, at, agent));
+}
 
 /** A seeded random number generator (Park and Miller's), for the same preview every time. */
 function random(seed) {
@@ -174,5 +230,6 @@ export function seedCogs(DB, now = Date.now()) {
     }
   }
   seedHours(DB, rnd, now, at);
+  seedDrafts(DB, rnd, now);
   DB.sqlite.exec('COMMIT');
 }

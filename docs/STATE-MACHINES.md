@@ -81,7 +81,13 @@ a failed assignment opens it again, unless the rule was saved by then.
 **Shared draft.** none → version N → used or discarded → undo window → agent told (`src/drafts.js`,
 `src/agent/discard.js`). `updated_at` is the version, and a save or discard names the one it started
 from. A save from a draft that is gone is a conflict too. The agent hears of a discard after 30
-seconds, past the inbox's 8-second Undo, and not at all if the draft came back.
+seconds, past the inbox's 8-second Undo, and not at all if the draft came back. Each step is an
+event in `draft_events` (`src/draftevents.js`): saved, then sent (`how`: me, app, agent) or
+discarded (by a person, or by the agent: withdrawn). Undo is a save of the same text, with no
+draft, by the person who discarded it, within a minute (`UNDO_SECONDS`): it deletes the discard's
+event and the draft goes on with its `created_at` and `origin`, as if it had not been discarded.
+`origin` (who saved the first version) stays through every version and every move into a group;
+`origin_body` follows only that person's saves.
 
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry

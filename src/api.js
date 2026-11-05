@@ -1031,7 +1031,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     // The post went out: whatever happens here, the answer says so.
     if (res.ok && typeof body.draft === 'string') {
-      await discardDraft(env, me, { thread: body.thread, base: body.draft }, inMine).catch((e) => {
+      const sent = { how: url.pathname === '/api/post' ? 'me' : 'app', text: body.text };
+      const used = { thread: body.thread, base: body.draft };
+      await discardDraft(env, me, used, inMine, { sent }).catch((e) => {
         console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
       });
     }

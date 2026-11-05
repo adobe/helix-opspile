@@ -25,6 +25,7 @@ import {
 import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, volumeRows,
 } from '../src/cogs/rollup.js';
+import { AGENT_EMAIL } from '../src/drafts.js';
 import { jobSubject } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 
@@ -718,6 +719,69 @@ describe('cogs: report', () => {
     assert.equal(r.totals.flowMonthly, null);
     assert.equal(r.totals.perMessage, null);
     assert.equal(r.orgs.find((o) => o.org === 'acme').perMessage, null);
+  });
+
+  it('counts the agents\' drafts, and costs an accepted one', async () => {
+    const env = seeded();
+    const AGENT = 91;
+    env.DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (?, ?, 'opspile agent', 0)")
+      .run(AGENT, AGENT_EMAIL);
+    const ev = (at, action, org, {
+      by = 2, origin = AGENT, changed = null, version = 'v2', how = null,
+    } = {}) => env.DB.sqlite.prepare(`INSERT INTO draft_events (thread, draft, version, action, how,
+        person, by_agent, origin, origin_agent, changed, org, team, at)
+      VALUES ('t', 'v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'helix', ?)`)
+      .run(...[version, action, how, by, Number(by === AGENT), origin, Number(origin === AGENT),
+        changed, org, at]);
+    // Counting since long before the period.
+    ev('2026-10-01T09:00:00.000Z', 'saved', 'acme', { by: AGENT, version: 'v1' });
+    const at = '2026-11-01T10:00:00.000Z';
+    ev(at, 'saved', 'acme', { by: AGENT, version: 'v1' });
+    ev(at, 'saved', 'acme', { by: 1 });
+    ev(at, 'sent', 'acme', { changed: 0, how: 'me' });
+    ev(at, 'sent', 'acme', { changed: 0.3, how: 'app' });
+    ev(at, 'discarded', 'globex');
+    ev(at, 'discarded', 'acme', { by: AGENT });
+    ev(at, 'posted', 'acme', { by: AGENT, how: 'agent' });
+    // A person's own draft, sent, is not the agent's.
+    ev(at, 'sent', 'acme', { origin: 1, changed: 0, how: 'me' });
+    // One of the agent's drafts is still open.
+    env.DB.sqlite.exec(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, updated_at) VALUES ('t', 'slack', 'E1', 'C1', '1.1', 'acme', 'helix', 'p/', '${at}')`);
+    env.DB.sqlite.prepare(`INSERT INTO drafts (thread, body, person, created_at, updated_at, origin)
+      VALUES ('t', 'Hi', ?, ?, ?, ?)`).run(AGENT, at, at, AGENT);
+    let r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW });
+    assert.deepEqual({ ...r.drafts, estimate: undefined }, {
+      started: 1,
+      sent: 1,
+      edited: 1,
+      discarded: 1,
+      withdrawn: 1,
+      agentPosts: 1,
+      accepted: 2,
+      decided: 4,
+      acceptance: 0.5,
+      open: 1,
+      estimate: undefined,
+    });
+    close(r.totals.perAcceptedDraft, 10 / 2);
+    close(r.totals.perAgentReply, 10 / 3);
+    close(r.services.find((x) => x.id === 'bedrock').perAcceptedDraft, 8 / 2);
+    const acme = r.orgs.find((o) => o.org === 'acme');
+    assert.deepEqual([acme.accepted, acme.agentPosts], [2, 1]);
+    close(acme.perAcceptedDraft, 9.5 / 2);
+    assert.equal(r.orgs.find((o) => o.org === 'globex').perAcceptedDraft, null);
+    assert.equal(r.since.drafts, '2026-10-01');
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&org=globex'), { now: NOW });
+    assert.deepEqual([r.drafts.accepted, r.drafts.discarded, r.drafts.open], [0, 1, 0]);
+    assert.equal(r.totals.perAcceptedDraft, null);
+    // Counted from the first whole day of the drafts' events: none were accepted on the 2nd.
+    env.DB.sqlite.exec("DELETE FROM draft_events WHERE at < '2026-11-01'");
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW });
+    assert.deepEqual(r.drafts.estimate, { from: '2026-11-02', days: 0.5 });
+    assert.equal(r.drafts.accepted, 2);
+    assert.equal(r.totals.perAcceptedDraft, null);
+    close(r.totals.perMessage, 10 / 80);
   });
 
   it('charts about as many columns whatever the period: by the hour, the day or the week', async () => {

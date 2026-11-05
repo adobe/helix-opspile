@@ -273,6 +273,35 @@ function kpis(d) {
   </div>`;
 }
 
+/**
+ * What became of the agents' drafts in the period, and what an accepted one costs: the flow over
+ * the drafts a person sent, as they were or edited, counted from the first whole day of the
+ * drafts' events (and of every source).
+ */
+function draftsCard(d) {
+  const r = d.drafts;
+  if (!r) return '';
+  if (!d.since?.drafts) {
+    return '<div class="card drafts"><h2>The agents\' drafts</h2><p class="hint">None recorded yet: drafts are counted from when they are saved, sent or discarded.</p></div>';
+  }
+  const t = d.totals;
+  const e = r.estimate;
+  const cut = e && e.from > d.from ? e.from : '';
+  const rate = cut ? `, rate since ${cut.slice(5)}` : '';
+  const why = cut ? ` Counted from ${cut} (UTC), the first whole day the drafts and every source were counted.` : '';
+  const none = !e ? ' Not estimated: the period ends before the drafts were counted for a whole day.' : '';
+  const pct = r.acceptance === null ? '–' : `${Math.round(r.acceptance * 100)}%`;
+  const model = d.services.find((x) => x.id === 'bedrock')?.perAcceptedDraft;
+  return `<div class="card drafts"><h2>The agents' drafts <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="kpis">
+    <div class="kpi" title="Of the agents' drafts that were sent or thrown away in the period, those a person sent, as they were or after editing them"><div class="k">Accepted</div><div class="v">${pct}</div><div class="s">${num(r.accepted)} of ${num(r.decided)}: ${num(r.sent)} as they were, ${num(r.edited)} edited</div></div>
+    <div class="kpi" title="Drafts a person discarded, and drafts the agent withdrew itself, because staff answered or the thread moved on"><div class="k">Not sent</div><div class="v">${num(r.discarded + r.withdrawn)}</div><div class="s">${num(r.discarded)} discarded, ${num(r.withdrawn)} withdrawn by the agent</div></div>
+    <div class="kpi" title="The agents' drafts no one has sent or discarded yet, now"><div class="k">Open now</div><div class="v">${num(r.open)}</div><div class="s">${num(r.started)} started in the period</div></div>
+    <div class="kpi" title="Replies an agent posted itself (post_message), where the team turned that on"><div class="k">Agent posts</div><div class="v">${num(r.agentPosts)}</div><div class="s">posted by the agents themselves</div></div>
+    <div class="kpi" title="The flow divided by the accepted drafts.${esc(why || none)}"><div class="k">Per accepted draft</div><div class="v">${usd(t.perAcceptedDraft)}</div><div class="s">${usd(model)} of it the agents' model${rate}</div></div>
+    <div class="kpi" title="The flow divided by the accepted drafts and the agents' own posts.${esc(why || none)}"><div class="k">Per agent reply</div><div class="v">${usd(t.perAgentReply)}</div><div class="s">accepted drafts and agent posts</div></div>
+  </div></div>`;
+}
+
 /** The top of a chart's scale: 1, 2, 2.5 or 5 times a power of ten, at or above `v`. */
 function niceMax(v) {
   if (!(v > 0)) return 1;
@@ -501,17 +530,17 @@ function servicesTable(d) {
   const rows = d.services.map((s) => {
     const open = state.open.has(s.id);
     const metrics = open ? s.metrics.map((m) => `<tr class="metric"><td>${esc(m.label)}${m.detail ? ` <span class="sub">${esc(m.detail)}</span>` : ''}</td>
-      <td class="n" colspan="2">${quantity(m.quantity, m.unit)}${m.stock ? ' <span class="sub">on average</span>' : ''}</td>
+      <td class="n" colspan="3">${quantity(m.quantity, m.unit)}${m.stock ? ' <span class="sub">on average</span>' : ''}</td>
       <td class="n m">${price(m.price, m.per, m.unit)}${m.stock ? ' a month' : ''}</td>
       <td class="n">${m.stock ? '' : usd(m.usd)}</td><td class="n">${m.stock ? usd(m.usd) : ''}</td></tr>`).join('') : '';
     return `<tr class="pick" data-open="${esc(s.id)}" aria-expanded="${open}"><td><span class="name"><span class="twist">${open ? '▾' : '▸'}</span><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><span>${esc(s.name)}</span></span></td>
-      <td class="n">${usd(s.perMessage)}</td><td class="n">${usd(s.perThread)}</td><td></td>
+      <td class="n">${usd(s.perMessage)}</td><td class="n">${usd(s.perThread)}</td><td class="n">${usd(s.perAcceptedDraft)}</td><td></td>
       <td class="n">${usd(s.flow)}</td><td class="n">${usd(s.stock)}</td></tr>${metrics}`;
   }).join('');
   const t = d.totals;
   return `<div class="scroll"><table>
-    <thead><tr><th>Service</th><th class="n">Per message</th><th class="n">Per thread</th><th class="n">Unit price</th><th class="n">Flow</th><th class="n">Stock / month</th></tr></thead>
-    <tbody>${rows}<tr class="total"><td>All</td><td class="n">${usd(t.perMessage)}</td><td class="n">${usd(t.perThread)}</td><td></td><td class="n">${usd(t.flow)}</td><td class="n">${usd(t.stock)}</td></tr></tbody>
+    <thead><tr><th>Service</th><th class="n">Per message</th><th class="n">Per thread</th><th class="n" title="Per draft of the agents' a person sent">Per draft</th><th class="n">Unit price</th><th class="n">Flow</th><th class="n">Stock / month</th></tr></thead>
+    <tbody>${rows}<tr class="total"><td>All</td><td class="n">${usd(t.perMessage)}</td><td class="n">${usd(t.perThread)}</td><td class="n">${usd(t.perAcceptedDraft)}</td><td></td><td class="n">${usd(t.flow)}</td><td class="n">${usd(t.stock)}</td></tr></tbody>
   </table></div>`;
 }
 
@@ -521,6 +550,8 @@ const SORTS = {
   threads: (a, b) => b.threads - a.threads,
   perMessage: (a, b) => (b.perMessage ?? -1) - (a.perMessage ?? -1),
   perThread: (a, b) => (b.perThread ?? -1) - (a.perThread ?? -1),
+  accepted: (a, b) => (b.accepted || 0) - (a.accepted || 0),
+  perAcceptedDraft: (a, b) => (b.perAcceptedDraft ?? -1) - (a.perAcceptedDraft ?? -1),
   stock: (a, b) => b.stock - a.stock,
 };
 
@@ -539,11 +570,11 @@ function whoTable(kind, list) {
     return `<tr class="pick${picked ? ' on' : ''}" data-pick="${key}" data-value="${esc(g[key])}" title="${picked ? 'Picked: click to drop' : 'Only this one'}">
       <td><div class="name"><span>${esc(g.name)}</span>${type}</div><div class="bar-in" style="width:${top ? Math.max(1, (g.flow / top) * 100) : 0}%"></div></td>
       <td class="n">${num(g.messages)}</td><td class="n">${num(g.threads)}</td>
-      <td class="n">${usd(g.flow)}${shared}</td><td class="n">${usd(g.perMessage)}</td><td class="n">${usd(g.perThread)}</td><td class="n">${usd(g.stock)}</td></tr>`;
+      <td class="n">${usd(g.flow)}${shared}</td><td class="n">${usd(g.perMessage)}</td><td class="n">${usd(g.perThread)}</td><td class="n">${num(g.accepted || 0)}</td><td class="n">${usd(g.perAcceptedDraft)}</td><td class="n">${usd(g.stock)}</td></tr>`;
   }).join('');
   const more = sorted.length > limit ? `<div class="more"><button type="button" class="link" data-all="${kind}">Show all ${sorted.length}</button></div>` : '';
   return `<div class="scroll"><table>
-    <thead><tr><th>${kind === 'orgs' ? 'Customer' : 'Team'}</th>${head('messages', 'Messages', 'Messages in the period')}${head('threads', 'Threads', 'Threads started in the period')}${head('flow', 'Flow', 'What their work cost in the period')}${head('perMessage', 'Per message', 'Flow per message')}${head('perThread', 'Per thread', 'Flow per new thread')}${head('stock', 'Stock / month', 'What keeping theirs costs a month')}</tr></thead>
+    <thead><tr><th>${kind === 'orgs' ? 'Customer' : 'Team'}</th>${head('messages', 'Messages', 'Messages in the period')}${head('threads', 'Threads', 'Threads started in the period')}${head('flow', 'Flow', 'What their work cost in the period')}${head('perMessage', 'Per message', 'Flow per message')}${head('perThread', 'Per thread', 'Flow per new thread')}${head('accepted', 'Drafts', 'The agents\' drafts a person sent in the period')}${head('perAcceptedDraft', 'Per draft', 'Flow per draft of the agents\' a person sent')}${head('stock', 'Stock / month', 'What keeping theirs costs a month')}</tr></thead>
     <tbody>${rows}</tbody></table></div>${more}`;
 }
 
@@ -569,7 +600,7 @@ function prices(d) {
 }
 
 function notes(d) {
-  const since = Object.entries(d.since || {}).map(([src, at]) => `${{ meter: 'the Worker\'s own counts', account: 'Cloudflare\'s analytics', d1: 'messages and storage' }[src] || src} since ${at}`);
+  const since = Object.entries(d.since || {}).map(([src, at]) => `${{ meter: 'the Worker\'s own counts', account: 'Cloudflare\'s analytics', d1: 'messages and storage', drafts: 'the agents\' drafts' }[src] || src} since ${at}`);
   const parts = [
     'Flow is counted where the work happens and in Cloudflare\'s analytics, and rolled up every 20 minutes; storage once a day.',
     d.allocate === 'messages' ? 'Common costs (work for no customer in particular) are shared out by each customer\'s messages.' : 'Common costs are shown as Shared.',
@@ -589,6 +620,7 @@ function render() {
   if (!d) return;
   $('body').innerHTML = `${state.error ? `<p class="hint err">${esc(state.error)}</p>` : ''}
     ${kpis(d)}
+    ${draftsCard(d)}
     <div class="card"><h2>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
     <div class="card"><h2 class="split"><span>Where the flow goes</span><span class="seg" id="tmBy">${Object.entries(TM).map(([id, name]) => `<button type="button" data-tm-by="${id}" aria-pressed="${state.tm === id}">${name}</button>`).join('')}</span></h2><div class="treemap" id="treemap"></div></div>
     <div class="cols">
