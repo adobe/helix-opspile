@@ -696,11 +696,22 @@ and an unchanged thread is never labeled twice):
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
   or customer. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
-- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`:
-  authoring, sign-in and permissions, commerce, project status, go-live and migration, CDN and
-  caching, performance, preview and publishing, SEO, integrations). The kind says what the
-  thread asks for, the topics what it is about: an incident and a question can both be about
-  the CDN. A thread keeps the topics at 0.8 or above (`labels.topics`).
+- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`):
+  authoring and content, sign-in and permissions, project plan and go-live, caching and
+  delivery, domains and certificates, performance, preview and publishing, SEO, URLs and
+  redirects, code and deployment, blocks and front-end code, errors and traffic, limits and
+  quotas, security and compliance, roadmap and feedback. The kind says what the thread asks for,
+  the topics what concern it is about, and the tech stack (below) which products: an incident
+  and a question can both be about caching, on Akamai or Fastly. Topics name no products. A
+  thread keeps the topics at 0.55 or above (`labels.topics`): the best single cut on 225 threads
+  labeled by hand (macro F1 0.82; the ten topics before, kept at 0.8, had 0.56 and left 59% of
+  the threads with no topic, these 31%, the hand labels 24%). The list came from the
+  [topic map](#topic-maps). Clef's answers move a little with the other questions of a call,
+  so the four questions above and the topics are asked in a call of their own, as they were
+  measured, and the tech stack in calls of its own: an entry added or changed does not move the
+  topics' answers. Measure again when the questions or the topics change. A label from before
+  shows `golive` as `project`, and `commerce` and `integrations`, products now, not at all,
+  until the thread is labeled again.
 - **Extraction rules** (`src/extract.js`) find facts and detect technologies: regular
   expressions, or scripts, which are configuration of the ops teams (`extraction_rules`), not
   code. The admin team's apply to every channel, any other team's to the channels it owns, on
@@ -738,11 +749,34 @@ and an unchanged thread is never labeled twice):
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
+  Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
+  it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
+  (Edge Delivery, Document Authoring, Universal Editor, Experience Workspace, AEM as a Cloud
+  Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
+  Assets; CX Enterprise Coworker, Brand Concierge, Brand Visibility, Journey Optimizer, … are
+  their own), or a category for other companies' (CDN, Code hosting, Consent, …). Clef is asked
+  about each entry; the product groups them, on the Agents page and the Topics page, where an
+  entry is a feature of its product. Migration 0056 added what the product census (Clairic over
+  all 822 channel threads with a person's message) found the threads naming that no entry
+  covered, and the Adobe products they named that had none; it also put the names people use
+  into the descriptions of others (Google Tag Manager and Tealium are their own entry now,
+  Adobe's analytics another), where nobody had changed them since migration 0043. They are what
+  Clef's topics about commerce, assets, Sites Optimizer, integrations and the inbox would have
+  been.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
-  kept (0.8, and 0.6 for the free-text problem).
+  kept (0.8, and 0.6 for the free-text problem). In the same call it lists the **products** the
+  thread names (`product` facts, at most twelve), for the [topic map](#topic-maps) to match
+  against the tech stack. Clairic lists nearly every name in the state, so only its spans count:
+  not those in the header (the channel, the platform, the customer) or an author line, nor the
+  names of the thread's people and customer, nor fragments under three characters. The list's
+  one confidence says nothing (it shrinks as the list grows) and is not used. The wording and
+  the filter come from a census of all 822 channel threads with a person's message: 94% of the
+  thread–product pairs right after normalizing, 86% recall (it misses host names in URLs). A
+  product name says the thread mentions it; Clef's tech questions still say what the customer
+  uses.
 
 **Label review.** Members of the admin team can review labels in the inbox: a queue of
 current labels nobody has reviewed, least confident first, and per question the right
@@ -768,20 +802,30 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   what its customers need, from the titles of its fifteen most typical threads (nearest its
   centre). It names no customer, and a name it gives twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customer (`orgs`), and Clef's topics (`labels.topics`), the **tags** on the page.
+  messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
+  and the **products** Clairic named. Each product is matched against the tech stack (every
+  team's enabled entries): an entry covers it when its id or name is the product's, or is in it
+  as words ("Akamai Property Manager" is Akamai's), or its description names it, cut at commas,
+  "or", "such as" and brackets ("a consent manager such as OneTrust or Cookiebot"). A covered
+  product is named as its entry, and drawn as the product the entry is part of (its features
+  listed when it is picked); one no entry covers is a **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, and generic names (API, CDN, JSON, Slack, …) are
+  left out.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 
 The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
 person, topic, tag and customer, as big as its threads, a line between two that share threads,
 thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
-customer; the topics are the hubs). One kind shown alone is joined to itself: two people or two
-tags by the threads they share, and two topics or two customers, which never share a thread, by
+customer; the topics are the hubs). One kind shown alone is joined to itself: two people, tags or
+products by the threads they share, and two topics or two customers, which never share a thread, by
 the people they share (as many people as the threads a line needs, each with that many threads
 in both). The filters are a team, the kinds shown and the threads a
 line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
-without a pick, the topics are listed with the share of their threads Clef tagged at all, the
-fewest first on a click: the topics Clef rarely tags are what its topic questions miss.
+without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
+names, by their threads; adding one on the Agents page, or its name to an entry's description,
+makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
+fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
+drawn as a hollow ring.
 
 ## Replying
 
@@ -894,8 +938,8 @@ only once `TEAMS_EDITS` says it was given. A message you posted as the opspile a
 in `app_posts` (user state, like drafts) and is yours to edit as the app, where the app may
 still post: Slack `chat.update` with the bot token, the Teams bot's update activity, Discord
 `PATCH` with the bot, with mentions as when it was posted. Nobody else's messages, and nothing on Discord as a person, are offered.
-The accounts the message mentioned (`@Name` in its markdown, one account by that name) stay
-mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
+The accounts the message mentioned (`@Name` in its markdown, one account by that name, picked
+as for a thread agent's post: src/post.js `mentionsByName`) stay mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
 edit made on the platform, and the inbox shows the new text and "(edited)" meanwhile. A Slack
 change without `edited` (a bot's `chat.update`) that changes the text counts as an edit too.
 

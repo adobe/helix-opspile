@@ -14,11 +14,12 @@
  * Topics: the topic map (src/topicmap.js) for the admin team, over GET /api/admin/topics. What
  * the channel threads are about, found from what was said in them (the topics), drawn as one
  * force-directed graph with the Adobe people who posted in them, Clef's topics on them (the
- * tags, as the inbox's Topic filter has them) and the customers they are for. A line joins two
+ * tags, as the inbox's Topic filter has them), the products they are about (Clairic's, outlined
+ * when no tech stack entry names them: the gaps) and the customers they are for. A line joins two
  * that share threads, thicker the more; the topics are the hubs, so with them shown a line joins
  * a topic to the others, and a person to a customer, and without them any two kinds. One kind
- * alone is joined to itself: people and tags by the threads they share, topics and customers (one
- * to a thread) by the people they share. A node is as big as its threads.
+ * alone is joined to itself: people, tags and products by the threads they share, topics and
+ * customers (one to a thread) by the people they share. A node is as big as its threads.
  *
  * Pointing at a node shows what it is joined to; a click picks it, and the panel beside the graph
  * says what it is: a topic's theme, its people, customers and tags, its threads (each a link into
@@ -42,12 +43,13 @@ const TYPES = [
   { id: 'person', label: 'People', one: 'Person', title: 'Adobe people who posted in the threads' },
   { id: 'topic', label: 'Topics', one: 'Topic', title: 'What the threads are about, found from what was said in them' },
   { id: 'tag', label: 'Tags', one: 'Tag', title: 'Clef\'s topics on the threads, as the inbox\'s Topic filter has them' },
+  { id: 'product', label: 'Products', one: 'Product', title: 'The products and technologies the threads are about (Clairic); outlined ones are not in the tech stack yet' },
   { id: 'org', label: 'Customers', one: 'Customer', title: 'Who the threads are for: customers, partners and vendors' },
 ];
 const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
 const MINS = [1, 2, 3, 5, 8];
 /** People and customers with a name on the graph, the most threads first; the rest on pointing. */
-const NAMED = 12;
+const NAMED = 14;
 const THREADS_SHOWN = 30;
 
 const state = {
@@ -97,17 +99,22 @@ function toUrl({ push = true } = {}) {
 // ---- the graph's data -------------------------------------------------------------------
 
 const map = () => state.latest?.map;
+/** The map's products (maps from before them have none). */
+const products = () => map().products || {};
+/** A thread's product id as the graph has it: the product its entry is part of, or itself. */
+const productOf = (id) => TopicGraph.productOf(map(), id);
 const isCustomer = (slug) => TopicGraph.isCustomer(map(), slug);
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
 
-/** The graph for the filters (ui/topicgraph.js), the people and customers of most threads named. */
+/** The graph for the filters (ui/topicgraph.js), the people, customers and products of most
+ * threads named. */
 function graphOf() {
   const { q } = state;
   const g = TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
   const { nodes } = g;
   // The people and customers with a name on the graph: those of the most threads.
-  for (const type of ['person', 'org']) {
+  for (const type of ['person', 'org', 'product']) {
     nodes.filter((n) => n.type === type).sort((a, b) => b.threads.length - a.threads.length)
       .slice(0, NAMED).forEach((n) => { n.named = true; });
   }
@@ -120,7 +127,7 @@ const sim = {
   nodes: [], edges: [], alpha: 0, target: 0, frame: 0, pos: new Map(),
 };
 const radius = (n) => ({
-  topic: 6, tag: 5, person: 3, org: 3,
+  topic: 6, tag: 5, product: 4, person: 3, org: 3,
 }[n.type] + Math.sqrt(n.threads.length) * 1.7);
 
 /** Starts the layout of `graph`, each node where it was, a new one beside a neighbour. */
@@ -308,9 +315,10 @@ function drawGraph({ refit: asked = false } = {}) {
       class: `node${n.named || n.type === 'topic' || n.type === 'tag' ? ' named' : ''}`,
       'data-type': n.type,
       'data-id': n.id,
+      ...(n.gap ? { 'data-gap': '' } : {}),
       tabindex: '0',
       role: 'button',
-      'aria-label': `${TYPE[n.type].one} ${n.label}, ${n.threads.length} threads`,
+      'aria-label': `${TYPE[n.type].one} ${n.label}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} threads`,
     });
     n.el.append(el('circle', { r: n.r.toFixed(1) }));
     const label = el('text', { class: 'lbl', dy: '1em' });
@@ -359,7 +367,7 @@ function tip(n, ev) {
     t.hidden = true;
     return;
   }
-  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(TYPE[n.type].one)} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span>`;
+  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(TYPE[n.type].one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span>`;
   t.hidden = false;
   const box = $('graph').getBoundingClientRect();
   t.style.left = `${Math.min(ev.clientX - box.left + 14, box.width - t.offsetWidth - 8)}px`;
@@ -463,6 +471,7 @@ function related(threads, type) {
     if (type === 'topic') add(String(t.topic));
     if (type === 'person') Object.keys(t.staff || {}).forEach(add);
     if (type === 'tag') (t.tags || []).forEach(add);
+    if (type === 'product') new Set((t.products || []).map(productOf)).forEach(add);
     if (type === 'org' && isCustomer(t.org)) add(t.org);
   }
   const g = state.graph;
@@ -509,6 +518,8 @@ function overview() {
     <p class="hint">Found from what was said in the threads with ${m.min_messages} messages or more (not meetings or
       people's comings and goings), each named from its most typical threads. <b>${none} of them (${pct(none, threads.length)})
       have no tag from Clef</b>: the topics Clef rarely tags are what its topic questions miss.</p>
+    ${gaps()}
+    <h3>Topics</h3>
     <table class="topics"><thead><tr><th>Topic</th><th class="n">${sortBy('threads', 'Threads', 'The most threads first')}</th>
       <th class="n">${sortBy('tagged', 'Tagged', 'Threads with a tag from Clef: the fewest first')}</th><th>Tags</th></tr></thead>
     <tbody>${topics.map((n) => {
@@ -519,6 +530,50 @@ function overview() {
   }).join('')}</tbody></table>`;
 }
 
+/** The products no tech stack entry names, by their threads: what to add to it. */
+function gaps() {
+  const all = [...state.graph.all.values()].filter((n) => n.type === 'product');
+  if (!all.length) {
+    return '<h3>Products</h3><p class="hint">No products yet: Clairic names them when it labels a thread.</p>';
+  }
+  const list = all.filter((n) => n.gap).sort((a, b) => b.threads.length - a.threads.length
+    || a.label.localeCompare(b.label));
+  const named = all.reduce((s, n) => s + (n.gap ? 0 : n.threads.length), 0);
+  const missed = list.reduce((s, n) => s + n.threads.length, 0);
+  // A name of one customer's threads is likelier theirs (a brand, a system of theirs) than a
+  // product to add: the list is of those two customers or more name.
+  const customers = (n) => new Set(n.threads.map((t) => t.org).filter(isCustomer)).size;
+  const shown = list.filter((n) => n.threads.length > 1 && customers(n) > 1).slice(0, 20);
+  const max = Math.max(1, ...shown.map((n) => n.threads.length));
+  return `<h3>Not in the tech stack <span class="sub">${list.length}</span></h3>
+    <p class="hint">Products the threads are about that no technology of the tech stack names
+      (${pct(missed, missed + named)} of the products found). Add them, or their names to an
+      entry's description, on the Agents page, and Clef asks about them.</p>
+    ${shown.length ? `<ul class="rel">${shown.map((n) => `<li><button class="pickr" data-sel="${esc(n.id)}" data-type="product">
+      <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
+      <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
+      <span class="n" title="${customers(n)} customers">${n.threads.length}</span></button></li>`).join('')}</ul>` : ''}
+    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more (Find shows them)</div>` : ''}`;
+}
+
+/** A product's entries in the tech stack (its features) the threads named, by their threads. */
+function features(n) {
+  const counts = new Map();
+  for (const t of n.threads) {
+    for (const id of t.products || []) {
+      if (productOf(id) === n.key) counts.set(id, (counts.get(id) || 0) + 1);
+    }
+  }
+  const rows = [...counts].sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '';
+  const max = rows[0][1];
+  return `<section><h3>Features <span class="sub">${rows.length}</span></h3>
+    <ul class="rel">${rows.map(([id, c]) => `<li><div class="pickr feature" data-type="product"><span class="dot" data-type="product"></span>
+      <span class="nm">${esc(products()[id]?.name || id)}</span>
+      <span class="meter"><span class="fill" data-w="${Math.round((100 * c) / max)}"></span></span>
+      <span class="n">${c}</span></div></li>`).join('')}</ul></section>`;
+}
+
 function details(n) {
   const m = map();
   const topic = n.type === 'topic' ? m.topics[Number(n.key)] : null;
@@ -527,6 +582,8 @@ function details(n) {
     plural(n.threads.length, 'thread'),
     ...(topic ? [`cohesion ${topic.cohesion}`] : []),
     ...(org ? [org.type] : []),
+    ...(n.type === 'product' && n.gap ? ['not in the tech stack'] : []),
+    ...(n.type === 'product' && !n.gap && !n.key.startsWith('group:') ? [`tech stack: ${products()[n.key]?.name}`] : []),
     ...(n.type === 'tag' ? [] : [`${pct(tagged(n.threads), n.threads.length)} tagged by Clef`]),
   ];
   const others = TYPES.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
@@ -535,6 +592,7 @@ function details(n) {
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
+    ${n.type === 'product' && n.key.startsWith('group:') ? features(n) : ''}
     ${others.map((t) => relatedList(n, t)).join('')}
     ${threadList(n.threads)}`;
 }

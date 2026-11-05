@@ -12,18 +12,33 @@
 
 /*
  * The Topics page's graph, as the global `TopicGraph`: from a topic map (src/topicmap.js) and
- * the filters, its nodes (people, topics, tags, customers) and the lines between them. ui/topics.js
+ * the filters, its nodes (people, topics, tags, products, customers) and the lines between them. ui/topics.js
  * lays it out and draws it; test/ui-topicgraph.test.js checks it.
  *
  * A line joins two that share threads, at least `min`. With the topics shown they are the hubs: a
  * line joins a topic to the others, and a person to a customer; without them any two kinds. One
- * kind alone is joined to itself: people and tags by the threads they share, topics and customers
- * (one to a thread, so never two in one) by the people they share, `min` people each with `min`
- * threads in both. A node without a line is not drawn, but a topic is.
+ * kind alone is joined to itself: people, tags and products by the threads they share, topics
+ * and customers (one to a thread, so never two in one) by the people they share, `min` people
+ * each with `min` threads in both. A node without a line is not drawn, but a topic is.
  */
 globalThis.TopicGraph = (() => {
   const isCustomer = (map, slug) => Boolean(slug) && !slug.startsWith('_')
     && map.orgs[slug]?.type !== 'internal';
+  /** The map's products (maps from before them have none). */
+  const productsOf = (map) => map.products || {};
+  /** A thread's product id as the graph has it: the product its entry is part of, or itself. */
+  const productOf = (map, id) => {
+    const p = productsOf(map)[id];
+    return p?.product ? `group:${p.product}` : id;
+  };
+  /** The products the entries are part of: `group:<name>` → `{ name, group }`. */
+  function productGroups(map) {
+    const out = {};
+    for (const p of Object.values(productsOf(map))) {
+      if (p.product) out[`group:${p.product}`] = { name: p.product, group: true };
+    }
+    return out;
+  }
 
   /** Counts each pair of `ids` (sorted) in `weights`. */
   function pairs(ids, weights, joined = () => true) {
@@ -62,12 +77,22 @@ globalThis.TopicGraph = (() => {
       || b.type === 'topic' || (a.type === 'person' && b.type === 'org')
       || (a.type === 'org' && b.type === 'person')));
     const weights = new Map();
+    const products = productsOf(map);
+    const groups = productGroups(map);
     // Threads per person and node, for joining topics or customers by their people.
     const through = alone && (shown[0] === 'topic' || shown[0] === 'org') ? new Map() : null;
     for (const t of threads) {
       const on = [node('topic', t.topic, map.topics[t.topic]?.label || `Topic ${t.topic + 1}`)];
       for (const p of Object.keys(t.staff || {})) on.push(node('person', p, map.people[p] || `#${p}`));
       for (const g of t.tags || []) on.push(node('tag', g, map.tags[g] || g));
+      // A tech stack entry as the product it is part of (Experience Manager Sites for Universal
+      // Editor, CDN for Akamai), its entries the product's features; a gap as itself.
+      for (const key of new Set((t.products || []).map((id) => productOf(map, id)))) {
+        const p = products[key] || groups[key];
+        const product = node('product', key, p?.name || key);
+        product.gap = !p?.tech && !p?.group;
+        on.push(product);
+      }
       if (isCustomer(map, t.org)) on.push(node('org', t.org, map.orgs[t.org]?.name || t.org));
       for (const n of on) n.threads.push(t);
       const vis = on.filter((n) => shown.includes(n.type));
@@ -105,5 +130,5 @@ globalThis.TopicGraph = (() => {
     };
   }
 
-  return { build, isCustomer };
+  return { build, isCustomer, productOf };
 })();

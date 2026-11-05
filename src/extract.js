@@ -48,7 +48,7 @@ import { sha256 } from './raw.js';
 export const GLOBAL_TEAM = 'admin';
 export const MAX_PER_FIELD = 20;
 export const MAX_RULES = 100;
-export const MAX_TECH = 60;
+export const MAX_TECH = 100;
 export const MAX_PATTERN = 600;
 export const MAX_SCRIPT = 20000;
 const MAX_VALUE = 300;
@@ -365,6 +365,7 @@ const techOut = (t) => ({
   tech: t.tech,
   name: t.name,
   description: t.description,
+  product: t.product || null,
   enabled: Boolean(t.enabled),
   by: t.changed_by || null,
   at: t.changed_at || null,
@@ -494,6 +495,8 @@ export function checkTech(input, old = {}) {
     tech: clean(get('tech'), 32),
     name: clean(get('name'), MAX_NAME),
     description: clean(get('description'), MAX_DESCRIPTION),
+    // The product or category it is part of (migration 0056): none when not given.
+    product: clean(get('product'), MAX_NAME) || null,
     enabled: get('enabled') === undefined ? true : Boolean(get('enabled')),
   };
   if (!ID.test(tech.tech)) {
@@ -608,16 +611,17 @@ export async function saveTech(env, team, input, by) {
       return { error: `a team has at most ${MAX_TECH} technologies` };
     }
   }
-  await env.DB.prepare(`INSERT INTO tech_stack (team, tech, name, description, enabled, changed_by,
-      changed_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+  await env.DB.prepare(`INSERT INTO tech_stack (team, tech, name, description, product, enabled,
+      changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (team, tech) DO UPDATE SET name = excluded.name,
-      description = excluded.description, enabled = excluded.enabled,
+      description = excluded.description, product = excluded.product, enabled = excluded.enabled,
       changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
     .bind(
       team,
       tech.tech,
       tech.name,
       tech.description,
+      tech.product,
       tech.enabled ? 1 : 0,
       by,
       new Date().toISOString(),

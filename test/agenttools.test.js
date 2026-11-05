@@ -390,7 +390,7 @@ describe('the agent\'s switchable tools', () => {
     assert.equal(sum.text.trim(), '2\n1\ndata.csv');
     assert.ok(missing.error);
     assert.match(missing.text, /missing\.txt/);
-    assert.match(post.text, /^posted on Slack \(message 1792584999\.000900\)\./);
+    assert.match(post.text, /^posted on Slack \(message 1792584999\.000900, tags [^)]+\)\./);
     assert.deepEqual(posts, [{
       channel: 'C1',
       thread_ts: '1792584000.000100',

@@ -19,9 +19,10 @@ import { threadVectorId } from './vectors.js';
  * vectors (src/vectors.js, the mean of everything people wrote in them) are clustered with
  * k-means into topics, and a language model names each topic from the titles of its most typical
  * threads. With them come the Adobe people who posted in each thread, the customer it is for and
- * Clef's topics (labels.topics), so the Topics page (ui/topics.js) can draw people, topics, Clef's
- * topics and customers as one graph, and show where Clef's topics do not cover what the threads
- * are about.
+ * Clef's topics (labels.topics) and the products Clairic found in it (`product` facts), so the
+ * Topics page (ui/topics.js) can draw people, topics, Clef's topics, products and customers as one
+ * graph, and show what Clef's topics and the tech stack do not cover yet: topics that get no tag,
+ * and products no tech stack entry names (the gaps).
  *
  * Only threads with something to say: at least MIN_MESSAGES messages, and not a meeting or a
  * people thread (Clef's kind), whose vectors say "let's meet" more than what about. The vectors
@@ -210,7 +211,123 @@ async function threadsOf(env) {
     WHERE ${WHERE} AND m.staff = 1 AND m.counted = 1 AND m.deleted = 0
     GROUP BY m.thread, m.person`).bind(MIN_MESSAGES).all();
   const { results: orgs } = await env.DB.prepare('SELECT slug, name, type FROM orgs').all();
-  return { threads: threads || [], posts: posts || [], orgs: orgs || [] };
+  const { results: products } = await env.DB.prepare(`SELECT f.thread, f.value FROM facts f
+    JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
+    WHERE ${WHERE} AND f.source = 'clairic' AND f.field = 'product'`).bind(MIN_MESSAGES).all();
+  const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product
+    FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
+  return {
+    threads: threads || [],
+    posts: posts || [],
+    orgs: orgs || [],
+    products: products || [],
+    tech: tech || [],
+  };
+}
+
+// ---- products and the tech stack -------------------------------------------------------
+
+/**
+ * Names Clairic gives that say nothing about which product: the platforms the inbox reads, and
+ * what every site has. A name of one of them, alone, is left out.
+ */
+export const GENERIC = new Set(['api', 'apis', 'cdn', 'json', 'html', 'css', 'javascript', 'js',
+  'website', 'web', 'site', 'dns', 'http', 'https', 'ssl', 'tls', 'url', 'cache', 'email', 'git',
+  'slack', 'teams', 'microsoft teams', 'discord', 'browser', 'cloud', 'saas', 'ai', 'sdk', 'ui',
+  'edge delivery', 'edge delivery services', 'eds', 'aem', 'adobe', 'franklin', 'helix']);
+
+/** A product's name as a key: lower case, words only, without "Adobe" or "AEM" before it. */
+export function productKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9.+#]+/g, ' ')
+    .replace(/\b(?:adobe|aem)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const within = (phrase, key) => ` ${phrase} `.includes(` ${key} `);
+
+/**
+ * The tech stack as names to match a product against: each entry's id and name, and the names
+ * its description gives, cut at commas, "or", "such as" and brackets ("a consent manager such as
+ * OneTrust or Cookiebot" names OneTrust and Cookiebot).
+ */
+export function techIndex(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const phrases = by.get(r.tech) || {
+      tech: r.tech, name: r.name, names: new Set(), phrases: new Set(),
+    };
+    [r.tech, r.name].map(productKey).filter(Boolean).forEach((k) => phrases.names.add(k));
+    String(r.description || '').split(/,|\(|\)|\bor\b|\bsuch as\b|\blike\b|\balso called\b|;/i)
+      .map(productKey).filter((k) => k.length > 1)
+      .forEach((k) => phrases.phrases.add(k));
+    by.set(r.tech, phrases);
+  }
+  return [...by.values()];
+}
+
+/**
+ * The tech stack entry that covers a product, or null: one whose id or name is the product's,
+ * or is in it as words ("Akamai Property Manager" is Akamai's), or whose description names it
+ * ("OneTrust" is the consent manager's).
+ */
+export function coveredBy(name, index) {
+  const key = productKey(name);
+  if (!key) {
+    return null;
+  }
+  const exact = index.find((t) => t.names.has(key));
+  if (exact) {
+    return exact.tech;
+  }
+  const named = index.find((t) => [...t.phrases].some((p) => within(p, key)));
+  if (named) {
+    return named.tech;
+  }
+  const part = index.find((t) => [...t.names].some((n) => n.length > 3 && within(key, n)));
+  return part ? part.tech : null;
+}
+
+/**
+ * The products of the threads (Clairic's `product` facts), each as the tech stack entry that
+ * covers it (`tech:<id>`, named as the entry, with the product it is part of: `product`, the
+ * admin team's when teams differ) or, when none does, as itself (`new:<key>`, named as most
+ * threads write it, no `tech`): `{ of: thread → ids, products: id → { name, tech, product } }`.
+ */
+export function productsOf(facts, techRows) {
+  const index = techIndex(techRows);
+  const partOf = new Map();
+  for (const r of techRows) {
+    if (r.product && !partOf.has(r.tech)) {
+      partOf.set(r.tech, r.product);
+    }
+  }
+  const of = new Map();
+  const forms = new Map();
+  const products = {};
+  for (const f of facts) {
+    const key = productKey(f.value);
+    if (key && !GENERIC.has(key)) {
+      const tech = coveredBy(f.value, index);
+      const id = tech ? `tech:${tech}` : `new:${key}`;
+      if (tech) {
+        products[id] = {
+          name: index.find((t) => t.tech === tech).name, tech, product: partOf.get(tech) || null,
+        };
+      } else {
+        const counts = forms.get(id) || new Map();
+        counts.set(f.value, (counts.get(f.value) || 0) + 1);
+        forms.set(id, counts);
+      }
+      of.set(f.thread, [...new Set([...(of.get(f.thread) || []), id])]);
+    }
+  }
+  for (const [id, counts] of forms) {
+    products[id] = {
+      name: [...counts].sort((a, b) => b[1] - a[1])[0][0], tech: null, product: null,
+    };
+  }
+  return { of, products };
 }
 
 /** The threads' vectors from CONTENT, by thread key; those it does not have are left out. */
@@ -276,13 +393,17 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
  * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
- *   topic ids → the names the inbox shows).
+ *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
+ *   products Clairic found in the threads, `tech` the tech stack entry that covers one (null for
+ *   a gap), `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
     return { error: 'a topic map needs the CONTENT index and Workers AI' };
   }
-  const { threads, posts, orgs } = await threadsOf(env);
+  const {
+    threads, posts, orgs, products: facts, tech,
+  } = await threadsOf(env);
   const vectors = await vectorsOf(env, threads.map((t) => t.thread));
   const rows = threads.filter((t) => vectors.has(t.thread));
   if (rows.length < MIN_THREADS) {
@@ -324,6 +445,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     people[p.person] = p.name || `#${p.person}`;
   }
   const used = new Set(rows.map((t) => t.org));
+  const products = productsOf(facts, tech);
   const map = {
     version: 1,
     built_at: now.toISOString(),
@@ -344,6 +466,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
         messages: t.messages,
         kind: t.kind || null,
         tags: topicList(t.topics),
+        products: products.of.get(t.thread) || [],
         topic,
         sim: round(sims[i]),
         staff: staff.get(t.thread) || {},
@@ -353,6 +476,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     orgs: Object.fromEntries(orgs.filter((o) => used.has(o.slug))
       .map((o) => [o.slug, { name: o.name || o.slug, type: o.type }])),
     tags: topicNames(),
+    products: products.products,
   };
   const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
     VALUES (?, ?, ?, ?, ?) RETURNING id`)

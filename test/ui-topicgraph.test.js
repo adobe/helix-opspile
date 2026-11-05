@@ -18,7 +18,7 @@ import { SCRIPTS } from './ui.js';
 // eslint-disable-next-line no-new-func
 const TopicGraph = new Function('globalThis', `${SCRIPTS['topicgraph.js']}\nreturn globalThis.TopicGraph;`)({});
 
-const ALL = ['person', 'topic', 'tag', 'org'];
+const ALL = ['person', 'topic', 'tag', 'product', 'org'];
 
 /** A map of `threads`: `[topic, org, people, tags]` each, on team `a`. */
 function mapOf(threads) {
@@ -105,6 +105,25 @@ describe('the Topics graph (ui/topicgraph.js)', () => {
     assert.deepEqual(lines(TopicGraph.build(map, { shown: ['person', 'tag'], min: 2 })), [
       'person:1 tag:cdn 2', 'person:2 tag:cdn 2',
     ]);
+  });
+
+  it('joins products by the threads they share, an entry as the product it is part of', () => {
+    const map = mapOf([[0, 'acme', [1]], [1, 'acme', [1]], [2, 'acme', [1]]]);
+    map.products = {
+      ue: { name: 'Universal Editor', tech: true, product: 'Sites' },
+      sites: { name: 'Sites', tech: true, product: 'Sites' },
+      akamai: { name: 'Akamai', tech: true },
+      fastly: { name: 'Fastly' },
+    };
+    map.threads[0].products = ['ue', 'akamai'];
+    map.threads[1].products = ['sites', 'ue', 'akamai'];
+    map.threads[2].products = ['fastly'];
+    const g = TopicGraph.build(map, { shown: ['product'], min: 2 });
+    // Universal Editor and Sites are one product; a thread naming both counts once.
+    assert.deepEqual(lines(g), ['product:akamai product:group:Sites 2']);
+    assert.deepEqual(g.all.get('product:group:Sites').threads.length, 2);
+    assert.equal(g.all.get('product:fastly').gap, true);
+    assert.equal(g.all.get('product:akamai').gap, false);
   });
 
   it('takes the team\'s threads only', () => {
