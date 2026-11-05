@@ -682,6 +682,44 @@ export function readMembers(group, keep = [], most = MAX_READ_MEMBERS) {
 }
 
 /**
+ * The technologies an inbox entry shows, likeliest first, as `[{ tech, p }]`: each member's
+ * (`labels.tech`, the highest of any member). Where no member has been labeled since labels
+ * had them, those whose highest probability in the channel one of its threads set
+ * (`channel_tech.thread`).
+ */
+export function threadTech(labels, channelTech, keys) {
+  const best = new Map();
+  const add = (id, p) => {
+    if (!(best.get(id) >= p)) {
+      best.set(id, p);
+    }
+  };
+  const stored = (labels || []).filter((l) => l.tech != null);
+  for (const l of stored) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(l.tech);
+    } catch {
+      parsed = null;
+    }
+    for (const [id, p] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
+      if (typeof p === 'number') {
+        add(id, p);
+      }
+    }
+  }
+  if (!stored.length) {
+    const own = new Set(keys);
+    for (const t of channelTech || []) {
+      if (own.has(t.thread)) {
+        add(t.tech, t.p);
+      }
+    }
+  }
+  return [...best].map(([tech, p]) => ({ tech, p })).sort((a, b) => b.p - a.p);
+}
+
+/**
  * One inbox entry: the thread, or the group of re-threaded threads it stands for, with
  * every member's messages in order. Each message carries its platform `thread`. A member's
  * key opens its group (a root that is folded later was opened, linked or kept in a tab under
@@ -721,7 +759,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
-    { results: appPosts }, agentTurn,
+    { results: appPosts }, agentTurn, { results: memberTech }, { results: rootLinks },
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -752,7 +790,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     reviewsFor(env.DB, [labelKey]),
     resolutionFacts(env, group.map((m) => m.thread)),
     env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first(),
-    env.DB.prepare(`SELECT tech, p FROM channel_tech
+    env.DB.prepare(`SELECT tech, p, thread FROM channel_tech
       WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
       .bind(row.source, row.tenant, row.channel_id).all(),
     env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
@@ -767,7 +805,17 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // GET /api/agent decides: the inbox shows it with the messages.
     row.kind === 'channel' ? Promise.all([keptTurn(env, key), agentEnabled(env, row.channel_id, row.team)])
       .then(([turn, on]) => (on ? turn : null)) : null,
+    // The technologies each member shows (labels.tech), for the header's tech stack.
+    env.DB.prepare(`SELECT thread, tech FROM labels
+      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
+    // Each folded post's link on the platform, its root's: the header lists them.
+    group.length > 1 ? env.DB.prepare(`SELECT t.thread, m.permalink FROM threads t
+      JOIN messages m ON m.source = t.source AND m.tenant = t.tenant
+        AND m.channel_id = t.channel_id AND m.id = t.root_id
+      WHERE t.thread IN (SELECT value FROM json_each(?)) AND m.deleted = 0
+        AND m.permalink IS NOT NULL`).bind(readKeys).all() : { results: [] },
   ]);
+  const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
   row.permalink = link ? link.permalink : null;
   const byId = new Map((idx || []).map((m) => [`${m.thread}|${m.id}`, m]));
@@ -831,7 +879,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
       label_thread: labelKey,
     },
-    tech: tech || [],
+    tech: (tech || []).map((t) => ({ tech: t.tech, p: t.p })),
+    thread_tech: threadTech(memberTech, tech, entryKeys),
     topics: topicList(model && model.topics),
     vocab: await vocab(env, row.team),
     members: group.map((m) => ({
@@ -840,6 +889,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       last_at: m.last_at,
       any_at: m.any_at,
       logical_via: m.logical_via,
+      ...(group.length > 1
+        ? { title: m.title || null, permalink: rootLink.get(m.thread) || null } : {}),
       // Its messages are not read (MAX_READ_MEMBERS): the page says where posts are missing.
       ...(readSet.has(m.thread) ? {} : { left_out: true }),
     })),

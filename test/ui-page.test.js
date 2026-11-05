@@ -903,6 +903,70 @@ describe('inbox page', () => {
     assert.equal(channelOf('acme-ops').href, '/inbox?view=personal&filters=1&f.customer=acme');
   });
 
+  describe('the thread\'s header', () => {
+    const header = () => piece('const HEAD_POSTS', 'const pct =', 'headLinks, headTech, headPosts');
+    const fact = (field, value) => ({ field, value });
+
+    it('names the links by the page mentioned, else the site\'s production URL', () => {
+      const { headLinks } = header();
+      const site = fact('site', 'acme/www');
+      // Only a site: its production URL.
+      assert.deepEqual(headLinks([site]).map((l) => [l.group, l.href]), [['site', 'https://main--www--acme.aem.live/']]);
+      // A page mentioned comes first, the one Clairic says is affected before the others; a
+      // link to documentation or code is a reference, after the site; the ids come last.
+      const links = headLinks([
+        fact('cve', 'CVE-2026-1234'), fact('ticket', 'OPS-1'), site,
+        fact('url', 'https://github.com/acme/www'), fact('url', 'https://www.aem.live/docs/cdn'),
+        fact('url', 'https://www.acme.example/pricing'),
+        fact('url', 'https://main--www--acme.aem.page/en/'),
+        fact('affected_url', 'main--www--acme.aem.page/en'),
+      ]);
+      assert.deepEqual(links.map((l) => [l.group, l.text, l.note]), [
+        ['mentioned', 'main--www--acme.aem.page/en', 'Affected page'],
+        ['mentioned', 'www.acme.example/pricing', ''],
+        ['site', 'main--www--acme.aem.live', 'Production'],
+        ['reference', 'github.com/acme/www', ''],
+        ['reference', 'www.aem.live/docs/cdn', ''],
+        ['id', 'OPS-1', 'Ticket'],
+        ['id', 'CVE-2026-1234', 'CVE'],
+      ]);
+      assert.equal(links.find((l) => l.text === 'OPS-1').href, null);
+      assert.equal(links.find((l) => l.group === 'id' && l.href).href, 'https://www.cve.org/CVERecord?id=CVE-2026-1234');
+      // What is no URL, and a site that is no `org/site`, are left out.
+      assert.deepEqual(headLinks([fact('affected_url', 'the homepage'), fact('site', 'acme')]), []);
+    });
+
+    it('names the tech stack by what the thread shows, then the customer\'s, then its topics', () => {
+      const { headTech } = header();
+      const vocab = { tech: { eds: 'Edge Delivery', akamai: 'Akamai' }, topics: { cdn: 'CDN and caching' } };
+      const data = {
+        vocab,
+        thread_tech: [{ tech: 'akamai', p: 0.9 }],
+        tech: [{ tech: 'eds', p: 1 }, { tech: 'akamai', p: 0.95 }, { tech: 'fastly', p: 0.8 }],
+        topics: ['cdn'],
+      };
+      const t = headTech(data);
+      assert.equal(t.label, 'Akamai');
+      assert.deepEqual(t.here.map((x) => [x.name, x.p]), [['Akamai', 0.9]]);
+      assert.deepEqual(t.also.map((x) => x.name), ['Edge Delivery', 'fastly']);
+      assert.deepEqual(t.topics.map((x) => x.name), ['CDN and caching']);
+      assert.equal(t.count, 4);
+      // Nothing the thread shows: the customer's likeliest, else the first topic.
+      assert.equal(headTech({ ...data, thread_tech: [] }).label, 'Edge Delivery');
+      assert.equal(headTech({ vocab, topics: ['cdn'] }).label, 'CDN and caching');
+      assert.equal(headTech({ vocab }).count, 0);
+    });
+
+    it('lists a large group\'s first post and its latest', () => {
+      const { headPosts } = header();
+      const members = Array.from({ length: 30 }, (_, i) => ({ thread: `t${i}` }));
+      const { posts, skipped } = headPosts(members);
+      assert.equal(skipped, 18);
+      assert.deepEqual(posts.map((m) => m.thread), ['t0', ...members.slice(19).map((m) => m.thread)]);
+      assert.deepEqual(headPosts(members.slice(0, 2)), { posts: members.slice(0, 2), skipped: 0 });
+    });
+  });
+
   it('ranks a thread just resolved below the open ones of its pile', () => {
     const me = 'me';
     const { classicScore: baseScore } = piece('function closeness', '\nconst tpl', 'classicScore', {

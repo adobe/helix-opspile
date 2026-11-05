@@ -636,12 +636,15 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         urgency: label.urgency,
         resolved_p: label.resolved_p,
         topics: label.topics || [],
+        // The technologies the thread shows (labels.tech), as JSON; null: labeled before that.
+        tech: label.tech ? JSON.stringify(label.tech) : null,
         labeled_through: entry.row.any_at,
         reviewed: [],
       });
     }
+    // Clairic's affected page; the rest as the rules found them.
     facts.set(key, threadFacts.map(([field, value]) => ({
-      source: 'rule', field, value, confidence: null,
+      source: field === 'affected_url' ? 'clairic' : 'rule', field, value, confidence: null,
     })));
     for (const m of mentioned) {
       const [who, ago] = [].concat(m);
@@ -689,9 +692,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ],
     reads: { priya: 332 },
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 2.4, resolved_p: 0.1, topics: ['cdn', 'publishing'],
+      kind: 'incident',
+      next_actor: 'us',
+      urgency: 2.4,
+      resolved_p: 0.1,
+      topics: ['cdn', 'publishing'],
+      tech: { akamai: 0.93, eds: 1 },
     },
-    facts: [['ticket', 'OPS-1042'], ['site', 'acme-preview']],
+    // The header's links: the page the customer named first, then the site, then the ids.
+    facts: [
+      ['ticket', 'OPS-1042'], ['site', 'acme/acme-preview'], ['cve', 'CVE-2026-1234'],
+      ['url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
+      ['url', 'https://www.aem.live/docs/cdn-guide'],
+      ['affected_url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
+    ],
     // Written by the thread agent, long enough to fold: the draft line shows its first line.
     draft: {
       by: 'agent',
@@ -1130,9 +1144,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['tom', 280, 'They come from the query index. I will drop them from it.'],
     ],
     reads: { dana: 'latest' },
+    // Labeled before labels had their technologies: the channel's are all the header has.
     label: {
       kind: 'request', next_actor: 'us', urgency: 0.5, resolved_p: 0.2, topics: ['seo'],
     },
+    // No page named: the site's production URL comes first.
+    facts: [['site', 'umbrella/www'], ['url', 'https://github.com/umbrella/www']],
   });
   const followUp = seed({
     ch: CHANNELS.aemUmbrella,

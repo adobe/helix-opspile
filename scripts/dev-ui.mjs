@@ -85,7 +85,7 @@ import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
-import { fold, readMembers } from '../src/api.js';
+import { fold, readMembers, threadTech } from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -730,6 +730,10 @@ function agentTurn(entry, { asked = false } = {}) {
  */
 const DEV_READ_MEMBERS = 8;
 
+/** The channel's tech stack (channel_tech), likeliest first. */
+const channelTech = (entry) => (entry.ch.tech || [])
+  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
+
 function thread(asked) {
   const own = store.threads.get(asked);
   const entry = own && store.threads.get(own.row.logical_thread || asked);
@@ -781,6 +785,7 @@ function thread(asked) {
       root_at: m.root_at,
       last_at: m.last_at,
       any_at: m.any_at,
+      ...(group.length > 1 ? { title: m.title || null, permalink: m.permalink } : {}),
       ...(readSet.has(m.thread) ? {} : { left_out: true }),
     })),
     messages,
@@ -798,7 +803,11 @@ function thread(asked) {
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
-    tech: (entry.ch.tech || []).map((tech, i) => ({ tech, p: 0.95 - i * 0.05 })),
+    tech: channelTech(entry),
+    // As src/api.js: what the members' labels say the thread shows (labels.tech).
+    thread_tech: threadTech(group.map(({ row: m }) => ({
+      thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
+    })), channelTech(entry), group.map(({ row: m }) => m.thread)),
     topics: store.labels.get(key)?.topics || [],
     vocab: vocabNames,
     reviews: [],
