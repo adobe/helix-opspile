@@ -525,6 +525,29 @@ describe('connecting and posting', () => {
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
   });
 
+  it('keeps a folded root in its group once a reply of the group goes to its thread', async () => {
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, any_at, logical_thread, logical_via, updated_at) VALUES ('slack:E1:C1:1.5', 'slack', 'E1',
+      'C1', '1.5', 'acme', 'helix', 'p/', '2026-10-21T11:00:00Z', 'slack:E1:C1:1.1', 'clef',
+      '2026-10-21T11:00:00Z')`).run();
+    const routed = () => e.DB.rows('SELECT thread FROM threads WHERE routed_at IS NOT NULL')
+      .map((r) => r.thread);
+    // The member's own entry (a link to it): the person chose that thread.
+    await post(e, ME, { thread: 'slack:E1:C1:1.5', text: 'Hi.' }, inTeam);
+    assert.deepEqual(routed(), []);
+    // The group's entry: the inbox picks the latest member, which is held in the group now.
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'On it.' }, inTeam);
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(calls.at(-1).init.body).thread_ts, '1.5');
+    assert.deepEqual(routed(), ['slack:E1:C1:1.5']);
+    const [{ routed_at: first }] = e.DB.rows('SELECT routed_at FROM threads WHERE routed_at IS NOT NULL');
+    await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'Again.' }, inTeam);
+    assert.deepEqual(e.DB.rows('SELECT routed_at FROM threads WHERE routed_at IS NOT NULL'), [{ routed_at: first }]);
+  });
+
   it('sends emoji names as the platform knows them, and says what it sent', async () => {
     const e = env();
     await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,

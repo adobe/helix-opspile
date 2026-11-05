@@ -294,6 +294,13 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   group's entry stops interleaving the two platform threads, and its replies go to its own
   platform thread again (src/post.js `target`, the entry's latest). A burst member, and alerts,
   stay in their group.
+- **Replies the inbox routed:** a group's replies go to the platform thread it was last active
+  in, which may be a folded root's. Once one does (a person's from the inbox, the app's, or a
+  thread agent's), the group's conversation goes on there, where the channel sees it: that root
+  gets `routed_at` (`routeReply`, written before the post) and stays in its group for good. Its
+  replies do not split it out, neither the inbox's own nor those of the people who answer them
+  there, and a forced re-threading leaves it alone. Splitting it would leave the answer the
+  channel read in an entry without the question it answered.
 
 A match sets `logicalThread` on that one message file and on its thread row, always pointing at
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing

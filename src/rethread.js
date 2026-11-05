@@ -29,8 +29,9 @@ import { teamsOf } from './shares.js';
  * message (Slack: forwarded, or a link to it) was started on purpose, and stays on its own.
  * So does a conversation's root that people answer in its own platform thread: one that has
  * replies when it is decided is not folded, and one that gets them after it was folded is split
- * back out (`dethread`), for good. A root that announces a thread (🧵, `:thread:`) stays on its
- * own, too.
+ * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
+ * (`routed_at`): then it stays in the group for good. A root that announces a thread (🧵,
+ * `:thread:`) stays on its own, too.
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -378,6 +379,10 @@ export async function rethread(env, key, { force = false } = {}) {
   if (thread.logical_via === SPLIT) {
     return { result: 'unchanged', logical: null, reason: 'split' };
   }
+  // The inbox replied for its group in its platform thread: that is where the group goes on.
+  if (thread.routed_at && thread.logical_thread) {
+    return { result: 'unchanged', logical: thread.logical_thread, reason: 'routed' };
+  }
   if (thread.rethreaded_at && !force) {
     return { result: 'unchanged', logical: thread.logical_thread };
   }
@@ -639,13 +644,15 @@ export async function rethread(env, key, { force = false } = {}) {
  * (see answered()). Called for every reply a person posts; only a folded root changes, once:
  * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
  * burst go with it. A burst member itself, and alerts, stay in their group: a burst is one
- * request in pieces, and someone answering one of a series of alerts answers all of them.
+ * request in pieces, and someone answering one of a series of alerts answers all of them. So does
+ * a root the inbox sent a reply of its group to (`routed_at`, src/post.js routeReply): the group's
+ * conversation goes on in its platform thread, and those who answer there answer the group.
  * `rethreaded_at` moves to now, so the export sweep writes the threads again.
  */
 export async function dethread(env, key) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
-    || !thread.root_id || !await answered(env, thread)) {
+    || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
     return { result: 'unchanged' };
   }
   const group = thread.logical_thread;
@@ -679,7 +686,7 @@ export async function dethread(env, key) {
         new Date(Date.parse(last.root_at) + BURST_MS).toISOString(),
       ).first();
     if (!next || next.author_key !== author.author_key || next.logical_thread !== group
-      || next.logical_via !== 'burst') {
+      || next.logical_via !== 'burst' || next.routed_at) {
       break;
     }
     // eslint-disable-next-line no-await-in-loop
