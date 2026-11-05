@@ -12,6 +12,7 @@
 
 import { TITLER, topicList, topicNames } from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
+import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
@@ -327,6 +328,141 @@ export async function nameTopic(env, titles) {
   }
 }
 
+/** Words that make a name vague: a name made of them and little else names nothing. */
+export const FILLER = ['issues', 'issue', 'problems', 'troubleshooting', 'support', 'management',
+  'configuration', 'configurations', 'setup', 'implementation', 'integration', 'content delivery',
+  'content management', 'technical', 'general', 'various', 'miscellaneous'];
+
+export const NAMER_ALL = 'You name the topics of a support inbox: groups of threads between'
+  + ' Adobe and its enterprise customers about Adobe Experience Manager (Edge Delivery Services,'
+  + ' Document Authoring, Universal Editor, AEM as a Cloud Service) and the products around it.'
+  + ' For each topic you get the titles of its most typical threads, the concerns a classifier'
+  + ' found in them and the products they name, with how many threads have each. Name what sets'
+  + ' each topic apart from the others: read all of them first, and give no two topics names that'
+  + ' could be swapped. A name has two to five words, in sentence case (a capital first letter,'
+  + ' and for names of products), and is as specific as the threads allow: name the product or'
+  + ' the failure where the threads share one ("Sidekick sign-in after SSO changes", "CDN purge'
+  + ` and stale cache", "Product feeds for marketplaces"). Do not use ${FILLER.map((w) => `"${w}"`).join(', ')}`
+  + ' or a name every topic could have; and not "AEM", "Adobe" or "Edge Delivery" alone. A topic'
+  + ' that is mostly one project names what the project is ("Storefront rebuild on Edge"). Name no'
+  + ' customer or person. With each name write one sentence on what its customers need. Answer'
+  + ' with JSON only: [{"id": 0, "name": "…", "theme": "…"}, …], every topic once.';
+
+/** What NAMER_ALL reads: per topic, its threads' titles, concerns and products, with counts. */
+export function namingInput(topics) {
+  const counts = (list) => list.map(([name, n]) => `${name} (${n})`).join(', ') || 'none';
+  return topics.map((t) => [
+    `Topic ${t.id} (${t.titles.length} titles shown):`,
+    ...t.titles.map((title) => `- ${title}`),
+    `Concerns: ${counts(t.tags)}`,
+    `Products: ${counts(t.products)}`,
+  ].join('\n')).join('\n\n');
+}
+
+const vague = (label) => {
+  const rest = FILLER.reduce((s, w) => s.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' '), label)
+    .replace(/\b(?:and|of|for|the|a|with|aem|adobe|edge)\b/gi, ' ').replace(/[^\p{L}\p{N}]+/gu, '');
+  return rest.length < 4;
+};
+
+/** Sentence case: the first letter a capital, the rest as written (product names keep theirs). */
+const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * The names NAMER_ALL gave, by topic id: `[{ label, theme }]`, null for a topic it gave no name
+ * worth showing (none, too long, vague, or the same as another's).
+ */
+export function parseNames(text, n) {
+  const out = Array.from({ length: n }, () => null);
+  const json = String(text || '').match(/\[[\s\S]*\]/);
+  let list = [];
+  try {
+    list = json ? JSON.parse(json[0]) : [];
+  } catch {
+    list = [];
+  }
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const id = Number(item && item.id);
+    const label = sentence(tidy(item && item.name).replace(/[.:]$/, ''));
+    if (Number.isInteger(id) && id >= 0 && id < n && !out[id] && label && label.length <= MAX_LABEL
+      && !vague(label) && !seen.has(label.toLowerCase())) {
+      seen.add(label.toLowerCase());
+      out[id] = { label, theme: String((item && item.theme) || '').trim().slice(0, MAX_THEME) };
+    }
+  }
+  return out;
+}
+
+/**
+ * NAMER_ALL's answer: from the agents' model on Bedrock (src/agent/model.js) where agents are
+ * configured, else from Workers AI's title model; `{ text, model }`, or null when it failed.
+ */
+async function nameAll(env, user) {
+  if (!modelProblem(env)) {
+    try {
+      const res = await fetch(`${gatewayBaseUrl(env)}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(env), 'content-type': 'application/json', 'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: env.AGENT_MODEL,
+          max_tokens: 6000,
+          system: NAMER_ALL,
+          messages: [{ role: 'user', content: user }],
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      const text = (body.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+      // COGS (src/cogs/meter.js): Bedrock is not a binding, so its tokens are counted here.
+      const u = body.usage || {};
+      for (const [metric, q] of [['input_tokens', u.input_tokens], ['output_tokens', u.output_tokens]]) {
+        if (env.meter && q) {
+          env.meter.add('bedrock', metric, env.AGENT_MODEL, q);
+        }
+      }
+      if (res.ok && text) {
+        return { text, model: env.AGENT_MODEL };
+      }
+      console.log(JSON.stringify({ route: 'topicmap', namer: 'bedrock', status: res.status }));
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'topicmap', namer: 'bedrock', error: e.message }));
+    }
+  }
+  try {
+    const res = await env.AI.run(TITLER, {
+      messages: [{ role: 'system', content: NAMER_ALL }, { role: 'user', content: user }],
+      max_tokens: 4000,
+    });
+    const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '');
+    return text ? { text, model: TITLER } : null;
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'topicmap', namer: 'error', error: e.message }));
+    return null;
+  }
+}
+
+/**
+ * Every topic's name and theme, in one call, so the names tell the topics apart; a topic that call
+ * named badly is named on its own (nameTopic). `topics`: `{ id, titles, tags, products }`, the
+ * last two `[name, threads]`, the most first. `{ names, model }`.
+ */
+export async function nameTopics(env, topics) {
+  const all = await nameAll(env, namingInput(topics));
+  const names = all ? parseNames(all.text, topics.length) : topics.map(() => null);
+  const taken = new Set(names.filter(Boolean).map((x) => x.label.toLowerCase()));
+  const filled = await Promise.all(topics.map(async (t, i) => {
+    if (names[i]) {
+      return names[i];
+    }
+    const one = await nameTopic(env, t.titles);
+    return one.label && !taken.has(one.label.toLowerCase())
+      ? { ...one, label: sentence(one.label) } : one;
+  }));
+  return { names: filled, model: (all && all.model) || TITLER };
+}
+
 const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
 
 /**
@@ -367,8 +503,21 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   const clusters = members.filter((m) => m.length)
     .map((m) => m.sort((a, b) => sims[b] - sims[a]))
     .sort((a, b) => b.length - a.length);
-  const names = await Promise.all(clusters.map((m) => nameTopic(env, m.slice(0, NEAREST)
-    .map((i) => rows[i].title).filter(Boolean))));
+  const products = productsOf(facts, tech);
+  const top = (list) => [...list.reduce((c, v) => c.set(v, (c.get(v) || 0) + 1), new Map())]
+    .sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const tagNames = topicNames();
+  const productName = (id) => {
+    const p = products.products[id];
+    return (p && (p.product && p.tech ? `${p.name} (${p.product})` : p.name)) || id;
+  };
+  const { names, model: namer } = await nameTopics(env, clusters.map((m, id) => ({
+    id,
+    titles: m.slice(0, NEAREST).map((i) => rows[i].title).filter(Boolean),
+    tags: top(m.flatMap((i) => topicList(rows[i].topics).map((g) => tagNames[g] || g))),
+    products: top(m.flatMap((i) => [...new Set((products.of.get(rows[i].thread) || [])
+      .map(productName))])),
+  })));
   const seen = new Map();
   const topics = clusters.map((m, id) => {
     let label = names[id].label || `Topic ${id + 1}`;
@@ -391,13 +540,12 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     people[p.person] = p.name || `#${p.person}`;
   }
   const used = new Set(rows.map((t) => t.org));
-  const products = productsOf(facts, tech);
   const map = {
     version: 1,
     built_at: now.toISOString(),
     built_by: by,
     model: EMBEDDING_MODEL,
-    namer: TITLER,
+    namer,
     min_messages: MIN_MESSAGES,
     topics,
     threads: clusters.flatMap((m, topic) => m.map((i) => {

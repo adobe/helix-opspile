@@ -516,7 +516,7 @@ function overview() {
   const none = threads.length - tagged(threads);
   return `<h2>${plural(topics.length, 'topic')} <span class="sub">${plural(threads.length, 'thread')}</span></h2>
     <p class="hint">Found from what was said in the threads with ${m.min_messages} messages or more (not meetings or
-      people's comings and goings), each named from its most typical threads. <b>${none} of them (${pct(none, threads.length)})
+      people's comings and goings), named all at once from their most typical threads, Clef topics and products. <b>${none} of them (${pct(none, threads.length)})
       have no tag from Clef</b>: the topics Clef rarely tags are what its topic questions miss.</p>
     ${gaps()}
     <h3>Topics</h3>
@@ -540,20 +540,26 @@ function gaps() {
     || a.label.localeCompare(b.label));
   const named = all.reduce((s, n) => s + (n.gap ? 0 : n.threads.length), 0);
   const missed = list.reduce((s, n) => s + n.threads.length, 0);
-  // A name of one customer's threads is likelier theirs (a brand, a system of theirs) than a
-  // product to add: the list is of those two customers or more name.
+  // Named in two threads or more: by two customers or more first, as products to add; by one
+  // customer, folded, as those are as likely a brand or a system of theirs. Names of one thread
+  // only are counted.
   const customers = (n) => new Set(n.threads.map((t) => t.org).filter(isCustomer)).size;
-  const shown = list.filter((n) => n.threads.length > 1 && customers(n) > 1).slice(0, 20);
-  const max = Math.max(1, ...shown.map((n) => n.threads.length));
+  const several = list.filter((n) => n.threads.length > 1);
+  const shown = several.filter((n) => customers(n) > 1).slice(0, 20);
+  const one = several.filter((n) => customers(n) <= 1).slice(0, 30);
+  const once = list.length - several.length;
+  const max = Math.max(1, ...[...shown, ...one].map((n) => n.threads.length));
+  const rows = (nodes) => `<ul class="rel">${nodes.map((n) => `<li><button class="pickr" data-sel="${esc(n.id)}" data-type="product">
+      <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
+      <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
+      <span class="n" title="${plural(customers(n), 'customer')}">${n.threads.length}</span></button></li>`).join('')}</ul>`;
   return `<h3>Not in the tech stack <span class="sub">${list.length}</span></h3>
     <p class="hint">Products the threads are about that no technology of the tech stack names
       (${pct(missed, missed + named)} of the products found). Add them, or their names to an
-      entry's description, on the Agents page, and Clef asks about them.</p>
-    ${shown.length ? `<ul class="rel">${shown.map((n) => `<li><button class="pickr" data-sel="${esc(n.id)}" data-type="product">
-      <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
-      <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
-      <span class="n" title="${customers(n)} customers">${n.threads.length}</span></button></li>`).join('')}</ul>` : ''}
-    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more (Find shows them)</div>` : ''}`;
+      entry's aliases, on the Agents page, and Clef asks about them.</p>
+    ${shown.length ? rows(shown) : '<p class="sub">None that two customers name.</p>'}
+    ${one.length ? `<details class="gaps"><summary>Named by one customer <span class="sub">${one.length}</span></summary>${rows(one)}</details>` : ''}
+    ${once ? `<div class="sub more">and ${once} named in one thread each (Find shows them)</div>` : ''}`;
 }
 
 /** A product's entries in the tech stack (its features) the threads named, by their threads. */

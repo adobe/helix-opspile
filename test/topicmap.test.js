@@ -14,8 +14,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
-  buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, productKey,
-  productsOf, sweepTopicMap, techIndex, topicCount,
+  buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, NAMER_ALL,
+  parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
 } from '../src/topicmap.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -100,7 +100,7 @@ async function setup({ perGroup = 10 } = {}) {
   await thread('slack:E1:C1:alert', { kind: 'alert', vector: near(2, 1) });
   await thread('slack:E1:C1:novec', { embedded: null });
   await thread('slack:E1:C1:gone', {});
-  const calls = { get: 0, ai: [] };
+  const calls = { get: 0, ai: [], all: [] };
   return {
     DB,
     calls,
@@ -115,6 +115,11 @@ async function setup({ perGroup = 10 } = {}) {
       async run(model, { messages }) {
         assert.match(model, /llama/);
         const user = messages[1].content;
+        if (messages[0].content === NAMER_ALL) {
+          // Every topic at once: as the test says, else an answer that is no JSON.
+          calls.all.push(user);
+          return { response: calls.allAnswer ? calls.allAnswer(user) : 'Sorry, I cannot.' };
+        }
         calls.ai.push(user);
         if (user.includes('sidekick')) {
           return { response: '1. "Sidekick sign-in"\nAuthors cannot sign in after an SSO change.' };
@@ -294,6 +299,73 @@ describe('topic map: building', () => {
     const latest = await latestTopicMap(env);
     assert.equal(latest.id, built.id);
     assert.deepEqual(latest.map, map);
+  });
+
+  it('names every topic in one call, from titles, concerns and products, and fixes what it misses', async () => {
+    const env = await setup();
+    // A good name, a vague one, and none for the third.
+    env.calls.allAnswer = (user) => {
+      const ids = [...user.matchAll(/^Topic (\d+)/gm)].map((m) => Number(m[1]));
+      const of = (word) => ids.find((id) => new RegExp(`Topic ${id} [^]*?- ${word}`).test(user));
+      return `Here: [{"id": ${of('cache')}, "name": "cache purge and stale pages", "theme": "Purges that do not take."},
+        {"id": ${of('checkout')}, "name": "Implementation issues", "theme": "x"}]`;
+    };
+    const { map } = await buildTopicMap(env, { now: NOW });
+    assert.equal(env.calls.all.length, 1);
+    const [user] = env.calls.all;
+    assert.match(user, /^Topic 0 \(10 titles shown\):\n- /);
+    assert.match(user, /Concerns: Caching and delivery \(5\)/);
+    assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Contentstack \(5\))/);
+    const topicOf = (word) => map.threads.find((t) => t.title.startsWith(word)).topic;
+    const label = (word) => map.topics[topicOf(word)].label;
+    // Its name, in sentence case; the vague one and the missing one named on their own.
+    assert.equal(label('cache'), 'Cache purge and stale pages');
+    assert.equal(label('sidekick'), 'Sidekick sign-in');
+    assert.equal(label('checkout'), 'Storefront');
+    assert.equal(env.calls.ai.length, 2);
+    assert.equal(map.namer, '@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  });
+
+  it('names with the agents\' model on Bedrock where agents are configured', async () => {
+    const env = await setup();
+    Object.assign(env, {
+      AI_GATEWAY_ACCOUNT: 'acct', AGENT_GATEWAY: 'gw', AGENT_MODEL: 'us.anthropic.claude-test', BEDROCK_API_KEY: 'k',
+    });
+    const real = globalThis.fetch;
+    const asked = [];
+    const metered = [];
+    env.meter = { add: (...a) => metered.push(a) };
+    globalThis.fetch = async (url, init) => {
+      asked.push({
+        url: String(url), body: JSON.parse(init.body), auth: init.headers.authorization,
+      });
+      const ids = [...JSON.parse(init.body).messages[0].content.matchAll(/^Topic (\d+)/gm)].map((m) => m[1]);
+      return Response.json({
+        usage: { input_tokens: 900, output_tokens: 120 },
+        content: [{ type: 'text', text: JSON.stringify(ids.map((id) => ({ id: Number(id), name: `Distinct topic ${id}`, theme: 't' }))) }],
+      });
+    };
+    try {
+      const { map } = await buildTopicMap(env, { now: NOW });
+      assert.equal(asked.length, 1);
+      assert.match(asked[0].url, /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/acct\/gw\/aws-bedrock\/bedrock-runtime\/[a-z0-9-]+\/anthropic\/v1\/messages$/);
+      assert.equal(asked[0].body.model, 'us.anthropic.claude-test');
+      assert.equal(asked[0].auth, 'Bearer k');
+      assert.deepEqual(map.topics.map((t) => t.label).sort(), ['Distinct topic 0', 'Distinct topic 1', 'Distinct topic 2']);
+      assert.equal(map.namer, 'us.anthropic.claude-test');
+      assert.deepEqual(metered, [['bedrock', 'input_tokens', 'us.anthropic.claude-test', 900],
+        ['bedrock', 'output_tokens', 'us.anthropic.claude-test', 120]]);
+      assert.equal(env.calls.all.length + env.calls.ai.length, 0);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  it('reads the names: JSON in the answer, each once, not vague or too long', () => {
+    const names = parseNames('ok [{"id":0,"name":"CDN purge"},{"id":0,"name":"Again"},{"id":1,"name":"cdn purge"},'
+      + '{"id":2,"name":"Content delivery issues"},{"id":3,"name":"x"},{"id":9,"name":"Out of range"}] done', 4);
+    assert.deepEqual(names.map((n) => n && n.label), ['CDN purge', null, null, null]);
+    assert.deepEqual(parseNames('no json', 2), [null, null]);
   });
 
   it('needs enough threads, and the index and Workers AI', async () => {

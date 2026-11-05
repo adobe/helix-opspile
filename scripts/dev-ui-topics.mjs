@@ -165,6 +165,10 @@ export function topicMapFixture(now = Date.now(), tech = []) {
       }
       const at = now - Math.floor(rnd() * 60 * 86400000);
       const key = `slack:T-FAKE:C0TOPIC${String(id).padStart(2, '0')}:${1790000000 + threads.length}.000100`;
+      // The storefront customer's own payment system: a gap only one customer names.
+      if (OWN_TOPIC[id] && org === OWN_TOPIC[id] && rnd() < 0.4) {
+        facts.push({ thread: key, value: 'Choco Pay' });
+      }
       for (const [name, p] of Object.entries(PRODUCTS[id] || {})) {
         if (rnd() < p) {
           facts.push({ thread: key, value: name });

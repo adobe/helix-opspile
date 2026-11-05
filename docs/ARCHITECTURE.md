@@ -807,9 +807,14 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 - **k-means** (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same
   threads make the same map) into about one topic per twelve threads, at most 30. A few hundred
   threads take a quarter of a second.
-- The language model of the titles names each topic (two to five words) and says in a sentence
-  what its customers need, from the titles of its fifteen most typical threads (nearest its
-  centre). It names no customer, and a name it gives twice gets a number.
+- One call names every topic (two to five words) and says in a sentence what its customers
+  need: it reads all of them at once, each as the titles of its fifteen most typical threads
+  (nearest its centre), the Clef topics and the products they have, with how many threads have
+  each, so the names tell the topics apart. The model is the agents' (Claude on Bedrock, through
+  AI Gateway, counted for COGS) where agents are configured, else the language model of the
+  titles. A name that is vague (made of words such as "issues", "management", "content
+  delivery"), too long, or another topic's, and a topic it did not name, are named on their own
+  from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
   messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products** Clairic named. Each product is matched against the tech stack (every
@@ -835,7 +840,8 @@ the people they share (as many people as the threads a line needs, each with tha
 in both). The filters are a team, the kinds shown and the threads a
 line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
 without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
-names, by their threads; adding one on the Agents page, or its name to an entry's description,
+names, by their threads; those two customers or more name, then, folded, those of one customer,
+which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one on the Agents page, or its name to an entry's description,
 makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
 fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
 drawn as a hollow ring.
