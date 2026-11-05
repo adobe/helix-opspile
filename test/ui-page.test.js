@@ -36,9 +36,10 @@ describe('inbox page', () => {
     await transform(html, { loader: 'js', format: 'esm' });
   });
 
-  it('shows no expert finder: it asks /api/experts nothing and has no place for it', () => {
-    assert.doesNotMatch(html, /\/api\/experts/);
-    assert.doesNotMatch(html, /id="experts"|class="expertlist"/);
+  it('shows only the thread agents\' suggestions, not the expert finder\'s own list', () => {
+    const asked = html.match(/(?<=(?:get|fetch)\(\s*[`'"])\/api\/experts[^`'"]*/g);
+    assert.equal(asked.length, 1, asked.join(', '));
+    assert.match(asked[0], /^\/api\/experts\?thread=.*&suggested=1$/);
   });
 
   describe('the channel of a new thread', () => {
@@ -437,7 +438,9 @@ describe('inbox page', () => {
       open: 'b',
       cache: new Map([['a', 1], ['b', 2]]),
       offline: 1,
+      experts: new Map([['b', []]]),
     };
+    const experts = [];
     const { listen } = piece('/**\n * A socket is back', '// ---------------------------------------------------------------- notifications', 'listen', {
       WebSocket: FakeSocket,
       location: { protocol: 'https:', host: 'x' },
@@ -449,6 +452,7 @@ describe('inbox page', () => {
       clearTimeout: () => {},
       noteEvent: () => {},
       screenTeams: () => ['helix'],
+      loadExperts: (k) => experts.push(k),
       fetch: async () => {},
     });
     listen('notifications', 1);
@@ -468,6 +472,8 @@ describe('inbox page', () => {
     sockets[1].onopen();
     assert.deepEqual(reloads, ['b']);
     assert.deepEqual([...state.cache.keys()], ['b']);
+    assert.deepEqual(experts, ['b']);
+    assert.equal(state.experts.has('b'), false);
 
     // With no thread open, a tab in the background still has something to catch up on.
     state.open = null;

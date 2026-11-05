@@ -1045,17 +1045,20 @@ two dropdowns, each named by what matters most for the thread:
   support cases. The first one is the dropdown's name and opens with a click; ▾ lists them all.
 
 A dropdown is left out when it has nothing to list. Whether the thread is resolved is not in
-the header: the ✅ on its root says so, and so do the list and the Send button's menu. The
-header names no colleagues to pull in: the expert finder, below, is not shown in the inbox.
+the header: the ✅ on its root says so, and so do the list and the Send button's menu. After
+the dropdowns comes whom a thread agent suggests pulling in ("Agent suggests Lena Berg", below),
+when one did; the expert finder's own ranking is not shown.
 
 **Expert finder.** Adobe colleagues worth pulling into a thread who are not in it yet, each
 with why: "knows about this topic", "typically responds in about 4 hours" (`GET /api/experts`,
-`src/experts.js`). The inbox does not show it, and asks `GET /api/experts` nothing: the line
-2 of a thread's header that named the top one ("Lena Berg knows about this topic"), with a ▾ list
-of up to eight, each with ✕ for "not the right person", was taken out, because its picks were
-mostly wrong and made the inbox look less capable than it is. What is left is the finder itself,
-for the thread agents (`list_experts`, `suggest_expert`) and the API; `@` mentions rank people
-by what they know (`src/expertise.js`, above) on their own.
+`src/experts.js`). The inbox does not show its ranking: line 2 of a thread's header named the
+top one ("Lena Berg knows about this topic"), with a ▾ list of up to eight, each with ✕ for "not
+the right person", and that was taken out, because its picks were mostly wrong and made the
+inbox look less capable than it is. The header shows only what a thread agent picked, for a
+reason (`suggest_expert`, below): it asks `GET /api/experts?suggested=1`, which reads those
+suggestions and ranks and records nothing. The ranking is left for the thread agents
+(`list_experts`) and the API; `@` mentions rank people by what they know (`src/expertise.js`,
+above) on their own.
 
 It speaks only when someone is needed. Once Adobe has the thread in hand (three messages of
 staff in it, `IN_HAND`: a first answer may only say who will look), its own people are the ones
@@ -1094,9 +1097,10 @@ A thread agent can pull someone in too: `list_experts` reads the same list, and 
 puts a colleague at the top of it, with its reason (`expert_suggestions`, migration 0045; user
 state, like drafts). Nobody is told or mentioned; a person decides. It takes only staff with an
 account on the thread's platform, three per thread at most, and a suggestion goes away once the
-person is in the thread. It still sends the open inboxes a room event `experts`, which the inbox
-no longer listens to: with the finder gone from the header, a suggestion shows nowhere in the
-inbox, only in `GET /api/experts` and the agent's own `list_experts`.
+person is in the thread. It tells the open inboxes (a room event `experts`), and the header shows
+it as "Agent suggests …": clicking it mentions them in the reply box, as picking them after `@`
+does, and ▾ lists each suggestion with its reason when there are several. Nothing is sent: the
+reply stays the person's to write.
 
 **What the finder learns from.** History says who answered threads, but not what the finder
 showed when, nor what people made of it, and the signals cannot be worked out again for a past

@@ -20,7 +20,7 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
-  cache: new Map(), staged: {}, profiles: new Map(), headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -2073,7 +2073,7 @@ async function loadAgent(key, { latest = null } = {}) {
 // Line 1: the customer's icon with the platform's on it, which opens the thread on the platform
 // (a group of folded posts: a list of them, each to open), the title, and the channel where
 // the line has room for it. Line 2: two dropdowns, each named by what matters most for the
-// thread: its tech stack and the links found in it.
+// thread: its tech stack and the links found in it, then whom the thread's agent suggests.
 const HEAD_POSTS = 12; // the posts a group's list shows: its first and the latest
 // Hosts that documentation and code live on: a link there is a reference, not the customer's
 // page (a site's own host, `main--site--org.aem.live`, has `--` in it).
@@ -2248,6 +2248,7 @@ function closeHeadMenus(focus = false) {
 function toggleHeadMenu(name) {
   const was = state.headOpen?.key === state.open && state.headOpen.name === name;
   closeHeadMenus();
+  if (state.expertsOpen) closeExperts(state.expertsOpen);
   if (!was) {
     state.headOpen = { key: state.open, name };
     syncHeadMenus();
@@ -2273,6 +2274,103 @@ function fitHead() {
   chan.hidden = false;
   const lead = line.firstElementChild;
   chan.hidden = chan.offsetTop >= lead.offsetTop + lead.offsetHeight;
+}
+
+// ---------------------------------------------------------------- the agent's suggestions
+// Bottom right of the thread's header: a colleague the thread agent suggested pulling in
+// (`suggest_expert`) and its reason (GET /api/experts?suggested=1, src/experts.js), with more in
+// a dropdown when it suggested several. Picking one mentions them in the reply box, as picking
+// them after @ does; what is sent stays the person's to write. The expert finder's own ranking
+// is not shown (docs/ARCHITECTURE.md, "Expert finder"): only whom an agent picked, for a reason.
+
+function expertsHtml(key) {
+  const list = state.experts.get(key);
+  if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
+  const open = state.expertsOpen === key;
+  const top = list[0];
+  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests">▾</button>` : '';
+  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
+}
+
+/** Puts the suggestions on screen without touching the rest of the header. */
+function placeExperts(key) {
+  if (state.open !== key) return;
+  $('experts')?.replaceWith(toNode(expertsHtml(key)));
+  wireExperts(key);
+}
+
+/** Asks for the thread's suggestions, again only once there is something new in it. */
+async function loadExperts(key) {
+  if (state.expertsOpen && state.expertsOpen !== key) state.expertsOpen = null;
+  wireExperts(key);
+  if (state.experts.has(key) && state.expertsAt.get(key) === threadRow(key)?.last_at) return;
+  let res;
+  try {
+    res = await get(`/api/experts?thread=${encodeURIComponent(key)}&suggested=1`);
+  } catch {
+    return; // the header works without it
+  }
+  const same = JSON.stringify(state.experts.get(key)) === JSON.stringify(res.experts);
+  state.experts.set(key, res.experts);
+  state.expertsAt.set(key, threadRow(key)?.last_at);
+  if (!same) placeExperts(key);
+}
+
+/** Writes @Name into the reply box, where the caret is, and remembers the account. */
+function pullExpert(key, e) {
+  const box = $('reply');
+  if (!box) {
+    toast('There is no reply box here to mention them in.');
+    return;
+  }
+  const at = document.activeElement === box ? box.selectionStart : box.value.length;
+  const before = box.value.slice(0, at);
+  const insert = `${before && !/\s$/.test(before) ? ' ' : ''}@${e.name} `;
+  if (!mentionsIn(key, box.value).some((m) => m.id === e.id)) {
+    box.value = before + insert + box.value.slice(at);
+    box.setSelectionRange(at + insert.length, at + insert.length);
+    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+    mention.picked.get(key).set(e.name, e);
+    mention.names.add(e.name);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  box.focus();
+}
+
+function closeExperts(key, focus = false) {
+  if (state.expertsOpen !== key) return;
+  state.expertsOpen = null;
+  placeExperts(key);
+  if (focus) document.querySelector('#experts .more')?.focus();
+}
+
+function wireExperts(key) {
+  const el = $('experts');
+  if (!el) return;
+  el.onclick = (e) => {
+    const pick = e.target.closest('[data-expert]');
+    if (e.target.closest('[data-experts-more]')) {
+      state.expertsOpen = state.expertsOpen === key ? null : key;
+      placeExperts(key);
+      const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
+      (rows[1] || rows[0])?.focus();
+    } else if (pick) {
+      const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
+      state.expertsOpen = null;
+      placeExperts(key);
+      if (expert) pullExpert(key, expert);
+    }
+  };
+  el.onkeydown = (e) => {
+    if (state.expertsOpen !== key) return;
+    if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const rows = [...el.querySelectorAll('.expertlist [data-expert]')];
+    const i = rows.indexOf(document.activeElement);
+    rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
+  };
 }
 
 /**
@@ -2519,12 +2617,13 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
-  // Line 1: where it is and what it is about; line 2: its tech stack and links.
+  // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
+  // suggests.
   const lead = `<div class="lead">${headSource(thread, members, t)}<h2>${emojify(channelNames(thread.title) || '(no text)')}</h2></div>`;
   const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(thread.channel_name)}</span>` : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}${chan}</div>
-      <div class="l2">${techMenu(data)}${linksMenu(facts)}</div></div>`;
+      <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = composer(thread, resolveButton(thread, resolution));
   renderPane(pane, key, {
@@ -2536,6 +2635,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   state.shownIds = ids;
   cardGone();
   loadAgent(key, { latest });
+  loadExperts(key);
   const scroller = pane.querySelector('.scroller');
   // Shown for the first time (a fresh page, where the first render is a live one, for the
   // workspace's emoji): placed where it opens, not scrolled down from the top.
@@ -4870,6 +4970,8 @@ function syncSockets() {
  */
 function caughtUp() {
   for (const k of state.cache.keys()) if (k !== state.open) state.cache.delete(k);
+  // Once, when several rooms come back together.
+  if (state.open && state.experts.delete(state.open)) loadExperts(state.open);
   reloadSoon(state.open || GAP);
 }
 function listen(team, live, { again = false } = {}) {
@@ -4920,6 +5022,7 @@ function listen(team, live, { again = false } = {}) {
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
 
@@ -5509,6 +5612,7 @@ const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="cu
 const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
+  state.expertsOpen = null;
   if (history.state?.list) { history.back(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null });
   closeMentions();
@@ -5828,6 +5932,7 @@ async function start() {
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
+  document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
   document.addEventListener('click', (e) => { if (state.headOpen && !e.target.closest('[data-hm]')) closeHeadMenus(); });
   // The header's line 1 shows the channel where it fits: again as the pane changes width.
   if (window.ResizeObserver) new ResizeObserver(() => fitHead()).observe($('pane'));
@@ -5850,7 +5955,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();

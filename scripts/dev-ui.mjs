@@ -1243,6 +1243,28 @@ async function api(req, res, url) {
       ...(url.searchParams.has('pool') ? { pool } : {}),
     });
   }
+  if (url.pathname === '/api/experts') {
+    // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'
+    // suggestions. The thread about the old blog paths has one.
+    const entry = store.threads.get(url.searchParams.get('thread'));
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const { messages } = thread(entry.row.thread);
+    const inThread = (name) => messages.some((m) => m.author?.name === name);
+    const agent = /blog/i.test(messages[0]?.body || '') ? [{
+      id: 'lena',
+      name: 'Lena Berg',
+      member: true,
+      suggested: { at: new Date().toISOString() },
+      reasons: ['Wrote the redirects for the last blog migration'],
+    }] : [];
+    const experts = agent.filter((e) => !inThread(e.name) && e.name !== store.people.get(ME)?.name)
+      .map((e) => ({
+        ...e, avatar: null, staff: true, kind: 'person', response: null,
+      }));
+    return json(res, { platform: entry.row.source, experts });
+  }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source.
     const u = url.searchParams.get('url');
