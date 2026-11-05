@@ -876,7 +876,7 @@ function valuesOf(f, t) {
 }
 // Unread only keeps every thread the list has shown since it was opened (see syncList), so a
 // row does not vanish when you, or you elsewhere, read it.
-const passes = (t, except) => (!state.unread || keptUnread(t))
+const passes = (t, except) => (!state.unread || simple() || keptUnread(t))
   && (!personal() || t.kind !== 'alert')
   && viewFacets().every((f) => f.id === except || facetPasses(f, t));
 /**
@@ -1068,6 +1068,7 @@ const oneCustomer = () => state.sel.customer?.size === 1;
  * room before the reactions, the latest reply, as Messages does.
  */
 function row(t, hit = null) {
+  if (simple()) return simpleRow(t, hit);
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -1094,6 +1095,69 @@ function row(t, hit = null) {
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+/*
+ * The simple personal view is the customer list: its threads come under their customers, each
+ * a heading with the red badge, the messages that mention you and that you have not read. The
+ * threads the badge counts are right under it, each with a red dot, the badge's colour: that
+ * is the view's one mark. Unread is bold. A customer shows its unread threads and, up to
+ * GROUP_ROWS, its latest; the rest of its threads are a click away (the customer, picked).
+ */
+const GROUP_ROWS = 3;
+const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** A thread's unread mentions of you, as the badge counts them. */
+const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * A thread's row in the simple personal view: the red dot while it mentions you, its title
+ * (bold while unread), how long ago, and the latest reply. Its customer is the heading above.
+ * No status, people, counts or reactions: the expert view has them.
+ */
+function simpleRow(t, hit = null) {
+  const n = youCount(t);
+  const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
+  const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
+  const draft = t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">Draft</span>` : '';
+  const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
+  return `${rowOpen(t, hit, ' simple')}
+    <div class="l1"><span class="you"${n ? ` title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you"` : ''}></span><span class="title">${titleHtml(t, hit)}</span>
+      <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
+    <div class="l2">${cust}${draft}${said}</div>${hit ? hitLine(hit) : ''}</div>`;
+}
+/**
+ * The simple personal view's list, by customer (`shown` in the view's order, latest activity
+ * first): each customer where its latest thread is, its heading, the threads it shows, and how
+ * many more it has. A thread shown once stays while the list lasts, read or not.
+ */
+function groupPlan(shown) {
+  const L = state.list;
+  L.grouped ||= new Set();
+  const by = new Map();
+  for (const t of shown) {
+    if (!by.has(t.org)) by.set(t.org, []);
+    by.get(t.org).push(t);
+  }
+  const all = oneCustomer();
+  const plan = [];
+  for (const [org, ts] of by) {
+    const keepIt = (t) => all || t.unread || L.grouped.has(t.thread) || t.thread === state.open;
+    const kept = new Set(ts.filter(keepIt));
+    for (const t of ts) if (kept.size < GROUP_ROWS) kept.add(t);
+    const rows = ts.filter((t) => kept.has(t));
+    for (const t of rows) L.grouped.add(t.thread);
+    plan.push({ head: org, you: ts.reduce((n, t) => n + youCount(t), 0), unread: ts.some((t) => t.unread) });
+    for (const t of rows) plan.push({ t });
+    if (ts.length > rows.length) plan.push({ more: org, n: ts.length - rows.length });
+  }
+  return plan;
+}
+/** A customer's heading, and its "N more", in the simple personal view. */
+function groupHtml(x) {
+  if (x.more) {
+    return `<button type="button" class="grp-more" data-group="${esc(x.more)}">${x.n} more from ${esc(customerName(x.more))}</button>`;
+  }
+  const picked = state.sel.customer?.has(x.head);
+  return `<button type="button" class="grp${x.unread ? ' new' : ''}" data-group="${esc(x.head)}" aria-pressed="${Boolean(picked)}" title="${picked ? 'Back to all customers' : `Only ${esc(customerName(x.head))}`}">${picked ? '<span class="back" aria-hidden="true">‹</span>' : ''}<span class="nm">${esc(customerName(x.head))}</span>${youBadge(x.you)}</button>`;
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -1495,7 +1559,7 @@ function endTeam(view) {
 }
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
 function endNote() {
-  if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
+  if (!personal() || simple() || !state.unread || searching() || state.data?.page?.next) return '';
   if (viewFacets().some((f) => filterCount(f.id))) return '';
   return endHtml(state.data?.elsewhere);
 }
@@ -1506,7 +1570,9 @@ function threadRows() {
   listHead(box);
   syncList();
   if (searching()) { searchRows(box); return; }
-  const shown = placeRows(viewSort(state.data.threads.filter(onList)));
+  const listedRows = placeRows(viewSort(state.data.threads.filter(onList)));
+  const plan = simple() ? groupPlan(listedRows) : null;
+  const shown = plan ? plan.filter((x) => x.t).map((x) => x.t) : listedRows;
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
@@ -1518,7 +1584,9 @@ function threadRows() {
   const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
   // Start a thread (not while viewing as someone: that is read-only).
   const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
-  const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
+  // The simple personal view keeps a new thread and the views: its customers are its filter.
+  const count = simple() ? `<span class="lead">${post}</span><span class="sort">${sorter}</span>`
+    : `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
@@ -1560,6 +1628,20 @@ function threadRows() {
       existing.set(n.thread, node);
       nodes[i] = node;
     }
+  }
+  // The customers' headings, between their threads (the simple personal view).
+  if (plan) {
+    const heads = state.groupNodes || (state.groupNodes = new Map());
+    const byThread = new Map(nodes.map((n) => [n.dataset.thread, n]));
+    const seq = plan.map((x) => {
+      if (x.t) return byThread.get(x.t.thread);
+      const key = x.more ? `more:${x.more}` : `head:${x.head}`;
+      const html = groupHtml(x);
+      let node = heads.get(key);
+      if (!node || node.__html !== html) { node = toNode(html); node.__html = html; heads.set(key, node); }
+      return node;
+    });
+    nodes.splice(0, nodes.length, ...seq);
   }
   const keep = new Set(nodes);
   const note = endNote();
@@ -5542,6 +5624,11 @@ async function start() {
       endTeam(view);
       switchView(view.dataset.view || null);
       return;
+    }
+    const group = e.target.closest('[data-group]');
+    if (group) {
+      toggleFilter('customer', group.dataset.group, false);
+      render(); toUrl(); $('threads').scrollTop = 0; return;
     }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }

@@ -1919,3 +1919,58 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 @media (hover: none) and (pointer: coarse) {
   .spectrum .find input, .spectrum .composer textarea { font-size: var(--spectrum-font-size-100); }
 }
+
+/* ==== The simple personal view =================================================================
+   (`main.simple`, see `simple` in ui/inbox.js.) No filter column: the list is the customer
+   list, each customer a heading over its threads. Its one mark is red: the heading's badge
+   counts the messages that mention you and that you have not read, and the threads it counts,
+   right under it, have a red dot. Unread is bold; nothing else is red, nothing else has a
+   count. */
+main.simple { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), 34%) 1fr; }
+main.simple #filters, main.simple #threads .count .filt { display: none !important; }
+main.simple #threads { border-left: 0; }
+@media (max-width: 1099px) { main.simple { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 37 + var(--spectrum-spacing-75)), 42%) minmax(0, 1fr); } }
+@media (max-width: 699px) { main.simple { grid-template-columns: 100%; } }
+#threads .rows > .grp { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%;
+  padding: var(--spectrum-spacing-300) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-75) var(--spectrum-spacing-200);
+  border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
+#threads .rows > .grp .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .rows > .grp-more { display: block; width: 100%; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-200) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100));
+  border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
+main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
+main.simple .t .snip:empty { flex: 1; }
+main.simple .t .cust { flex: none; }
+/* Its look: headings on the list's own layer, the badge S2's NotificationBadge in negative,
+   the dot its colour. */
+.spectrum #threads .rows > .grp {
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum #threads .rows > .grp.new { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .rows > .grp:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum #threads .rows > .grp .back { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #threads .rows > .grp .men {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-negative-background-color-default);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+  text-align: center;
+}
+.spectrum #threads .rows > .grp-more {
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-accent-content-color-default);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum #threads .rows > .grp-more:hover { text-decoration: underline; }
+.spectrum main.simple .t.mention .you { background: var(--spectrum-negative-background-color-default); }
+.spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
+.spectrum main.simple .t .drafted { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
