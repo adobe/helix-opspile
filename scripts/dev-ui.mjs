@@ -69,7 +69,6 @@ import { ICONS } from '../src/icons.js';
 import { SOUNDS } from '../src/sound.js';
 import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
-import { cleanExpertEvent } from '../src/expertevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
   fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
@@ -189,22 +188,6 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
-// The expert finder's lists, by id, as production records them (src/expertevents.js).
-const expertLists = new Map();
-let expertList = 0;
-// Whom I said is not the right person, by thread.
-const expertRejects = new Map();
-const EXPERTS = [
-  {
-    id: 'lena', name: 'Lena Berg', member: true, reasons: ['knows about this topic', 'typically responds in about 40 minutes', 'is active in this channel'],
-  },
-  {
-    id: 'priya', name: 'Priya Nair', member: true, reasons: ['typically responds in about 4 hours', 'is active in this channel'],
-  },
-  {
-    id: 'tom', name: 'Tom Okafor', member: false, reasons: ['knows about this topic', 'not in this channel'],
-  },
-];
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
 
 // ---- reactions, as D1's `reactions` would hold them ---------------------------------------
@@ -1259,56 +1242,6 @@ async function api(req, res, url) {
       people: suggestMentions(pool, url.searchParams.get('q')),
       ...(url.searchParams.has('pool') ? { pool } : {}),
     });
-  }
-  if (url.pathname === '/api/experts') {
-    // Stands in for src/experts.js: the colleagues not in the thread yet, in the fake data's
-    // order, with reasons that show each form the finder has.
-    const entry = store.threads.get(url.searchParams.get('thread'));
-    if (!entry || !inTeam(entry.row.team)) {
-      return json(res, { error: 'not found' }, 404);
-    }
-    const { messages } = thread(entry.row.thread);
-    const inThread = (name) => messages.some((m) => m.author?.name === name
-      || JSON.stringify(m).includes(`@${name}`));
-    const me = store.people.get(ME)?.name;
-    // The thread about the old blog paths has the form of an agent's suggestion.
-    const agent = /blog/i.test(messages[0]?.body || '') ? [{
-      id: 'lena',
-      name: 'Lena Berg',
-      member: true,
-      suggested: { at: new Date().toISOString() },
-      reasons: ['Wrote the redirects for the last blog migration'],
-    }] : [];
-    // Once Adobe wrote three messages in the thread, only an agent's suggestion, unless I was
-    // asked in it and have not answered yet (src/experts.js, inHand).
-    const askedMe = messages.some((m) => JSON.stringify(m).includes(`@${me}`))
-      && !messages.some((m) => m.author?.name === me);
-    const held = messages.filter((m) => m.author?.staff).length >= 3 && !askedMe;
-    const found = held ? [] : EXPERTS.filter((e) => !agent.some((a) => a.id === e.id));
-    const experts = [...agent, ...found]
-      .filter((e) => !inThread(e.name) && e.name !== me
-        && !expertRejects.get(entry.row.thread)?.has(e.id))
-      .map((e) => ({
-        ...e, avatar: null, staff: true, kind: 'person', response: null,
-      }));
-    // A list id, as production records each list (src/expertevents.js); its events are logged.
-    expertList += 1;
-    expertLists.set(expertList, { thread: entry.row.thread, ids: experts.map((e) => e.id) });
-    return json(res, { platform: entry.row.source, experts, list: expertList });
-  }
-  if (url.pathname === '/api/experts/event' && req.method === 'POST') {
-    const ev = cleanExpertEvent(await readJson(req));
-    const list = !ev.error && expertLists.get(ev.list);
-    const error = ev.error || (!list && 'no such list')
-      || (ev.account && !list.ids.includes(ev.account) && 'not on that list');
-    console.log(error ? `expert event refused: ${error}` : `expert ${ev.action}${ev.account ? ` ${ev.account} at ${list.ids.indexOf(ev.account)}` : ''} (list ${ev.list})`);
-    if (!error && ev.action === 'reject') {
-      if (!expertRejects.has(list.thread)) {
-        expertRejects.set(list.thread, new Set());
-      }
-      expertRejects.get(list.thread).add(ev.account);
-    }
-    return error ? json(res, { error }, 400) : res.writeHead(204).end();
   }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source.

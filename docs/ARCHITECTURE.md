@@ -1032,7 +1032,7 @@ it and all the suggestions need at once: one round trip to D1 after the place, n
 and the channel's name at the end where the line has room for it. The icon opens the thread on
 the platform; a re-threaded group lists its posts instead (the first and the latest eleven of a
 large one), each with its root's link. Hovering it names the customer and its type. Line 2 has
-three dropdowns, each named by what matters most for the thread:
+two dropdowns, each named by what matters most for the thread:
 
 - **Tech stack:** what the thread shows (`labels.tech` of its members, the likeliest first),
   then the rest of the channel's (`channel_tech`), then Clef's topics of the thread. A thread
@@ -1043,25 +1043,25 @@ three dropdowns, each named by what matters most for the thread:
   (`main--<site>--<org>.aem.live`), then links to documentation and code (`aem.live`,
   `github.com`, `adobe.com` hosts without `--`), then tickets, CVEs (linked to cve.org) and
   support cases. The first one is the dropdown's name and opens with a click; ▾ lists them all.
-- **Experts:** the expert finder, below.
 
 A dropdown is left out when it has nothing to list. Whether the thread is resolved is not in
-the header: the ✅ on its root says so, and so do the list and the Send button's menu.
+the header: the ✅ on its root says so, and so do the list and the Send button's menu. The
+header names no colleagues to pull in: the expert finder, below, is not shown in the inbox.
 
-**Expert finder.** Line 2 of a thread's header names the colleague most worth pulling
-in and why: "Lena Berg knows about this topic", "Dana Ops typically responds in about 4 hours"
-(`GET /api/experts`, `src/experts.js`). Clicking it mentions them in the reply box, as picking
-them after `@` does, and ▾ lists up to eight, each with all of its reasons. Nothing is sent: the
-reply stays the person's to write.
-Each of the eight has ✕, "Not the right person for this thread": they leave the list, and the
-finder leaves them out of that person's lists of the thread from then on (a `reject`, below; for
-everyone else they stay).
+**Expert finder.** Adobe colleagues worth pulling into a thread who are not in it yet, each
+with why: "knows about this topic", "typically responds in about 4 hours" (`GET /api/experts`,
+`src/experts.js`). The inbox does not show it, and asks `GET /api/experts` nothing: the line
+2 of a thread's header that named the top one ("Lena Berg knows about this topic"), with a ▾ list
+of up to eight, each with ✕ for "not the right person", was taken out, because its picks were
+mostly wrong and made the inbox look less capable than it is. What is left is the finder itself,
+for the thread agents (`list_experts`, `suggest_expert`) and the API; `@` mentions rank people
+by what they know (`src/expertise.js`, above) on their own.
 
 It speaks only when someone is needed. Once Adobe has the thread in hand (three messages of
 staff in it, `IN_HAND`: a first answer may only say who will look), its own people are the ones
 to ask, and the most active in the channel
-are mostly who is in it already: the header then shows only an agent's suggestion, if there is
-one. The exception is the person who was mentioned and has not posted since, who may be looking
+are mostly who is in it already: `GET /api/experts` then lists only an agent's suggestion, if
+there is one. The exception is the person who was mentioned and has not posted since, who may be looking
 for whom to hand it to. The list is still computed and recorded (`held`, below), for the training
 to see whom the team pulled in anyway. A thread agent's `list_experts` always gets the full list.
 
@@ -1091,23 +1091,28 @@ channels of every team, which neither the viewer nor a thread agent may read. It
 minutes per version of the thread, per isolate.
 
 A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
-puts a colleague at the top of it, as "Agent suggests …", with its reason (`expert_suggestions`,
-migration 0045; user state, like drafts). Nobody is told or mentioned; a person decides. It takes
-only staff with an account on the thread's platform, three per thread at most, tells the open
-inboxes (a room event `experts`), and a suggestion goes away once the person is in the thread.
+puts a colleague at the top of it, with its reason (`expert_suggestions`, migration 0045; user
+state, like drafts). Nobody is told or mentioned; a person decides. It takes only staff with an
+account on the thread's platform, three per thread at most, and a suggestion goes away once the
+person is in the thread. It still sends the open inboxes a room event `experts`, which the inbox
+no longer listens to: with the finder gone from the header, a suggestion shows nowhere in the
+inbox, only in `GET /api/experts` and the agent's own `list_experts`.
 
 **What the finder learns from.** History says who answered threads, but not what the finder
 showed when, nor what people made of it, and the signals cannot be worked out again for a past
 moment. So each list `GET /api/experts` computes for someone is kept (`expert_events`, migration
-0047, `src/expertevents.js`): every candidate it ranked, up to 20 and not only the eight shown,
-by account and person, with the numbers that placed them (each signal scaled and as found, the
-score, topic, channel membership, response times, an agent's suggestion) and the finder's version
-(`FINDER` in `src/experts.js`), and `held` when the header showed none of it, never what anyone
-wrote. The answer has its id (`list`), and the
-page says what happened to it (`POST /api/experts/event`): `shown` once each time the thread is
-opened with it in the header, `open` for its ▾ list, `pick` of someone (their place comes from
-the list, not the page), `reject` for ✕, and `dismiss` when the ▾ list is closed, or left for another thread or
-page, with nobody picked: the clearest "none of these". Whom the person mentioned afterwards, and
+0047, `src/expertevents.js`): every candidate it ranked, up to 20 and not only the eight it
+answers with, by account and person, with the numbers that placed them (each signal scaled and as
+found, the score, topic, channel membership, response times, an agent's suggestion) and the
+finder's version (`FINDER` in `src/experts.js`), and `held` when it answered with none of it,
+never what anyone wrote. The answer has its id (`list`), and the page said what happened to it
+(`POST /api/experts/event`): `shown` once each time the thread was opened with it in the header,
+`open` for its ▾ list, `pick` of someone (their place comes from the list, not the page),
+`reject` for ✕, and `dismiss` when the ▾ list was closed, or left for another thread or page,
+with nobody picked: the clearest "none of these". Since the header lost the finder the inbox
+sends none of these and asks for no lists, so new ones come only from other callers of the API;
+the rejects recorded before still leave those people out of that person's lists of the thread.
+Whom the person mentioned afterwards, and
 who answered, are in `mentions` and `messages` already, so they are joined in training, not
 recorded twice. Nothing is recorded while viewing as someone else. `GET /api/experts/events`
 (admin team) gives them out a page at a time; `npm run rank -- experts`, and the weekly run,
