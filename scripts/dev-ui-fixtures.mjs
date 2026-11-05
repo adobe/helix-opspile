@@ -1085,7 +1085,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         ['mei', 900, 'The docs host shows a certificate warning since this morning.'],
         ['lena', 860, 'The certificate had expired; it is renewed now. Can you check again?'],
         ['mei', 845, 'Works again, thanks!'],
-        ['lena', 840, 'Great, closing this one. :white_check_mark:'],
+        // Short replies on both sides: the quick reactions on hovering one stay in the pane.
+        ['lena', 840, 'Closing. :white_check_mark:'],
       ],
       reads: { dana: 'latest', priya: 'latest' },
       label: {
