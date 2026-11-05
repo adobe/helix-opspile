@@ -14,7 +14,7 @@ import { TITLER, topicList, topicNames } from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { threadVectorId } from './vectors.js';
 import {
-  coveredBy, GENERIC, productKey, techIndex,
+  coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
 
 export {
@@ -253,7 +253,7 @@ export function productsOf(facts, techRows) {
   const products = {};
   for (const f of facts) {
     const key = productKey(f.value);
-    if (key && !GENERIC.has(key)) {
+    if (key && !GENERIC.has(nameKey(f.value))) {
       const tech = coveredBy(f.value, index);
       const id = tech ? `tech:${tech}` : `new:${key}`;
       if (tech) {

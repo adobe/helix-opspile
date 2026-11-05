@@ -195,6 +195,12 @@ describe('topic map: products and the tech stack', () => {
       'new:tealium': { name: 'Tealium', tech: null, product: null },
     });
     assert.deepEqual(of.get('a'), ['tech:consent', 'new:tealium']);
+    // A stored "Adobe Analytics" is the analytics entry's; "analytics" alone is a word.
+    const adobe = productsOf(
+      [{ thread: 'd', value: 'Adobe Analytics' }, { thread: 'd', value: 'analytics' }],
+      [{ tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics' }],
+    );
+    assert.deepEqual(adobe.of.get('d'), ['tech:analytics']);
     assert.deepEqual(of.get('b'), ['new:tealium']);
   });
 });

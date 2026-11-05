@@ -54,8 +54,11 @@ export function productKey(name) {
 
 const within = (phrase, key) => ` ${phrase} `.includes(` ${key} `);
 
-/** A name as a key, with "AEM" or "Adobe" kept where it is generic without them. */
-function nameKey(name) {
+/**
+ * A name as a key, with "AEM" or "Adobe" kept where it is generic without them: "Adobe
+ * Analytics" is a product, "analytics" a word. What GENERIC is checked against.
+ */
+export function nameKey(name) {
   const key = productKey(name);
   if (key && key.length > 2 && !GENERIC.has(key)) {
     return key;

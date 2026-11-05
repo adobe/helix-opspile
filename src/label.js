@@ -18,7 +18,7 @@ import {
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import {
-  coveredBy, GENERIC, productKey, productLike, techIndex,
+  coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
 } from './products.js';
 
 /**
@@ -459,7 +459,7 @@ export function productFacts(answer, state, thread = {}, tech = []) {
       .slice(0, MAX_PRODUCT);
     const key = value.toLowerCase();
     if (value.length < 2 || !/[a-z]/i.test(value) || value.includes('@') || names.has(key)
-      || isOrg(value) || GENERIC.has(productKey(value)) || GENERIC.has(key)) {
+      || isOrg(value) || GENERIC.has(nameKey(value)) || GENERIC.has(key)) {
       return;
     }
     const entry = coveredBy(value, index);

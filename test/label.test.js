@@ -107,6 +107,33 @@ describe('Clairic facts', () => {
     assert.deepEqual(productFacts(undefined, STATE), []);
   });
 
+  it('keeps Adobe products whose names are generic words without "Adobe" or "AEM"', () => {
+    const tech = [
+      {
+        tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics', aliases: 'Adobe Analytics, CJA',
+      },
+      {
+        tech: 'assets', name: 'Assets', description: 'AEM Assets', aliases: 'AEM Assets, DAM',
+      },
+      {
+        tech: 'forms', name: 'Forms', description: 'AEM Forms', aliases: 'AEM Forms',
+      },
+      {
+        tech: 'aemcs', name: 'AEM Cloud Service', description: 'AEM as a Cloud Service', aliases: 'AEM Author, AEM Publish',
+      },
+    ];
+    const names = ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author', 'analytics', 'assets', 'forms'];
+    const text = `Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n${names.join(', ')}`;
+    const spans = names.map((n) => {
+      const i = text.lastIndexOf(n);
+      return [i, i + n.length];
+    });
+    assert.deepEqual(
+      productFacts({ spans }, text, { org: 'acme' }, tech).map((f) => f.value),
+      ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author'],
+    );
+  });
+
   it('counts spans in code points, as Clairic does, and drops pieces of words', () => {
     const state = 'Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n🚀 🎉 Akamai and Bazaarvoice, and Azure Storage';
     const cp = (word, from = 0) => {
