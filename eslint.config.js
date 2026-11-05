@@ -72,6 +72,8 @@ export default [
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).
         Table: 'readonly',
+        // The Topics page's graph, ui/topicgraph.js.
+        TopicGraph: 'readonly',
       },
     },
     rules: {
