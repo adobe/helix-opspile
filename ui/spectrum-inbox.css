@@ -19,6 +19,8 @@ html, body { overscroll-behavior: none; }
 #threads { padding-bottom: var(--safe-bottom); }
 
 .menu .item .ck { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
+/* A switch's ✓ shows while it is on. */
+.menu .item[role="switch"] .ck { visibility: hidden; }
 .menu .item[aria-checked="true"] .ck { visibility: visible; }
 .menu select { width: calc(100% - var(--spectrum-spacing-300)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 .menu .hint { margin: 0 var(--spectrum-spacing-100) var(--spectrum-spacing-75); }

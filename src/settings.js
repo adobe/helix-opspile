@@ -24,6 +24,8 @@ import { json } from './http.js';
  * - `traces`: whether the thread agent's thinking shows under a thread (what it is doing while
  *   it works, its note once done); on unless they turn it off.
  * - `channelTraces`: the same, by channel id, where it differs: a channel's wins over `traces`.
+ * - `expert`: the personal view as the expert view, with every filter and each thread's status,
+ *   people and reactions, instead of the simple one; off unless they turn it on.
  *
  * The browser shows the notifications and the agent's thinking (ui/inbox.js): the server keeps
  * the settings only.
@@ -34,6 +36,7 @@ export const DEFAULTS = Object.freeze({
   bells: Object.freeze([]),
   traces: true,
   channelTraces: Object.freeze({}),
+  expert: false,
 });
 
 export const PERSONAL = '~personal';
@@ -118,6 +121,7 @@ export function withDefaults(me, stored) {
     bells,
     traces: typeof s.traces === 'boolean' ? s.traces : DEFAULTS.traces,
     channelTraces,
+    expert: typeof s.expert === 'boolean' ? s.expert : DEFAULTS.expert,
   };
 }
 
@@ -136,16 +140,16 @@ export async function readSettings(env, me) {
 
 /**
  * The settings `now` with what `body` changes (`mentions`, `threads`, `bells`, `traces`,
- * `channelTraces`; `bells` replaces the list, `channelTraces` changes the channels it names, and
- * `null` lets a channel follow `traces` again): `{ settings }`, or `{ error }` when the body is
- * not settings.
+ * `channelTraces`, `expert`; `bells` replaces the list, `channelTraces` changes the channels it
+ * names, and `null` lets a channel follow `traces` again): `{ settings }`, or `{ error }` when
+ * the body is not settings.
  */
 export function mergeSettings(me, now, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'expected a JSON object' };
   }
   const next = { ...now };
-  for (const key of ['mentions', 'threads']) {
+  for (const key of ['mentions', 'threads', 'expert']) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') {
         return { error: `\`${key}\` is true or false` };
