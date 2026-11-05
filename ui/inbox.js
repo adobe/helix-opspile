@@ -987,9 +987,52 @@ const mentionBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
+/*
+ * The simple personal view's one mark: the red badge. It counts the messages that mention you
+ * and that you have not read, and it looks the same wherever it is: beside a customer, and on
+ * each of their threads it points to. Nothing else in the view is red, and nothing else has a
+ * count. Unread is bold, a customer's name as a thread's title.
+ */
+const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** A thread's unread mentions of you, as the badge counts them. */
+const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * The simple personal view's only card: its customers, latest activity first, by name, bold
+ * while they have unread threads, with the red badge. "All customers" first, picked while no
+ * customer is.
+ */
+function simpleCustomers() {
+  const all = listed().filter((t) => passes(t, 'customer'));
+  const by = new Map();
+  for (const t of all) {
+    const c = by.get(t.org) || { at: '', unread: false, you: 0 };
+    if (activityOf(t) > c.at) c.at = activityOf(t);
+    c.unread ||= Boolean(t.unread);
+    c.you += youCount(t);
+    by.set(t.org, c);
+  }
+  const on = state.sel.customer || new Set();
+  for (const v of on) if (!by.has(v)) by.set(v, { at: '', unread: false, you: 0 });
+  const rows = [...by].sort((a, b) => b[1].at.localeCompare(a[1].at)).map(([v, c]) => {
+    const name = customerName(v);
+    return `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(name)}">
+      <span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
+  }).join('');
+  const you = [...by.values()].reduce((n, c) => n + c.you, 0);
+  return `<div class="card simple" data-f="customer"><h3>Customers</h3>
+    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
+}
+
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
   syncList();
+  if (simple()) {
+    const html = simpleCustomers();
+    const box = $('filters');
+    if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
+    return;
+  }
+  $('filters').__html = undefined;
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
@@ -1068,6 +1111,7 @@ const oneCustomer = () => state.sel.customer?.size === 1;
  * room before the reactions, the latest reply, as Messages does.
  */
 function row(t, hit = null) {
+  if (simple()) return simpleRow(t, hit);
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -1094,6 +1138,22 @@ function row(t, hit = null) {
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+/**
+ * A thread's row in the simple personal view: its title (bold while unread) and how long ago,
+ * then its customer (unless one is picked) and the latest reply, and the red badge when it
+ * mentions you. No status, people, counts or reactions: the expert view has them.
+ */
+function simpleRow(t, hit = null) {
+  const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
+  const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
+  const cust = oneCustomer() ? '' : `<span class="cust">${esc(orgName(t))}</span>`;
+  const draft = t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">Draft</span>` : '';
+  return `${rowOpen(t, hit, ' simple')}
+    <div class="l1"><span class="title">${titleHtml(t, hit)}</span>
+      <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
+    <div class="l2">${cust}${draft}${said}${youBadge(youCount(t))}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -1203,7 +1263,7 @@ function searchRows(box) {
   const all = data?.hits || [];
   const hits = all.filter((h) => { const t = searchEntry(h.thread); return t && passes(t); });
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (state.unread ? 1 : 0);
-  const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const filt = filtButton(on);
   let said = 'Searching…';
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
@@ -1339,6 +1399,17 @@ const COMPOSE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke=
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
 
 function renderThreads() { inPass(threadRows); }
+
+/**
+ * The Filters button of narrower screens, with how many filters are set. In the simple
+ * personal view it opens the customers: it names the one picked, and carries the red badge.
+ */
+function filtButton(on) {
+  if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const picked = [...(state.sel.customer || [])][0];
+  const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}${esc(picked ? customerName(picked) : 'Customers')}${youBadge(you)}</button>`;
+}
 
 /*
  * The thread list stays put while it is the same list: the same view, filters and unread only
@@ -1511,7 +1582,7 @@ function threadRows() {
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
-  const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const filt = filtButton(on);
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   // The bell: notifications for this view, with its filters (not while viewing as someone).
   const rung = bellOn();
@@ -5511,7 +5582,7 @@ async function start() {
   $('filters').onclick = (e) => {
     const el = e.target.closest('.card');
     if (!el) return;
-    if (e.target.dataset.clear) {
+    if (e.target.closest('[data-clear]')) {
       for (const f of cardFacets(el.dataset.f)) { delete state.sel[f.id]; delete state.not[f.id]; }
       render(); toUrl(); return;
     }
