@@ -36,8 +36,9 @@ import { teamsOf } from './shares.js';
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
  * of its own, however close it reads: so Clef must be all but certain to fold a root into a
- * conversation with thread replies (MIN_CLEF_THREADED), and a root is no burst of one that has
- * been answered already.
+ * conversation with thread replies, or into any in a channel whose roots mostly get them
+ * (MIN_CLEF_THREADED, HABIT_THREADED), and a root is no burst of one that has been answered
+ * already.
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -81,6 +82,17 @@ export const MIN_CLEF_CONVERSATION = 0.8;
  * were new topics. Folded into a conversation without any, half as often, as follow-ups do.
  */
 export const MIN_CLEF_THREADED = 0.99;
+/**
+ * A channel whose people reply in platform threads: of its roots in the last 30 days, at least
+ * five, half or more got a person's reply in their own. There, a conversation without replies
+ * yet (its question still waiting for one) is held in threads all the same: a new root is a new
+ * question, however close it reads, and needs MIN_CLEF_THREADED too. Of the conversation roots
+ * Clef had folded in such channels below that, more than half got replies of their own, twice
+ * as often as the other folds.
+ */
+export const HABIT_MS = 30 * 86400 * 1000;
+export const HABIT_MIN_ROOTS = 5;
+export const HABIT_THREADED = 0.5;
 const MAX_TEXT = 1500;
 const SNIPPET = 600;
 
@@ -315,12 +327,36 @@ async function conversations(env, thread, similar) {
 }
 
 /**
+ * Whether the channel of `thread` replies in platform threads (HABIT_THREADED), from its roots by
+ * people before `thread`'s, and their replies before it.
+ */
+async function repliesInThreads(env, thread) {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS roots, COALESCE(SUM(EXISTS (SELECT 1 FROM messages x
+      WHERE x.thread = t.thread AND x.id != t.root_id AND x.counted = 1 AND x.deleted = 0
+        AND x.at < ?4)), 0) AS replied
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
+      AND m.deleted = 0
+    WHERE t.source = ?1 AND t.tenant = ?2 AND t.channel_id = ?3 AND t.kind = 'channel'
+      AND t.root_at < ?4 AND t.root_at >= ?5 AND t.thread != ?6`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      thread.root_at,
+      new Date(Date.parse(thread.root_at) - HABIT_MS).toISOString(),
+      thread.thread,
+    ).first();
+  return Boolean(row && row.roots >= HABIT_MIN_ROOTS && row.replied >= row.roots * HABIT_THREADED);
+}
+
+/**
  * Clef, in conversations: which of the conversations does the new root continue, if any? It
  * reads them as the channel's transcript (each message marked with its conversation and how
  * long before it was posted), which tells answers and thanks apart from new topics far better
- * than comparing the new root with each conversation on its own.
+ * than comparing the new root with each conversation on its own. In a channel that replies in
+ * threads (`inThreads`), every conversation counts as held in threads.
  */
-export async function askClefConversation(env, text, at, convs) {
+export async function askClefConversation(env, text, at, convs, { inThreads = false } = {}) {
   const lines = [];
   convs.forEach((c, i) => c.messages.forEach((m) => lines.push({
     at: m.at, line: `[${LABELS[i]}, ${ago(at - Date.parse(m.at))} before] ${m.text}`,
@@ -354,8 +390,9 @@ export async function askClefConversation(env, text, at, convs) {
   if (!best) {
     return { p: 0 };
   }
-  // A conversation held in platform threads needs Clef all but certain (MIN_CLEF_THREADED).
-  const threaded = Boolean(best.candidate.replies);
+  // A conversation held in platform threads, or any in a channel that replies in threads, needs
+  // Clef all but certain (MIN_CLEF_THREADED).
+  const threaded = Boolean(best.candidate.replies) || inThreads;
   if (best.p >= (threaded ? MIN_CLEF_THREADED : MIN_CLEF_CONVERSATION)) {
     return best;
   }
@@ -482,8 +519,9 @@ export async function rethread(env, key, { force = false } = {}) {
   } else if (conversation) {
     // The channel's latest conversations and the similar ones, read as a transcript.
     const convs = await conversations(env, thread, earlier.slice(0, 4));
-    asked = convs.length
-      ? await askClefConversation(env, text, Date.parse(thread.root_at), convs) : null;
+    asked = convs.length ? await askClefConversation(env, text, Date.parse(thread.root_at), convs, {
+      inThreads: await repliesInThreads(env, thread),
+    }) : null;
     if (asked && asked.candidate) {
       match = { thread: asked.candidate.thread, via: 'clef', p: asked.p };
     }

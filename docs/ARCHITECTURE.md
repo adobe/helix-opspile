@@ -261,20 +261,24 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   "a new topic", told how long before each was posted, and a match needs a probability of at
   least 0.7. Candidates of the same group share their probability.
 - **Conversation channels:** in a chat, answers, thanks, nudges and escalations posted as new
-  messages ("done, you have access now", "this is a blocker, please help") share few words with what
-  they follow up, people answer hours later, and the same words ("thanks!") are not a repeat.
-  So Clef reads the channel's **latest three conversations** active in the last three days and
-  the groups of up to four similar roots (cosine ≥ 0.6) as a transcript: each conversation's
-  first message and its latest two before the new root, marked with the conversation's letter
-  and how long before they were posted, then the new message, and says which conversation it
-  continues or that it is a new topic. A match needs a probability of at least 0.8, and 0.99
-  for a conversation with replies in its platform threads (`MIN_CLEF_THREADED`): people continue
-  a chat with more top-level messages where the chat is top-level messages, and where they reply
-  in threads, a new top-level message is nearly always a topic of its own, however close it
-  reads. Folded into conversations held in threads at 0.8, new roots got replies of their own as
-  often as the channel's new topics; folded into ones without, half as often. Comparing
-  the new root with each candidate on its own spread Clef's answer over several candidates and
-  left most of a chat in pieces. Platform notices ("… has joined the channel") are left alone.
+  messages ("done, you have access now", "this is a blocker, please help") share few words with
+  what they follow up, people answer hours later, and the same words ("thanks!") are not a repeat.
+  So Clef reads the channel's **latest three conversations** active in the last three days and the
+  groups of up to four similar roots (cosine ≥ 0.6) as a transcript: each conversation's first
+  message and its latest two before the new root, marked with the conversation's letter and how
+  long before they were posted, then the new message, and says which conversation it continues or
+  that it is a new topic. A match needs a probability of at least 0.8, and 0.99 for a conversation
+  with replies in its platform threads (`MIN_CLEF_THREADED`), and for any conversation in a
+  channel that replies in threads (of its roots in the last 30 days, at least five, half or more
+  got a person's reply in their own: a question that is still waiting for its first reply there is
+  held in threads all the same): people continue a chat with more top-level messages where the
+  chat is top-level messages, and where they reply in threads, a new top-level message is nearly
+  always a topic of its own, however close it reads. Folded into conversations held in threads at
+  0.8, new roots got replies of their own as often as the channel's new topics; folded into ones
+  without, half as often. In channels that reply in threads, those folded at Clef's usual
+  certainty got replies of their own twice as often as the other folds. Comparing the new root
+  with each candidate on its own spread Clef's answer over several candidates and left most of a
+  chat in pieces. Platform notices ("… has joined the channel") are left alone.
 - **Quotes:** a root that quotes a message (below) stays on its own, whatever Clef or a burst
   would say. Forwarding a message into the channel, or linking to one, starts a topic on purpose:
   whoever meant to continue that conversation would have replied in it, and the text that goes

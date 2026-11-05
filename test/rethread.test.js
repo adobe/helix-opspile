@@ -689,6 +689,42 @@ describe('conversations held in threads', () => {
     }
   });
 
+  it('needs Clef all but certain in a channel that replies in threads, also for a conversation without replies', async () => {
+    // Earlier roots, days before, each answered in its thread or not; then a question nobody
+    // answered yet, and another one an hour later. Of the six roots before it, half answered is
+    // a channel that replies in threads, a third is not; four roots say nothing yet.
+    const cases = [[5, 0, 0.96, false], [3, 2, 0.96, false], [2, 3, 0.96, true], [3, 0, 0.96, true],
+      [5, 0, 0.995, true]];
+    for (const [answered, unanswered, p, folds] of cases) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: p }) };
+      for (let i = 0; i < answered + unanswered; i += 1) {
+        const when = at(-(10 + i) * 24 * 60);
+        // eslint-disable-next-line no-await-in-loop
+        const k = await seed(env, `34.${i}`, `unrelated topic number ${i} ${'x'.repeat(i)}`, when);
+        post(env, k, `34.${i}`, when, 'U1');
+        if (i < answered) {
+          post(env, k, `34.${i}.1`, at(-(10 + i) * 24 * 60 + 5), 'U3');
+        }
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '35.0', 'Rolling out the banner shows the dates in the wrong format', at(0));
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '35.5', 'Is the sale sheet adding products to the exclusion list?', at(60));
+      channel(env);
+      post(env, a, '35.0', at(0), 'U1');
+      post(env, b, '35.5', at(60), 'U1');
+      // eslint-disable-next-line no-await-in-loop
+      const r = await rethread(env, b);
+      const label = `${answered} of ${answered + unanswered} answered, p ${p}`;
+      assert.equal(r.result, folds ? 'rethreaded' : 'new-topic', label);
+      if (folds) {
+        assert.equal(row(env, b).logical_thread, a, label);
+      } else {
+        assert.deepEqual([r.clef, r.threaded], [p, true], label);
+      }
+    }
+  });
+
   it('is no burst of a root that was answered in its thread already', async () => {
     const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
     const a = await seed(env, '31.0', 'Can teams be excluded from the list?', at(0));
