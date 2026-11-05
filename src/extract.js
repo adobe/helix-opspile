@@ -366,6 +366,7 @@ const techOut = (t) => ({
   name: t.name,
   description: t.description,
   product: t.product || null,
+  aliases: t.aliases || null,
   enabled: Boolean(t.enabled),
   by: t.changed_by || null,
   at: t.changed_at || null,
@@ -489,6 +490,16 @@ export function checkRule(input, old = {}) {
 }
 
 /** A technology from what someone gave, checked: `{ tech }` or `{ error }`. */
+/** Names, comma-separated, each trimmed, once: at most MAX_ALIASES characters in all. */
+const MAX_ALIASES = 1000;
+function aliasList(v) {
+  const list = Array.isArray(v) ? v : String(v ?? '').split(',');
+  const seen = new Set();
+  const names = list.map((n) => String(n ?? '').replace(/\s+/g, ' ').trim())
+    .filter((n) => n && !seen.has(n.toLowerCase()) && seen.add(n.toLowerCase()));
+  return names.join(', ').slice(0, MAX_ALIASES);
+}
+
 export function checkTech(input, old = {}) {
   const get = (k) => (input[k] === undefined ? old[k] : input[k]);
   const tech = {
@@ -497,6 +508,8 @@ export function checkTech(input, old = {}) {
     description: clean(get('description'), MAX_DESCRIPTION),
     // The product or category it is part of (migration 0056): none when not given.
     product: clean(get('product'), MAX_NAME) || null,
+    // Other names it goes by, for matching the products the threads name (migration 0057).
+    aliases: aliasList(get('aliases')) || null,
     enabled: get('enabled') === undefined ? true : Boolean(get('enabled')),
   };
   if (!ID.test(tech.tech)) {
@@ -611,10 +624,11 @@ export async function saveTech(env, team, input, by) {
       return { error: `a team has at most ${MAX_TECH} technologies` };
     }
   }
-  await env.DB.prepare(`INSERT INTO tech_stack (team, tech, name, description, product, enabled,
-      changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  await env.DB.prepare(`INSERT INTO tech_stack (team, tech, name, description, product, aliases,
+      enabled, changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (team, tech) DO UPDATE SET name = excluded.name,
-      description = excluded.description, product = excluded.product, enabled = excluded.enabled,
+      description = excluded.description, product = excluded.product,
+      aliases = excluded.aliases, enabled = excluded.enabled,
       changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
     .bind(
       team,
@@ -622,6 +636,7 @@ export async function saveTech(env, team, input, by) {
       tech.name,
       tech.description,
       tech.product,
+      tech.aliases,
       tech.enabled ? 1 : 0,
       by,
       new Date().toISOString(),

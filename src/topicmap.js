@@ -13,6 +13,13 @@
 import { TITLER, topicList, topicNames } from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { threadVectorId } from './vectors.js';
+import {
+  coveredBy, GENERIC, nameKey, productKey, techIndex,
+} from './products.js';
+
+export {
+  coveredBy, GENERIC, productKey, techIndex,
+} from './products.js';
 
 /**
  * Topic maps: what the channel threads are about, found rather than asked. The threads' CONTENT
@@ -214,8 +221,8 @@ async function threadsOf(env) {
   const { results: products } = await env.DB.prepare(`SELECT f.thread, f.value FROM facts f
     JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
     WHERE ${WHERE} AND f.source = 'clairic' AND f.field = 'product'`).bind(MIN_MESSAGES).all();
-  const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product
-    FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
+  const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product,
+    aliases FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
   return {
     threads: threads || [],
     posts: posts || [],
@@ -225,68 +232,7 @@ async function threadsOf(env) {
   };
 }
 
-// ---- products and the tech stack -------------------------------------------------------
-
-/**
- * Names Clairic gives that say nothing about which product: the platforms the inbox reads, and
- * what every site has. A name of one of them, alone, is left out.
- */
-export const GENERIC = new Set(['api', 'apis', 'cdn', 'json', 'html', 'css', 'javascript', 'js',
-  'website', 'web', 'site', 'dns', 'http', 'https', 'ssl', 'tls', 'url', 'cache', 'email', 'git',
-  'slack', 'teams', 'microsoft teams', 'discord', 'browser', 'cloud', 'saas', 'ai', 'sdk', 'ui',
-  'edge delivery', 'edge delivery services', 'eds', 'aem', 'adobe', 'franklin', 'helix']);
-
-/** A product's name as a key: lower case, words only, without "Adobe" or "AEM" before it. */
-export function productKey(name) {
-  return String(name || '').toLowerCase().replace(/[^a-z0-9.+#]+/g, ' ')
-    .replace(/\b(?:adobe|aem)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-const within = (phrase, key) => ` ${phrase} `.includes(` ${key} `);
-
-/**
- * The tech stack as names to match a product against: each entry's id and name, and the names
- * its description gives, cut at commas, "or", "such as" and brackets ("a consent manager such as
- * OneTrust or Cookiebot" names OneTrust and Cookiebot).
- */
-export function techIndex(rows) {
-  const by = new Map();
-  for (const r of rows) {
-    const phrases = by.get(r.tech) || {
-      tech: r.tech, name: r.name, names: new Set(), phrases: new Set(),
-    };
-    [r.tech, r.name].map(productKey).filter(Boolean).forEach((k) => phrases.names.add(k));
-    String(r.description || '').split(/,|\(|\)|\bor\b|\bsuch as\b|\blike\b|\balso called\b|;/i)
-      .map(productKey).filter((k) => k.length > 1)
-      .forEach((k) => phrases.phrases.add(k));
-    by.set(r.tech, phrases);
-  }
-  return [...by.values()];
-}
-
-/**
- * The tech stack entry that covers a product, or null: one whose id or name is the product's,
- * or is in it as words ("Akamai Property Manager" is Akamai's), or whose description names it
- * ("OneTrust" is the consent manager's).
- */
-export function coveredBy(name, index) {
-  const key = productKey(name);
-  if (!key) {
-    return null;
-  }
-  const exact = index.find((t) => t.names.has(key));
-  if (exact) {
-    return exact.tech;
-  }
-  const named = index.find((t) => [...t.phrases].some((p) => within(p, key)));
-  if (named) {
-    return named.tech;
-  }
-  const part = index.find((t) => [...t.names].some((n) => n.length > 3 && within(key, n)));
-  return part ? part.tech : null;
-}
+// ---- products and the tech stack (src/products.js) --------------------------------------
 
 /**
  * The products of the threads (Clairic's `product` facts), each as the tech stack entry that
@@ -307,7 +253,7 @@ export function productsOf(facts, techRows) {
   const products = {};
   for (const f of facts) {
     const key = productKey(f.value);
-    if (key && !GENERIC.has(key)) {
+    if (key && !GENERIC.has(nameKey(f.value))) {
       const tech = coveredBy(f.value, index);
       const id = tech ? `tech:${tech}` : `new:${key}`;
       if (tech) {

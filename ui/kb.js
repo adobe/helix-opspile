@@ -931,6 +931,8 @@ function techForm(t = {}) {
     <label for="tProduct">Part of</label><input id="tProduct" list="tProducts" placeholder="Experience Manager Sites, or a category such as CDN" value="${esc(t.product || '')}" class="long">
     <datalist id="tProducts">${products().map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
     <span class="hint">An Adobe product by its name on <a href="https://business.adobe.com/products.html" target="_blank" rel="noopener">Adobe's product list</a>, or a category for other companies' products. The Topics page groups by it.</span>
+    <label for="tAliases">Also called</label><input id="tAliases" placeholder="Other names in threads, comma-separated, e.g. EdgeWorkers, Property Manager" value="${esc(t.aliases || '')}" class="long">
+    <span class="hint">Not asked of Clef: the Topics page matches the products the threads name against these too, so they do not show as missing from the tech stack.</span>
     <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>
   </form>`;
 }
@@ -1050,7 +1052,7 @@ function bindExtraction() {
   $('techForm').onsubmit = async (e) => {
     e.preventDefault();
     const r = await send('POST', '/tech', {
-      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), product: $('tProduct').value.trim(), enabled: true,
+      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), product: $('tProduct').value.trim(), aliases: $('tAliases').value.trim(), enabled: true,
     });
     if (r) { state.editTech = null; reload(`Saved ${r.tech.name}: Clef is asked about it from the next labeling of a thread.`); }
   };

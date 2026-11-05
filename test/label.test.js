@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  askClef, clairicFacts, FIELDS, MAX_PRODUCTS, MAX_QUESTIONS, productFacts, TOPIC_MIN, TOPICS,
+  askClef, clairicFacts, FIELDS, MAX_GAPS, MAX_QUESTIONS, productFacts, TOPIC_MIN, TOPICS,
   isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
@@ -84,19 +84,82 @@ describe('Clairic facts', () => {
     return [i, i + word.length];
   };
 
+  const TECH = [
+    { tech: 'akamai', name: 'Akamai', description: 'Akamai as CDN' },
+    {
+      tech: 'tagmanager', name: 'Tag manager', description: 'a tag manager', aliases: 'GTM, Google Tag Manager',
+    },
+  ];
+
   it('takes the products from the messages, not the header, the authors or the customer', () => {
     const spans = [at('Slack', 0), at('acme-corp', 0), at('Dana Ops'), at('Akamai'),
       at('Universal Editor'), at('Sidekick.'), at('Kim', STATE.indexOf('Kim here')), at('GTM'),
       at('ACME-Corp'), at('sl '), at('Akamai', STATE.indexOf('again') - 8)];
     const facts = productFacts({
       type: 'list', confidence: 1e-7, spans, value: [],
-    }, STATE, { org: 'acme-corp' });
-    assert.deepEqual(facts.map((f) => f.value), ['Akamai', 'Universal Editor', 'Sidekick', 'GTM']);
+    }, STATE, { org: 'acme-corp' }, TECH);
+    // The tech stack's first, once each (GTM is the tag manager's alias), then the others.
+    assert.deepEqual(facts.map((f) => f.value), ['Akamai', 'GTM', 'Universal Editor', 'Sidekick']);
     assert.ok(facts.every((f) => f.field === 'product' && f.confidence === null));
-    // Without spans, the values; at most a few.
-    const many = productFacts({ value: Array.from({ length: 30 }, (_, i) => `Tool ${i}`) }, STATE);
-    assert.equal(many.length, MAX_PRODUCTS);
+    // Without spans, the values; at most a few the tech stack does not have.
+    const many = productFacts({ value: Array.from({ length: 30 }, (_, i) => `Toolbox ${String.fromCharCode(65 + i)}`) }, STATE);
+    assert.equal(many.length, MAX_GAPS);
     assert.deepEqual(productFacts(undefined, STATE), []);
+  });
+
+  it('keeps Adobe products whose names are generic words without "Adobe" or "AEM"', () => {
+    const tech = [
+      {
+        tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics', aliases: 'Adobe Analytics, CJA',
+      },
+      {
+        tech: 'assets', name: 'Assets', description: 'AEM Assets', aliases: 'AEM Assets, DAM',
+      },
+      {
+        tech: 'forms', name: 'Forms', description: 'AEM Forms', aliases: 'AEM Forms',
+      },
+      {
+        tech: 'aemcs', name: 'AEM Cloud Service', description: 'AEM as a Cloud Service', aliases: 'AEM Author, AEM Publish',
+      },
+    ];
+    const names = ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author', 'analytics', 'assets', 'forms'];
+    const text = `Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n${names.join(', ')}`;
+    const spans = names.map((n) => {
+      const i = text.lastIndexOf(n);
+      return [i, i + n.length];
+    });
+    assert.deepEqual(
+      productFacts({ spans }, text, { org: 'acme' }, tech).map((f) => f.value),
+      ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author'],
+    );
+  });
+
+  it('counts spans in code points, as Clairic does, and drops pieces of words', () => {
+    const state = 'Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n🚀 🎉 Akamai and Bazaarvoice, and Azure Storage';
+    const cp = (word, from = 0) => {
+      const i = Array.from(state).join('').indexOf(word, from);
+      const before = Array.from(state.slice(0, i)).length;
+      return [before, before + Array.from(word).length];
+    };
+    const [z0, z1] = cp('zure Storage');
+    const facts = productFacts({ spans: [cp('Akamai'), cp('Bazaarvoice'), [z0, z1]] }, state, { org: 'acme' }, TECH);
+    assert.deepEqual(facts.map((f) => f.value), ['Akamai', 'Bazaarvoice']);
+  });
+
+  it('keeps names that look like products, not words, ids, headers or people', () => {
+    const state = 'Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n';
+    const names = ['Release', 'compute_execution_time', 'YwcCRmwU5Lk6WjXlqbJ0Jp', 'Cache-Control',
+      'AI-powered', 'Adobe Team', 'Deploy Optimizations to', 'vCPU limit', 'EDS URL', 'BLOCKER',
+      'PDP', 'experience', 'Edge', 'Feroot', 'Datawrapper', 'Experience Context'];
+    const text = `${state}${names.join(', ')}; then release it.`;
+    const spans = names.map((n) => {
+      const i = text.indexOf(n, text.indexOf('\n\n'));
+      return [i, i + n.length];
+    });
+    assert.deepEqual(
+      productFacts({ spans }, text, { org: 'acme' }, TECH).map((f) => f.value),
+      ['Feroot', 'Datawrapper', 'Experience Context'],
+    );
   });
 
   it('keeps the other fields above their confidence, and not the products list', () => {

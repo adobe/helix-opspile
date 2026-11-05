@@ -987,6 +987,7 @@ export const TOOLS = [
         name: { type: 'string', description: 'What the inbox shows' },
         description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
         product: { type: 'string', description: 'The product it is part of: an Adobe product by its name on business.adobe.com/products (e.g. "Experience Manager Sites"), or a category for other companies\' (e.g. "CDN")' },
+        aliases: { type: 'string', description: 'Other names it goes by in threads, comma-separated (e.g. "EdgeWorkers, Property Manager"): for matching the products the threads name, not asked of Clef' },
         enabled: { type: 'boolean' },
       },
       required: ['team', 'tech'],

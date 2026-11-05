@@ -85,7 +85,7 @@ async function setup({ perGroup = 10 } = {}) {
       if (g === 0) {
         // The cache threads name a CDN the tech stack has, one it does not, and generic words.
         DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Jira');
+          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Contentstack');
         DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
           VALUES (?, 'clairic', 'product', 'CDN', 0.9)`).run(key);
       }
@@ -163,7 +163,20 @@ describe('topic map: products and the tech stack', () => {
     assert.equal(productKey('AEM Sites Optimizer'), 'sites optimizer');
     assert.equal(productKey('Adobe  Web-SDK'), 'web sdk');
     assert.equal(coveredBy('Akamai', index), 'akamai');
-    assert.equal(coveredBy('akamai property manager', index), 'akamai');
+    assert.equal(coveredBy('Akamai Property Manager', index), 'akamai');
+    // Inside another name only where it is written as one; a word alone is no name.
+    assert.equal(coveredBy('akamai property manager', index), null);
+    assert.equal(coveredBy('manager', index), null);
+    // An alias (migration 0057), with AEM kept where it is generic without it.
+    assert.equal(coveredBy('EdgeWorkers', techIndex([{
+      tech: 'akamai', name: 'Akamai', description: 'Akamai as CDN', aliases: 'EdgeWorkers, AEM Author',
+    }])), 'akamai');
+    assert.equal(coveredBy('AEM Author', techIndex([{
+      tech: 'aemcs', name: 'AEM CS', description: 'x', aliases: 'AEM Author',
+    }])), 'aemcs');
+    assert.equal(coveredBy('DA author', techIndex([{
+      tech: 'aemcs', name: 'AEM CS', description: 'x', aliases: 'AEM Author',
+    }])), null);
     assert.equal(coveredBy('OneTrust', index), 'consent');
     assert.equal(coveredBy('Web SDK', index), 'analytics');
     assert.equal(coveredBy('AEM Sites Optimizer', index), 'aso');
@@ -182,6 +195,12 @@ describe('topic map: products and the tech stack', () => {
       'new:tealium': { name: 'Tealium', tech: null, product: null },
     });
     assert.deepEqual(of.get('a'), ['tech:consent', 'new:tealium']);
+    // A stored "Adobe Analytics" is the analytics entry's; "analytics" alone is a word.
+    const adobe = productsOf(
+      [{ thread: 'd', value: 'Adobe Analytics' }, { thread: 'd', value: 'analytics' }],
+      [{ tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics' }],
+    );
+    assert.deepEqual(adobe.of.get('d'), ['tech:analytics']);
     assert.deepEqual(of.get('b'), ['new:tealium']);
   });
 });
@@ -262,13 +281,13 @@ describe('topic map: building', () => {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
     assert.equal(map.tags.cdn, 'Caching and delivery');
-    // The products: Akamai is the tech stack's (migration 0043), Jira a gap, CDN generic.
+    // The products: Akamai is the tech stack's (migration 0043), Contentstack a gap, CDN generic.
     assert.deepEqual(map.products, {
       'tech:akamai': { name: 'Akamai', tech: 'akamai', product: 'CDN' },
-      'new:jira': { name: 'Jira', tech: null, product: null },
+      'new:contentstack': { name: 'Contentstack', tech: null, product: null },
     });
     assert.deepEqual(one.products, ['tech:akamai']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:jira']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:contentstack']);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:1.2').products, []);
     assert.equal(map.built_by, 'Ada');
 

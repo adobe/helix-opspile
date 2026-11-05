@@ -749,6 +749,9 @@ and an unchanged thread is never labeled twice):
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
+  An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
+  threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
+  asked of Clef.
   Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
   it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
   (Edge Delivery, Document Authoring, Universal Editor, Experience Workspace, AEM as a Cloud
@@ -768,15 +771,21 @@ and an unchanged thread is never labeled twice):
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
   kept (0.8, and 0.6 for the free-text problem). In the same call it lists the **products** the
-  thread names (`product` facts, at most twelve), for the [topic map](#topic-maps) to match
-  against the tech stack. Clairic lists nearly every name in the state, so only its spans count:
-  not those in the header (the channel, the platform, the customer) or an author line, nor the
-  names of the thread's people and customer, nor fragments under three characters. The list's
-  one confidence says nothing (it shrinks as the list grows) and is not used. The wording and
-  the filter come from a census of all 822 channel threads with a person's message: 94% of the
-  thread–product pairs right after normalizing, 86% recall (it misses host names in URLs). A
-  product name says the thread mentions it; Clef's tech questions still say what the customer
-  uses.
+  thread names (`product` facts), for the [topic map](#topic-maps) to match against the tech
+  stack. Clairic lists nearly every name in the state, so `productFacts` (src/label.js) keeps
+  few of them: only its spans count (counted in code points, as Clairic counts; a string here
+  counts UTF-16 units, one more per emoji), not those in the header or an author line, not a
+  mention (`@Name`) or a piece of a word, not the names of the thread's people and customer, nor
+  generic words (src/products.js `GENERIC`). Of the rest it keeps what the tech stack covers, one
+  name per entry, and at most six it does not, the most named first, when they look like the
+  name of a product (`productLike`: a proper name of at most four words, not an id, a variable, a
+  header, a host name, a short acronym, a possessive, a phrase that ends in a lower-case noun, or
+  a word the thread also writes in lower case). The list's one confidence says nothing (it
+  shrinks as the list grows) and is not used. On the census's 822 threads: two names a thread
+  instead of six, two in three of them names of known products (two in five before, and a sixth
+  generic words), the names nobody knows yet a third, and 83% of the products a hand-made alias
+  table finds. A product name says the thread mentions it; Clef's tech questions still say what
+  the customer uses.
 
 **Label review.** Members of the admin team can review labels in the inbox: a queue of
 current labels nobody has reviewed, least confident first, and per question the right
@@ -804,12 +813,16 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
   messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products** Clairic named. Each product is matched against the tech stack (every
-  team's enabled entries): an entry covers it when its id or name is the product's, or is in it
-  as words ("Akamai Property Manager" is Akamai's), or its description names it, cut at commas,
-  "or", "such as" and brackets ("a consent manager such as OneTrust or Cookiebot"). A covered
-  product is named as its entry, and drawn as the product the entry is part of (its features
-  listed when it is picked); one no entry covers is a **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, and generic names (API, CDN, JSON, Slack, …) are
-  left out.
+  team's enabled entries, src/products.js `coveredBy`): an entry covers it when its id, name or
+  one of its aliases is the product's; or is in it as words, where the product is written as a
+  name ("Akamai Property Manager" is Akamai's, "en-to launch" is not Adobe Launch's); or its
+  description names it where it writes a name, cut at commas, "or", "such as" and brackets ("a
+  consent manager such as OneTrust or Cookiebot" names OneTrust and Cookiebot, not "consent
+  manager"). A word alone is no name. A covered product is named as its entry, and drawn as the
+  product the entry is part of (its features listed when it is picked); one no entry covers is a
+  **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, except where
+  a name is generic without them ("AEM Author"), and generic names (API, CDN, JSON, Slack, …)
+  are left out.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 

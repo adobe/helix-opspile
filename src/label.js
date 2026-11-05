@@ -17,6 +17,9 @@ import {
   extract, rulesFor, techFor, techNames,
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
+import {
+  coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
+} from './products.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
@@ -266,8 +269,12 @@ export const PRODUCTS_INSTRUCTIONS = 'Names of software products, cloud services
   + ' developer tools that the customer uses or asks about, for example AEM Sites, Document'
   + ' Authoring, Cloudflare, Algolia or GitHub. Not the names of people, customers or the channel,'
   + ' and not generic words such as API, CDN, website or page.';
-/** At most this many products per thread, each at most MAX_PRODUCT characters. */
-export const MAX_PRODUCTS = 12;
+/**
+ * At most this many products per thread, each at most MAX_PRODUCT characters, of them at most
+ * MAX_GAPS the tech stack does not cover.
+ */
+export const MAX_PRODUCTS = 16;
+export const MAX_GAPS = 6;
 const MAX_PRODUCT = 60;
 
 export const FIELDS = {
@@ -405,36 +412,71 @@ const AUTHOR_LINE = /^\[[^\]\n]+\] ([^\n]*?) \((?:Adobe staff|customer[^)]*|[a-z
  * The products Clairic named in a thread (its `products` list), as `product` facts: the names
  * its spans point at in the messages, not in the header (the channel, the platform, the
  * customer) or an author line (people and bots), trimmed, without the names of the thread's
- * people and its customer, those of at least three characters with a letter, each once, at most
- * MAX_PRODUCTS. Whether one is the tech stack's is for the Topics page to say (src/topicmap.js).
+ * people and its customer; of those, the names the tech stack (`tech`, as techFor has it) covers,
+ * and those that look like the name of a product (src/products.js productLike), each once, at most
+ * MAX_PRODUCTS. Clairic lists nearly every name in the state; this keeps two in five of them, and
+ * nine in ten of the products a hand-made table of aliases finds (docs/ARCHITECTURE.md).
  */
-export function productFacts(answer, state, thread = {}) {
+export function productFacts(answer, state, thread = {}, tech = []) {
+  const index = techIndex(tech);
   const text = String(state || '');
-  const header = Math.max(0, text.indexOf('\n\n'));
-  const authors = [...text.matchAll(AUTHOR_LINE)];
-  const inAuthor = (at) => authors.some((m) => at >= m.index && at < m.index + m[0].length);
-  const names = new Set(authors.flatMap((m) => [m[1], ...m[1].split(/\s+/)])
+  // Clairic's spans count code points, as Python does; a string here counts UTF-16 units, one
+  // more for every emoji. So the state is read as code points, and so are the places in it.
+  const chars = Array.from(text);
+  const at16 = (i) => Array.from(text.slice(0, i)).length;
+  const header = Math.max(0, at16(text.indexOf('\n\n')));
+  const authors = [...text.matchAll(AUTHOR_LINE)]
+    .map((m) => [at16(m.index), at16(m.index) + Array.from(m[0]).length]);
+  const inAuthor = (at) => authors.some(([from, to]) => at >= from && at < to);
+  const names = new Set([...text.matchAll(AUTHOR_LINE)].flatMap((m) => [m[1], ...m[1].split(/\s+/)])
     .map((n) => n.toLowerCase()).filter((n) => n.length > 2));
   const org = String(thread.org || '').toLowerCase();
   [org, ...org.split(/[-_.]/)].filter((w) => w.length > 3).forEach((w) => names.add(w));
+  // The customer as written in a message: "Acme Corp" for acme-corp.
+  const squash = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const own = squash(org);
+  const isOrg = (v) => own.length > 3 && (squash(v) === own || squash(v).startsWith(own));
   const spans = Array.isArray(answer?.spans) && answer.spans.length ? answer.spans : null;
   let items = Array.isArray(answer?.value) ? answer.value : [];
   if (spans) {
-    items = spans.filter(([at]) => at >= header && !inAuthor(at))
-      .map(([at, end]) => text.slice(at, end));
+    // Not a mention of someone (`@Name`), nor a piece of a word: Clairic's spans now and then
+    // start or end inside one ("zure Storage").
+    const inWord = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+    items = spans.filter(([at, end]) => at >= header && !inAuthor(at) && chars[at - 1] !== '@'
+      && !inWord(chars[at - 1]) && !inWord(chars[end]))
+      .map(([at, end]) => chars.slice(at, end).join(''));
   }
-  const seen = new Set();
-  const facts = [];
-  for (const item of items) {
+  // A word written in lower case elsewhere in the thread ("Release" at the start of a sentence,
+  // "release" in the next) is a word, not a name.
+  const words = new Set(text.match(/\b\p{Ll}[\p{Ll}-]+\b/gu) || []);
+  const aWord = (v) => /^\p{Lu}\p{Ll}+$/u.test(v) && words.has(v.toLowerCase());
+  // A name the tech stack covers, once per entry (its first name); one it does not, by how often
+  // the thread names it, then the first, at most MAX_GAPS of them.
+  const covered = new Map();
+  const others = new Map();
+  items.forEach((item, i) => {
     const value = String(item ?? '').replace(/\s+/g, ' ').replace(PRODUCT_TRIM, '')
       .slice(0, MAX_PRODUCT);
     const key = value.toLowerCase();
-    if (value.length >= 3 && /[a-z]/i.test(value) && !value.includes('@') && !names.has(key)
-      && !seen.has(key) && facts.length < MAX_PRODUCTS) {
-      seen.add(key);
-      facts.push({ field: 'product', value, confidence: null });
+    if (value.length < 2 || !/[a-z]/i.test(value) || value.includes('@') || names.has(key)
+      || isOrg(value) || GENERIC.has(nameKey(value)) || GENERIC.has(key)) {
+      return;
     }
-  }
+    const entry = coveredBy(value, index);
+    if (entry) {
+      if (!covered.has(entry)) {
+        covered.set(entry, value);
+      }
+    } else if (productLike(value) && !aWord(value)) {
+      const k = productKey(value);
+      const o = others.get(k) || { value, n: 0, i };
+      o.n += 1;
+      others.set(k, o);
+    }
+  });
+  const gaps = [...others.values()].sort((x, y) => y.n - x.n || x.i - y.i).slice(0, MAX_GAPS);
+  const facts = [...covered.values(), ...gaps.map((g) => g.value)].slice(0, MAX_PRODUCTS)
+    .map((value) => ({ field: 'product', value, confidence: null }));
   return facts;
 }
 
@@ -664,7 +706,7 @@ export async function labelThread(env, key, now = new Date()) {
     .run();
   await recordTech(env, thread, tech, a, found.tech);
   const loose = [...clairicFacts(clairic.answers),
-    ...productFacts(clairic.answers?.products, state, thread)];
+    ...productFacts(clairic.answers?.products, state, thread, tech)];
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
     result: 'labeled',
