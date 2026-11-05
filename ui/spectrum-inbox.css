@@ -226,10 +226,9 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 /*
  * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
  * The filter cards stick out of the page's left edge and hang over the thread list by a
- * third of their corner radius, two thirds while one of their filters is on, all of it
- * under the pointer. They need room to do so (and to cast their shadow): the filter
- * column reaches into the thread list by --fg, and lets the pointer through where it has
- * no card. The open thread's row is lifted out of its column, over the pane, by a copy
+ * third of their corner radius while one of their filters is on; pointing at one moves
+ * nothing. They need room to do so (and to cast their shadow): the filter column reaches
+ * into the thread list by --fg, and lets the pointer through where it has no card. The open thread's row is lifted out of its column, over the pane, by a copy
  * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
  * the list's heading and the open thread's header, and the list shows no scrollbar for it
  * to cover.
@@ -246,8 +245,6 @@ main { position: relative; background: var(--col); }
   transition: margin-right var(--spectrum-animation-duration-300) ease-out, padding-right var(--spectrum-animation-duration-300) ease-out; }
 /* A card hangs further out by its right edge and padding alone: its contents stay put. */
 main:not(.rail) #filters .card.active { --out: calc(var(--r) / 3); }
-main:not(.rail) #filters .card:hover { --out: calc(var(--r) * 2 / 3); }
-main:not(.rail) #filters .card.active:hover { --out: var(--r); }
 @media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
 /* Room for the filter cards' overhang, so they never cover a status dot. */
 .t { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
