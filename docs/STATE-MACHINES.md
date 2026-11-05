@@ -159,6 +159,12 @@ lease, which gives back only its own lease. Disconnecting and signing in do not 
 refresh writes only over the sealed grant it started from. One that lost revokes what it got, unless
 the grant is still the same one.
 
+**Computer secret.** none → set → changed → deleted (a row in `agent_secrets`,
+`src/secretadmin.js`). Not stored anywhere else: the shell has only a placeholder, and the gateway
+(`forward` in `src/agent/secrets.js`) reads the row on every request that names it, by the agent's
+team and customer as they are then, so a change, a deletion or a moved thread counts from the next
+request. Changing it without a value keeps the sealed one.
+
 **Personal token.** none → valid → expired → refreshed, or gone (`user_tokens`, `src/post.js`). A
 token Microsoft no longer accepts on any scope ends the connection, so the page asks to connect
 again. A failure that may pass leaves it.

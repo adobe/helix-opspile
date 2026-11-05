@@ -61,7 +61,9 @@ import { latestTurn } from './turn.js';
  * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
  * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
  * SQLite (src/agent/computer.js). Its shell, in a Dynamic Worker, reaches the files back through
- * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that).
+ * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
+ * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
+ * secrets where the shell names them.
  */
 
 const TARGET_TTL_MS = 5 * 60 * 1000;
@@ -247,8 +249,21 @@ export class ThreadAgent extends Agent {
   }
 
   /**
+   * Where the shell reaches the network: through the Worker's SecretGateway, which puts the
+   * team's and the customer's secrets into the requests that name them (src/agent/secrets.js)
+   * and lets the others through as they are. It knows this agent by name; the revision is
+   * fixed, as the name is.
+   */
+  egress() {
+    const gateway = this.ctx.exports && this.ctx.exports.SecretGateway;
+    return gateway
+      ? { mode: 'http-gateway', gateway: gateway({ props: { agent: this.name } }), revision: 'secrets-1' }
+      : { mode: 'direct' };
+  }
+
+  /**
    * The Workspace of the computer: files in this object's SQLite, a shell in a Dynamic Worker
-   * that reaches the internet (curl) without a filter.
+   * that reaches the internet (curl) without a filter, with its secrets (`egress`).
    */
   workspace() {
     this.ws ??= new Workspace({
@@ -260,7 +275,7 @@ export class ThreadAgent extends Agent {
           workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
           ctx: this.ctx,
           commands: [jqModules, curlModules],
-          egress: { mode: 'direct' },
+          egress: this.egress(),
         }),
       ],
       ...(this.env.FILES ? {

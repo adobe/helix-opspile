@@ -1496,8 +1496,9 @@ last from one turn to the next, and nobody else's. Commands run in a `WorkerShel
 [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
 binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
 Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
-grep, sed, awk, sort, find, jq…) and `curl`, with the Dynamic Worker's own network access
-(egress `direct`, no filter), and no npm, node or python. What curl fetches is untrusted, like
+grep, sed, awk, sort, find, jq…) and `curl`, with network access through the Worker's
+`SecretGateway` (egress `http-gateway`, no filter; see "Computer secrets" below), and no npm,
+node or python. What curl fetches is untrusted, like
 customer messages; nothing stops an agent from sending what it read, so the prompt says not to
 send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
@@ -1513,6 +1514,27 @@ schedule (`expireUploads`) empties it when the oldest file expires, even if the 
 Files of withheld messages stay out of it, as they do of `read_file`, but a file itself is not
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
+
+**Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
+0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
+it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and never shown
+again. A team's wins over the customer's of the same name. The agent never holds a value: its
+prompt lists the names, hosts and descriptions, and pi's `bash` gets each as a variable whose
+value is a placeholder (`$ACME_API_KEY` is `opspile-secret-ACME_API_KEY`), through the tool's
+`prepare`. The Workspace's egress is `http-gateway` with `SecretGateway` (`src/agent/gateway.js`,
+exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
+`globalOutbound`: every `fetch` of the shell, curl's too, arrives there, with the agent's name in
+its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
+One that does is sent with the values in place of the placeholders (in the URL, the headers, a
+Basic `Authorization`, a textual body up to 1 MiB), only over HTTPS to a host the secret lists,
+and with `redirect: manual`, so a redirect comes back to the shell and its next request is
+checked again; what comes back has the values replaced by their placeholders, in its headers and
+its body (`scrubber`, which also finds a value split between chunks). A placeholder for another
+host, over HTTP, or for a secret the agent's team and customer do not have is refused with a 403,
+and nothing is sent. The gateway reads the secrets from D1 on each such request, by the agent's
+team and customer as they are now, so a deleted secret or a moved thread counts at once. What it
+does not stop: a host on the list that publishes what it receives (the agent could post the key
+into a ticket of the API it is for), and a value the host sends back encoded otherwise.
 
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and

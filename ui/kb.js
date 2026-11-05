@@ -30,6 +30,8 @@ const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
   channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {}, openPer: new Set(),
   extraction: null,
+  // The computer's secret being added ('new') or edited (its id), or null.
+  secretEditing: null,
 };
 const VIEWS = ['history', 'agents', 'mcp', 'extraction'];
 const $ = (id) => document.getElementById(id);
@@ -198,6 +200,7 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.mcp = null;
   state.globals = null;
   state.tools = null;
+  state.secretEditing = null;
   state.extraction = null;
   const [{ ok, body }] = await Promise.all([
     call(`/api/kb/files?repo=${encodeURIComponent(repo)}`),
@@ -725,8 +728,90 @@ function toolRow(t) {
       ${t.problem ? `<div class="sub err">${esc(t.problem)}</div>` : ''}
       ${by ? `<div class="sub by">${by}</div>` : ''}
     </div>
+    ${t.tool === 'computer' ? secretsBlock(t) : ''}
     ${toolPerChannel(t)}
   </div>`;
+}
+
+// ---- the computer's secrets -----------------------------------------------------------------
+//
+// API keys and tokens of this team or customer for the agents' shells (src/agent/secrets.js),
+// over /api/kb/tools/secrets (src/secretadmin.js), in the Computer tool's row. The shell has
+// `$NAME`, a placeholder; the Worker's gateway puts the value in, only in HTTPS requests to the
+// secret's hosts. A value is sent once; only names and hosts come back.
+
+function secretForm(s) {
+  return `<form class="mcpform" id="secretForm" autocomplete="off">
+    <h3>${s.id ? `Edit ${esc(s.name)}` : 'Add a secret'}</h3>
+    <label for="sName">Variable</label><input id="sName" class="mono short" placeholder="ACME_API_KEY" value="${esc(s.name || '')}" required pattern="[A-Z][A-Z0-9_]+">
+    <label for="sValue">Value</label><input id="sValue" class="mono" type="password" placeholder="${s.id ? 'set; fill in to replace it' : 'the API key or token'}"${s.id ? '' : ' required'}>
+    <span class="hint">Stored encrypted, and never shown again, not even to the agents.</span>
+    <label for="sHosts">Sent only to</label><input id="sHosts" class="mono" placeholder="api.example.com, *.example.com" value="${esc((s.hosts || []).join(', '))}" required>
+    <span class="hint">Hosts, over HTTPS; *.example.com is any host below example.com. A request that names it for another host is refused.</span>
+    <label for="sDesc">What it is for</label><input id="sDesc" placeholder="Told to the agents, e.g. The ticket API, as a bearer token" value="${esc(s.description || '')}">
+    <span class="apply"><button class="primary">${s.id ? 'Save' : 'Add'}</button><button type="button" id="sCancel">Cancel</button></span>
+  </form>`;
+}
+
+/** The computer's secrets: one row each, and the form to add or change one. */
+function secretsBlock(t) {
+  const b = base();
+  const list = t.secrets || [];
+  const whose = b.kind === 'team' ? `the agents of ${b.name}` : `the agents of ${b.name}'s threads, in every team (a team's own of the same name wins)`;
+  const rows = list.map((s) => `<div class="srow"><span class="what" title="${esc(s.updatedBy ? `Changed by ${s.updatedBy}, ${ago(s.updatedAt)}` : '')}"><b class="mono">$${esc(s.name)}</b>
+      to ${esc(s.hosts.join(', '))}${s.description ? ` · ${esc(s.description)}` : ''}</span>
+    ${mayEdit() ? `<span class="acts"><button type="button" data-sedit="${s.id}">Edit</button><button type="button" class="danger" data-sdel="${s.id}">Delete</button></span>` : ''}</div>`).join('');
+  const editing = state.secretEditing === 'new' ? {} : list.find((s) => s.id === state.secretEditing);
+  let form = '';
+  if (mayEdit()) form = editing ? secretForm(editing) : '<div class="srow"><span class="acts"><button type="button" id="sNew">Add a secret</button></span></div>';
+  return `<div class="secrets">
+    <div class="sub">Secrets of ${esc(whose)}: API keys their shell uses as $NAME. It holds a placeholder; the value goes in on the way out, only in HTTPS requests to the hosts given, and the agents never see it.</div>
+    ${rows || '<div class="none">No secret yet.</div>'}
+    ${form}
+  </div>`;
+}
+
+/** The handlers of the computer's secrets. */
+function bindSecrets(computer, stale) {
+  const repo = state.repo;
+  const edit = (id, focus) => { state.secretEditing = id; renderMcp(); $(focus).focus(); };
+  if ($('sNew')) $('sNew').onclick = () => edit('new', 'sName');
+  for (const el of $('editor').querySelectorAll('[data-sedit]')) {
+    el.onclick = () => edit(Number(el.dataset.sedit), 'sValue');
+  }
+  for (const el of $('editor').querySelectorAll('[data-sdel]')) {
+    el.onclick = async () => {
+      const s = computer.secrets.find((x) => x.id === Number(el.dataset.sdel));
+      if (!(await ask(`Delete the secret ${s.name}?`, `Agents can no longer use $${s.name}, from their next command. Its value is deleted.`, 'Delete'))) return;
+      const { ok, body } = await call('/api/kb/tools/secrets', { method: 'DELETE', body: JSON.stringify({ id: s.id }) });
+      if (stale()) return;
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Deleting failed.' }); return; }
+      computer.secrets = body.secrets;
+      if (state.secretEditing === s.id) state.secretEditing = null;
+      renderMcp({ kind: 'ok', text: `Deleted ${s.name}.` });
+    };
+  }
+  if (!$('secretForm')) return;
+  $('sCancel').onclick = () => { state.secretEditing = null; renderMcp(); };
+  $('secretForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const id = state.secretEditing === 'new' ? null : state.secretEditing;
+    const value = $('sValue').value.trim();
+    const payload = {
+      ...(id ? { id } : { repo }),
+      name: $('sName').value.trim(),
+      hosts: $('sHosts').value.trim(),
+      description: $('sDesc').value.trim(),
+      ...(value ? { value } : {}),
+    };
+    const { ok, body } = await call('/api/kb/tools/secrets', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    if (stale()) return;
+    // The form stays as it is, its value too, to be corrected.
+    if (!ok) { showNote({ kind: 'err', text: body.error || 'Saving failed.' }); return; }
+    computer.secrets = body.secrets;
+    state.secretEditing = null;
+    renderMcp({ kind: 'ok', text: `${body.secret.name} is ${id ? 'saved' : 'added'}: agents with the computer use it as $${body.secret.name} from their next command.` });
+  };
 }
 
 const TOOL_CONFIRM = {
@@ -764,6 +849,7 @@ function bindTools() {
   const repo = state.repo;
   const find = (tool) => state.tools.find((t) => t.tool === tool);
   const stale = () => state.repo !== repo || state.view !== 'mcp';
+  if (find('computer')) bindSecrets(find('computer'), stale);
   for (const el of $('editor').querySelectorAll('[data-tteam]')) {
     el.onclick = async () => {
       const t = find(el.dataset.tteam);

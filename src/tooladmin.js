@@ -16,6 +16,7 @@ import {
 import { json } from './http.js';
 import { channelOwner, ownerOf } from './mcpadmin.js';
 import { isAdmin, managesTeam } from './review.js';
+import { secretAdmin, secretsOf } from './secretadmin.js';
 
 /**
  * The knowledge-base editor's API for the agents' switchable tools (src/agent/agenttools.js),
@@ -30,6 +31,9 @@ import { isAdmin, managesTeam } from './review.js';
  *   the admin team, per channel, and it turns on only in an internal channel.
  *
  * Agents notice at their next message.
+ *
+ * The Computer tool comes with the secrets of the team or the customer (`secrets`: names and
+ * hosts, never values), which `/api/kb/tools/secrets` changes (src/secretadmin.js).
  */
 
 const bad = (error) => json({ error }, 400);
@@ -46,6 +50,7 @@ async function list(env, me, repo) {
       (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
     .bind(owner.scope === 'team' ? owner.slug : '', owner.slug).all();
   const rows = results || [];
+  const secrets = await secretsOf(env, owner);
   return json({
     repo,
     tools: AGENT_TOOLS.map((t) => ({
@@ -63,6 +68,7 @@ async function list(env, me, repo) {
         : null,
       channels: Object.fromEntries(rows.filter((r) => r.tool === t.tool && r.scope === 'channel')
         .map((r) => [r.target, shownSwitch(r)])),
+      ...(t.tool === 'computer' ? { secrets } : {}),
     })),
   });
 }
@@ -124,8 +130,11 @@ async function switchTool(env, me, body) {
   });
 }
 
-/** Routes `/api/kb/tools`; null for other paths. */
+/** Routes `/api/kb/tools` and `/api/kb/tools/secrets`; null for other paths. */
 export async function toolAdmin(request, env, url, me) {
+  if (url.pathname === '/api/kb/tools/secrets') {
+    return secretAdmin(request, env, url, me);
+  }
   if (url.pathname !== '/api/kb/tools') {
     return null;
   }
