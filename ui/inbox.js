@@ -999,7 +999,7 @@ const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === 
  * - `sticky`: whether the heading stays at the top while its threads scroll under it.
  */
 const GROUPS = {
-  fold: 'three', mark: 'dot', headBadge: true, sticky: false,
+  fold: 'new', mark: 'dot', headBadge: true, sticky: false,
 };
 const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
 /** A thread's unread mentions of you, as the badge counts them. */
