@@ -13,6 +13,7 @@
     "ui:dev": "node --watch scripts/dev-ui.mjs",
     "ui:session": "node scripts/dev-ui-session.mjs",
     "rank": "node scripts/rank.mjs",
+    "response:backtest": "node scripts/response-backtest.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",
     "pretest": "npm run build --silent",
