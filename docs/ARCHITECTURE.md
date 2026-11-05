@@ -1182,12 +1182,10 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   an offer to overwrite it. A discard does the same. A save from a draft that is gone (discarded
   or sent) saves nothing either, and offers to save it as a new one.
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
-  you, or the thread agent), when, and how it starts, opened to all of it with ▾. The reply box
-  is yours, and a draft never replaces what you typed. Resting the pointer on the line, or
-  moving the keyboard focus into it, shows the draft in the box, in place (dashed), and gives
-  the box back as it was when the pointer or focus leaves; the box grows upwards, up to most of
-  the pane, so the line stays under the pointer and a long draft can be read (the wheel scrolls
-  what does not fit, from the line). Clicking the line or **Edit** (tapping it, on touch) takes the draft
+  you, or the thread agent), when, and how it starts. **View draft** opens the line to all of it
+  and **Hide draft** closes it again, with a click or a tap alike; nothing shows on hover, since
+  a draft shown under a resting pointer moved the line away from it and hid again, over and over.
+  The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
 - The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
@@ -1207,7 +1205,9 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   (`update_draft`, `post_draft`) replace a draft's sources with each save, so they describe its
   text; a person's edit in the inbox keeps them, and Undo of a discard brings them back.
 - The sources sit on a row of the draft's line. Resting the pointer on one (or moving the
-  keyboard focus to it) shows it beside the draft, with the agent's quote above it; clicking it
+  keyboard focus to it) shows it beside the draft, which the reply box shows meanwhile (dashed,
+  and given back as it was after; it grows only into what the feed can give up, so the line
+  stays under the pointer), with the agent's quote above it; clicking it
   opens it in a new tab. `GET /api/draft/source` tells the inbox how: a browser cannot tell why
   a frame stayed empty, so the Worker fetches the page, without the viewer's credentials, and
   reads its `X-Frame-Options` and `frame-ancestors`. A page that may be framed shows in a

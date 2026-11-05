@@ -2571,7 +2571,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   const keepHeight = prevScroller ? prevScroller.scrollHeight : 0;
-  // A draft shown in the reply box on hover gives the box back first: what it held is what counts.
+  // A draft shown in the reply box beside a source gives the box back first: what it held counts.
   if (switching) hideSource();
   endDraftPreview();
   const typed = $('reply')?.value;
@@ -2768,10 +2768,9 @@ async function openThread(key, { live = false, cached = false } = {}) {
     box.onblur = () => setTimeout(closeMentions, 150);
     grow();
     box.onkeydown = (e) => {
-      // Typing while the pointer rests on the draft line: the box is yours again, until the
-      // pointer comes back to the line.
-      if (draftPreview.key || draftPreview.over) {
-        Object.assign(draftPreview, { over: false, focus: false });
+      // Typing while a source shows the draft in the box: the box is yours again.
+      if (draftPreview.key) {
+        hideSource();
         endDraftPreview();
       }
       if (mentionKey(e, key)) return;
@@ -2896,16 +2895,21 @@ const tookDraft = (c, d) => Boolean(c && d && c.base === d.updated_at && c.text.
 
 function growReply(box) {
   box.style.height = 'auto';
-  // The stylesheet's limit: a draft being looked at (.previewing, .checking) may take more room.
-  box.style.height = `${Math.min(parseFloat(getComputedStyle(box).maxHeight) || 180, box.scrollHeight)}px`;
+  // The stylesheet's limit: a draft being looked at (.previewing, .checking) may take more room,
+  // but only what the feed above can give up. A box taller than that made the composer overflow
+  // the pane and pushed the draft's line down, from under the pointer resting on it.
+  let max = parseFloat(getComputedStyle(box).maxHeight) || 180;
+  const feed = box.closest('#pane')?.querySelector('.scroller');
+  if (feed && (box.classList.contains('previewing') || box.closest('.checking'))) {
+    max = Math.min(max, box.offsetHeight + feed.clientHeight);
+  }
+  box.style.height = `${Math.min(max, box.scrollHeight)}px`;
 }
 
-// The draft shown in the reply box while the pointer rests on its line (`over`) or the
-// keyboard focus is in it (`focus`), and what the box held before (`value`, `sel`).
-const draftPreview = {
-  key: null, value: '', sel: [0, 0], over: false, focus: false,
-};
-// Threads whose draft line shows all of the draft, not only how it starts.
+// The draft shown in the reply box while one of its sources is shown beside it, and what the
+// box held before (`value`, `sel`). Reading the draft itself is "View draft", on its line.
+const draftPreview = { key: null, value: '', sel: [0, 0] };
+// Threads whose draft line shows all of the draft ("View draft"), not only how it starts.
 const draftOpen = new Set();
 
 function startDraftPreview(key) {
@@ -2941,7 +2945,7 @@ function endDraftPreview() {
 }
 
 function syncDraftPreview(key) {
-  if (draftPreview.over || draftPreview.focus || sourcePop.url) startDraftPreview(key);
+  if (sourcePop.url) startDraftPreview(key);
   else endDraftPreview();
 }
 
@@ -3072,6 +3076,32 @@ function wireSources(el) {
   });
 }
 
+/**
+ * The draft as "View draft" shows it, all of it. As it was written, for now: to show it as the
+ * thread will (Markdown, as `md` renders a message), return that here and style `.draftbar .pv .md`.
+ */
+const viewedDraft = (d) => esc(d.body);
+
+/**
+ * The draft line's markup: who saved draft `d`, when, and how it starts, or all of it once
+ * viewed (`open`); "View draft" opens and closes it. What to do with it are buttons of their
+ * own: `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text),
+ * `asMe` (Send as me), `asBot` (Send as bot) and `discard`; `note` says where the draft stands.
+ */
+function draftLine(d, {
+  open = false, own = false, note = '', editable = false, asMe = false, asBot = false, discard = false,
+} = {}) {
+  const acts = [];
+  if (editable) acts.push(`<button data-draft="edit" title="${own ? 'Add the draft after what you wrote, to edit it' : 'Put the draft in the reply box, to edit it'}">${own ? 'Add to reply' : 'Edit'}</button>`);
+  if (asMe) acts.push('<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">Send as me</button>');
+  if (asBot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot">Send as bot</button>');
+  if (discard) acts.push('<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button>');
+  return `<span class="pen">✎ Draft</span>
+      <div class="pv" id="draft-text"><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span><span class="tx">${open ? viewedDraft(d) : esc(d.body)}</span></div>
+      <button class="view" data-draft="view" aria-expanded="${open}" aria-controls="draft-text" title="${open ? 'Show only how the draft starts' : 'Show all of the draft, here'}">${open ? 'Hide draft' : 'View draft'}</button>
+      ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}${sourcesLine(d)}`;
+}
+
 /** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
 function renderDraftBar(key, force = false) {
   const el = $('draftbar');
@@ -3087,32 +3117,24 @@ function renderDraftBar(key, force = false) {
   let html = '';
   if (d) {
     const took = box && tookDraft(c, d);
-    const own = box && !took && c?.text.trim();
-    const open = draftOpen.has(key);
     let note = '';
     if (took) note = c.text === d.body ? ' · in the reply box' : ' · in the reply box, edited';
-    else if (own && c.base) note = ' · changed since you took it';
-    const editable = box && !took && !readonly;
-    const acts = [];
-    if (editable) acts.push(`<button data-draft="edit" title="${own ? 'Add the draft after what you wrote, to edit it' : 'Put the draft in the reply box, to edit it'}">${own ? 'Add to reply' : 'Edit'}</button>`);
-    if (box && !readonly) acts.push('<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">Send as me</button>');
-    if (data.can_post_as_bot) acts.push('<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot">Send as bot</button>');
-    if (!readonly) acts.push('<button data-draft="discard" title="Throw the draft away, for everyone on the team">Discard</button>');
-    const tag = editable ? 'button' : 'span';
-    const long = d.body.length > 80 || d.body.includes('\n');
-    html = `<span class="pen">✎ Draft</span>
-      <${tag} class="pv"${editable ? ` data-draft="edit" title="${own ? 'Hover to see it after your text; click to add it to your reply' : 'Hover to see it in the reply box; click to edit it'}"` : ''}><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span><span class="tx">${esc(d.body)}</span></${tag}>
-      ${long ? `<button class="more" data-draft="more" aria-expanded="${open}" title="${open ? 'Show how it starts' : 'Show all of it'}" aria-label="${open ? 'Show less of the draft' : 'Show all of the draft'}">${open ? '▴' : '▾'}</button>` : ''}
-      ${acts.length ? `<span class="act">${acts.join('')}</span>` : ''}${sourcesLine(d)}`;
+    else if (c?.base && box && c.text.trim()) note = ' · changed since you took it';
+    html = draftLine(d, {
+      open: draftOpen.has(key),
+      own: Boolean(box && !took && c?.text.trim()),
+      note,
+      editable: Boolean(box && !took && !readonly),
+      asMe: Boolean(box && !readonly),
+      asBot: Boolean(data.can_post_as_bot),
+      discard: !readonly,
+    });
   }
   if (force || el.__html !== html) {
-    // A new line under a resting pointer (the reply box was rebuilt) is hovered too.
-    if (el.__html === undefined) draftPreview.over = !TOUCH_ONLY.matches && el.matches(':hover');
     el.__html = html;
     el.innerHTML = html;
     el.hidden = !d;
     el.classList.toggle('open', draftOpen.has(key));
-    if (!el.contains(document.activeElement)) draftPreview.focus = false;
     // The draft changed while shown in the box: show the new one.
     endDraftPreview();
   }
@@ -3122,57 +3144,40 @@ function renderDraftBar(key, force = false) {
   if (!el.__wired) wireDraftBar(el);
 }
 
-/** What the draft line answers: clicks, the pointer resting on it, focus moving through it. */
+/**
+ * What the draft line answers: clicks and Escape. Only a click opens all of the draft, the same
+ * with a mouse and on touch: shown while the pointer rested on the line, the draft changed the
+ * layout under the pointer, which then left the line and hid it again, over and over.
+ */
 function wireDraftBar(el) {
   el.__wired = true;
   wireSources(el);
-  const sync = () => syncDraftPreview(el.__key);
   el.addEventListener('click', (e) => {
     const key = el.__key;
     const b = e.target.closest('[data-draft]');
     if (!b || b.disabled) return;
     const act = b.dataset.draft;
-    if (act === 'more') {
+    if (act === 'view') {
       if (draftOpen.has(key)) draftOpen.delete(key); else draftOpen.add(key);
       renderDraftBar(key);
-      el.querySelector('.more')?.focus();
+      el.querySelector('.view')?.focus();
       return;
     }
-    Object.assign(draftPreview, { over: false, focus: false });
     endDraftPreview();
     if (act === 'edit') adoptDraft(key);
     else if (act === 'discard') discardDraft(key);
     else sendDraft(key, act === 'bot');
   });
-  el.addEventListener('pointerenter', (e) => {
-    if (e.pointerType === 'touch') return;
-    draftPreview.over = true;
-    sync();
-  });
-  el.addEventListener('pointerleave', () => {
-    draftPreview.over = false;
-    sync();
-  });
-  el.addEventListener('focusin', (e) => {
-    // Keyboard focus, not the focus a click leaves behind.
-    draftPreview.focus = e.target.matches(':focus-visible');
-    sync();
-  });
-  el.addEventListener('focusout', (e) => {
-    if (el.contains(e.relatedTarget)) return;
-    draftPreview.focus = false;
-    sync();
-  });
   el.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !(draftPreview.key || sourcePop.url)) return;
+    if (e.key !== 'Escape' || !(sourcePop.url || draftOpen.has(el.__key))) return;
     e.preventDefault();
-    Object.assign(draftPreview, { over: false, focus: false });
-    hideSource();
-    endDraftPreview();
-    $('reply')?.focus();
+    if (sourcePop.url) { hideSource(); return; }
+    draftOpen.delete(el.__key);
+    renderDraftBar(el.__key);
+    el.querySelector('.view')?.focus();
   });
-  // The pointer has to stay on the line for the box to show the draft, so the wheel reads it from
-  // there (an opened line scrolls its own text).
+  // While a source shows the draft in the box, the pointer is on the line: the wheel reads the
+  // box from there (an opened line scrolls its own text).
   el.addEventListener('wheel', (e) => {
     const box = $('reply');
     if (!draftPreview.key || !box || (el.classList.contains('open') && e.target.closest('.pv'))) return;

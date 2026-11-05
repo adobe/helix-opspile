@@ -745,7 +745,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
 
 /* The thread's shared draft, on its own line under the reply box: a dashed card that
-   shows who saved it and how it starts (all of it, opened), and sends it as it is. */
+   shows who saved it and how it starts (all of it, with View draft), and sends it as it is. */
 .composer { flex-wrap: wrap; }
 .draftbar { flex-basis: 100%; display: flex; align-items: center; min-width: 0;
  padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
@@ -753,23 +753,21 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar[hidden] { display: none; }
 .draftbar .pen { flex: none; }
 .draftbar .pv { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
-  font: inherit; color: inherit; border: 0; padding: var(--spectrum-spacing-50) 0; }
-
-.draftbar button.pv:hover .tx, .draftbar button.pv:focus-visible .tx { text-decoration: underline dotted; }
+  padding: var(--spectrum-spacing-50) 0; }
 .draftbar .pv .by { margin-right: .5em; }
 
-/* Opened: who and the actions on the first row, all of the draft under them. */
+/* Viewed: who and the actions on the first row, all of the draft under them. */
 .draftbar.open { flex-wrap: wrap; }
 .draftbar.open .pv { order: 1; flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
 .draftbar.open .pv .by { display: block; }
-.draftbar.open .more { margin-left: auto; }
+.draftbar.open .view { margin-left: auto; }
 .draftbar button { flex: none; }
 
 .draftbar .act { display: flex; flex-wrap: wrap; justify-content: flex-end; flex: none; }
 
 
 .draftbar button:disabled { opacity: .5; cursor: default; }
-/* The draft shown in the reply box while the pointer rests on (or focus is in) its line. */
+/* The draft shown in the reply box while one of its sources is shown beside it. */
 .composer textarea.previewing { border-style: dashed; border-color: var(--accent); color: var(--mute);
   background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
 /* Long drafts are read here, so the box may take most of the pane while it shows one. */
@@ -1765,11 +1763,10 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .draftbar .pv { border-radius: var(--spectrum-corner-radius-75); background: none; }
-.spectrum .draftbar .pv:hover { background: none; }
 .spectrum .draftbar .pv .by { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .draftbar .pv .tx { color: var(--spectrum-neutral-content-color-default); }
 .spectrum .draftbar .act { gap: var(--spectrum-spacing-75); }
-.spectrum .draftbar button:not(.pv) {
+.spectrum .draftbar button {
   min-height: var(--spectrum-component-height-75);
   padding: 0 var(--spectrum-component-pill-edge-to-text-75);
   border: var(--spectrum-border-width-200) solid transparent;
@@ -1777,7 +1774,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-bold-font-weight);
 }
-.spectrum .draftbar button.more { padding: 0 var(--spectrum-spacing-100); }
 .spectrum .draftbar button.asme { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
 .spectrum .draftbar button.asme:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
 .spectrum .draftbar button.asbot { color: var(--spectrum-accent-content-color-default); background: transparent; border-color: var(--spectrum-accent-visual-color); }
