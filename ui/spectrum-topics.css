@@ -50,9 +50,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 .panel .head > div { flex: 1; min-width: 0; }
 .panel .head .dot { flex: none; }
 .panel ul.rel, .panel ol.threads { list-style: none; margin: 0; padding: 0; }
-.panel button.pickr { display: grid; grid-template-columns: auto minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 8) auto; align-items: center; width: 100%; text-align: left; }
-.panel button.pickr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.panel button.pickr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.panel .pickr { display: grid; grid-template-columns: auto minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 8) auto; align-items: center; width: 100%; text-align: left; }
+.panel .pickr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel .pickr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .meter { display: block; overflow: hidden; }
 .meter .fill { display: block; height: 100%; }
 .meter .w1 { width: 10%; } .meter .w2 { width: 20%; } .meter .w3 { width: 30%; } .meter .w4 { width: 40%; }
@@ -209,7 +209,7 @@ tr.pick { cursor: pointer; }
 .spectrum .panel .hint.gap { margin: var(--spectrum-spacing-200) 0 0; color: var(--spectrum-orange-900); }
 .spectrum .panel .more { margin-top: var(--spectrum-spacing-75); }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
-.spectrum .panel button.pickr {
+.spectrum .panel .pickr {
   gap: var(--spectrum-spacing-100);
   min-height: var(--spectrum-component-height-100);
   padding: 0 var(--spectrum-spacing-100);
@@ -219,6 +219,7 @@ tr.pick { cursor: pointer; }
   font-weight: var(--spectrum-regular-font-weight);
 }
 .spectrum .panel button.pickr:hover:not(:disabled) { background: var(--spectrum-gray-100); }
+.spectrum .panel .pickr.feature { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-100); }
 .spectrum .meter { height: var(--spectrum-spacing-75); background: var(--spectrum-gray-200); border-radius: var(--spectrum-corner-radius-full); }
 .spectrum .meter .fill { background: var(--s2-type); border-radius: var(--spectrum-corner-radius-full); }
 /* The threads: Links, with where each is from under it. */

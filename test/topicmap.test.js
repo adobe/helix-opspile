@@ -151,7 +151,9 @@ describe('topic map: clustering', () => {
 describe('topic map: products and the tech stack', () => {
   const TECH = [
     { tech: 'akamai', name: 'Akamai', description: 'Akamai as CDN' },
-    { tech: 'consent', name: 'Consent manager', description: 'a consent manager such as OneTrust or Cookiebot' },
+    {
+      tech: 'consent', name: 'Consent manager', description: 'a consent manager such as OneTrust or Cookiebot', product: 'Consent',
+    },
     { tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics, Web SDK or Experience Platform data collection' },
     { tech: 'aso', name: 'Sites Optimizer', description: 'AEM Sites Optimizer' },
   ];
@@ -176,8 +178,8 @@ describe('topic map: products and the tech stack', () => {
       { thread: 'b', value: 'API' }, { thread: 'b', value: 'Slack' },
     ], TECH);
     assert.deepEqual(products, {
-      'tech:consent': { name: 'Consent manager', tech: 'consent' },
-      'new:tealium': { name: 'Tealium', tech: null },
+      'tech:consent': { name: 'Consent manager', tech: 'consent', product: 'Consent' },
+      'new:tealium': { name: 'Tealium', tech: null, product: null },
     });
     assert.deepEqual(of.get('a'), ['tech:consent', 'new:tealium']);
     assert.deepEqual(of.get('b'), ['new:tealium']);
@@ -187,22 +189,44 @@ describe('topic map: products and the tech stack', () => {
 describe('the tech stack after the product census (migration 0056)', () => {
   it('names what the threads were about, and keeps descriptions someone changed', async () => {
     const DB = d1();
-    const rows = DB.sqlite.prepare("SELECT tech, name, description, changed_by FROM tech_stack WHERE team = 'admin'").all();
+    const rows = DB.sqlite.prepare("SELECT tech, name, description, product, changed_by FROM tech_stack WHERE team = 'admin'").all();
     const index = techIndex(rows);
     for (const [name, tech] of [['Admin Console', 'adobeims'], ['Edge Functions', 'edgefunctions'],
-      ['Google Tag Manager', 'analytics'], ['Tealium', 'analytics'], ['Preflight', 'aso'],
-      ['Bazaarvoice', 'reviews'], ['Content Fragments', 'aemcontent'], ['Workfront', 'workfront'],
-      ['Dynamic Media', 'dm'], ['Claude', 'aiagents'], ['OpTel', 'rum']]) {
+      ['Google Tag Manager', 'tagmanager'], ['Tealium', 'tagmanager'], ['Adobe Analytics', 'analytics'],
+      ['Customer Journey Analytics', 'analytics'], ['Preflight', 'aso'], ['Bazaarvoice', 'reviews'],
+      ['Content Fragments', 'aemcontent'], ['Workfront', 'workfront'], ['Dynamic Media', 'dm'],
+      ['Claude', 'aiagents'], ['OpTel', 'rum'], ['CX Coworker', 'coworker'],
+      ['Brand Concierge', 'brandconcierge'], ['Journey Optimizer', 'ajo'], ['Salesforce', 'crm']]) {
       assert.equal(coveredBy(name, index), tech, name);
     }
-    assert.equal(rows.length, 50);
-    // A description changed on the Agents page before stays as it was.
-    const edited = d1();
-    edited.sqlite.exec("UPDATE tech_stack SET description = 'our own words' WHERE tech = 'rum'");
-    const sql = (await import('node:fs')).readFileSync(new URL('../migrations/0056_tech_census.sql', import.meta.url), 'utf8');
-    edited.sqlite.exec(sql);
-    const rum = edited.sqlite.prepare("SELECT description FROM tech_stack WHERE tech = 'rum'").get();
-    assert.equal(rum.description, 'our own words');
+    assert.equal(rows.length, 58);
+    // Every entry is part of a product: an Adobe product by the name on its list, or a category.
+    assert.deepEqual(rows.filter((r) => !r.product).map((r) => r.tech), []);
+    const of = Object.fromEntries(rows.map((r) => [r.tech, r.product]));
+    assert.deepEqual(
+      ['eds', 'da', 'ue', 'xw', 'aemcs', 'msm', 'edgefunctions'].map((t) => of[t]),
+      Array(7).fill('Experience Manager Sites'),
+    );
+    assert.deepEqual(
+      [of.dm, of.assets, of.coworker, of.brandconcierge, of.llmo, of.akamai],
+      ['Experience Manager Assets', 'Experience Manager Assets', 'CX Enterprise Coworker',
+        'Brand Concierge', 'Brand Visibility', 'CDN'],
+    );
+    assert.equal(rows.find((r) => r.tech === 'llmo').name, 'Brand Visibility');
+    // Run on a tech stack as migration 0043 left it, but for one description changed on the
+    // Agents page: that one stays, the others change.
+    const before = d1();
+    before.sqlite.exec(`UPDATE tech_stack SET description = 'our own words' WHERE tech = 'rum';
+      UPDATE tech_stack SET description = 'Adobe Analytics, Web SDK or Experience Platform data collection',
+        name = 'Analytics' WHERE tech = 'analytics';`);
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync(new URL('../migrations/0056_tech_census.sql', import.meta.url), 'utf8')
+      .replace(/^ALTER TABLE.*$/m, '');
+    before.sqlite.exec(sql);
+    const get = (tech) => before.sqlite.prepare('SELECT name, description FROM tech_stack WHERE tech = ?').get(tech);
+    assert.equal(get('rum').description, 'our own words');
+    assert.match(get('analytics').description, /Customer Journey Analytics/);
+    assert.equal(before.sqlite.prepare("SELECT COUNT(*) AS n FROM tech_stack WHERE team = 'admin'").get().n, 58);
   });
 });
 
@@ -240,8 +264,8 @@ describe('topic map: building', () => {
     assert.equal(map.tags.cdn, 'Caching and delivery');
     // The products: Akamai is the tech stack's (migration 0043), Jira a gap, CDN generic.
     assert.deepEqual(map.products, {
-      'tech:akamai': { name: 'Akamai', tech: 'akamai' },
-      'new:jira': { name: 'Jira', tech: null },
+      'tech:akamai': { name: 'Akamai', tech: 'akamai', product: 'CDN' },
+      'new:jira': { name: 'Jira', tech: null, product: null },
     });
     assert.deepEqual(one.products, ['tech:akamai']);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:jira']);

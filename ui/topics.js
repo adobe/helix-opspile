@@ -99,6 +99,16 @@ function toUrl({ push = true } = {}) {
 const map = () => state.latest?.map;
 /** The map's products (maps from before them have none). */
 const products = () => map().products || {};
+/** A thread's product id as the graph has it: the product its entry is part of, or itself. */
+const productOf = (id) => (products()[id]?.product ? `group:${products()[id].product}` : id);
+/** The products the entries are part of, as products() has entries: `group:<name>` → `{ name, group }`. */
+function productGroups() {
+  const out = {};
+  for (const p of Object.values(products())) {
+    if (p.product) out[`group:${p.product}`] = { name: p.product, group: true };
+  }
+  return out;
+}
 const isCustomer = (slug) => slug && !slug.startsWith('_') && map().orgs[slug]?.type !== 'internal';
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
@@ -133,9 +143,12 @@ function graphOf() {
     const on = [node('topic', t.topic, m.topics[t.topic]?.label || `Topic ${t.topic + 1}`)];
     for (const p of Object.keys(t.staff || {})) on.push(node('person', p, m.people[p] || `#${p}`));
     for (const g of t.tags || []) on.push(node('tag', g, m.tags[g] || g));
-    for (const p of t.products || []) {
-      const product = node('product', p, products()[p]?.name || p);
-      product.gap = !products()[p]?.tech;
+    // A tech stack entry as the product it is part of (Experience Manager Sites for Universal
+    // Editor, CDN for Akamai), its entries the product's features; a gap as itself.
+    for (const key of new Set((t.products || []).map(productOf))) {
+      const p = products()[key] || productGroups()[key];
+      const product = node('product', key, p?.name || key);
+      product.gap = !p?.tech && !p?.group;
       on.push(product);
     }
     if (isCustomer(t.org)) on.push(node('org', t.org, orgName(t.org)));
@@ -523,7 +536,7 @@ function related(threads, type) {
     if (type === 'topic') add(String(t.topic));
     if (type === 'person') Object.keys(t.staff || {}).forEach(add);
     if (type === 'tag') (t.tags || []).forEach(add);
-    if (type === 'product') (t.products || []).forEach(add);
+    if (type === 'product') new Set((t.products || []).map(productOf)).forEach(add);
     if (type === 'org' && isCustomer(t.org)) add(t.org);
   }
   const g = state.graph;
@@ -605,7 +618,25 @@ function gaps() {
       <span class="dot" data-type="product" data-gap></span><span class="nm">${esc(n.label)}</span>
       <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
       <span class="n" title="${customers(n)} customers">${n.threads.length}</span></button></li>`).join('')}</ul>` : ''}
-    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more, of one thread or one customer each (Find shows them)</div>` : ''}`;
+    ${list.length > shown.length ? `<div class="sub more">and ${list.length - shown.length} more (Find shows them)</div>` : ''}`;
+}
+
+/** A product's entries in the tech stack (its features) the threads named, by their threads. */
+function features(n) {
+  const counts = new Map();
+  for (const t of n.threads) {
+    for (const id of t.products || []) {
+      if (productOf(id) === n.key) counts.set(id, (counts.get(id) || 0) + 1);
+    }
+  }
+  const rows = [...counts].sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '';
+  const max = rows[0][1];
+  return `<section><h3>Features <span class="sub">${rows.length}</span></h3>
+    <ul class="rel">${rows.map(([id, c]) => `<li><div class="pickr feature" data-type="product"><span class="dot" data-type="product"></span>
+      <span class="nm">${esc(products()[id]?.name || id)}</span>
+      <span class="meter"><span class="fill" data-w="${Math.round((100 * c) / max)}"></span></span>
+      <span class="n">${c}</span></div></li>`).join('')}</ul></section>`;
 }
 
 function details(n) {
@@ -616,7 +647,8 @@ function details(n) {
     plural(n.threads.length, 'thread'),
     ...(topic ? [`cohesion ${topic.cohesion}`] : []),
     ...(org ? [org.type] : []),
-    ...(n.type === 'product' ? [n.gap ? 'not in the tech stack' : `tech stack: ${products()[n.key]?.name}`] : []),
+    ...(n.type === 'product' && n.gap ? ['not in the tech stack'] : []),
+    ...(n.type === 'product' && !n.gap && !n.key.startsWith('group:') ? [`tech stack: ${products()[n.key]?.name}`] : []),
     ...(n.type === 'tag' ? [] : [`${pct(tagged(n.threads), n.threads.length)} tagged by Clef`]),
   ];
   const others = TYPES.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
@@ -625,6 +657,7 @@ function details(n) {
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
+    ${n.type === 'product' && n.key.startsWith('group:') ? features(n) : ''}
     ${others.map((t) => relatedList(n, t)).join('')}
     ${threadList(n.threads)}`;
 }

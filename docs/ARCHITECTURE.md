@@ -749,13 +749,20 @@ and an unchanged thread is never labeled twice):
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
-  Migration 0056 added what the product census found the threads naming that no entry
-  covered: Adobe IMS and the Admin Console, AI assistants, Content Fragments and AEM's APIs, the
-  customer's own cloud services, AEM's AI features, Dynamic Media, Commerce Optimizer, Google's
-  site tools, MSM, ERP and PIM, Edge Functions, AEM 6.5, script security, CRM, Figma, Workfront,
-  embeds, reviews and the inbox itself; and the names people use to the descriptions of others,
-  where nobody had changed them since migration 0043. They are what Clef's topics about
-  commerce, assets, Sites Optimizer, integrations and the inbox would have been.
+  Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
+  it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
+  (Edge Delivery, Document Authoring, Universal Editor, Experience Workspace, AEM as a Cloud
+  Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
+  Assets; CX Enterprise Coworker, Brand Concierge, Brand Visibility, Journey Optimizer, … are
+  their own), or a category for other companies' (CDN, Code hosting, Consent, …). Clef is asked
+  about each entry; the product groups them, on the Agents page and the Topics page, where an
+  entry is a feature of its product. Migration 0056 added what the product census (Clairic over
+  all 822 channel threads with a person's message) found the threads naming that no entry
+  covered, and the Adobe products they named that had none; it also put the names people use
+  into the descriptions of others (Google Tag Manager and Tealium are their own entry now,
+  Adobe's analytics another), where nobody had changed them since migration 0043. They are what
+  Clef's topics about commerce, assets, Sites Optimizer, integrations and the inbox would have
+  been.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
@@ -800,8 +807,8 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   team's enabled entries): an entry covers it when its id or name is the product's, or is in it
   as words ("Akamai Property Manager" is Akamai's), or its description names it, cut at commas,
   "or", "such as" and brackets ("a consent manager such as OneTrust or Cookiebot"). A covered
-  product is named as its entry; one no entry covers is a **gap**, named as most threads write
-  it. "AEM" and "Adobe" in front do not count, and generic names (API, CDN, JSON, Slack, …) are
+  product is named as its entry, and drawn as the product the entry is part of (its features
+  listed when it is picked); one no entry covers is a **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, and generic names (API, CDN, JSON, Slack, …) are
   left out.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.

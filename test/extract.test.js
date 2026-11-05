@@ -114,7 +114,9 @@ describe('a team\'s rules and tech stack', () => {
     await saveTech(e, 'helix', {
       tech: 'gdrive', name: 'Google Drive', description: 'x', enabled: false,
     }, 'Bo');
-    await saveTech(e, 'helix', { tech: 'sitecore', name: 'Sitecore', description: 'Sitecore as the old CMS' }, 'Bo');
+    await saveTech(e, 'helix', {
+      tech: 'sitecore', name: 'Sitecore', description: 'Sitecore as the old CMS', product: '  Content sources ',
+    }, 'Bo');
     const helix = await techFor(e, 'helix');
     const edge = await techFor(e, 'edge');
     assert.equal(helix.find((t) => t.tech === 'akamai').description, 'Akamai, as CDN or for media');
@@ -122,6 +124,9 @@ describe('a team\'s rules and tech stack', () => {
     assert.ok(!helix.some((t) => t.tech === 'gdrive'));
     assert.ok(edge.some((t) => t.tech === 'gdrive'));
     assert.ok(helix.some((t) => t.tech === 'sitecore') && !edge.some((t) => t.tech === 'sitecore'));
+    assert.equal(helix.find((t) => t.tech === 'sitecore').product, 'Content sources');
+    // A team's change to one of the admin team's keeps the product it is part of.
+    assert.equal(helix.find((t) => t.tech === 'akamai').product, 'CDN');
     assert.equal((await techNames(e)).akamai, 'Akamai');
   });
 

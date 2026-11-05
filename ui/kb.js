@@ -875,7 +875,7 @@ function techRow(t, own) {
   const local = !own && !mine && mayRules() ? `<span class="acts"><button data-tlocal="${esc(t.tech)}">Change for ${esc(base().name)}</button><button data-toff="${esc(t.tech)}">Turn off here</button></span>` : '';
   return `<div class="ch rule${t.enabled ? '' : ' off'}${mine ? ' replaced' : ''}">
     <div class="who">
-      <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span></div>
+      <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span>${t.product ? `<span class="src" title="The product it is part of">${esc(t.product)}</span>` : ''}</div>
       <div class="sub">Does this thread show that the customer uses ${esc(t.description)}?</div>
       ${replaced}
       ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
@@ -909,6 +909,17 @@ function ruleForm(r = {}) {
   </form>`;
 }
 
+/** The products and categories the tech stacks name, for the form's suggestions. */
+function products() {
+  const x = state.extraction;
+  const all = [...(x?.tech || []), ...(x?.inherited?.tech || [])].map((t) => t.product).filter(Boolean);
+  return [...new Set(all)].sort((a, b) => a.localeCompare(b));
+}
+
+/** A tech stack by product (those of none last), then by name. */
+const byProduct = (list) => [...list].sort((a, b) => (a.product ? 0 : 1) - (b.product ? 0 : 1)
+  || String(a.product || '').localeCompare(String(b.product || '')) || a.name.localeCompare(b.name));
+
 function techForm(t = {}) {
   const editing = Boolean(t.tech && state.extraction.tech.some((y) => y.tech === t.tech));
   return `<form class="mcpform" id="techForm" autocomplete="off">
@@ -917,6 +928,9 @@ function techForm(t = {}) {
     <label for="tName">Name</label><input id="tName" placeholder="What ${esc(state.extraction.global ? 'the inbox' : `${base().name}'s inbox`)} shows, e.g. Akamai" value="${esc(t.name || '')}" required class="long">
     <label for="tDesc">Clef is asked</label><input id="tDesc" placeholder="Akamai as CDN" value="${esc(t.description || '')}" required>
     <span class="hint">"Does this thread show that the customer uses <i>…</i>?", about every thread of ${esc(state.extraction.global ? 'every channel' : `${base().name}'s channels`)}.</span>
+    <label for="tProduct">Part of</label><input id="tProduct" list="tProducts" placeholder="Experience Manager Sites, or a category such as CDN" value="${esc(t.product || '')}" class="long">
+    <datalist id="tProducts">${products().map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
+    <span class="hint">An Adobe product by its name on <a href="https://business.adobe.com/products.html" target="_blank" rel="noopener">Adobe's product list</a>, or a category for other companies' products. The Topics page groups by it.</span>
     <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>
   </form>`;
 }
@@ -941,8 +955,8 @@ function renderExtraction(note) {
       ${inherited ? `<details class="inherited"><summary>The admin team's rules, for every channel (${inherited.rules.length})</summary>${inherited.rules.map((r) => ruleRow(r, false)).join('')}</details>` : ''}
       ${mayRules() ? ruleForm(editing || {}) : ''}
       <h3 class="group">Tech stack</h3>
-      ${x.tech.map((t) => techRow(t, true)).join('') || `<div class="empty">${x.global ? 'No technologies.' : `No technologies of ${esc(b.name)}'s own yet.`}</div>`}
-      ${inherited ? `<details class="inherited"${state.editTech && !x.tech.some((t) => t.tech === state.editTech) ? ' open' : ''}><summary>The admin team's tech stack, for every channel (${inherited.tech.length})</summary>${inherited.tech.map((t) => techRow(t, false)).join('')}</details>` : ''}
+      ${byProduct(x.tech).map((t) => techRow(t, true)).join('') || `<div class="empty">${x.global ? 'No technologies.' : `No technologies of ${esc(b.name)}'s own yet.`}</div>`}
+      ${inherited ? `<details class="inherited"${state.editTech && !x.tech.some((t) => t.tech === state.editTech) ? ' open' : ''}><summary>The admin team's tech stack, for every channel (${inherited.tech.length})</summary>${byProduct(inherited.tech).map((t) => techRow(t, false)).join('')}</details>` : ''}
       ${mayRules() ? techForm(techEditing || {}) : ''}
     </div>`;
   bindExtraction();
@@ -1036,7 +1050,7 @@ function bindExtraction() {
   $('techForm').onsubmit = async (e) => {
     e.preventDefault();
     const r = await send('POST', '/tech', {
-      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), enabled: true,
+      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), product: $('tProduct').value.trim(), enabled: true,
     });
     if (r) { state.editTech = null; reload(`Saved ${r.tech.name}: Clef is asked about it from the next labeling of a thread.`); }
   };

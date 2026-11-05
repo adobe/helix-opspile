@@ -19,7 +19,8 @@ import { MIN_MESSAGES, productsOf } from '../src/topicmap.js';
  * would have written into `topic_maps` for a few hundred threads of the fake inbox's teams, with
  * what production shows: people who work on two or three topics each, customers with a topic of
  * their own, Clef's topics (the tags) on fewer than half the threads and on none of some topics
- * (the gaps the page is for), and one topic that is mostly one customer. Seeded, so every start
+ * (the gaps the page is for), products of the tech stack and some it does not name, and one
+ * topic that is mostly one customer. Seeded, so every start
  * shows the same map. Made-up names and titles only.
  */
 
@@ -97,44 +98,31 @@ const ORGS = [
   ['aperture', 'Aperture Science', 'customer'], ['vandelay', 'Vandelay Industries', 'partner'], ['gringotts', 'Gringotts', 'customer'],
   ['bluesun', 'Blue Sun', 'customer'], ['opspile', 'opspile', 'internal'],
 ];
-// The products the threads of a topic name (Clairic's `product` facts), and how often: some the
-// tech stack below has, some it does not (Edge Functions, the Sidekick, a tag manager, a reviews
-// service), so the preview shows gaps.
+// The products the threads of a topic name (Clairic's `product` facts), and how often: most of
+// them the tech stack's (migrations 0043 and 0056), some not (the Sidekick, the Config Service,
+// Jira, a crawler), so the preview shows gaps beside the products.
 const PRODUCTS = {
   0: { Akamai: 0.3, Fastly: 0.3, 'Edge Functions': 0.15 },
   1: { Akamai: 0.4, Cloudflare: 0.4, CloudFront: 0.2 },
   2: { Cloudflare: 0.3, "Let's Encrypt": 0.2 },
-  3: { GitHub: 0.6, 'Code Sync': 0.3 },
-  4: { Sidekick: 0.8, Okta: 0.3, IMS: 0.3 },
-  5: { 'Admin Console': 0.4, IMS: 0.3, 'Config Service': 0.3 },
+  3: { GitHub: 0.6, 'Code Sync': 0.3, Jira: 0.2 },
+  4: { Sidekick: 0.8, Okta: 0.3, 'Admin Console': 0.3 },
+  5: { 'Admin Console': 0.4, 'Config Service': 0.3 },
   6: { 'Universal Editor': 0.3 },
-  7: { 'Edge Functions': 0.3 },
+  7: { 'Edge Functions': 0.3, 'Document Authoring': 0.2 },
   8: { Lighthouse: 0.3, RUM: 0.3, 'Dynamic Media': 0.3 },
   9: { 'Google Merchant Center': 0.5, Bazaarvoice: 0.4 },
   10: { 'Adobe Commerce': 0.7 },
-  11: { 'Adobe Commerce': 0.5, 'Product Bus': 0.4 },
+  11: { 'Adobe Commerce': 0.5, 'Product Bus': 0.4, 'Commerce Optimizer': 0.3 },
   12: { 'Content Fragments': 0.6, 'Universal Editor': 0.3 },
   13: { 'Document Authoring': 0.4, SharePoint: 0.3 },
-  15: { 'Google Search Console': 0.3 },
+  15: { 'Google Search Console': 0.3, 'Screaming Frog': 0.3 },
   16: { 'AEM Assets': 0.6, 'Asset Picker': 0.4, 'Dynamic Media': 0.3 },
   19: {
-    'Google Tag Manager': 0.4, OneTrust: 0.3, 'Adobe Analytics': 0.3, Tealium: 0.2,
+    'Google Tag Manager': 0.4, OneTrust: 0.3, 'Adobe Analytics': 0.3, 'CX Coworker': 0.2,
   },
-  20: { 'Sites Optimizer': 0.8 },
+  20: { 'Sites Optimizer': 0.8, 'Brand Visibility': 0.3 },
 };
-// The tech stack the products are matched against (a part of migration 0043's).
-const TECH = [
-  ['akamai', 'Akamai', 'Akamai as CDN'], ['fastly', 'Fastly', 'Fastly as CDN'],
-  ['cloudflare', 'Cloudflare', 'Cloudflare as CDN'], ['cloudfront', 'CloudFront', 'Amazon CloudFront as CDN'],
-  ['github', 'GitHub', 'GitHub for code'], ['sso', 'Single sign-on', 'single sign-on through its own identity provider (Okta or Microsoft Entra ID)'],
-  ['ue', 'Universal Editor', 'Universal Editor'], ['da', 'Document Authoring', 'Document Authoring (da.live)'],
-  ['sharepoint', 'SharePoint', 'SharePoint or OneDrive as the content source'], ['rum', 'Operational telemetry', 'real-user monitoring or operational telemetry (RUM)'],
-  ['assets', 'Assets', 'AEM Assets or Dynamic Media'], ['feeds', 'Product feeds', 'product feeds to Google Merchant Center or other marketplaces'],
-  ['commerce', 'Commerce', 'Adobe Commerce (Magento) or Commerce drop-ins'], ['productbus', 'Product Bus', 'the Product Bus for its commerce data'],
-  ['consent', 'Consent manager', 'a consent manager such as OneTrust or Cookiebot'],
-  ['analytics', 'Analytics', 'Adobe Analytics, Web SDK or Experience Platform data collection'],
-  ['aso', 'Sites Optimizer', 'AEM Sites Optimizer'],
-].map(([tech, name, description]) => ({ tech, name, description }));
 
 // The storefront is one customer's.
 const OWN_TOPIC = { 11: 'wonka' };
@@ -142,7 +130,7 @@ const TEAMS = ['edge', 'platform'];
 const SUFFIXES = ['', ' again', ' on the staging site', ' for the new brand', ' after the update', ' in one region'];
 
 /** The map, as src/topicmap.js builds it (`buildTopicMap`'s `map`). */
-export function topicMapFixture(now = Date.now()) {
+export function topicMapFixture(now = Date.now(), tech = []) {
   const rnd = random(4242);
   const pick = (list) => list[Math.floor(rnd() * list.length)];
   const people = Object.fromEntries(PEOPLE.map(([name], i) => [100 + i, name]));
@@ -203,7 +191,7 @@ export function topicMapFixture(now = Date.now()) {
   });
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
-  const products = productsOf(facts, TECH);
+  const products = productsOf(facts, tech);
   return {
     version: 1,
     built_at: new Date(now - 2 * 86400000).toISOString(),
@@ -223,9 +211,11 @@ export function topicMapFixture(now = Date.now()) {
   };
 }
 
-/** The made-up map in `topic_maps`, as the cron would have kept it. */
+/** The made-up map in `topic_maps`, as the cron would have kept it, of the tech stack in `DB`. */
 export function seedTopicMap(DB, now = Date.now()) {
-  const map = topicMapFixture(now);
+  const tech = DB.sqlite.prepare(`SELECT tech, name, description, product FROM tech_stack
+    WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
+  const map = topicMapFixture(now, tech);
   DB.sqlite.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
     VALUES (?, ?, ?, ?, ?)`).run(map.built_at, map.built_by, map.threads.length, map.topics.length, JSON.stringify(map));
 }

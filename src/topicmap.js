@@ -214,8 +214,8 @@ async function threadsOf(env) {
   const { results: products } = await env.DB.prepare(`SELECT f.thread, f.value FROM facts f
     JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
     WHERE ${WHERE} AND f.source = 'clairic' AND f.field = 'product'`).bind(MIN_MESSAGES).all();
-  const { results: tech } = await env.DB.prepare(`SELECT tech, name, description FROM tech_stack
-    WHERE enabled = 1`).all();
+  const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product
+    FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
   return {
     threads: threads || [],
     posts: posts || [],
@@ -290,11 +290,18 @@ export function coveredBy(name, index) {
 
 /**
  * The products of the threads (Clairic's `product` facts), each as the tech stack entry that
- * covers it (`tech:<id>`, named as the entry) or, when none does, as itself (`new:<key>`, named
- * as most threads write it): `{ of: thread → ids, products: id → { name, tech } }`.
+ * covers it (`tech:<id>`, named as the entry, with the product it is part of: `product`, the
+ * admin team's when teams differ) or, when none does, as itself (`new:<key>`, named as most
+ * threads write it, no `tech`): `{ of: thread → ids, products: id → { name, tech, product } }`.
  */
 export function productsOf(facts, techRows) {
   const index = techIndex(techRows);
+  const partOf = new Map();
+  for (const r of techRows) {
+    if (r.product && !partOf.has(r.tech)) {
+      partOf.set(r.tech, r.product);
+    }
+  }
   const of = new Map();
   const forms = new Map();
   const products = {};
@@ -304,7 +311,9 @@ export function productsOf(facts, techRows) {
       const tech = coveredBy(f.value, index);
       const id = tech ? `tech:${tech}` : `new:${key}`;
       if (tech) {
-        products[id] = { name: index.find((t) => t.tech === tech).name, tech };
+        products[id] = {
+          name: index.find((t) => t.tech === tech).name, tech, product: partOf.get(tech) || null,
+        };
       } else {
         const counts = forms.get(id) || new Map();
         counts.set(f.value, (counts.get(f.value) || 0) + 1);
@@ -314,7 +323,9 @@ export function productsOf(facts, techRows) {
     }
   }
   for (const [id, counts] of forms) {
-    products[id] = { name: [...counts].sort((a, b) => b[1] - a[1])[0][0], tech: null };
+    products[id] = {
+      name: [...counts].sort((a, b) => b[1] - a[1])[0][0], tech: null, product: null,
+    };
   }
   return { of, products };
 }
@@ -382,9 +393,9 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
  * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
- *   topic ids → the names the inbox shows), `products` (id → `{ name, tech }`: the products
- *   Clairic found in the threads, `tech` the tech stack entry that covers one, null for a gap;
- *   a thread's `products` are their ids).
+ *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
+ *   products Clairic found in the threads, `tech` the tech stack entry that covers one (null for
+ *   a gap), `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
