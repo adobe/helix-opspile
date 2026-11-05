@@ -105,8 +105,11 @@ lasts a day, so after that Retry turns into Send again.
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
 `{ text, from, base }`). Only a box that holds the draft unchanged follows it.
 
-**Draft preview.** off → showing → off (`draftPreview`, `ui/inbox.js`). `syncDraftPreview` is the one
-place that decides, from the pointer and the focus, and the box is always given back as it was.
+**Draft preview.** off → showing → off (`draftPreview`, `ui/inbox.js`): the draft in the reply box
+while one of its sources is shown. `syncDraftPreview` is the one place that decides, from the source
+on screen, and the box is always given back as it was. Reading the draft itself is **View draft**, a
+click that opens its line (`draftOpen`); nothing about the draft follows the pointer, which a layout
+that moves under it turns into a loop.
 
 **New-thread composer.** editing → posting → awaiting → opened, or still awaited after five minutes
 (`state.compose`, `state.awaiting`, `started`). From posting on, the pane shows the thread as it will
