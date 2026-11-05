@@ -544,6 +544,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   `#name`, linked to the inbox that has the channel (the view on screen if it does, else your
   team's, else Personal) with the channel's customer picked, or to the channel on Slack or
   Discord when it is in none of yours. Inbox titles and last texts get the names of the ids.
+  **Links to a channel** (not to a message in it) are resolved the same way, on every
+  platform (`src/channelurl.js`, the `channel_links` of `/api/thread`): a Teams channel's link
+  in a Slack message, or a Slack channel's in a Teams post, opens the channel's threads in the
+  inbox, and a bare link shows `#name`. A link to a channel that is in none of your inboxes
+  stays a link to its platform.
 - **The list stays put** while it is the same list (the same view, filters and unread only):
   reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
   read or not (unread only is "unread when the list was opened"); the rows in view, and those

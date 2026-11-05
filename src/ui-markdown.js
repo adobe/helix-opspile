@@ -40,11 +40,12 @@ import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-ta
 
 import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
 import { slackMessageKey } from './slackurl.js';
+import { channelUrlKey } from './channelurl.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
 export { suggestMentions } from './mention-match.js';
-export { slackMessageKey };
+export { slackMessageKey, channelUrlKey };
 
 /** Stands in for a line ending until it is known to be inside a paragraph. */
 const BREAK = '\uE000';
@@ -273,6 +274,31 @@ const cards = (html, slack, quoted) => html.replace(QUOTE_CARD, (_, href, at, na
     : quoteTimeLink(at, href, { title: 'Open the quoted message' });
   return `<blockquote class="quote"><p class="quote-by">${who}${when}</p>`;
 });
+
+/** A link as micromark writes one: its href, a title perhaps, its text. */
+const LINK = /<a href="([^"]*)"((?: title="[^"]*")?)>([\s\S]*?)<\/a>/g;
+/**
+ * Links to a channel (src/channelurl.js) that `channelUrl` knows: to where the inbox has it
+ * (`inbox`: in this tab), else to the channel on its platform as linked. A link that shows its
+ * address shows `#name` instead; one with words of its own keeps them.
+ */
+function channelUrls(html, channelUrl) {
+  if (!channelUrl) {
+    return html;
+  }
+  return html.replace(LINK, (m, href, title, inner) => {
+    const c = channelUrl(decode(href));
+    if (!c) {
+      return m;
+    }
+    const text = decode(inner.replace(/<[^>]*>/g, '')).trim();
+    const label = c.name && (!text || /^https?:\/\//i.test(text)) ? `#${encode(c.name)}` : inner;
+    const to = c.inbox && c.href ? encode(c.href) : href;
+    const hint = c.title ? ` title="${encode(c.title)}"` : title;
+    return `<a class="channel" href="${to}"${c.inbox && c.href ? ' data-inbox' : ''}${hint}>`
+      + `${label}</a>`;
+  });
+}
 
 /**
  * The opening `<a>` tag when a paragraph is that one link and nothing else. Words beside
@@ -508,6 +534,9 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
  * @param {(token: string) => ({ name: string, href: string, title?: string,
  *   inbox?: boolean })|undefined} [options.channel] the channel a `#name` or `#C…` names: a
  *   link to it, as `#name` (`inbox`: the link is to the inbox, and opens in this tab)
+ * @param {(url: string) => ({ name?: string, href?: string, title?: string,
+ *   inbox?: boolean })|undefined} [options.channelUrl] the channel a link is to, on any
+ *   platform (src/channelurl.js): as `channel`, and without `inbox` the link keeps its address
  * @param {(href: string, what: 'stream'|'poster') => string|undefined} [options.fileUrl]
  *   where the page loads an attached video or audio file (`stream`) and a video's still
  *   (`poster`) from: with it, they play in their cards
@@ -522,6 +551,7 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
   channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
+  channelUrl = null,
 } = {}) {
   const mark = (_, before, at) => {
     const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
@@ -536,7 +566,8 @@ export function render(src, {
     : String(src || '').replaceAll(BREAK, '');
   const quoted = new Set();
   const lookup = typeof slack === 'function' ? slack : null;
-  const html = highlighted(cards(toHtml(body, '<br />\n'), lookup, quoted), highlight);
+  const marked = highlighted(cards(toHtml(body, '<br />\n'), lookup, quoted), highlight);
+  const html = channelUrls(marked, channelUrl);
   const channelLink = (m, before, token) => {
     const c = channel(token);
     if (!c || !c.href) {
@@ -559,8 +590,8 @@ export function render(src, {
         link -= 1;
       } else if (part.startsWith('<a ')) {
         link += 1;
-        // A thread in this inbox opens here. A Slack permalink's chooser is added later.
-        if (/\sdata-(?:inbox|thread)=/.test(part)) {
+        // A thread or channel in this inbox opens here. A Slack permalink's chooser comes later.
+        if (/\sdata-(?:inbox\b|thread=)/.test(part)) {
           return part;
         }
         return part.replace('<a ', '<a target="_blank" rel="noopener" ');

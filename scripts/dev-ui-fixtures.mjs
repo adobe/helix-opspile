@@ -829,6 +829,13 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     messages: [['bot', 18 * 60, 'New channel created: #C0UMBRELLA, ask in #edge-questions']],
   });
 
+  // Links to a Teams channel in a Slack message, one bare and one with words of its own: the
+  // bare one shows the channel's name, and both open its threads in the inbox.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [['priya', 17 * 60, 'Purges are tracked in https://teams.microsoft.com/l/channel/CH-CDN/CDN%20tickets?groupId=TEAM-EDGE&tenantId=T-FAKE, the release dates in [the release channel](https://teams.microsoft.com/l/channel/CH-RELEASE/Release%20train?groupId=TEAM-PLATFORM&tenantId=T-FAKE).']],
+  });
+
   // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a
   // `_toneN`): shown as emoji all the same (src/emojinames.js).
   seed({
@@ -925,6 +932,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['lena', 1500, 'Release 42 cut is scheduled for Thursday.', { subject: 'Release 42 cut' }],
       ['tom', 1490, 'Freeze starts Wednesday 18:00. Anything else to land?'],
       ['lena', 95, 'Only the cache header fix. PR is up.'],
+      // A Slack channel's link in a Teams post: it opens the channel's threads in the inbox.
+      ['tom', 90, 'Globex asked about it too: https://acme.slack.com/archives/C0GLOBEX01'],
     ],
     label: {
       kind: 'request', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,

@@ -456,6 +456,22 @@ function setChannelRefs(list) {
   channelSet = channelSets.get(source);
 }
 const channelOf = (token) => channelRefs.get(token) || channelRefs.get(token.toLowerCase());
+// Channels that links in the open thread's messages are to, on any platform (a Teams channel's
+// in a Slack message; src/channelurl.js): as above, keyed by `source:id`. One in none of the
+// viewer's inboxes keeps its link to the platform.
+let channelUrls = new Map();
+function setChannelLinks(list) {
+  channelUrls = new Map();
+  for (const c of list || []) {
+    // Not in the viewer's inbox: the link keeps its own address, whatever `url` says.
+    const link = channelLink({ ...c, url: c.url || '#' });
+    channelUrls.set(`${c.source}:${c.id}`, link.inbox ? link : { ...link, href: undefined });
+  }
+  const source = `${JSON.stringify([...channelRefs])}\u0000${JSON.stringify([...channelUrls])}`;
+  if (!channelSets.has(source)) channelSets.set(source, String(channelSets.size));
+  channelSet = channelSets.get(source);
+}
+const channelUrlOf = (href) => channelUrls.get(Markdown.channelUrlKey(href));
 // Slack message permalinks the open thread names (src/slacklinks.js): a card, and a way to
 // open the thread here. Keyed by `channel:id`, so the workspace host does not matter.
 let slackLinks = new Map();
@@ -556,7 +572,7 @@ function md(src, thread = '') {
     // A message's video and audio files play in the page, through the Worker (src/fileview.js).
     const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, fileUrl, slack: slackOf, highlight: highlightCode,
+      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, channelUrl: channelUrlOf, fileUrl, slack: slackOf, highlight: highlightCode,
     }).replace(/data-quote-author="([^"]*)"/g, (_, name) => {
       const key = profileKey(null, { name: attrText(name), platform: 'slack' });
       return `data-p="${esc(key)}"`;
@@ -2672,6 +2688,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   for (const p of mention.picked.get(key)?.values() || []) known(p.name, pickedKind(p));
   for (const p of sending) for (const [name, kind] of Object.entries(p.kinds || {})) known(name, kind);
   setChannelRefs(data.channels);
+  setChannelLinks(data.channel_links);
   setSlackLinks(data.links);
   setMentionNames([
     ...shown.map((m) => m.author?.name),

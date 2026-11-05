@@ -12,7 +12,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { channelRefs, channelTokens, nameChannelIds } from '../src/channelrefs.js';
+import {
+  channelLinks, channelRefs, channelTokens, nameChannelIds,
+} from '../src/channelrefs.js';
 import { d1 } from './d1.js';
 
 // Made-up teams, customers, channels and ids only.
@@ -105,6 +107,38 @@ describe('channel references', () => {
     assert.equal(await nameChannelIds({ DB: null }, none), none);
   });
 
+  it('resolves links to channels on every platform, in the workspace the link names', async () => {
+    const DB = fresh();
+    DB.sqlite.exec(`INSERT INTO channels (source, tenant, channel_id, name, group_id, fetched_at,
+        domain) VALUES
+      ('teams', 'TN1', '19:cdn@thread.tacv2', 'CDN tickets', 'G1', '2026-10-01', NULL),
+      ('slack', 'E2', 'C0AAAAAAAA1', 'acme-ops-e2', NULL, '2026-10-01', 'other-ws')`);
+    DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, any_at, updated_at)
+      VALUES ('teams:TN1:G1:19:cdn@thread.tacv2:1', 'teams', 'TN1', '19:cdn@thread.tacv2', '1',
+        'acme', 'ops', 'p', '2026-10-02', '2026-10-02')`).run();
+    const teams = 'https://teams.microsoft.com/l/channel/19%3Acdn%40thread.tacv2/CDN%20tickets'
+      + '?groupId=G1&tenantId=TN1';
+    // In a Slack message: the Teams channel, and a Slack channel of the open thread's workspace.
+    const fromSlack = await channelLinks({ DB }, { source: 'slack', tenant: 'E1' }, [
+      `see [CDN](${teams}) and https://slack.com/archives/C0AAAAAAAA1, not https://slack.com/archives/C0ZZZZZZZZ9`,
+    ], me);
+    assert.deepEqual(fromSlack.map((r) => [r.source, r.id, r.name, r.org, r.teams]), [
+      ['teams', '19:cdn@thread.tacv2', 'CDN tickets', 'acme', ['ops']],
+      ['slack', 'C0AAAAAAAA1', 'acme-ops', 'acme', ['ops']],
+    ]);
+    assert.equal(fromSlack[0].url, 'https://teams.microsoft.com/l/channel/19%3Acdn%40thread.tacv2/CDN%20tickets?groupId=G1&tenantId=TN1');
+    // In a Teams post: a Slack channel, by the workspace its host names.
+    const [byHost] = await channelLinks({ DB }, { source: 'teams', tenant: 'TN1' }, [
+      'https://other-ws.slack.com/archives/C0AAAAAAAA1',
+    ], me);
+    assert.equal(byHost.name, 'acme-ops-e2');
+    // A Teams link to another tenant's channel by that id is not this one.
+    assert.deepEqual(await channelLinks({ DB }, { source: 'slack', tenant: 'E1' }, [
+      teams.replace('TN1', 'TN9'),
+    ], me), []);
+  });
+
   it('asks nothing for texts that name no channel, or on Teams', async () => {
     const DB = {
       prepare() {
@@ -113,5 +147,6 @@ describe('channel references', () => {
     };
     assert.deepEqual(await channelRefs({ DB }, { source: 'slack', tenant: 'E1' }, ['no refs'], me), []);
     assert.deepEqual(await channelRefs({ DB }, { source: 'teams', tenant: 'T1' }, ['#general'], me), []);
+    assert.deepEqual(await channelLinks({ DB }, { source: 'slack', tenant: 'E1' }, ['https://x.example/'], me), []);
   });
 });

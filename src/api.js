@@ -41,7 +41,7 @@ import { folderFiles } from './filecache.js';
 import { filePoster, streamFile, threadFile } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
-import { channelRefs, nameChannelIds } from './channelrefs.js';
+import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
 import {
@@ -857,7 +857,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
   // authors those links add; the mention and channel lookups run alongside the link lookup.
   const linksP = slackMessageLinks(env, me, bodies, row.tenant);
-  const [cards, mentioned, channels, links] = await Promise.all([
+  const [cards, mentioned, channels, links, channelLinked] = await Promise.all([
     linksP.then((linked) => profiles(env, [
       ...messages.map((m) => m.authorKey),
       ...linked.map((l) => l.authorKey),
@@ -870,6 +870,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     channelRefs(env, row, [...bodies, row.title, anchorLabel && anchorLabel.title,
       label && label.title], me),
     linksP,
+    // Links to channels, on any platform (a Teams channel's in a Slack message).
+    channelLinks(env, row, bodies, me),
   ]);
   return {
     thread: {
@@ -900,6 +902,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     profiles: cards,
     mentioned,
     channels,
+    channel_links: channelLinked,
     links,
     watermarks: marks || [],
     label,

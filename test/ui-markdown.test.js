@@ -18,7 +18,7 @@ import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import {
-  fileKind, mentionPattern, render, splitAttachments,
+  channelUrlKey, fileKind, mentionPattern, render, splitAttachments,
 } from '../src/ui-markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
@@ -167,6 +167,23 @@ describe('ui markdown', () => {
       + '<code>#C0AAAAAAAA1</code> or <a target="_blank" rel="noopener" href="https://x.example">#beta-help</a></p>');
     // Without channels, the text stays as it was.
     assert.equal(md('see #C0AAAAAAAA1'), '<p>see #C0AAAAAAAA1</p>');
+  });
+
+  it('links channel links, on any platform, to where the inbox has the channel', () => {
+    const teams = 'https://teams.microsoft.com/l/channel/19%3Acdn%40thread.tacv2/CDN?groupId=G1&tenantId=TN1';
+    const known = {
+      'teams:19:cdn@thread.tacv2': {
+        name: 'CDN tickets', href: '/inbox?team=ops&filters=1', inbox: true, title: '#CDN tickets: Ops',
+      },
+      'slack:C0BBBBBBBB2': { name: 'beta-help', title: '#beta-help is not in your inbox: open it in Slack' },
+    };
+    const html = render(`${teams} or [the CDN channel](${teams}), https://acme.slack.com/archives/C0BBBBBBBB2 and https://acme.slack.com/archives/C0ZZZZZZZZ9`, {
+      channelUrl: (href) => known[channelUrlKey(href)],
+    }).replace(/\n/g, '');
+    assert.equal(html, '<p><a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">#CDN tickets</a> '
+      + 'or <a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">the CDN channel</a>, '
+      + '<a target="_blank" rel="noopener" class="channel" href="https://acme.slack.com/archives/C0BBBBBBBB2" title="#beta-help is not in your inbox: open it in Slack">#beta-help</a> '
+      + 'and <a target="_blank" rel="noopener" href="https://acme.slack.com/archives/C0ZZZZZZZZ9">https://acme.slack.com/archives/C0ZZZZZZZZ9</a></p>');
   });
 
   it('links bare and bracketed URLs, and strikes through only with two tildes', () => {

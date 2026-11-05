@@ -64,6 +64,7 @@ import {
 } from '../src/attach.js';
 import { parse } from '../src/channels.js';
 import { channelTokens, SLACK_CHANNEL_ID } from '../src/channelrefs.js';
+import { channelUrlRefs } from '../src/channelurl.js';
 import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
 import { SOUNDS } from '../src/sound.js';
@@ -681,6 +682,23 @@ function channelRefs(source, texts) {
     }));
 }
 
+/** As src/channelrefs.js channelLinks: the channels links in the texts are to, any platform. */
+function channelLinksFor(texts) {
+  const channels = new Map([...store.threads.values()].map((e) => [`${e.ch.source}:${e.ch.channelId}`, e.ch]));
+  const mine = myChannels();
+  const teams = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+  return channelUrlRefs(texts).map((r) => channels.get(`${r.source}:${r.channel}`)).filter(Boolean)
+    .map((ch) => ({
+      id: ch.channelId,
+      source: ch.source,
+      name: ch.name,
+      org: ch.org,
+      teams: teams.includes(ch.team) ? [ch.team] : [],
+      personal: mine.has(`${ch.source}:${ch.channelId}`),
+      url: null,
+    }));
+}
+
 const AGENT_NOTE = 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
   + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
   + '- Filed *cdn-503-after-config-change* in the ACME knowledge base';
@@ -799,6 +817,7 @@ function thread(asked) {
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
+    channel_links: channelLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body)),
     links,
     watermarks,
     label: store.labels.get(key) || null,
