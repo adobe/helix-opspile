@@ -838,10 +838,22 @@ const FACETS = [
 // kept for the other.
 const PERSONAL_FACETS = FACETS.filter((f) => f.id === 'customer' || f.id === 'platform');
 const personal = () => state.sort === 'personal';
+/*
+ * The personal view is simple unless you turn the expert view on (the user menu, the `expert`
+ * setting): the expert view is the personal view as it was, with every card and each thread's
+ * status, people and reactions. The simple one filters by customer only (SIMPLE_FACETS), and
+ * `main.simple` is set while it is on screen (see syncRail).
+ */
+const expertOn = () => state.settings?.expert === true;
+const simple = () => personal() && !expertOn();
+const SIMPLE_FACETS = FACETS.filter((f) => f.id === 'customer');
 /** Which inbox is on screen (or `data` is of): a team's slug, or `~personal`. */
 const scopeKey = () => (personal() ? '~personal' : state.team);
 const scopeOf = (data) => (data.personal ? '~personal' : data.team);
-const viewFacets = () => (personal() ? PERSONAL_FACETS : FACETS);
+const viewFacets = () => {
+  if (!personal()) return FACETS;
+  return simple() ? SIMPLE_FACETS : PERSONAL_FACETS;
+};
 const single = (id) => personal() && id === 'customer';
 /** Into the personal view: one customer stays picked, the open thread's if it is one of them. */
 function onePick() {
@@ -975,9 +987,73 @@ const mentionBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
+/*
+ * The simple personal view: a column of customers beside the list, and the list by customer
+ * until one is picked. Its one mark is red: the badge counts the messages that mention you
+ * and that you have not read, beside a customer, and the threads it counts are marked in the
+ * same red. Unread is bold. GROUPS says how the list by customer goes:
+ * - `fold`: what a customer shows of its threads: 'three' (its unread ones, and its latest up
+ *   to three), 'all', or 'new' (its unread ones; customers with none are named at the end);
+ * - `mark`: a thread that mentions you has a red 'dot' before its title, or the red 'badge';
+ * - `headBadge`: whether a customer's heading carries the badge too;
+ * - `sticky`: whether the heading stays at the top while its threads scroll under it.
+ */
+const GROUPS = {
+  fold: 'all', mark: 'badge', headBadge: false, sticky: true,
+};
+const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** A thread's unread mentions of you, as the badge counts them. */
+const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
+ * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
+ */
+function logo(org, ts) {
+  const t = ts.find((x) => x.org === org && orgIcon(x));
+  const img = t ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : '';
+  return `<span class="logo">${tile(customerName(org))}${img}</span>`;
+}
+/** A logo that does not load leaves its initial. */
+function wireLogos() {
+  addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
+}
+/**
+ * The simple personal view's only card: its customers, latest activity first, by logo and
+ * name, bold while they have unread threads, with the red badge. "All customers" first,
+ * picked while no customer is.
+ */
+function simpleCustomers() {
+  const all = listed().filter((t) => passes(t, 'customer'));
+  const by = new Map();
+  for (const t of all) {
+    const c = by.get(t.org) || { at: '', unread: false, you: 0 };
+    if (activityOf(t) > c.at) c.at = activityOf(t);
+    c.unread ||= Boolean(t.unread);
+    c.you += youCount(t);
+    by.set(t.org, c);
+  }
+  const on = state.sel.customer || new Set();
+  for (const v of on) if (!by.has(v)) by.set(v, { at: '', unread: false, you: 0 });
+  const rows = [...by].sort((a, b) => b[1].at.localeCompare(a[1].at)).map(([v, c]) => {
+    const name = customerName(v);
+    return `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(name)}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
+  }).join('');
+  const you = [...by.values()].reduce((n, c) => n + c.you, 0);
+  return `<div class="card simple" data-f="customer"><h3>Customers</h3>
+    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
+}
+
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
   syncList();
+  if (simple()) {
+    const html = simpleCustomers();
+    const box = $('filters');
+    if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
+    return;
+  }
+  $('filters').__html = undefined;
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
@@ -1056,6 +1132,7 @@ const oneCustomer = () => state.sel.customer?.size === 1;
  * room before the reactions, the latest reply, as Messages does.
  */
 function row(t, hit = null) {
+  if (simple()) return simpleRow(t, hit);
   const status = statusOf(t);
   const faces = (t.participants || []).map((p) => avatar(p.name || '?', p.avatar, '', {
     key: profileKey(p.key, { ...p, platform: t.source }), tab: true,
@@ -1082,6 +1159,79 @@ function row(t, hit = null) {
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
+}
+
+/**
+ * The list by customer: the simple personal view, but for a search. With a customer picked
+ * it is that customer's heading over all of its threads, and the heading leads back.
+ */
+const grouped = () => simple() && !searching();
+/**
+ * A thread's row in the simple personal view: its title (bold while unread) and how long ago,
+ * then Draft and the latest reply, and the red mark (GROUPS.mark) when it mentions you. The
+ * customer is its heading, or picked; only a search result names it. No status, people,
+ * counts or reactions: the expert view has them.
+ */
+function simpleRow(t, hit = null) {
+  const n = youCount(t);
+  const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
+  const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
+  const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
+  const draft = t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">Draft</span>` : '';
+  const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you"` : ''}></span>` : '';
+  return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
+    <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
+      <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
+    <div class="l2">${cust}${draft}${said}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+}
+/**
+ * The list by customer (`shown` in the view's order, latest activity first): each customer
+ * where its latest thread is, its heading, the threads it shows (GROUPS.fold), and how many
+ * more it has. A thread shown once stays while the list lasts, read or not, as the list keeps
+ * its rows. With fold 'new', the customers with nothing new are named at the end instead.
+ */
+function groupPlan(shown) {
+  const L = state.list;
+  L.grouped ||= new Set();
+  const by = new Map();
+  for (const t of shown) {
+    if (!by.has(t.org)) by.set(t.org, []);
+    by.get(t.org).push(t);
+  }
+  const plan = [];
+  const quiet = [];
+  for (const [org, ts] of by) {
+    const stays = (t) => t.unread || L.grouped.has(t.thread) || t.thread === state.open;
+    let rows = ts;
+    if (GROUPS.fold !== 'all' && !oneCustomer()) {
+      const kept = new Set(ts.filter(stays));
+      if (GROUPS.fold === 'three') for (const t of ts) if (kept.size < 3) kept.add(t);
+      rows = ts.filter((t) => kept.has(t));
+    }
+    if (!rows.length) { quiet.push(org); continue; }
+    for (const t of rows) L.grouped.add(t.thread);
+    plan.push({
+      head: org, you: ts.reduce((n, t) => n + youCount(t), 0), unread: ts.some((t) => t.unread), picked: oneCustomer(),
+    });
+    for (const t of rows) plan.push({ t });
+    if (ts.length > rows.length) plan.push({ more: org, n: ts.length - rows.length });
+  }
+  if (quiet.length) plan.push({ quiet, alone: !plan.length });
+  return plan;
+}
+/** A customer's heading, its "N more", and the customers with nothing new. */
+function groupHtml(x) {
+  if (x.quiet) {
+    const names = x.quiet.map((v) => `<button type="button" class="linkish" data-group="${esc(v)}">${esc(customerName(v))}</button>`);
+    const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+    return `<div class="grp-quiet">${x.alone ? 'Nothing new. ' : ''}Nothing new from ${list}.</div>`;
+  }
+  if (x.more) {
+    return `<button type="button" class="grp-more" data-group="${esc(x.more)}">${x.n} more from ${esc(customerName(x.more))}</button>`;
+  }
+  const name = customerName(x.head);
+  const back = x.picked ? '<span class="back">All customers</span>' : '';
+  return `<button type="button" class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}${back}</button>`;
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -1191,7 +1341,7 @@ function searchRows(box) {
   const all = data?.hits || [];
   const hits = all.filter((h) => { const t = searchEntry(h.thread); return t && passes(t); });
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (state.unread ? 1 : 0);
-  const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const filt = filtButton(on);
   let said = 'Searching…';
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
@@ -1328,6 +1478,16 @@ const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke=
 
 function renderThreads() { inPass(threadRows); }
 
+/**
+ * The Filters button of narrower screens, with how many filters are set. In the simple
+ * personal view it opens the customers, and carries the red badge of them all.
+ */
+function filtButton(on) {
+  if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${youBadge(you)}</button>`;
+}
+
 /*
  * The thread list stays put while it is the same list: the same view, filters and unread only
  * (`listKey`). Reading a thread changes its score, its status and whether it is unread; none of
@@ -1428,6 +1588,9 @@ const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="c
 function listHead(box) {
   if (box.querySelector('.rows')) return;
   box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
+  // How tall the heading is, for what sticks under it (the customers' headings, GROUPS.sticky).
+  const head = box.querySelector('.count');
+  new ResizeObserver(() => box.style.setProperty('--list-head', `${head.offsetHeight}px`)).observe(head);
   const input = $('q');
   input.value = state.search.q;
   input.addEventListener('input', () => searchSoon(input.value));
@@ -1494,12 +1657,14 @@ function threadRows() {
   listHead(box);
   syncList();
   if (searching()) { searchRows(box); return; }
-  const shown = placeRows(viewSort(state.data.threads.filter(onList)));
+  const listedRows = placeRows(viewSort(state.data.threads.filter(onList)));
+  const plan = grouped() ? groupPlan(listedRows) : null;
+  const shown = plan ? plan.filter((x) => x.t).map((x) => x.t) : listedRows;
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
   const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
-  const filt = `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  const filt = filtButton(on);
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   // The bell: notifications for this view, with its filters (not while viewing as someone).
   const rung = bellOn();
@@ -1548,6 +1713,22 @@ function threadRows() {
       existing.set(n.thread, node);
       nodes[i] = node;
     }
+  }
+  // The customers' headings, between their threads (the list by customer).
+  if (plan) {
+    const heads = state.groupNodes || (state.groupNodes = new Map());
+    const byThread = new Map(nodes.map((n) => [n.dataset.thread, n]));
+    const seq = plan.map((x) => {
+      if (x.t) return byThread.get(x.t.thread);
+      let key = `head:${x.head}`;
+      if (x.more) key = `more:${x.more}`;
+      else if (x.quiet) key = 'quiet';
+      const html = groupHtml(x);
+      let node = heads.get(key);
+      if (!node || node.__html !== html) { node = toNode(html); node.__html = html; heads.set(key, node); }
+      return node;
+    });
+    nodes.splice(0, nodes.length, ...seq);
   }
   const keep = new Set(nodes);
   const note = endNote();
@@ -4809,7 +4990,7 @@ async function saveSettings(patch) {
     }
   }
   state.settings = next;
-  const shown = () => { renderNotify(); renderTraces(); renderThreads(); };
+  const shown = () => { renderNotify(); renderTraces(); renderExpert(); render(); };
   shown(); syncSockets(); tracesChanged(before);
   const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
   if (res.ok) { state.settings = res.data; shown(); return true; }
@@ -4871,6 +5052,16 @@ function wireTraces() {
   // The open thread's channel, as the menu opens.
   $('menu').addEventListener('beforetoggle', (e) => { if (e.newState === 'open') renderTraces(); });
   renderTraces();
+}
+
+/** The user menu's switch between the simple personal view and the expert view. */
+function renderExpert() {
+  $('expertBox').hidden = Boolean(state.as) || !state.settings;
+  $('expertView').setAttribute('aria-checked', String(expertOn()));
+}
+function wireExpert() {
+  $('expertView').onclick = () => saveSettings({ expert: !expertOn() });
+  renderExpert();
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
@@ -5346,7 +5537,9 @@ let lastPointer = 'mouse';
 function syncRail() {
   const main = document.querySelector('main');
   const force = document.documentElement.dataset.rail;
-  const on = WIDE.matches && (force ? force === 'on' : RAIL_BAND.matches);
+  // The simple personal view has no rail: what it filters by is short enough to show whole.
+  const on = !simple() && WIDE.matches && (force ? force === 'on' : RAIL_BAND.matches);
+  main.classList.toggle('simple', simple());
   main.classList.toggle('rail', on);
   if (!on) main.classList.remove('railopen');
 }
@@ -5487,7 +5680,7 @@ async function start() {
   $('filters').onclick = (e) => {
     const el = e.target.closest('.card');
     if (!el) return;
-    if (e.target.dataset.clear) {
+    if (e.target.closest('[data-clear]')) {
       for (const f of cardFacets(el.dataset.f)) { delete state.sel[f.id]; delete state.not[f.id]; }
       render(); toUrl(); return;
     }
@@ -5519,6 +5712,11 @@ async function start() {
       switchView(view.dataset.view || null);
       return;
     }
+    const group = e.target.closest('[data-group]');
+    if (group) {
+      toggleFilter('customer', group.dataset.group, false);
+      render(); toUrl(); $('threads').scrollTop = 0; return;
+    }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
@@ -5535,6 +5733,7 @@ async function start() {
   });
   wireDrawerSwipes();
   wireRail();
+  wireLogos();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
@@ -5686,6 +5885,7 @@ async function start() {
       $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
       await loadWho();
       renderNotify();
+      renderExpert();
       toUrl();
       await loadInbox();
       connect();
@@ -5704,6 +5904,7 @@ async function start() {
   }
   wireNotify();
   wireTraces();
+  wireExpert();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
