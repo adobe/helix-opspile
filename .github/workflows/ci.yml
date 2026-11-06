@@ -60,6 +60,12 @@ jobs:
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
       TEAMS_APP_ID: ${{ secrets.TEAMS_APP_ID }}
+      # The agents' request_membership (src/agent/membership.js): the admins' bot Workers, bound
+      # where named, and the Slack channel and bot user the requests are posted to.
+      TEAMS_ADMIN_WORKER: ${{ secrets.TEAMS_ADMIN_WORKER }}
+      SLACK_AUTOMATION_WORKER: ${{ secrets.SLACK_AUTOMATION_WORKER }}
+      MEMBERSHIP_SLACK_CHANNEL: ${{ secrets.MEMBERSHIP_SLACK_CHANNEL }}
+      MEMBERSHIP_SLACK_BOT: ${{ secrets.MEMBERSHIP_SLACK_BOT }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
