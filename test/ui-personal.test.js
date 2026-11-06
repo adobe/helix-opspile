@@ -116,6 +116,7 @@ function load() {
     KIND_EMOJI: { question: '❓' },
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
+    AT: '<svg/>',
   });
 }
 
@@ -391,6 +392,16 @@ describe('the simple personal view', () => {
       state.mentions = true;
       pick('globex');
       assert.deepEqual(outline(), ['# globex', 'g2']);
+    });
+
+    it('is in the funnel\'s menu, or an @ at the top right of the customers', () => {
+      assert.equal(page.GROUPS.mentions, 'funnel');
+      assert.doesNotMatch(page.simpleCustomers(), /data-atme/);
+      page.GROUPS.mentions = 'rail';
+      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="false"/);
+      state.mentions = true;
+      assert.match(page.simpleCustomers(), /data-atme aria-pressed="true" title="Showing only threads that mention you"/);
+      page.GROUPS.mentions = 'funnel';
     });
 
     it('filters nothing in a team\'s view', () => {

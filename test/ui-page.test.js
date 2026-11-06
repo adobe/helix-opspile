@@ -1178,6 +1178,26 @@ describe('inbox page', () => {
       assert.deepEqual(shown(), ['globex1', 'globex2']);
     });
 
+    it('has the funnel open a menu in the personal view, and toggle unread only in a team\'s', () => {
+      const st = { unread: false, mentions: false };
+      let mine = true;
+      const groups = { mentions: 'funnel' };
+      const { funnel } = piece('function funnel()', '/** The funnel\'s menu', 'funnel', {
+        state: st, personal: () => mine, GROUPS: groups, $: () => null, FUNNEL: '<svg/>',
+      });
+      assert.match(funnel(), /^<button class="unread" popovertarget="show" aria-haspopup="true" aria-expanded="false" title="Show unread threads, or mentions of you"/);
+      st.mentions = true;
+      assert.match(funnel(), /^<button class="unread on" [^>]*title="Showing mentions of you"/);
+      st.unread = true;
+      assert.match(funnel(), /title="Showing unread only, mentions of you"/);
+      // A team's view, or the @ in the customers: the funnel is unread only, as it was.
+      mine = false;
+      assert.match(funnel(), /^<button class="unread" data-unread aria-pressed="true"/);
+      mine = true;
+      groups.mentions = 'rail';
+      assert.doesNotMatch(funnel(), /popovertarget/);
+    });
+
     it('is a new list when Mentions goes on or off in the personal view', () => {
       const { state, shown, see } = list({ personal: true });
       state.data.threads = [thread('a', { last_at: '2026-01-01T10:02:00Z' }),

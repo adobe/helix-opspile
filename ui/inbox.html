@@ -68,6 +68,11 @@
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
   <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
   <div id="lift" inert aria-hidden="true" hidden></div>
+  <!-- The funnel's menu in the personal view (ui/inbox.js, funnel). -->
+  <div id="show" class="menu show" popover>
+    <button class="item" type="button" data-unread role="switch" aria-checked="false"><span class="ck">✓</span>Unread only</button>
+    <button class="item" type="button" data-atme role="switch" aria-checked="false"><span class="ck">✓</span>Mentions of me</button>
+  </div>
 </main>
 <script src="markdown.js"></script>
 <script src="rank.js"></script>
