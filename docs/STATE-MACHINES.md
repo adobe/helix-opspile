@@ -109,9 +109,12 @@ lasts a day, so after that Retry turns into Send again.
 `{ text, from, base }`). Only a box that holds the draft unchanged follows it.
 
 **Draft line.** closed → open → closed (`draftOpen`, `ui/inbox.js`): **View draft**, a click, shows
-all of the draft on its line, rendered. The reply box only ever holds what you typed or took in: a
-source shown beside the draft leaves it alone (it used to show the draft too, a second copy next to
-an opened line).
+all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
+too (`draftPeek` names the thread it opened), and leaving closes only what it opened. Hide draft and
+Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
+open line grows upwards from the pane's bottom edge, so it stays under the pointer. The reply box
+only ever holds what you typed or took in: a source shown beside the draft leaves it alone (it used
+to show the draft too, a second copy next to an opened line).
 
 **New-thread composer.** editing → posting → awaiting → opened, or still awaited after five minutes
 (`state.compose`, `state.awaiting`, `started`). From posting on, the pane shows the thread as it will

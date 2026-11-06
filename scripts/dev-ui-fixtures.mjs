@@ -947,9 +947,14 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['tom', 2000, 'Can you share one URL where this happens?'],
     ],
     reads: { tom: 2000, dana: 'latest' },
-    // A colleague's draft, in a channel where the opspile app does not post.
+    // A colleague's draft, in a channel where the opspile app does not post: a line break and a
+    // numbered list, which the closed line shows rendered, on one line ("… now? 1. Which URL …").
     draft: {
-      by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
+      by: 'tom',
+      ago: 20,
+      body: 'Thanks for the details.\nWe rolled back the config change; can you confirm it works now?\n'
+        + '1. **Which URL** still shows an unpublished page, if any\n'
+        + '2. **When** you last saw it',
     },
     label: {
       kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1, topics: ['publishing'],
@@ -1064,9 +1069,13 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['lena', 80, 'It can: the site config names the content source. Which org do you have?'],
       ['jonas', 30, 'Ours is `initech`, the site is in `initech-web`.'],
     ],
-    // Discord takes no replies as yourself: the draft can still go out as the opspile app.
+    // Discord takes no replies as yourself: the draft can still go out as the opspile app. Its
+    // code block keeps to the closed line's one line.
     draft: {
-      by: 'lena', ago: 12, body: 'Then map `initech` in the site config of `initech-web`: the content source names its own org.',
+      by: 'lena',
+      ago: 12,
+      body: 'Then map `initech` in the site config of `initech-web`:\n\n```yaml\ncontent:\n'
+        + '  source: initech\n  site: initech-web\n```\n\nThe content source names its own org.',
     },
     label: {
       kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.2,
