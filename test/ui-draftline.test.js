@@ -73,6 +73,14 @@ describe('draft line', () => {
     assert.equal(line(soft, { open: true }).match(/<br \/>/g).length, 2);
   });
 
+  it('closed, keeps a code block on the one line: the stylesheet makes its newlines spaces', () => {
+    // A message's code block keeps its newlines (`.bubble pre`, white-space: pre-wrap); the
+    // closed line's `nowrap` has to reach it, and the code in it, or the line grows a line each.
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\.draftbar \.pv \.line :is\(pre, code\) \{ white-space: inherit; \}/);
+    assert.match(css, /\.draftbar \.pv \.md\.line \{[^}]*white-space: nowrap/);
+  });
+
   it('says Hide draft once viewed, and shows all of it as the message will be', () => {
     rendered.length = 0;
     const html = draftLine(draft, { open: true, thread: 'slack:T:C:1' });

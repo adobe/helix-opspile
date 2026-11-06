@@ -1069,9 +1069,13 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['lena', 80, 'It can: the site config names the content source. Which org do you have?'],
       ['jonas', 30, 'Ours is `initech`, the site is in `initech-web`.'],
     ],
-    // Discord takes no replies as yourself: the draft can still go out as the opspile app.
+    // Discord takes no replies as yourself: the draft can still go out as the opspile app. Its
+    // code block keeps to the closed line's one line.
     draft: {
-      by: 'lena', ago: 12, body: 'Then map `initech` in the site config of `initech-web`: the content source names its own org.',
+      by: 'lena',
+      ago: 12,
+      body: 'Then map `initech` in the site config of `initech-web`:\n\n```yaml\ncontent:\n'
+        + '  source: initech\n  site: initech-web\n```\n\nThe content source names its own org.',
     },
     label: {
       kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.2,

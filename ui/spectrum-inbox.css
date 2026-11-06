@@ -771,6 +771,8 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .pv .md.line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .draftbar .pv .line :is(p, ul, ol, li, pre, blockquote, h1, h2, h3, h4, h5, h6, table, thead, tbody, tr, th, td) {
   display: inline; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font-size: inherit; }
+/* A code block sets its own white-space (it keeps its newlines in a message): here it is text too. */
+.draftbar .pv .line :is(pre, code) { white-space: inherit; }
 .draftbar .pv .line :is(p, li, pre, blockquote, h1, h2, h3, h4, h5, h6, tr, th, td)::after { content: " "; }
 .draftbar .pv .line ol { counter-reset: draft-li; }
 .draftbar .pv .line ol > li { counter-increment: draft-li; }
