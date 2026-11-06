@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { kept, keptAccounts } from './accounts.js';
 import { roster } from './agent/members.js';
 import { entryOf } from './drafts.js';
 import { recordList, rejectedBy } from './expertevents.js';
@@ -243,15 +244,22 @@ export function reasonsOf(e) {
   return reasons;
 }
 
-/** Candidates' accounts on the thread's platform, by person; other people cannot be mentioned. */
-async function accounts(env, t, people) {
-  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name,
-      i.avatar, MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
-    ${ACCOUNTS} AND i.person IN (SELECT value FROM json_each(?))`)
-    .bind(t.source, t.tenant, JSON.stringify(people)).all();
+/**
+ * Candidates' accounts on the thread's platform, by person; other people cannot be mentioned.
+ * Of a person's several, their account for the thread (src/accounts.js): the signals are the
+ * person's, from all of their accounts, and go to that one.
+ */
+async function accounts(env, t, people, now) {
+  const [{ results }, reached] = await Promise.all([
+    env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name,
+        i.avatar, MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
+      ${ACCOUNTS} AND i.person IN (SELECT value FROM json_each(?))`)
+      .bind(t.source, t.tenant, JSON.stringify(people)).all(),
+    keptAccounts(env, t, { people, now }),
+  ]);
   const out = new Map();
   for (const r of results || []) {
-    if (r.staff && !out.has(r.person)) {
+    if (r.staff && (!out.has(r.person) || kept(reached, r.id) === r.id)) {
       out.set(r.person, r);
     }
   }
@@ -350,7 +358,7 @@ async function rank(env, t, rows, now) {
   if (!open.length) {
     return [];
   }
-  const [known, recent] = await Promise.all([accounts(env, t, open), active(env, open, now)]);
+  const [known, recent] = await Promise.all([accounts(env, t, open, now), active(env, open, now)]);
   const listed = open.filter((p) => known.has(p) && recent.has(p));
   const members = await membersOf(env, t, listed.map((p) => known.get(p).id));
   const ranked = listed.map((person) => {
@@ -386,8 +394,12 @@ async function rank(env, t, rows, now) {
   return ranked.map((e) => ({ ...e, response: times.get(e.person) || null }));
 }
 
-/** The agents' suggestions on an entry that still stand: they are not in it yet. */
-async function suggested(env, t, keys, threads) {
+/**
+ * The agents' suggestions on an entry that still stand: they are not in it yet. Each person
+ * once, the latest, by their account for the thread (src/accounts.js), whichever of theirs the
+ * agent named.
+ */
+async function suggested(env, t, keys, threads, now = Date.now()) {
   const { results } = await env.DB.prepare(`SELECT s.user_id AS id, s.reason, s.at, i.person,
       ${NAME} AS name, i.avatar
     FROM expert_suggestions s
@@ -398,9 +410,45 @@ async function suggested(env, t, keys, threads) {
   if (!results || !results.length) {
     return [];
   }
-  const inThread = await inEntry(env, threads);
-  return results.filter((r) => !inThread.has(r.person));
+  const [inThread, reached] = await Promise.all([
+    inEntry(env, threads),
+    keptAccounts(env, t, { ids: results.map((r) => r.id), now }),
+  ]);
+  const moved = results.filter((r) => !inThread.has(r.person))
+    .map((r) => ({ ...r, id: kept(reached, r.id), named: r.id }));
+  const ids = [...new Set(moved.filter((r) => r.id !== r.named).map((r) => r.id))];
+  // The name and picture of an account the agent did not name.
+  const { results: shown } = ids.length ? await env.DB.prepare(`SELECT i.user_id AS id,
+      ${NAME} AS name, i.avatar ${ACCOUNTS} AND i.user_id IN (SELECT value FROM json_each(?))`)
+    .bind(t.source, t.tenant, JSON.stringify(ids)).all() : { results: [] };
+  const looks = new Map((shown || []).map((r) => [r.id, r]));
+  const seen = new Set();
+  return moved.filter((r) => {
+    const who = r.person ?? r.id;
+    if (seen.has(who)) {
+      return false;
+    }
+    seen.add(who);
+    return true;
+  }).map(({ named: _, ...r }) => ({ ...r, ...(looks.get(r.id) || {}) }));
 }
+
+/**
+ * The accounts person `me` said are not the right ones for the entry (`rejectedBy`), with each
+ * one's person's account for the thread: whichever of theirs was on the list, it was them.
+ */
+async function rejectedAccounts(env, t, me, keys, now) {
+  const said = await rejectedBy(env, me, keys).catch(() => new Set());
+  if (!said.size) {
+    return said;
+  }
+  const reached = await keptAccounts(env, t, { ids: [...said], now }).catch(() => new Map());
+  return new Set([...said].flatMap((id) => [id, kept(reached, id)]));
+}
+
+/** Whether a list entry and an agent's suggestion are one person. */
+const same = (e, s) => e.id === s.id || (e.person !== null && e.person !== undefined
+  && e.person === s.person);
 
 /** A list entry as the page and the agents get it; `member` null is not known. */
 function shape(e) {
@@ -470,15 +518,14 @@ export async function findExperts(env, key, {
   }
   const keys = [...new Set([key, ...threads])];
   const [pins, rejected] = await Promise.all([
-    suggested(env, t, keys, threads),
-    rejectedBy(env, me, keys).catch(() => new Set()),
+    suggested(env, t, keys, threads, now),
+    rejectedAccounts(env, t, me, keys, now),
   ]);
-  const others = ranked.list.filter((e) => e.person !== me
-    && !pins.some((s) => s.id === e.id));
+  const others = ranked.list.filter((e) => e.person !== me && !pins.some((s) => same(e, s)));
   const mine = pins.filter((s) => s.person !== me);
   const members = await membersOf(env, t, mine.map((s) => s.id));
   const pinned = mine.map((s) => {
-    const e = ranked.list.find((x) => x.id === s.id);
+    const e = ranked.list.find((x) => same(x, s));
     return { ...e, ...s, member: inChannel(members, s.id, Boolean(e && e.member)) };
   });
   // Who `me` said is not the right person stays out of what is shown, not of what is recorded.
@@ -512,7 +559,7 @@ export async function agentSuggestions(env, key, { me = null } = {}) {
   const keys = [...new Set([key, ...threads])];
   const [pins, rejected] = await Promise.all([
     suggested(env, t, keys, threads),
-    rejectedBy(env, me, keys).catch(() => new Set()),
+    rejectedAccounts(env, t, me, keys, Date.now()),
   ]);
   const mine = pins.filter((s) => s.person !== me && !rejected.has(s.id));
   const members = mine.length ? await membersOf(env, t, mine.map((s) => s.id)) : null;
@@ -570,9 +617,20 @@ export async function suggestExpert(env, key, {
     return { error: 'no such thread' };
   }
   const account = String(id || '');
+  const t = await target(env, key);
+  // A person's accounts are one suggestion, kept as their account for the thread.
+  const { results: theirs } = await env.DB.prepare(`SELECT user_id FROM identities
+    WHERE source = ?1 AND tenant = ?2 AND (user_id = ?3 OR person = (SELECT person FROM identities
+      WHERE source = ?1 AND tenant = ?2 AND user_id = ?3))`)
+    .bind(t.source, t.tenant, account).all();
+  const accountsOf = JSON.stringify([
+    ...new Set([account, ...(theirs || []).map((r) => r.user_id)]),
+  ]);
+  const forget = () => env.DB.prepare(`DELETE FROM expert_suggestions
+    WHERE user_id IN (SELECT value FROM json_each(?))
+      AND thread IN (SELECT value FROM json_each(?))`).bind(accountsOf, JSON.stringify(e.keys)).run();
   if (withdraw) {
-    await env.DB.prepare(`DELETE FROM expert_suggestions WHERE user_id = ?
-      AND thread IN (SELECT value FROM json_each(?))`).bind(account, JSON.stringify(e.keys)).run();
+    await forget();
     await notifyRoom(env, e.teams, { type: 'experts', thread: e.key });
     return { ok: true };
   }
@@ -580,7 +638,6 @@ export async function suggestExpert(env, key, {
   if (!why) {
     return { error: 'say why: the reason is what the team reads' };
   }
-  const t = await target(env, key);
   const person = await env.DB.prepare(`SELECT i.person, ${NAME} AS name,
       MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
     ${ACCOUNTS} AND i.user_id = ?`).bind(t.source, t.tenant, account).first();
@@ -588,15 +645,16 @@ export async function suggestExpert(env, key, {
     return { error: `${account} is not an Adobe colleague on this platform: use an id from list_experts` };
   }
   const { results } = await env.DB.prepare(`SELECT user_id FROM expert_suggestions
-    WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(e.keys)).all();
-  const others = (results || []).filter((r) => r.user_id !== account);
-  if (others.length >= MAX_SUGGESTED) {
+    WHERE thread IN (SELECT value FROM json_each(?))
+      AND user_id NOT IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(e.keys), accountsOf).all();
+  if ((results || []).length >= MAX_SUGGESTED) {
     return { error: `this thread has ${MAX_SUGGESTED} suggestions already: withdraw one first` };
   }
-  await env.DB.prepare(`DELETE FROM expert_suggestions WHERE user_id = ?
-    AND thread IN (SELECT value FROM json_each(?))`).bind(account, JSON.stringify(e.keys)).run();
+  const chosen = kept(await keptAccounts(env, t, { ids: [account] }), account);
+  await forget();
   await env.DB.prepare(`INSERT INTO expert_suggestions (thread, user_id, reason, by, at)
-    VALUES (?, ?, ?, ?, ?)`).bind(e.key, account, why, by, new Date().toISOString()).run();
+    VALUES (?, ?, ?, ?, ?)`).bind(e.key, chosen, why, by, new Date().toISOString()).run();
   await notifyRoom(env, e.teams, { type: 'experts', thread: e.key });
   return { ok: true, name: person.name };
 }

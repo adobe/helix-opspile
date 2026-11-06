@@ -12,6 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { keptAccounts } from '../src/accounts.js';
 import { inbox, searchInbox, thread } from '../src/api.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -82,5 +83,14 @@ describe('inbox queries', () => {
 
   it('search identities and messages by index when opening a thread', async () => {
     assert.deepEqual(scans(await plans((env) => thread(env, me, 'slack:E1:C1:1.1'))), []);
+  });
+
+  it('search the messages and channels of a person\'s accounts by index', async () => {
+    // Asked for everyone's on every typed @ (src/post.js `mentionable`): migration 0061.
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    const [p] = await plans((env) => keptAccounts(env, t));
+    assert.deepEqual(p.plan.filter((d) => /^SCAN (identities|messages|channel_members|[iowxm])\b/.test(d)), []);
+    assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX messages_author/.test(d)), p.plan.join('\n'));
+    assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX channel_members_user/.test(d)), p.plan.join('\n'));
   });
 });
