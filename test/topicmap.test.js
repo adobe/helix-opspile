@@ -223,7 +223,7 @@ describe('the tech stack after the product census (migration 0056)', () => {
       ['Brand Concierge', 'brandconcierge'], ['Journey Optimizer', 'ajo'], ['Salesforce', 'crm']]) {
       assert.equal(coveredBy(name, index), tech, name);
     }
-    assert.equal(rows.length, 58);
+    assert.equal(rows.length, 59);
     // Every entry is part of a product: an Adobe product by the name on its list, or a category.
     assert.deepEqual(rows.filter((r) => !r.product).map((r) => r.tech), []);
     const of = Object.fromEntries(rows.map((r) => [r.tech, r.product]));
@@ -250,7 +250,38 @@ describe('the tech stack after the product census (migration 0056)', () => {
     const get = (tech) => before.sqlite.prepare('SELECT name, description FROM tech_stack WHERE tech = ?').get(tech);
     assert.equal(get('rum').description, 'our own words');
     assert.match(get('analytics').description, /Customer Journey Analytics/);
-    assert.equal(before.sqlite.prepare("SELECT COUNT(*) AS n FROM tech_stack WHERE team = 'admin'").get().n, 58);
+    assert.equal(before.sqlite.prepare("SELECT COUNT(*) AS n FROM tech_stack WHERE team = 'admin'").get().n, 59);
+  });
+});
+
+describe('the AEM Sidekick and Document Authoring (migration 0061)', () => {
+  it('tells them apart, both features of Experience Manager Sites', async () => {
+    const DB = d1();
+    const rows = DB.sqlite.prepare("SELECT tech, name, description, aliases, product FROM tech_stack WHERE team = 'admin'").all();
+    const index = techIndex(rows);
+    for (const [name, tech] of [['Sidekick', 'sidekick'], ['AEM Sidekick', 'sidekick'],
+      ['Sidekick Library', 'sidekick'], ['Dark Alley', 'da'], ['DA', 'da'], ['da.live', 'da'],
+      ['Document Authoring', 'da'], ['Adobe Document Authoring', 'da'], ['Block Library', 'eds'],
+      ['aem.live', 'eds'], ['Edge Delivery site', null]]) {
+      assert.equal(coveredBy(name, index), tech, name);
+    }
+    const of = Object.fromEntries(rows.map((r) => [r.tech, r]));
+    assert.equal(of.sidekick.product, 'Experience Manager Sites');
+    assert.equal(of.sidekick.name, 'AEM Sidekick');
+    assert.doesNotMatch(of.eds.aliases, /Sidekick/);
+    assert.match(of.da.description, /Dark Alley/);
+    // An alias or description changed on the Agents page stays.
+    const before = d1();
+    before.sqlite.exec(`DELETE FROM tech_stack WHERE tech = 'sidekick';
+      UPDATE tech_stack SET aliases = 'our own' WHERE tech = 'eds';
+      UPDATE tech_stack SET description = 'our own words' WHERE tech = 'da';`);
+    const { readFileSync } = await import('node:fs');
+    before.sqlite.exec(readFileSync(new URL('../migrations/0061_sidekick.sql', import.meta.url), 'utf8'));
+    const get = (tech) => before.sqlite.prepare('SELECT aliases, description FROM tech_stack WHERE tech = ?').get(tech);
+    assert.equal(get('eds').aliases, 'our own');
+    assert.equal(get('da').description, 'our own words');
+    assert.match(get('da').aliases, /Dark Alley/);
+    assert.equal(get('sidekick').aliases.split(', ')[0], 'Sidekick');
   });
 });
 
