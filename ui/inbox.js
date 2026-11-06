@@ -1047,23 +1047,31 @@ function wireLogos() {
   addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
 }
 /**
- * The simple personal view's only card: its customers, latest activity first, by logo and
- * name, bold while they have unread threads, with the red badge. "All customers" first,
- * picked while no customer is.
+ * The simple personal view's only card: its customers, by logo and name, bold while they have
+ * unread threads, with the red badge. "All customers" first, picked while no customer is. The
+ * customers go by `columnOrder`.
  */
+/**
+ * The customers' order in the column: those with unread mentions of you first, most mentions
+ * first, then those with unread threads, then the rest; by name within each.
+ */
+function columnOrder([va, a], [vb, b]) {
+  const pile = (c) => [c.you > 0, c.unread, true].indexOf(true);
+  return pile(a) - pile(b) || b.you - a.you
+    || customerName(va).localeCompare(customerName(vb), undefined, { sensitivity: 'base' });
+}
 function simpleCustomers() {
   const all = listed().filter((t) => passes(t, 'customer'));
   const by = new Map();
   for (const t of all) {
-    const c = by.get(t.org) || { at: '', unread: false, you: 0 };
-    if (activityOf(t) > c.at) c.at = activityOf(t);
+    const c = by.get(t.org) || { unread: false, you: 0 };
     c.unread ||= Boolean(t.unread);
     c.you += youCount(t);
     by.set(t.org, c);
   }
   const on = state.sel.customer || new Set();
-  for (const v of on) if (!by.has(v)) by.set(v, { at: '', unread: false, you: 0 });
-  const rows = [...by].sort((a, b) => b[1].at.localeCompare(a[1].at)).map(([v, c]) => {
+  for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
+  const rows = [...by].sort(columnOrder).map(([v, c]) => {
     const name = customerName(v);
     return `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(name)}">
       ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
