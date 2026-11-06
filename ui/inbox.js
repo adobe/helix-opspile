@@ -1023,15 +1023,13 @@ const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === 
  *   to three), 'all', or 'new' (its unread ones; customers with none are named at the end);
  * - `mark`: a thread that mentions you has a red 'dot' before its title, or the red 'badge';
  * - `headBadge`: whether a customer's heading carries the badge too;
- * - `sticky`: whether the heading stays at the top while its threads scroll under it;
- * - `mentions`: where Mentions (see mentionsOn) is: 'funnel', a menu under the list's funnel
- *   with Unread only and Mentions in it, or 'rail', an @ at the top right of the customers.
+ * - `sticky`: whether the heading stays at the top while its threads scroll under it.
  */
 const GROUPS = {
-  fold: 'all', mark: 'badge', headBadge: false, sticky: true, mentions: 'funnel',
+  fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
 const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
-/** Mentions as a switch of its own (GROUPS.mentions 'rail'): an @, filled while it filters. */
+/** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
 const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
 /** A thread's unread mentions of you, as the badge counts them. */
 const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
@@ -1071,8 +1069,7 @@ function simpleCustomers() {
       ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
   }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
-  const at = GROUPS.mentions === 'rail' ? atButton() : '';
-  return `<div class="card simple" data-f="customer"><h3>Customers${at}</h3>
+  return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
 }
 
@@ -1089,7 +1086,8 @@ function filterCards() {
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
-    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+    const at = personal() && f.id === 'customer' ? atButton() : '';
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}${at}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
   // Only the cards whose counts or selection changed are rebuilt.
@@ -1512,52 +1510,14 @@ const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke=
 function renderThreads() { inPass(threadRows); }
 
 /**
- * The funnel: unread only, a switch. In the personal view with GROUPS.mentions 'funnel' it
- * opens a menu instead (#show), Unread only and Mentions, and is filled while either is on.
- */
-function funnel() {
-  if (!personal() || GROUPS.mentions !== 'funnel') {
-    return `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
-  }
-  const on = [state.unread && 'unread only', state.mentions && 'mentions of you'].filter(Boolean);
-  const title = on.length ? `Showing ${on.join(', ')}` : 'Show unread threads, or mentions of you';
-  return `<button class="unread${on.length ? ' on' : ''}" popovertarget="show" aria-haspopup="true" aria-expanded="${$('show')?.matches(':popover-open') || false}" title="${title}" aria-label="Show">${FUNNEL}</button>`;
-}
-/** The funnel's menu: its switches as they are, and where it opens (under the funnel). */
-function syncShow() {
-  const menu = $('show');
-  menu.querySelector('[data-unread]').setAttribute('aria-checked', String(state.unread));
-  menu.querySelector('[data-atme]').setAttribute('aria-checked', String(Boolean(state.mentions)));
-}
-function wireShow() {
-  const menu = $('show');
-  menu.addEventListener('beforetoggle', (e) => {
-    const b = document.querySelector('#threads [popovertarget="show"]');
-    if (e.newState !== 'open' || !b) return;
-    const r = b.getBoundingClientRect();
-    menu.style.setProperty('--show-x', `${r.left}px`);
-    menu.style.setProperty('--show-y', `${r.bottom}px`);
-    syncShow();
-  });
-  menu.addEventListener('toggle', (e) => document.querySelector('#threads [popovertarget="show"]')
-    ?.setAttribute('aria-expanded', String(e.newState === 'open')));
-  // The menu stays open: the list changes behind it, and the other switch is a click away.
-  menu.addEventListener('click', (e) => {
-    if (e.target.closest('[data-unread]')) setUnread(!state.unread);
-    else if (e.target.closest('[data-atme]')) state.mentions = !state.mentions;
-    else return;
-    syncShow(); render(); toUrl();
-  });
-}
-
-/**
  * The Filters button of narrower screens, with how many filters are set. In the simple
  * personal view it opens the customers, and carries the red badge of them all.
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
   const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
-  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${youBadge(you)}</button>`;
+  const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
 }
 
 /*
@@ -1732,10 +1692,10 @@ function threadRows() {
   const listedRows = placeRows(viewSort(state.data.threads.filter(onList)));
   const plan = grouped() ? groupPlan(listedRows) : null;
   const shown = plan ? plan.filter((x) => x.t).map((x) => x.t) : listedRows;
-  const unread = funnel();
+  const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
-  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
+  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (mentionsOn() ? 1 : 0);
   const filt = filtButton(on);
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   // The bell: notifications for this view, with its filters (not while viewing as someone).
@@ -5944,7 +5904,6 @@ async function start() {
     if (e.target === e.currentTarget && state.filtering) setFiltering(false);
   });
   wireDrawerSwipes();
-  wireShow();
   wireRail();
   wireLogos();
   $('pane').onclick = async (e) => {

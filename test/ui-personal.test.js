@@ -394,14 +394,10 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline(), ['# globex', 'g2']);
     });
 
-    it('is in the funnel\'s menu, or an @ at the top right of the customers', () => {
-      assert.equal(page.GROUPS.mentions, 'funnel');
-      assert.doesNotMatch(page.simpleCustomers(), /data-atme/);
-      page.GROUPS.mentions = 'rail';
-      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="false"/);
+    it('is the @ at the top right of the customers, filled while it filters', () => {
+      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="false" title="Show only threads that mention you"/);
       state.mentions = true;
-      assert.match(page.simpleCustomers(), /data-atme aria-pressed="true" title="Showing only threads that mention you"/);
-      page.GROUPS.mentions = 'funnel';
+      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="true" title="Showing only threads that mention you"/);
     });
 
     it('filters nothing in a team\'s view', () => {

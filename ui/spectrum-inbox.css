@@ -188,8 +188,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .count .order button:hover { color: var(--ink); }
 #threads .count .order button[aria-checked="true"] {
  cursor: default; }
-/* Unread only (in the personal view, the menu of it and Mentions): an icon, filled with the
-   accent colour while it filters. */
+/* Unread only: an icon, filled with the accent colour while it filters. */
 #threads .count .unread { display: grid; place-items: center; padding: 0;
  }
 
@@ -200,8 +199,6 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .rows > .end .linkish { font: inherit; font-weight: 650; }
 #threads .count .unread:hover { color: var(--ink); }
 #threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
-/* The funnel's menu (the personal view): under the funnel, as wide as its two switches. */
-.menu.show { inset: var(--show-y) auto auto var(--show-x); width: auto; min-width: calc(var(--spectrum-spacing-100) * 24); }
 /* The bell: notifications for the view on screen (its team and filters), filled while on. */
 #threads .count .bell, #threads .count .newpost { display: grid; place-items: center; padding: 0; margin-left: var(--spectrum-spacing-50);
  }
@@ -1285,14 +1282,12 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
 .spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):active { background: var(--spectrum-gray-300); }
 .spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"],
-.spectrum #threads .count .unread.on,
 .spectrum #threads .count .filt[aria-expanded="true"] {
   color: var(--spectrum-gray-25);
   background: var(--spectrum-neutral-background-color-selected-default);
   border-color: transparent;
 }
 .spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"]:hover,
-.spectrum #threads .count .unread.on:hover,
 .spectrum #threads .count .filt[aria-expanded="true"]:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-hover); }
 .spectrum #threads .count .found { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* The list's end: "Show older" a secondary Button, the closing note subdued. */
@@ -2042,16 +2037,18 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum #threads .rows > .grp .back { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
 .spectrum #threads .rows > .grp-more:hover { text-decoration: underline; }
 .spectrum #threads .rows > .grp-quiet { color: var(--spectrum-neutral-subdued-content-color-default); }
-/* Mentions at the top right of the customers (GROUPS.mentions 'rail'): a quiet ActionButton,
-   in its selected state while it filters. */
-.spectrum .card.simple h3 .atme {
+/* Mentions, at the top right of the personal view's customers: a quiet ActionButton, in its
+   selected state while it filters. On narrower screens the Customers button shows it is on. */
+.spectrum .card h3 .atme {
   display: grid; place-items: center; margin-left: auto; padding: 0;
   width: var(--spectrum-component-height-75); height: var(--spectrum-component-height-75);
   color: var(--spectrum-neutral-content-color-default); background: transparent; border: 0;
   border-radius: var(--s2-radius); cursor: pointer;
   transition: background-color var(--s2-ease), color var(--s2-ease);
 }
-.spectrum .card.simple h3 .atme svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.spectrum .card.simple h3 .atme:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
-.spectrum .card.simple h3 .atme[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
-.spectrum .card.simple h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .card h3 .atme svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .card h3 .atme:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .card h3 .atme[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
+.spectrum .card h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .card h3 .clear + .atme { margin-left: var(--spectrum-spacing-75); }
+.spectrum #threads .count .filt .at { display: inline-grid; margin-left: var(--spectrum-spacing-75); }

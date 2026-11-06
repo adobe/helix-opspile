@@ -556,8 +556,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Besides its cards it has one switch, **Mentions** (in the menu the funnel opens
-  there, with Unread only; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
+  views. Besides its cards it has one switch, **Mentions** (the @ at the top right of the
+  customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones the red badge counts. The
   customers without such a thread leave the column while it is on. Team views do not have it:
   their Involves card has Me (you posted or were mentioned). Its live updates come from the rooms of your teams and of the teams those channels are
