@@ -279,6 +279,21 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   certainty got replies of their own twice as often as the other folds. Comparing the new root
   with each candidate on its own spread Clef's answer over several candidates and left most of a
   chat in pieces. Platform notices ("… has joined the channel") are left alone.
+- **Replies posted top-level:** somebody who answers what they just read in the channel's box,
+  rather than in the thread's, posts a reply as a root: it @-mentions the person it answers, and
+  it comes at once. A root that @-mentions, by name, somebody who spoke in one of the
+  conversations Clef reads, less than five minutes after that conversation's latest message, is
+  its *addressed reply*: Clef's usual certainty in a conversation (0.8) is enough to fold it,
+  whatever the channel's habit and the conversation's thread replies, and even when it has
+  replies of its own already. The fold is `logical_via = 'reply'`, and, like a burst member, it
+  stays in its group when people answer it in its platform thread (below): that thread is where
+  the conversation went on, so whoever answers the reply answers the group. The lower bar is only
+  for the conversation the root addresses: where Clef picks another one, it needs
+  `MIN_CLEF_THREADED` as before. Of production's roots over two weeks, 13 were addressed replies,
+  and Clef gave 0.8 or more to three of them: a chat's answer and its follow-up, and a staff
+  answer to a customer. The ten it kept apart say so themselves ("in other news", "another
+  ticket", a question of their own), which is what the five minutes are for: an @-mention of
+  whoever was active last, hours later, is as often a topic of its own.
 - **Quotes:** a root that quotes a message (below) stays on its own, whatever Clef or a burst
   would say. Forwarding a message into the channel, or linking to one, starts a topic on purpose:
   whoever meant to continue that conversation would have replied in it, and the text that goes
@@ -296,8 +311,8 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   alone for good, its root file loses `logicalThread`, the roots that followed it in a burst go
   with it, and the open inboxes reload the group (`split` in the room's `thread` event). So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
-  platform thread again (src/post.js `target`, the entry's latest). A burst member, and alerts,
-  stay in their group.
+  platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
+  reply (`logical_via = 'reply'`, above) and alerts stay in their group.
 - **Replies the inbox routed:** a group's replies go to the platform thread it was last active
   in, which may be a folded root's. Once one does (a person's from the inbox, the app's, or a
   thread agent's), the group's conversation goes on there, where the channel sees it: that root

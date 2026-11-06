@@ -14,6 +14,7 @@ import { parse, render } from './channels.js';
 import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { CLEF } from './label.js';
 import { QUOTE_HEAD, quotesAsText } from './markdown.js';
+import { fold } from './mention-match.js';
 import { notifyRoom } from './notify.js';
 import { sha256 } from './raw.js';
 import { teamsOf } from './shares.js';
@@ -30,15 +31,18 @@ import { teamsOf } from './shares.js';
  * So does a conversation's root that people answer in its own platform thread: one that has
  * replies when it is decided is not folded, and one that gets them after it was folded is split
  * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
- * (`routed_at`): then it stays in the group for good. A root that announces a thread (🧵,
- * `:thread:`) stays on its own, too.
+ * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too.
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
  * of its own, however close it reads: so Clef must be all but certain to fold a root into a
  * conversation with thread replies, or into any in a channel whose roots mostly get them
  * (MIN_CLEF_THREADED, HABIT_THREADED), and a root is no burst of one that has been answered
- * already.
+ * already. The exception is a reply that landed top-level: one that @-mentions somebody who
+ * spoke in a conversation, within minutes of its latest message (ADDRESSED_MS), is that
+ * conversation's reply, wherever its author aimed it, and needs no more than MIN_CLEF_CONVERSATION
+ * (`logical_via` REPLY).
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -93,6 +97,14 @@ export const MIN_CLEF_THREADED = 0.99;
 export const HABIT_MS = 30 * 86400 * 1000;
 export const HABIT_MIN_ROOTS = 5;
 export const HABIT_THREADED = 0.5;
+/**
+ * How long after a conversation's latest message a root that @-mentions one of its people is
+ * its reply, posted top-level by mistake (REPLY, `addressedConversation`): somebody answers
+ * what they just read in the channel's box instead of the thread's, which happens at once.
+ * Later, an @-mention of whoever was active last is as often a topic of its own, which is what
+ * Clef and MIN_CLEF_THREADED are for.
+ */
+export const ADDRESSED_MS = 5 * 60 * 1000;
 const MAX_TEXT = 1500;
 const SNIPPET = 600;
 
@@ -240,6 +252,44 @@ const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.ki
  * folded again, not even by a forced re-threading or a burst before it.
  */
 export const SPLIT = 'split';
+/**
+ * `logical_via` of a root that is a reply posted top-level: it @-mentions somebody who spoke in
+ * the conversation Clef folded it into, minutes after its latest message (ADDRESSED_MS,
+ * `addressedConversation`). Like a burst member, it stays in its group when people answer it in
+ * its own platform thread: that thread is where the conversation went on, and whoever answers
+ * the reply answers the group.
+ */
+export const REPLY = 'reply';
+
+/** A message's text as `@name` mentions over single spaces, for `addresses`. */
+const mentionText = (body) => ` ${fold(body).replace(/[^\p{L}\p{N}@]+/gu, ' ').replace(/@\s+/g, '@')} `;
+const nameWords = (name) => fold(name).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+/**
+ * Whether a message @-mentions one of `names` (the people of a conversation): by the whole name
+ * ("@Ada Lovelace", Teams' "@Lovelace, Ada") or by its first word ("@Ada"), which is what the
+ * platforms put in the text for a mention (src/markdown.js), ignoring case, accents and
+ * punctuation.
+ */
+export function addresses(body, names) {
+  const text = mentionText(body);
+  return (names || []).some((name) => {
+    const words = nameWords(name);
+    return words.length > 0 && (text.includes(`@${words.join(' ')} `)
+      || (words[0].length >= 3 && text.includes(`@${words[0]} `)));
+  });
+}
+
+/**
+ * The conversation a new root is a reply to, posted top-level: the latest one whose newest
+ * message is less than ADDRESSED_MS old and one of whose people the root @-mentions. Its author
+ * answered what they had just read in the channel's box instead of the thread's, so the root is
+ * part of that conversation whatever the channel's habit (MIN_CLEF_THREADED), and the replies it
+ * gets in its own platform thread are the group's (REPLY, `dethread`).
+ */
+export function addressedConversation(body, convs, at, self = null) {
+  return (convs || []).find((c) => at - Date.parse(c.last) <= ADDRESSED_MS
+    && addresses(body, (c.names || []).filter((n) => n && n !== self))) || null;
+}
 
 /**
  * Whether a root has replies of its own: a person posted in its platform thread. People who
@@ -256,7 +306,8 @@ async function answered(env, thread, before = null) {
 /**
  * The conversations a new root in a conversation channel may continue: the channel's latest
  * ones (by their messages before the root) and the groups of the similar earlier roots, each
- * with its first message and its latest ones before the root, oldest first.
+ * with its first message and its latest ones before the root, oldest first, the people who
+ * spoke in it and when it was last active (`addressedConversation`).
  */
 async function conversations(env, thread, similar) {
   const { results: recent } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS grp,
@@ -318,8 +369,20 @@ async function conversations(env, thread, similar) {
         WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.id != t.root_id
           AND m.at < ? AND m.deleted = 0 AND m.counted = 1`)
         .bind(g, g, thread.thread, thread.root_at).first();
+      // The people who spoke in it before the new root, for a reply posted top-level.
+      // eslint-disable-next-line no-await-in-loop
+      const { results: who } = await env.DB.prepare(`SELECT DISTINCT m.author FROM messages m
+          JOIN threads t ON t.thread = m.thread
+        WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.at < ?
+          AND m.deleted = 0 AND m.counted = 1 AND m.author IS NOT NULL`)
+        .bind(g, g, thread.thread, thread.root_at).all();
       out.push({
-        thread: g, group: g, messages, replies: (replied && replied.n) || 0,
+        thread: g,
+        group: g,
+        messages,
+        replies: (replied && replied.n) || 0,
+        names: (who || []).map((r) => r.author),
+        last: picked[picked.length - 1].at,
       });
     }
   }
@@ -354,9 +417,11 @@ async function repliesInThreads(env, thread) {
  * reads them as the channel's transcript (each message marked with its conversation and how
  * long before it was posted), which tells answers and thanks apart from new topics far better
  * than comparing the new root with each conversation on its own. In a channel that replies in
- * threads (`inThreads`), every conversation counts as held in threads.
+ * threads (`inThreads`), every conversation counts as held in threads — except `addressed`, the
+ * one the root is a reply to (`addressedConversation`), where Clef's usual certainty is enough.
  */
-export async function askClefConversation(env, text, at, convs, { inThreads = false } = {}) {
+export async function askClefConversation(env, text, at, convs, opts = {}) {
+  const { inThreads = false, addressed = null } = opts;
   const lines = [];
   convs.forEach((c, i) => c.messages.forEach((m) => lines.push({
     at: m.at, line: `[${LABELS[i]}, ${ago(at - Date.parse(m.at))} before] ${m.text}`,
@@ -391,10 +456,11 @@ export async function askClefConversation(env, text, at, convs, { inThreads = fa
     return { p: 0 };
   }
   // A conversation held in platform threads, or any in a channel that replies in threads, needs
-  // Clef all but certain (MIN_CLEF_THREADED).
-  const threaded = Boolean(best.candidate.replies) || inThreads;
+  // Clef all but certain (MIN_CLEF_THREADED) — unless the root is its reply, posted top-level.
+  const replying = Boolean(addressed) && best.candidate === addressed;
+  const threaded = (Boolean(best.candidate.replies) || inThreads) && !replying;
   if (best.p >= (threaded ? MIN_CLEF_THREADED : MIN_CLEF_CONVERSATION)) {
-    return best;
+    return { ...best, ...(replying ? { addressed: true } : {}) };
   }
   return { p: best.p, ...(threaded ? { threaded } : {}) };
 }
@@ -509,21 +575,38 @@ export async function rethread(env, key, { force = false } = {}) {
   let asked = null;
   const quoting = quotes(root.parsed.body);
   const announcing = conversation && !quoting && announcesThread(root.parsed.body);
+  const asking = Boolean(conversation && !quoting && !announcing && !burst);
+  // The channel's latest conversations and the similar ones, read as a transcript.
+  const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
+  // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
+  // after its latest message. It is that conversation's, whatever the channel's habit, and the
+  // replies it gets in its own platform thread are the group's (REPLY, dethread()).
+  const addressed = asking && convs.length ? addressedConversation(
+    root.parsed.body,
+    convs,
+    Date.parse(thread.root_at),
+    root.parsed.meta.author && root.parsed.meta.author.name,
+  ) : null;
   // A burst is one request in pieces, wherever it is answered; anything else that people answer
-  // in its own platform thread is a conversation of its own.
-  const replied = conversation && !quoting && !announcing && !burst && await answered(env, thread);
+  // in its own platform thread is a conversation of its own, unless it is such a reply.
+  const own = asking && await answered(env, thread);
+  const replied = own && !addressed;
   if (quoting || announcing || replied) {
     // On its own: see quotes(), announcesThread() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
-    // The channel's latest conversations and the similar ones, read as a transcript.
-    const convs = await conversations(env, thread, earlier.slice(0, 4));
     asked = convs.length ? await askClefConversation(env, text, Date.parse(thread.root_at), convs, {
       inThreads: await repliesInThreads(env, thread),
+      addressed,
     }) : null;
-    if (asked && asked.candidate) {
-      match = { thread: asked.candidate.thread, via: 'clef', p: asked.p };
+    // A root that has replies of its own is only folded as the reply it is.
+    if (asked && asked.candidate && (!own || asked.addressed)) {
+      match = {
+        thread: asked.candidate.thread,
+        via: asked.addressed ? REPLY : 'clef',
+        p: asked.p,
+      };
     }
   } else if (twin) {
     match = { thread: twin.thread, via: 'skeleton', p: 1 };
@@ -681,15 +764,18 @@ export async function rethread(env, key, { force = false } = {}) {
  * gets replies in its own platform thread, is split back out into an inbox entry of its own
  * (see answered()). Called for every reply a person posts; only a folded root changes, once:
  * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
- * burst go with it. A burst member itself, and alerts, stay in their group: a burst is one
- * request in pieces, and someone answering one of a series of alerts answers all of them. So does
- * a root the inbox sent a reply of its group to (`routed_at`, src/post.js routeReply): the group's
- * conversation goes on in its platform thread, and those who answer there answer the group.
+ * burst go with it. A burst member itself, a reply that landed top-level (REPLY) and alerts stay
+ * in their group: a burst is one request in pieces, somebody answering one of a series of alerts
+ * answers all of them, and a reply's platform thread is where the conversation went on, so those
+ * who answer it there answer the group. So does a root the inbox sent a reply of its group to
+ * (`routed_at`, src/post.js routeReply): the group's conversation goes on in its platform thread,
+ * and those who answer there answer the group.
  * `rethreaded_at` moves to now, so the export sweep writes the threads again.
  */
 export async function dethread(env, key) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
+    || thread.logical_via === REPLY
     || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
     return { result: 'unchanged' };
   }
