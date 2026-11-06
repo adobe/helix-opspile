@@ -2995,12 +2995,18 @@ function wireSources(el) {
   });
 }
 
+// The thread whose draft line the pointer opened (in `draftOpen`), once it rested there for
+// HOVER_DELAY_MS (`timer`); it closes as the pointer leaves. The line grows upwards from the
+// pane's bottom edge, so it stays under the pointer; the delay keeps one passing by from opening it.
+const HOVER_DELAY_MS = 300;
+const draftPeek = { key: null, timer: 0 };
+
 /**
- * The draft as "View draft" shows it, all of it, as the thread will once it is sent: Markdown,
- * rendered as a message is (`md`, with the images of thread `thread`). Closed, the line shows
- * how it starts, as it was written.
+ * The draft as the line shows it, as the thread will once it is sent: Markdown, rendered as a
+ * message is (`md`, with the images of thread `thread`). Viewed (`open`), all of it; closed, how
+ * it starts, on one line (`.line`: the stylesheet runs its blocks on, and leaves out images).
  */
-const viewedDraft = (d, thread) => `<div class="tx md bubble">${md(d.body, thread)}</div>`;
+const viewedDraft = (d, thread, open = true) => `<div class="tx md bubble${open ? '' : ' line'}">${md(d.body, thread)}</div>`;
 
 // The draft line's icons, drawn as the page's others are (16 by 16, a 1.5 stroke).
 const ICON = (paths) => `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
@@ -3039,13 +3045,18 @@ function draftLine(d, {
   if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}
-      <div class="pv" id="draft-text">${open ? viewedDraft(d, thread) : `<span class="tx">${esc(d.body)}</span>`}</div>${sourcesLine(d)}</div>`;
+      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}</div>`;
 }
 
 /** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
 function renderDraftBar(key, force = false) {
   const el = $('draftbar');
   if (!el || state.open !== key) return;
+  // The line the pointer opened is another thread's, or a new line not under the pointer.
+  if (draftPeek.key && (draftPeek.key !== key || (el.__html === undefined && !el.matches(':hover')))) {
+    draftOpen.delete(draftPeek.key);
+    draftPeek.key = null;
+  }
   const data = state.cache.get(key)?.data;
   // A draft on its way (its reply shows in the feed, sending) is not offered again; it comes
   // back if the reply fails.
@@ -3083,19 +3094,42 @@ function renderDraftBar(key, force = false) {
 }
 
 /**
- * What the draft line answers: clicks and Escape. Only a click opens all of the draft, the same
- * with a mouse and on touch: shown while the pointer rested on the line, the draft changed the
- * layout under the pointer, which then left the line and hid it again, over and over.
+ * What the draft line answers: clicks and Escape, and the pointer resting on it. View draft opens
+ * all of the draft, the same with a mouse and on touch; a mouse resting on the line for
+ * HOVER_DELAY_MS opens it too, until it leaves (`draftPeek`). Opening grows the line upwards,
+ * so it stays under the pointer instead of leaving it, closing and opening again, over and over.
  */
 function wireDraftBar(el) {
   el.__wired = true;
   wireSources(el);
+  const unpeek = () => {
+    clearTimeout(draftPeek.timer);
+    if (!draftPeek.key) return;
+    draftOpen.delete(draftPeek.key);
+    draftPeek.key = null;
+    renderDraftBar(el.__key);
+  };
+  el.addEventListener('pointerenter', (e) => {
+    if (e.pointerType === 'touch' || TOUCH_ONLY.matches) return;
+    const key = el.__key;
+    clearTimeout(draftPeek.timer);
+    draftPeek.timer = setTimeout(() => {
+      if (el.__key !== key || state.open !== key || draftOpen.has(key) || !el.matches(':hover')) return;
+      draftPeek.key = key;
+      draftOpen.add(key);
+      renderDraftBar(key);
+    }, HOVER_DELAY_MS);
+  });
+  el.addEventListener('pointerleave', unpeek);
   el.addEventListener('click', (e) => {
     const key = el.__key;
     const b = e.target.closest('[data-draft]');
     if (!b || b.disabled) return;
     const act = b.dataset.draft;
     if (act === 'view') {
+      // It does what it says: Hide draft closes a line the pointer opened, too, until it comes back.
+      clearTimeout(draftPeek.timer);
+      draftPeek.key = null;
       if (draftOpen.has(key)) draftOpen.delete(key); else draftOpen.add(key);
       renderDraftBar(key);
       el.querySelector('.view')?.focus();
@@ -3110,6 +3144,7 @@ function wireDraftBar(el) {
     e.preventDefault();
     if (sourcePop.url) { hideSource(); return; }
     draftOpen.delete(el.__key);
+    draftPeek.key = null;
     renderDraftBar(el.__key);
     el.querySelector('.view')?.focus();
   });

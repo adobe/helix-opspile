@@ -1234,10 +1234,11 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   an offer to overwrite it. A discard does the same. A save from a draft that is gone (discarded
   or sent) saves nothing either, and offers to save it as a new one.
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
-  you, or the thread agent), when, and how it starts. **View draft** opens the line to all of it,
-  rendered as the message will be (its Markdown, mentions and emoji, as in the thread), and
-  **Hide draft** closes it again, with a click or a tap alike; nothing shows on hover, since
-  a draft shown under a resting pointer moved the line away from it and hid again, over and over.
+  you, or the thread agent), when, and how it starts, on one line, rendered as the message will
+  be (its Markdown, mentions and emoji, as in the thread). **View draft** opens the line to all
+  of it, and **Hide draft** closes it again, with a click or a tap alike; a mouse resting on the
+  line for 300 ms opens it too, until it leaves. The line grows upwards, so it stays under the
+  pointer, instead of moving away from it and closing again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
@@ -1275,8 +1276,8 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 
 ### Steering reactions
 
-Hovering a message shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟. Three of them steer the
-inbox, on any message of the thread:
+Resting the pointer on a message for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟.
+Three of them steer the inbox, on any message of the thread:
 
 - **👀 seen**: the person who put it is on it. For them it counts like having posted (higher);
   for the rest of the team, a colleague's 👀 since the customer last wrote puts the thread in

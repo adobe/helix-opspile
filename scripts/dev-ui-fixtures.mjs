@@ -947,9 +947,14 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['tom', 2000, 'Can you share one URL where this happens?'],
     ],
     reads: { tom: 2000, dana: 'latest' },
-    // A colleague's draft, in a channel where the opspile app does not post.
+    // A colleague's draft, in a channel where the opspile app does not post: a numbered list,
+    // which the closed line shows rendered, on one line ("… now? 1. Which URL …").
     draft: {
-      by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
+      by: 'tom',
+      ago: 20,
+      body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?\n'
+        + '1. **Which URL** still shows an unpublished page, if any\n'
+        + '2. **When** you last saw it',
     },
     label: {
       kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1, topics: ['publishing'],
