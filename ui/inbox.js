@@ -17,7 +17,7 @@ const state = {
   sel: { type: new Set(['conversation']) },
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
-  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, scores: new Map(),
+  order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, mentions: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
   cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
@@ -871,6 +871,16 @@ const viewFacets = () => {
   return simple() ? SIMPLE_FACETS : PERSONAL_FACETS;
 };
 const single = (id) => personal() && id === 'customer';
+/*
+ * Mentions (`state.mentions`, `mentions=1` in the address): the personal view's one switch past
+ * the customers, beside unread only. It keeps the threads that mention you, read or not (a
+ * mention you have read, too: `mentioned` has everyone ever mentioned in the thread); with
+ * unread only, the ones the red badge counts. It is not a card, and team views do not have it
+ * (their Involves card has "me"), so it filters nothing there.
+ */
+const mentionsOn = () => personal() && state.mentions;
+const namesMe = (t) => Boolean(t.mentionedMe || t.unreadMentions > 0)
+  || (t.mentioned || []).some((m) => m.person === viewerId());
 /** Into the personal view: one customer stays picked, the open thread's if it is one of them. */
 function onePick() {
   const set = state.sel.customer;
@@ -894,6 +904,7 @@ function valuesOf(f, t) {
 // row does not vanish when you, or you elsewhere, read it.
 const passes = (t, except) => (!state.unread || keptUnread(t))
   && (!personal() || t.kind !== 'alert')
+  && (!mentionsOn() || namesMe(t))
   && viewFacets().every((f) => f.id === except || facetPasses(f, t));
 /**
  * Whether `t` passes facet `f`, as in klickhaus: one of its values is picked (when any are),
@@ -1018,6 +1029,8 @@ const GROUPS = {
   fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
 const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
+const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
 /** A thread's unread mentions of you, as the badge counts them. */
 const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
 /**
@@ -1056,7 +1069,7 @@ function simpleCustomers() {
       ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
   }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
-  return `<div class="card simple" data-f="customer"><h3>Customers</h3>
+  return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
 }
 
@@ -1073,7 +1086,8 @@ function filterCards() {
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
-    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}</h3>
+    const at = personal() && f.id === 'customer' ? atButton() : '';
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}${at}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
   // Only the cards whose counts or selection changed are rebuilt.
@@ -1356,7 +1370,7 @@ function searchRows(box) {
   const { data, loading, error, q } = state.search;
   const all = data?.hits || [];
   const hits = all.filter((h) => { const t = searchEntry(h.thread); return t && passes(t); });
-  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (state.unread ? 1 : 0);
+  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (state.unread ? 1 : 0) + (mentionsOn() ? 1 : 0);
   const filt = filtButton(on);
   let said = 'Searching…';
   if (!loading && error) said = 'Search failed';
@@ -1488,6 +1502,7 @@ const preload = new IntersectionObserver((entries) => {
   for (const e of entries) if (e.isIntersecting) prefetch(e.target.dataset.thread);
 }, { root: $('threads'), rootMargin: '200px' });
 
+const AT = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.5"/><path d="M10.5 8v1a1.75 1.75 0 0 0 3.5 0V8a6 6 0 1 0-2.4 4.8"/></svg>';
 const FUNNEL = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M7 12h2"/></svg>';
 const COMPOSE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 2.8H3.6a1.1 1.1 0 0 0-1.1 1.1v8.5a1.1 1.1 0 0 0 1.1 1.1h8.5a1.1 1.1 0 0 0 1.1-1.1V8.5"/><path d="M12 1.9a1.2 1.2 0 0 1 1.7 1.7L8 9.3l-2.3.6.6-2.3z"/></svg>';
 const SLIDERS = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h6M11 4.5h3M2 11.5h2M7 11.5h7"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/></svg>';
@@ -1501,7 +1516,8 @@ function renderThreads() { inPass(threadRows); }
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
   const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
-  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${youBadge(you)}</button>`;
+  const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
 }
 
 /*
@@ -1532,7 +1548,7 @@ const keptUnread = (t) => t.unread || state.list.held.has(t.thread) || t.thread 
 const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]) => [id, [...s].sort()])
   .sort((a, b) => a[0].localeCompare(b[0]));
 const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
-  setsKey(state.sel), setsKey(state.not)]);
+  mentionsOn(), setsKey(state.sel), setsKey(state.not)]);
 /** A new list, when what the list is of changed. */
 function syncList() {
   if (!state.data) return;
@@ -1663,7 +1679,7 @@ function endTeam(view) {
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
 function endNote() {
   if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
-  if (viewFacets().some((f) => filterCount(f.id))) return '';
+  if (mentionsOn() || viewFacets().some((f) => filterCount(f.id))) return '';
   return endHtml(state.data?.elsewhere);
 }
 
@@ -1679,7 +1695,7 @@ function threadRows() {
   const unread = `<button class="unread" data-unread aria-pressed="${state.unread}" title="${state.unread ? 'Showing unread threads only' : 'Show unread threads only'}" aria-label="Unread only">${FUNNEL}</button>`;
   const sorter = viewSwitch();
   // Narrower screens keep the filter cards in a drawer, opened from here (see the styles).
-  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0);
+  const on = viewFacets().reduce((n, f) => n + filterCount(f.id), 0) + (mentionsOn() ? 1 : 0);
   const filt = filtButton(on);
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   // The bell: notifications for this view, with its filters (not while viewing as someone).
@@ -1750,7 +1766,8 @@ function threadRows() {
   const note = endNote();
   if (!nodes.length) {
     for (const c of list.children) preload.unobserve(c);
-    const empty = note || '<div class="empty">Nothing matches these filters.</div>';
+    const empty = note || (mentionsOn() ? '<div class="empty">No thread here mentions you.</div>'
+      : '<div class="empty">Nothing matches these filters.</div>');
     if (list.__empty !== empty) { list.innerHTML = empty; list.__empty = empty; }
   } else {
     list.__empty = '';
@@ -5504,7 +5521,7 @@ async function noteMessage(ev, team) {
  * synchronous, so nothing on screen sees it.
  */
 function inBell(b, data, t) {
-  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'list', 'coPeople'];
+  const keys = ['data', 'sort', 'team', 'sel', 'not', 'unread', 'mentions', 'list', 'coPeople'];
   const saved = Object.fromEntries(keys.map((k) => [k, state[k]]));
   const savedPass = pass;
   const sets = (o) => Object.fromEntries(Object.entries(o).map(([id, vs]) => [id, new Set(vs)]));
@@ -5517,6 +5534,7 @@ function inBell(b, data, t) {
       sel: sets(b.sel),
       not: sets(b.not),
       unread: false,
+      mentions: false,
       list: newList(),
     });
     state.coPeople = coParticipants();
@@ -5596,6 +5614,7 @@ function toUrl(push = true, entry = null) {
   if (state.compose) q.set('compose', '1');
   if (state.review) q.set('review', '1');
   if (state.unread) q.set('unread', '1');
+  if (mentionsOn()) q.set('mentions', '1');
   if (state.as) q.set('as', String(state.as));
   if (state.search.q) q.set('q', state.search.q);
   const url = `${location.pathname}?${q}`;
@@ -5645,6 +5664,7 @@ function fromUrl() {
   state.sort = personalAsked(q) ? 'personal' : 'team';
   onePick();
   setUnread(q.get('unread') === '1');
+  state.mentions = q.get('mentions') === '1';
   state.as = Number(q.get('as')) || null;
   return {
     open: q.get('t'), compose: q.get('compose') === '1' && !state.as, review: q.get('review') === '1', q: q.get('q') || '',
@@ -5829,6 +5849,7 @@ async function start() {
   await loadWho();
   toUrl(false);
   $('filters').onclick = (e) => {
+    if (e.target.closest('[data-atme]')) { state.mentions = !state.mentions; render(); toUrl(); return; }
     const el = e.target.closest('.card');
     if (!el) return;
     if (e.target.closest('[data-clear]')) {
@@ -5872,7 +5893,7 @@ async function start() {
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
-    if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); render(); toUrl(); return; }
+    if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); state.mentions = false; render(); toUrl(); return; }
     if (e.target.closest('a, .find')) return;
     const el = e.target.closest('.t');
     if (el && el.dataset.hit) openHit(el.dataset.thread);
@@ -6215,7 +6236,7 @@ const WEBMCP_TOOLS = [
       return out({
         viewer: state.data.me?.name || state.me.name, readonly: Boolean(state.data.me?.readonly),
         view: personal() ? 'personal' : state.team, team: personal() ? null : state.team, teams: (state.teams || []).map((t) => t.slug), sort: state.sort,
-        unread_only: state.unread, filters: activeFilters(), excluded: activeFilters(state.not), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
+        unread_only: state.unread, mentions_only: mentionsOn(), filters: activeFilters(), excluded: activeFilters(state.not), open_thread: state.open, shown: state.order.length, total: state.data.threads.length, counts,
       });
     },
   },
@@ -6234,6 +6255,7 @@ const WEBMCP_TOOLS = [
         involves_me: { type: 'boolean', description: 'Only threads the viewer posted in or was mentioned in' },
         sort: { type: 'string', enum: ['team', 'personal'], description: 'team: the inbox of a team (`team`, else the last one shown), what needs the viewer most first, with every filter; personal: the channels the viewer posted or was mentioned in, whichever team they belong to, latest activity first, filtered on one customer at most and on platform (the other filters do not apply there, and alerts are not shown)' },
         unread_only: { type: 'boolean', description: 'Only threads the viewer has not read (a thread read while the list is shown stays in it)' },
+        mentions_only: { type: 'boolean', description: 'The personal view only: only threads that mention the viewer, read or not (with unread_only, the unread mentions)' },
         team: { type: 'string', description: 'Ops team slug from get_inbox_state: shows that team\'s inbox (sort "team"); switching the view closes the open thread' },
       },
     },
@@ -6251,7 +6273,7 @@ const WEBMCP_TOOLS = [
       const view = args.team ? 'team' : (args.sort === 'team' || args.sort === 'personal' ? args.sort : state.sort);
       if (view === 'personal' && next.customer?.length > 1) return fail('The personal view filters on one customer at a time. Give one, or sort "team".');
       if (view !== state.sort || (args.team && args.team !== state.team)) await switchView(view === 'personal' ? null : args.team || state.team);
-      if (args.clear) { state.sel = {}; state.not = {}; setUnread(false); }
+      if (args.clear) { state.sel = {}; state.not = {}; setUnread(false); state.mentions = false; }
       // As on the cards, a value is picked or excluded: the one given last (excluded) wins.
       for (const [sets, others, given] of [[state.sel, state.not, next], [state.not, state.sel, nots]]) {
         for (const [arg, vals] of Object.entries(given)) {
@@ -6265,10 +6287,11 @@ const WEBMCP_TOOLS = [
       else if (args.involves_me === false) delete state.sel.involves;
       onePick();
       if (typeof args.unread_only === 'boolean') setUnread(args.unread_only);
+      if (typeof args.mentions_only === 'boolean') state.mentions = args.mentions_only;
       render();
       toUrl();
       return out({
-        view: personal() ? 'personal' : state.team, filters: activeFilters(), excluded: activeFilters(state.not), sort: state.sort, unread_only: state.unread, shown: state.order.length, total: state.data.threads.length,
+        view: personal() ? 'personal' : state.team, filters: activeFilters(), excluded: activeFilters(state.not), sort: state.sort, unread_only: state.unread, mentions_only: mentionsOn(), shown: state.order.length, total: state.data.threads.length,
       });
     },
   },

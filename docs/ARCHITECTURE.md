@@ -556,7 +556,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Its live updates come from the rooms of your teams and of the teams those channels are
+  views. Besides its cards it has one switch, **Mentions** (the @ at the top right of the
+  customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
+  the thread's mentions, has you); with unread only, the ones the red badge counts. The
+  customers without such a thread leave the column while it is on. Team views do not have it:
+  their Involves card has Me (you posted or were mentioned). Its live updates come from the rooms of your teams and of the teams those channels are
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
   A **team's** view
@@ -583,7 +587,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   in a Slack message, or a Slack channel's in a Teams post, opens the channel's threads in the
   inbox, and a bare link shows `#name`. A link to a channel that is in none of your inboxes
   stays a link to its platform.
-- **The list stays put** while it is the same list (the same view, filters and unread only):
+- **The list stays put** while it is the same list (the same view, filters, unread only and
+  Mentions):
   reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
   read or not (unread only is "unread when the list was opened"); the rows in view, and those
   scrolled past, keep their order, and the rows below them are sorted as the view sorts.

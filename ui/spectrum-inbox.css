@@ -2037,3 +2037,18 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum #threads .rows > .grp .back { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
 .spectrum #threads .rows > .grp-more:hover { text-decoration: underline; }
 .spectrum #threads .rows > .grp-quiet { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Mentions, at the top right of the personal view's customers: a quiet ActionButton, in its
+   selected state while it filters. On narrower screens the Customers button shows it is on. */
+.spectrum .card h3 .atme {
+  display: grid; place-items: center; margin-left: auto; padding: 0;
+  width: var(--spectrum-component-height-75); height: var(--spectrum-component-height-75);
+  color: var(--spectrum-neutral-content-color-default); background: transparent; border: 0;
+  border-radius: var(--s2-radius); cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .card h3 .atme svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .card h3 .atme:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .card h3 .atme[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
+.spectrum .card h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .card h3 .clear + .atme { margin-left: var(--spectrum-spacing-75); }
+.spectrum #threads .count .filt .at { display: inline-grid; margin-left: var(--spectrum-spacing-75); }

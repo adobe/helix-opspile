@@ -338,6 +338,7 @@ describe('inbox page', () => {
       viewFacets: () => [],
       filterCount: () => 0,
       filtButton: () => '',
+      mentionsOn: () => false,
       esc: (s) => s,
       viewSwitch: () => '',
       toNode: () => ({}),
@@ -1096,12 +1097,14 @@ describe('inbox page', () => {
         scores: new Map(),
       };
       const passes = (t) => (!state.unread || api.keptUnread(t))
+        && (!state.mentions || t.mentionedMe)
         && (!state.sel.customer?.size || state.sel.customer.has(t.org));
       const names = 'newList, keptUnread, syncList, onList, viewSort, placeRows';
       api = piece('function newList(', '/** The rows in view', names, {
         state,
         passes,
         personal: () => personal,
+        mentionsOn: () => personal && Boolean(state.mentions),
         scopeOf: (d) => d.team,
         activityOf: (t) => String(t.last_at || t.any_at || ''),
         smartScore: (t) => t.score,
@@ -1173,6 +1176,19 @@ describe('inbox page', () => {
       state.open = 'globex2';
       state.sel.customer = new Set(['globex', 'initech']);
       assert.deepEqual(shown(), ['globex1', 'globex2']);
+    });
+
+    it('is a new list when Mentions goes on or off in the personal view', () => {
+      const { state, shown, see } = list({ personal: true });
+      state.data.threads = [thread('a', { last_at: '2026-01-01T10:02:00Z' }),
+        thread('b', { last_at: '2026-01-01T10:01:00Z', mentionedMe: true })];
+      assert.deepEqual(shown(), ['a', 'b']);
+      see('a', 'b');
+      // The rows the list has shown would stay; Mentions starts it afresh, with only b.
+      state.mentions = true;
+      assert.deepEqual(shown(), ['b']);
+      state.mentions = false;
+      assert.deepEqual(shown(), ['a', 'b']);
     });
   });
 });

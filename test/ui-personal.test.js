@@ -13,8 +13,8 @@
 /*
  * The simple personal view (ui/inbox.js, `simple` and GROUPS): the customer column, the list
  * by customer, picking a customer and going back to all of them, the red badge as threads are
- * read, and the switch to the expert view. The page's own code, in two pieces, run in Node
- * with what they need of the rest of the page stubbed.
+ * read, Mentions (the @ switch), and the switch to the expert view. The page's own code, in
+ * two pieces, run in Node with what they need of the rest of the page stubbed.
  */
 
 import assert from 'node:assert/strict';
@@ -44,14 +44,19 @@ const FACETS = [
   { id: 'platform', value: (t) => t.source },
 ];
 
-/** The inbox: three customers, the latest activity first; two threads mention the viewer. */
+/** The viewer's person id. */
+const ME = 7;
+/**
+ * The inbox: three customers, the latest activity first; two unread threads mention the viewer,
+ * a read one did, and one mentions someone else.
+ */
 const inbox = () => [
   ['a1', 'acme', '2026-11-05T10:00Z', { unread: true, unreadMentions: 2, mentionedMe: true }],
   ['g1', 'globex', '2026-11-05T09:30Z', { unread: true }],
   ['a2', 'acme', '2026-11-05T09:00Z', { unread: true }],
   ['g2', 'globex', '2026-11-05T08:00Z', { unread: true, unreadMentions: 1, mentionedMe: true }],
-  ['a3', 'acme', '2026-11-04T12:00Z', {}],
-  ['i1', 'initech', '2026-11-03T12:00Z', { source: 'teams' }],
+  ['a3', 'acme', '2026-11-04T12:00Z', { mentioned: [{ person: ME, staff: true }] }],
+  ['i1', 'initech', '2026-11-03T12:00Z', { source: 'teams', mentioned: [{ person: 8, staff: true }] }],
   ['a4', 'acme', '2026-11-02T12:00Z', {}],
   ['x1', 'acme', '2026-11-05T11:00Z', { kind: 'alert', unread: true }],
 ].map(([thread, org, at, more]) => ({
@@ -77,8 +82,8 @@ let page;
 
 /** The two pieces, sharing `state`: which view is on screen, then the column and the list. */
 function load() {
-  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter', {
-    FACETS, state, pass: null, keptUnread: () => true,
+  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter, mentionsOn', {
+    FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
   page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount', {
@@ -111,6 +116,7 @@ function load() {
     KIND_EMOJI: { question: '❓' },
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
+    AT: '<svg/>',
   });
 }
 
@@ -156,6 +162,8 @@ beforeEach(() => {
   state = {
     sort: 'personal',
     settings: { expert: false },
+    unread: false,
+    mentions: false,
     sel: {},
     not: {},
     open: null,
@@ -342,6 +350,61 @@ describe('the simple personal view', () => {
       read('g2');
       assert.match(columnRow('globex'), /<span class="lab">Globex<\/span>/);
       assert.match(page.groupHtml(list().find((x) => x.head === 'globex')), /class="grp sticky"/);
+    });
+  });
+
+  describe('mentions', () => {
+    const rows = () => outline().filter((x) => !x.startsWith('#'));
+
+    it('is off unless asked for: every thread, every customer', () => {
+      assert.equal(views.mentionsOn(), false);
+      assert.deepEqual(rows(), ['a1', 'a2', 'a3', 'a4', 'g1', 'g2', 'i1']);
+    });
+
+    it('keeps the threads that mention you, read or not, under their customers', () => {
+      state.mentions = true;
+      assert.equal(views.mentionsOn(), true);
+      assert.deepEqual(outline(), ['# acme', 'a1', 'a3', '# globex', 'g2']);
+      // The column keeps only the customers that mention you, with their badges.
+      const col = page.simpleCustomers();
+      assert.deepEqual([...col.matchAll(/data-v="([^"]+)"/g)].map((m) => m[1]), ['acme', 'globex']);
+      assert.equal(badge(columnRow('')), '3');
+    });
+
+    it('keeps a thread once you read it: its mention stays in the thread', () => {
+      state.mentions = true;
+      Object.assign(state.data.threads.find((t) => t.thread === 'g2'), {
+        unread: false,
+        mentionedMe: false,
+        unreadMentions: 0,
+        mentioned: [{ person: ME, staff: true }],
+      });
+      assert.deepEqual(rows(), ['a1', 'a3', 'g2']);
+    });
+
+    it('with unread only, is what the red badge counts', () => {
+      state.mentions = true;
+      state.unread = true;
+      assert.deepEqual(rows(), ['a1', 'g2']);
+    });
+
+    it('goes with a customer picked', () => {
+      state.mentions = true;
+      pick('globex');
+      assert.deepEqual(outline(), ['# globex', 'g2']);
+    });
+
+    it('is the @ at the top right of the customers, filled while it filters', () => {
+      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="false" title="Show only threads that mention you"/);
+      state.mentions = true;
+      assert.match(page.simpleCustomers(), /<h3>Customers<button class="atme" type="button" data-atme aria-pressed="true" title="Showing only threads that mention you"/);
+    });
+
+    it('filters nothing in a team\'s view', () => {
+      state.mentions = true;
+      state.sort = 'team';
+      assert.equal(views.mentionsOn(), false);
+      assert.ok(state.data.threads.filter((t) => t.kind !== 'alert').every((t) => views.passes(t)));
     });
   });
 });
