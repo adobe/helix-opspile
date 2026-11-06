@@ -107,10 +107,10 @@ function load() {
     EMOJI_CODE: /:([a-z0-9_+-]+):/g,
     emojiHtml: () => '',
     Markdown: { emojiAlone: () => false },
-    statusOf: () => 'quiet',
-    checked: () => false,
-    resolvedOf: () => 'open',
-    STATUS_HINT: { quiet: 'Quiet' },
+    statusOf: (t) => t.status || 'quiet',
+    checked: (t) => t.resolution?.verdict === 'resolved',
+    resolvedOf: (t) => t.resolution?.verdict || 'open',
+    STATUS_HINT: { quiet: 'Quiet', team: 'Team on it' },
     urgencyOf: () => 'low',
     kindOf: () => 'question',
     KIND_EMOJI: { question: '❓' },
@@ -217,6 +217,53 @@ describe('the simple personal view', () => {
       state.settings.expert = true;
       assert.deepEqual(outline(), ['i1']);
       assert.deepEqual([...state.sel.platform], ['teams']);
+    });
+  });
+
+  describe('a thread with a draft', () => {
+    /** Thread a3, resolved with ✅ and with a draft, the team's status, read or not. */
+    function drafted(unread) {
+      const t = state.data.threads.find((x) => x.thread === 'a3');
+      Object.assign(t, {
+        unread,
+        status: 'team',
+        resolution: { verdict: 'resolved' },
+        draft: { by: { id: 'me' }, updated_at: '2026-11-05T09:00Z', preview: 'Try the purge' },
+      });
+      return t;
+    }
+    const mark = (r) => (/<span class="(pen|ok|dot)[^"]*"[^>]*>/.exec(r) || [])[0] || '';
+
+    it('shows a pencil in the status dot\'s place, over the resolved ✓, in the status\'s color', () => {
+      state.settings.expert = true;
+      const t = drafted(false);
+      let r = page.row(t);
+      assert.equal(mark(r), '<span class="pen s-team" title="Draft by you, 1h: Try the purge · Team on it">');
+      assert.doesNotMatch(r, /class="ok"|class="dot|class="drafted"|✎ Draft/);
+      // Without the draft, the resolved thread has its ✓ back.
+      delete t.draft;
+      r = page.row(t);
+      assert.match(mark(r), /^<span class="ok" title="Resolved · Team on it">$/);
+    });
+
+    it('outlines the pencil in its own shape while the team has not read the thread', () => {
+      state.settings.expert = true;
+      const t = drafted(true);
+      let r = page.row(t);
+      assert.match(mark(r), /^<span class="pen s-team ring" title="Draft by you, 1h: Try the purge · Team on it">$/);
+      assert.match(r, /<path d="[^"]*" fill="none" stroke="currentColor"/);
+      read('a3');
+      r = page.row(t);
+      assert.match(mark(r), /^<span class="pen s-team" /);
+      assert.doesNotMatch(r, /fill="none"/);
+    });
+
+    it('shows no draft mark at all in the personal view', () => {
+      for (const unread of [true, false]) {
+        const r = page.row(drafted(unread));
+        assert.match(r, / simple"/);
+        assert.doesNotMatch(r, /class="pen|class="drafted"|Draft|<svg/);
+      }
     });
   });
 
