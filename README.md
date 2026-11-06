@@ -213,6 +213,9 @@ sum, an odd pixel with the hairline border width), the layout's larger sizes on 
 plus the rest (`calc(var(--spectrum-spacing-100) * n + …)`), text on the type ramp, radii,
 borders and durations on theirs. A zero length keeps its unit (`0px`): calc() cannot add a
 unitless 0 to a length. The browser's chrome (`theme-color`) is Spectrum 2's base background.
+Your menu's **Appearance** picks the color scheme per browser (localStorage `opspile.scheme`):
+the system's, as the browser prefers it (the default), light or dark. `ui/header.js` sets it as
+`data-scheme` on `<html>`, which the tokens and the browser's chrome follow.
 
 Code blocks in messages are highlighted with [`@pierre/highlights`](https://diffs.com/highlights),
 the highlighter of slicc's chat (`src/ui-highlight.js`). A fence that names no language, as all of
