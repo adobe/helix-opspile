@@ -21,6 +21,8 @@
  * Bedrock price per model: the metric's `detail` is the model, and `models` its prices.
  */
 
+import { untagged } from '../experiments.js';
+
 export const AS_OF = '2026-11-02';
 
 /** The embedding models' dimensions (bge-base-en-v1.5), as the Vectorize indexes have them. */
@@ -62,8 +64,11 @@ const BEDROCK_MODELS = {
   },
 };
 
-/** A Bedrock model id (`us.anthropic.claude-opus-5-5`, `…-v1:0`) as priced here. */
-export const bedrockModel = (id) => String(id || '')
+/**
+ * A Bedrock model id (`us.anthropic.claude-opus-5-5`, `…-v1:0`, an experiment's arm after it:
+ * `…#cache=short`, src/experiments.js) as priced here.
+ */
+export const bedrockModel = (id) => untagged(id)
   .replace(/^.*\//, '')
   .replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '')
   .replace(/-v\d+(?::\d+)?$/, '');

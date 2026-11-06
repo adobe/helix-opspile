@@ -150,6 +150,12 @@ before the list is stored, so a failure tries again.
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
 sessions and never an unpinned one.
 
+**Agent experiment arm.** before → in an arm → after (`src/experiments.js`). Not stored: worked
+out from the clock and the agent's name at every model request (the retention it asks for) and at
+every metering (the tag on its tokens), so a deploy or an eviction cannot leave an agent in the
+wrong arm. The tokens metered first after the window opens or closes may include a round from just
+before it, counted with the arm of the moment.
+
 **MCP tool catalog.** unknown → checked → stale or error (`src/agent/mcp.js`). A failed check keeps
 the servers the agent had. A change of configuration, or an hour, asks again.
 

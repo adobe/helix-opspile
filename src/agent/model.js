@@ -120,8 +120,29 @@ export function fittingApi(api) {
   };
 }
 
-/** A pi-ai provider with one model, authenticated from the Worker's secrets. */
-export function agentProvider(env) {
+/**
+ * The API asking for the prompt cache retention `retention()` says, when it is called, instead
+ * of the one the request has: the agent's experiment arm (src/experiments.js), which changes
+ * while the agent runs. A request that asks for none (a compaction's) keeps asking for none.
+ */
+export function retainingApi(api, retention) {
+  if (!retention) {
+    return api;
+  }
+  const keep = (options) => (options && options.cacheRetention === 'none' ? options
+    : { ...options, cacheRetention: retention() });
+  return {
+    ...api,
+    stream: (model, context, options) => api.stream(model, context, keep(options)),
+    streamSimple: (model, context, options) => api.streamSimple(model, context, keep(options)),
+  };
+}
+
+/**
+ * A pi-ai provider with one model, authenticated from the Worker's secrets. `cacheRetention`,
+ * a function, picks each request's prompt cache retention (`retainingApi`).
+ */
+export function agentProvider(env, { cacheRetention } = {}) {
   return createProvider({
     id: PROVIDER,
     name: 'Amazon Bedrock via AI Gateway',
@@ -134,7 +155,7 @@ export function agentProvider(env) {
       },
     },
     models: env.AGENT_MODEL ? [agentModel(env)] : [],
-    api: fittingApi(anthropicMessagesApi()),
+    api: retainingApi(fittingApi(anthropicMessagesApi()), cacheRetention),
   });
 }
 

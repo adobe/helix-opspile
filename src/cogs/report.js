@@ -14,6 +14,7 @@ import {
   costOf, isStock, metricOf, priceList, serviceOf, SERVICES, unitPrice, VOLUME,
 } from './prices.js';
 import { dayOf, HOUR_DAYS } from './rollup.js';
+import { EXPERIMENTS, tagOf } from '../experiments.js';
 import { draftCounts, draftsSince, openDrafts } from '../draftevents.js';
 
 /*
@@ -321,6 +322,70 @@ function totalsOf(c, {
   };
 }
 
+/** The Bedrock metrics that are the prompt, as the model reads it. */
+const PROMPT = ['input_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cache_write_1h_tokens'];
+
+/**
+ * The experiments' arms side by side (src/experiments.js), from the priced `rows` of what is
+ * selected whose detail names an arm: per arm, its tokens and cost per metric, and the prompt
+ * (what the model read: input, cache reads and writes), which a cache policy does not change,
+ * so what the prompt cost per million tokens compares the arms however the threads fell. `vs`:
+ * how much more (or less, below 0) that is than in the experiment's default arm.
+ */
+export function experimentsOf(rows) {
+  const found = new Map();
+  for (const r of rows) {
+    const tag = r.service === 'bedrock' ? tagOf(r.detail) : null;
+    if (!tag) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    if (!found.has(tag.experiment)) {
+      found.set(tag.experiment, new Map());
+    }
+    const arms = found.get(tag.experiment);
+    const a = arms.get(tag.arm) || arms.set(tag.arm, {
+      id: tag.arm, usd: 0, prompt: 0, promptUsd: 0, metrics: {},
+    }).get(tag.arm);
+    const m = a.metrics[r.metric] || (a.metrics[r.metric] = { quantity: 0, usd: 0 });
+    m.quantity += r.quantity;
+    m.usd += r.usd;
+    a.usd += r.usd;
+    if (PROMPT.includes(r.metric)) {
+      a.prompt += r.quantity;
+      a.promptUsd += r.usd;
+    }
+  }
+  return [...found].map(([id, arms]) => {
+    const def = EXPERIMENTS.find((e) => e.id === id);
+    const perM = (a) => (a.prompt > 0 ? (a.promptUsd / a.prompt) * 1e6 : null);
+    const base = arms.get(def?.default);
+    const order = def ? def.arms.map((x) => x.id) : [];
+    const rank = (x) => (order.includes(x) ? order.indexOf(x) : order.length);
+    return {
+      id,
+      title: def?.title || id,
+      from: def?.from || null,
+      until: def?.until || null,
+      default: def?.default || null,
+      arms: [...arms.values()].sort((x, y) => rank(x.id) - rank(y.id) || x.id.localeCompare(y.id))
+        .map((a) => {
+          const read = a.metrics.cache_read_tokens?.quantity || 0;
+          const p = perM(a);
+          const b = base && base !== a ? perM(base) : null;
+          return {
+            ...a,
+            label: def?.arms.find((x) => x.id === a.id)?.label || a.id,
+            output: a.metrics.output_tokens?.quantity || 0,
+            hitRate: a.prompt > 0 ? read / a.prompt : null,
+            perMPrompt: p,
+            vs: p !== null && b ? p / b - 1 : null,
+          };
+        }),
+    };
+  });
+}
+
 /** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate. */
 export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const { from, to, days } = period(url, now);
@@ -495,6 +560,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     },
     drafts,
     services: byService,
+    experiments: experimentsOf(chosen),
     chart: { unit, columns: columns(unit, from, to, costs, now) },
     orgs: group('org').map((g) => ({
       ...g,
