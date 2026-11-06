@@ -112,6 +112,20 @@ export async function createKnowledgeBases() {
       }
       return { path, hash: await blobHash(r.fs, path), text: await r.fs.promises.readFile(`${DIR}/${path}`, 'utf8') };
     },
+    /** `{ [hash]: text }` of the tracked files whose blob hash is one of `hashes`. */
+    async blobs(repo, hashes) {
+      const r = repos.get(repo);
+      const out = {};
+      for (const path of await tracked(r)) {
+        // eslint-disable-next-line no-await-in-loop
+        const hash = await blobHash(r.fs, path);
+        if (hashes.includes(hash)) {
+          // eslint-disable-next-line no-await-in-loop
+          out[hash] = await r.fs.promises.readFile(`${DIR}/${path}`, 'utf8');
+        }
+      }
+      return out;
+    },
     async write(repo, changes, options) {
       const invalid = checkChanges(changes, { staff: true });
       return invalid ? { error: invalid } : commitChanges(repos.get(repo).fs, changes, options);

@@ -97,7 +97,37 @@ function timedBucket(bucket, timing) {
 }
 
 /**
- * Where a request's time goes, as a `Server-Timing` header: how long D1 and R2 were busy
+ * Calls on an Artifacts binding, or on a repo it gives, without touching the stub otherwise:
+ * Workers RPC stubs answer any property, `bind` and `apply` included, so the call goes through
+ * `Reflect.apply` and only functions are wrapped.
+ */
+function timedStub(stub, timing, wrapResult = (v) => v) {
+  return new Proxy(stub, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop);
+      if (typeof v !== 'function') {
+        return v;
+      }
+      if (prop === Symbol.dispose) {
+        return (...args) => Reflect.apply(v, target, args);
+      }
+      return async (...args) => wrapResult(
+        await timing.time('artifacts', () => Reflect.apply(v, target, args)),
+        prop,
+      );
+    },
+  });
+}
+
+/** The Artifacts binding: its calls, and those on the repos it gives (`get`). */
+function timedArtifacts(artifacts, timing) {
+  return timedStub(artifacts, timing, (v, prop) => (prop === 'get' && v
+    && (typeof v === 'object' || typeof v === 'function') ? timedStub(v, timing) : v));
+}
+
+/**
+ * Where a request's time goes, as a `Server-Timing` header: how long D1, R2 and Artifacts were
+ * busy
  * (the time at least one call was in flight, so parallel calls are not counted twice), how
  * many calls each took and in how many rounds (calls in flight together are one round; each
  * round waited for the one before), and the total. Durations and counts only: no keys, ids
@@ -139,7 +169,7 @@ export class Timing {
     this.marks.push([name, this.now() - this.start]);
   }
 
-  /** `env` with D1 (`DB`) and the pile-2 bucket (`CHANNELS`) timed; everything else as is. */
+  /** `env` with D1 (`DB`), the pile-2 bucket (`CHANNELS`) and `ARTIFACTS` timed; the rest as is. */
   wrap(env) {
     if (!env || env.timing === this) {
       return env;
@@ -149,6 +179,7 @@ export class Timing {
       timing: this,
       ...(env.DB ? { DB: timedDatabase(env.DB, this) } : {}),
       ...(env.CHANNELS ? { CHANNELS: timedBucket(env.CHANNELS, this) } : {}),
+      ...(env.ARTIFACTS ? { ARTIFACTS: timedArtifacts(env.ARTIFACTS, this) } : {}),
     };
   }
 

@@ -234,6 +234,21 @@ export async function readText(env, artifact, path, { full = false } = {}) {
   });
 }
 
+/**
+ * Blobs by their hash, as text, all at once: `{ [hash]: text }`, without those the repo does
+ * not have. The hashes come from a listing, so neither the head nor a tree is read; a blob's
+ * content never changes, so this is how the editor fetches files ahead of being opened.
+ */
+export async function readBlobs(env, artifact, hashes) {
+  return withRepo(env, artifact, async (repo) => {
+    const texts = await Promise.all(hashes.map(async (hash) => {
+      const blob = await repo.readBlob(hash).catch(() => null);
+      return blob ? blob.text() : null;
+    }));
+    return Object.fromEntries(hashes.map((h, i) => [h, texts[i]]).filter(([, t]) => t !== null));
+  });
+}
+
 /** Lines matching a regular expression (case-insensitive) in the text files below `path`. */
 export async function grepFiles(env, artifact, pattern, path = '') {
   let re;
