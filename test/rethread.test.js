@@ -17,7 +17,7 @@ import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import { routeReply, target } from '../src/post.js';
 import {
-  ago, dethread, rethread, skeleton, SPLIT,
+  addresses, ago, dethread, REPLY, rethread, skeleton, SPLIT,
 } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -85,14 +85,14 @@ function fakes({ clefChoice = 'new', clefP = 0.9, clefProbabilities = null } = {
   };
 }
 
-async function seed(env, n, text, at) {
+async function seed(env, n, text, at, author = null) {
   const thread = `slack:E1:C1:${n}`;
   const path = `channels/acme/helix/slack-C1/${n}/`;
   env.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
     kind, path, root_at, last_at, any_at, updated_at) VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix',
     'alert', ?, ?, ?, ?, ?)`).run(thread, n, path, at, at, at, at);
   await env.CHANNELS.put(`${path}${n}.md`, render({
-    source: 'slack', thread, id: n, at,
+    source: 'slack', thread, id: n, at, ...(author ? { author: { kind: 'person', name: author } } : {}),
   }, text), {
     customMetadata: { version: '1', deleted: '0' },
   });
@@ -771,6 +771,121 @@ describe('conversations held in threads', () => {
       assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
       assert.equal(env.clefCalls.length, 0);
     }
+  });
+});
+
+/**
+ * A reply that landed top-level: somebody answers in the channel's box instead of the thread's,
+ * @-mentioning whoever they answer, seconds later. Made-up names and texts only.
+ */
+describe('a reply posted top-level', () => {
+  const post = (env, k, id, when, user, author) => env.DB.sqlite.prepare(`INSERT INTO messages (source,
+    tenant, channel_id, id, thread, at, author, author_key, counted)
+    VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, ?, 1)`).run(id, k, when, author, `slack:E1:${user}`);
+  const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+  const row = (env, k) => env.DB.rows(`SELECT logical_thread, logical_via, logical_p FROM threads
+    WHERE thread = ?`, k)[0];
+
+  /** Five roots of earlier days, each answered in its thread: a channel that replies in threads. */
+  async function habit(env) {
+    for (let i = 0; i < 5; i += 1) {
+      const when = at(-(10 + i) * 24 * 60);
+      // eslint-disable-next-line no-await-in-loop
+      const k = await seed(env, `40.${i}`, `unrelated topic number ${i} ${'x'.repeat(i)}`, when, 'Ivy Chen');
+      post(env, k, `40.${i}`, when, 'U9', 'Ivy Chen');
+      post(env, k, `40.${i}.1`, at(-(10 + i) * 24 * 60 + 5), 'U3', 'Ada Lovelace');
+    }
+  }
+
+  /**
+   * A customer's question, and a colleague's answer to her as a root of its own, `gap` minutes
+   * later, in a channel that replies in threads.
+   */
+  async function pair({
+    gap = 0.6,
+    clefP = 0.9,
+    body = '@Mina Okafor when that happens to me, I reconnect the account on the right',
+  } = {}) {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP }) };
+    await habit(env);
+    const a = await seed(env, '41.0', 'our chatbot is gone and a colleague sees an error, can we get it back?', at(0), 'Mina Okafor');
+    const b = await seed(env, '41.5', body, at(gap), 'Kit Alder');
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '41.0', at(0), 'U1', 'Mina Okafor');
+    post(env, b, '41.5', at(gap), 'U2', 'Kit Alder');
+    await rethread(env, a);
+    return { env, a, b };
+  }
+
+  it('folds it into the conversation it answers, and keeps it there when it is answered itself', async () => {
+    const { env, a, b } = await pair();
+    assert.deepEqual(await rethread(env, b), { result: 'rethreaded', via: REPLY, p: 0.9 });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: REPLY, logical_p: 0.9 });
+    const file = parse(await (await env.CHANNELS.get('channels/acme/helix/slack-C1/41.5/41.5.md')).text());
+    assert.equal(file.meta.logicalThread, a);
+    // The conversation goes on in its platform thread: the asker answers there, and the group's
+    // replies go there, so it is no conversation of its own.
+    post(env, b, '41.6', at(1.5), 'U1', 'Mina Okafor');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.equal(row(env, b).logical_thread, a);
+    assert.equal((await target(env, a)).thread, b);
+  });
+
+  it('folds it when it has replies of its own already', async () => {
+    const { env, a, b } = await pair();
+    post(env, b, '41.6', at(1.5), 'U1', 'Mina Okafor');
+    assert.deepEqual(await rethread(env, b), { result: 'rethreaded', via: REPLY, p: 0.9 });
+    assert.equal(row(env, b).logical_thread, a);
+  });
+
+  it('is no reply when the conversation was last active longer ago', async () => {
+    const { env, b } = await pair({ gap: 30 });
+    const r = await rethread(env, b);
+    assert.deepEqual([r.result, r.clef, r.threaded], ['new-topic', 0.9, true]);
+    assert.equal(row(env, b).logical_thread, null);
+  });
+
+  it('is no reply when it @-mentions nobody of the conversation', async () => {
+    const { env, b } = await pair({ body: '@Ada Lovelace is the feed of our other site still being built?' });
+    const r = await rethread(env, b);
+    assert.deepEqual([r.result, r.clef, r.threaded], ['new-topic', 0.9, true]);
+  });
+
+  it('still needs Clef sure that it continues that conversation', async () => {
+    const { env, b } = await pair({ clefP: 0.7 });
+    const r = await rethread(env, b);
+    assert.deepEqual([r.result, r.clef, r.threaded], ['new-topic', 0.7, undefined]);
+  });
+
+  it('only lowers the bar for the conversation it addresses', async () => {
+    // Clef picks the conversation that was active last (c0), which the root addresses not.
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
+    await habit(env);
+    const a = await seed(env, '42.0', 'our chatbot is gone and a colleague sees an error, can we get it back?', at(0), 'Mina Okafor');
+    const other = await seed(env, '42.2', 'the sitemap of the second locale is empty since this morning', at(0.2), 'Ada Lovelace');
+    const b = await seed(env, '42.5', '@Mina Okafor when that happens to me, I reconnect the account on the right', at(0.6), 'Kit Alder');
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '42.0', at(0), 'U1', 'Mina Okafor');
+    post(env, other, '42.2', at(0.2), 'U3', 'Ada Lovelace');
+    post(env, b, '42.5', at(0.6), 'U2', 'Kit Alder');
+    const r = await rethread(env, b);
+    assert.deepEqual([r.result, r.clef, r.threaded], ['new-topic', 0.9, true]);
+  });
+});
+
+describe('addresses', () => {
+  it('finds the @-mention of a person by their name or its first word', () => {
+    const found = (body, names) => addresses(body, names);
+    assert.equal(found('@Mina Okafor any news on this?', ['Mina Okafor']), true);
+    assert.equal(found('hi @mina, any news on this?', ['Mina Okafor']), true);
+    assert.equal(found('@Okafor, Mina - any news?', ['Okafor, Mina']), true);
+    assert.equal(found('@Zoe did you see this?', ['Zo\u00eb Brandt']), true);
+    assert.equal(found('cc @Kit Alder @Mina Okafor', ['Ada Lovelace', 'Mina Okafor']), true);
+    // Not another name that starts the same, a name without the @, or somebody else.
+    assert.equal(found('@minarik any news?', ['Mina Okafor']), false);
+    assert.equal(found('Mina Okafor said it works now', ['Mina Okafor']), false);
+    assert.equal(found('@Ada can you look at this?', ['Mina Okafor']), false);
+    assert.equal(found('@Mina Okafor any news?', []), false);
   });
 });
 
