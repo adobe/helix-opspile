@@ -1364,6 +1364,7 @@ written by people outside its control.
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
+| `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
@@ -1636,6 +1637,28 @@ Neither says that nobody outside is in the channel (guests are not recorded), so
 alone does not turn it on. The prompt asks the agent to keep other customers' details out of the
 knowledge bases and out of what it posts; that and the channel's other tools are not restricted
 by code: what it read can reach them, `bash` and the `browser` server included.
+
+**`membership`.** Customers and colleagues ask in a thread for someone to be added to the
+channel, and on each platform the admins have a bot for that: admin-bot (teams-admin-agent) on
+Teams, AEM Ops Automation (the slack-automation relay) on Slack. A request that does not reach
+the bot properly (a plain "@admin, can you add …") is easy to miss, and the thread does not wait
+on us when Adobe posted last. With this tool the agent files it (`request_membership`,
+`src/agent/membership.js`), naming the author of the message that asked. Neither bot listens to
+other bots (Teams delivers no bot's message to another bot; the relay ignores bot messages), so
+opspile calls each through a service binding to its `MembershipRequests` entrypoint, on the same
+Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
+
+- **Teams** (`TEAMS_ADMIN`): `submit({ action, emails, teamId, conversationId, requester, via })`
+  files it as an `@admin-bot add` would: an approval card in the admins' Slack channel per
+  person not yet as asked, and admin-bot's answer in the Teams thread, then and once reviewed.
+- **Slack** (`SLACK_AUTOMATION`): the agent posts the request in `MEMBERSHIP_SLACK_CHANNEL`
+  (#general) as the opspile bot, mentioning only `MEMBERSHIP_SLACK_BOT` (the relay reads every
+  other `<@…>` as a person to add), with the asker's name and a link to the thread, then hands
+  that message to `submit({ channel, ts, text, requester, via })`. The relay threads its
+  confirmations under it; the asker confirms if they are a member of the workspace, an admin
+  otherwise.
+
+Nobody is added until it is approved, and the prompt says not to tell anyone otherwise.
 
 ## COGS
 

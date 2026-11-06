@@ -12,6 +12,7 @@
 
 import { discordEnabled } from '../discord.js';
 import { teamsBotEnabled } from '../teamsbot.js';
+import { membershipOn } from './membership.js';
 
 /**
  * Tools of the thread agents that are off until someone turns them on: for an ops team, or
@@ -33,6 +34,10 @@ import { teamsBotEnabled } from '../teamsbot.js';
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
  * - `any_thread`: the agent reads any thread of the inbox, whatever its channel, team or
  *   customer (src/agent/history.js).
+ * - `membership`: the agent asks the platform's admin bot to add people to the thread's channel,
+ *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
+ *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
+ *   through a service binding. The admins approve, as when a person asks the bot.
  *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
@@ -91,6 +96,19 @@ export const AGENT_TOOLS = [
     platforms: null,
     internal: true,
   },
+  {
+    tool: 'membership',
+    title: 'Request channel members',
+    names: ['request_membership'],
+    description: 'Where someone in the thread asks for people to be added to the channel (or'
+      + ' removed), the agent files the request with the admins\' bot: admin-bot on Teams, AEM Ops'
+      + ' Automation in #general on Slack',
+    note: 'Nobody is added until it is approved: on Teams by the admins, in their Slack channel;'
+      + ' on Slack by the person who asked, if they are a member there, or an admin. Each request'
+      + ' names the person who asked, and says the opspile agent sent it.',
+    platforms: ['slack', 'teams'],
+    needs: membershipOn,
+  },
 ];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((t) => [t.tool, t]));
@@ -104,10 +122,13 @@ const BOTS = {
 export const isAgentTool = (tool) => BY_NAME.has(String(tool));
 export const agentTool = (tool) => BY_NAME.get(String(tool)) || null;
 
-/** The platforms a tool works on in this deployment, or null for all of them. */
+/**
+ * The platforms a tool works on in this deployment, or null for all of them: where the opspile
+ * bot is set up, or for a tool with `needs` of its own, where those are.
+ */
 export function platformsOf(env, tool) {
   const t = agentTool(tool);
-  return t && t.platforms ? t.platforms.filter((p) => BOTS[p](env)) : null;
+  return t && t.platforms ? t.platforms.filter((p) => (t.needs || BOTS)[p](env)) : null;
 }
 
 /** Whether a tool works on a platform (a thread's `source`) in this deployment. */
@@ -120,6 +141,10 @@ export function onPlatform(env, tool, source) {
 export function toolProblem(env, tool) {
   if (tool === 'post_message' && !platformsOf(env, tool).length) {
     return 'No opspile bot (Slack, Teams or Discord) is set up in this deployment.';
+  }
+  if (tool === 'membership' && !platformsOf(env, tool).length) {
+    return 'Neither admin bot is bound here (TEAMS_ADMIN, or SLACK_AUTOMATION with'
+      + ' MEMBERSHIP_SLACK_CHANNEL and MEMBERSHIP_SLACK_BOT).';
   }
   if (tool === 'computer' && !env.LOADER) {
     return 'The Worker Loader binding (LOADER) is missing in this deployment.';
