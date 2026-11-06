@@ -843,6 +843,9 @@ export function agentToolsExtension(ctx, tools) {
           return fail('request_membership is not available in this channel (any more).');
         }
         const r = await requestMembership(env, t, args);
+        if (r.error && r.ts) {
+          return fail(`The request was posted in #general (message ${r.ts}), but ${r.error}. Do not post it again: say so in your note, for a person to handle.`);
+        }
         if (r.error) {
           return fail(`Nothing was requested${r.unknown ? ', as far as is known' : ''}: ${r.error}`);
         }

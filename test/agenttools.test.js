@@ -666,4 +666,16 @@ describe('requesting channel members', () => {
     assert.equal(r.error, true);
     assert.match(r.text, /admin-bot refused it: teamId must be the team's group id/);
   });
+
+  it('says a Slack request went out when the relay then failed, so it is not posted twice', async () => {
+    const gone = async () => {
+      throw new Error('binding gone');
+    };
+    const { run } = setup({ SLACK_AUTOMATION: { submit: gone } });
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, true);
+    assert.match(r.text, /posted in #general \(message 1792600000\.000200\), but AEM Ops Automation refused it: binding gone\. Do not post it again/);
+  });
 });

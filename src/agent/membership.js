@@ -137,13 +137,14 @@ async function onSlack(env, t, {
   if (!posted.ok) {
     return { error: `Slack: ${posted.error || res.status}` };
   }
+  // The post is out: from here on, a failure says so, so the agent does not post it again.
   const out = await env.SLACK_AUTOMATION.submit({
     channel: env.MEMBERSHIP_SLACK_CHANNEL,
     ts: posted.ts,
     text,
     requester: asker.userId && /^[UW][A-Z0-9]+$/.test(asker.userId) ? asker.userId : null,
     via: 'opspile',
-  });
+  }).catch((e) => ({ ok: false, error: e.message }));
   if (!out || !out.ok) {
     return {
       error: `AEM Ops Automation refused it: ${(out && out.error) || 'no answer'}`, ts: posted.ts,
