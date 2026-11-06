@@ -253,7 +253,11 @@ and again. A root by the same person within three minutes of their previous root
 channel, with nobody else's root between them, continues it (a *burst*), unless that root is
 deleted by then (people delete a message and post it again, and the new one is the thread), or
 someone has answered it in its thread already (then the new one is a message of its own, as the
-next of several questions each in its thread). When a root message
+next of several questions each in its thread). A root that only greets ("Hello Ada", "Hi team
+:wave:": a salutation, the people it is addressed to and emoji, `greets`) says nothing of its own,
+and its author's next root within 15 minutes continues it the same way: people greet, then take
+minutes to write what it is about, and Clef reads a greeting as a conversation of its own. When a
+root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
 earlier roots in the same channel, within 14 days, are found by vector search.
@@ -327,7 +331,7 @@ A match sets `logicalThread` on that one message file and on its thread row, alw
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing
 the match is a one-field change. Replays arrive in any order, so an alert that is matched also
 pulls in near-identical later alerts that had found nothing earlier, and a root pulls in the
-next root by the same person within three minutes. A conversation's root is decided from the
+next root by the same person within three minutes (15 after a greeting). A conversation's root is decided from the
 conversations before it, so re-threading a channel again goes oldest root first
 (`scripts/replay.mjs --rethread --channel <id>`). The inbox shows a group as
 one entry: the first thread's title, the latest activity and the latest member's label, the most

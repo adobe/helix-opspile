@@ -63,6 +63,14 @@ export const MIN_CANDIDATE_CONVERSATION = 0.6;
  */
 export const BURST_MS = 3 * 60 * 1000;
 /**
+ * A root that only greets ("Hello Ada", "Hi team :wave:") says nothing of its own: its author is
+ * typing what it is about, and a question takes longer to write than a follow-up. Their next root
+ * this soon, with nobody else's root between them, continues it, as a burst does: in the channels
+ * where people greet first, it came three to six minutes later, past BURST_MS, and Clef, reading
+ * a greeting as a conversation of its own, was not sure enough (0.77) to fold it.
+ */
+export const GREETING_MS = 15 * 60 * 1000;
+/**
  * In conversations, the channel's latest conversations active this recently are always
  * candidates, however differently they are worded: answers, thanks, nudges and escalations
  * posted as new messages ("this is a blocker, please help", "done, you have access") share few
@@ -245,6 +253,33 @@ export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE
  * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
  */
 export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
+const SALUTATION = /^(?:hi+|hel+o+|hey|heya|hiya|howdy|greetings|dear|hallo|moin|servus|hola|bonjour|bonsoir|salut|ciao|buongiorno|ol[aá]|good|guten|morning|afternoon|evening|day|morgen|tag)$/;
+const ADDRESSEE = /^(?:all|everyone|everybody|team|folks|guys|people|there|again|y'?all|you|both|zusammen|alle|miteinander|tous|à|a|le|la|l'équipe|équipe|and|und|et)$/;
+/**
+ * Whether a root only greets: a salutation, then at most the people it is addressed to (names,
+ * mentions, "team", "all") and emoji, and nothing else (see GREETING_MS).
+ */
+export function greets(body) {
+  const text = String(body || '')
+    .replace(/:[a-z0-9_+'-]+:/gi, ' ')
+    .replace(/\bhow are (?:you|things)(?: (?:doing|all))?\b|\bhope (?:you are|you're|all is|everyone is) (?:well|good)\b/gi, ' ')
+    .replace(/\p{Extended_Pictographic}|\p{Emoji_Modifier}|\u200d|\ufe0f/gu, ' ')
+    .replace(/[!.,;?…-]+/g, ' ')
+    .trim();
+  if (!text || text.length > 80) {
+    return false;
+  }
+  const words = text.split(/\s+/);
+  let i = 0;
+  while (i < words.length && SALUTATION.test(words[i].toLowerCase())) {
+    i += 1;
+  }
+  const rest = words.slice(i);
+  return i > 0 && rest.length <= 4 && rest.every((w) => w.startsWith('@')
+    || ADDRESSEE.test(w.toLowerCase()) || /^\p{Lu}[\p{Ll}'’]*(?:-\p{Lu}?[\p{Ll}'’]+)*$/u.test(w));
+}
+/** How soon after a root its author's next one continues it (BURST_MS, GREETING_MS). */
+const burstMs = (body) => (greets(body) ? GREETING_MS : BURST_MS);
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
 /**
@@ -547,12 +582,15 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) - GREETING_MS).toISOString(),
     ).first();
   // Not once someone answered it in its thread: the next root is no piece of it then, but a
-  // message of its own (the next of several questions, each in its thread).
-  const burst = previous && previous.author_key === author
-    && !await answered(env, previous, thread.root_at) ? previous : null;
+  // message of its own (the next of several questions, each in its thread). Later than BURST_MS,
+  // only a greeting's (GREETING_MS).
+  const soon = previous && previous.author_key === author
+    && (Date.parse(thread.root_at) - Date.parse(previous.root_at) <= BURST_MS
+      || greets((await rootBody(env, previous))?.parsed.body));
+  const burst = soon && !await answered(env, previous, thread.root_at) ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -701,7 +739,7 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) + BURST_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) + burstMs(root.parsed.body)).toISOString(),
     ).first();
   const nextFree = next && next.logical_via !== SPLIT
     && (!next.logical_thread || joined.includes(next.logical_thread));
@@ -795,6 +833,7 @@ export async function dethread(env, key) {
     WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
   const split = [key];
   let last = thread;
+  let lastBody = (await rootBody(env, thread))?.parsed.body;
   while (author && author.author_key) {
     // eslint-disable-next-line no-await-in-loop
     const next = await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
@@ -807,7 +846,7 @@ export async function dethread(env, key) {
         thread.channel_id,
         last.thread,
         last.root_at,
-        new Date(Date.parse(last.root_at) + BURST_MS).toISOString(),
+        new Date(Date.parse(last.root_at) + burstMs(lastBody)).toISOString(),
       ).first();
     if (!next || next.author_key !== author.author_key || next.logical_thread !== group
       || next.logical_via !== 'burst' || next.routed_at) {
@@ -820,6 +859,8 @@ export async function dethread(env, key) {
     await markRootFile(env, next, key);
     split.push(next.thread);
     last = next;
+    // eslint-disable-next-line no-await-in-loop
+    lastBody = (await rootBody(env, next))?.parsed.body;
   }
   // Open inboxes reload the group, which has these no more, and list them on their own.
   const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
