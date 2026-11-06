@@ -557,6 +557,7 @@ describe('inbox page', () => {
         smartScore: () => 0,
         render: () => {},
         backfill: () => {},
+        keepReads: () => {},
       });
       return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
     }

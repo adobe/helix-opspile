@@ -35,7 +35,9 @@ to a newer `version`, and a tombstone is final, so a replay in any order comes o
 
 **Room read flush.** idle → pending → flushed (`read:*` and the alarm, `src/room.js`). The flush
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
-have arrived.
+have arrived. Until then the inbox has the thread unread, so the page that sent a read holds it for
+30 seconds (`readsSent`, `keepReads` in `ui/inbox.js`): a reload meanwhile shows the thread read
+unless something came in after the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
 conversation's root folded by Clef that gets a person's reply in its own platform thread) split

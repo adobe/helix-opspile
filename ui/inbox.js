@@ -4724,7 +4724,21 @@ function markRead(t) {
     const ws = !personal() && state.sockets.find((x) => x.team === state.team);
     if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
+    readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
+  seeRead(t);
+  render();
+}
+/**
+ * Your reads this page sent, by platform thread, until the inbox has them. The room writes a read
+ * to D1 a few seconds after it (FLUSH_MS, src/room.js), so an inbox loaded meanwhile (any live
+ * update reloads it) still has the thread unread: kept as it came, the row turned bold again a
+ * second after you read it. A read is held for a while only: one that never got through shows.
+ */
+const READ_HOLD_MS = 30 * 1000;
+const readsSent = new Map();
+/** Shows `t` read by you, as the server will once it has your read. */
+function seeRead(t) {
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
   Object.assign(t, {
     unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
@@ -4732,7 +4746,21 @@ function markRead(t) {
   if (lastOf(t)) t.unseenByAdobe = false;
   const applies = { 'mentioned-team': t.mentionedTeam.length > 0 };
   t.attention = applies['mentioned-team'] ? 'mentioned-team' : null;
-  render();
+}
+/**
+ * The entries of a fresh inbox page that your reads in flight (`readsSent`) have read: read,
+ * unless something came in since (its end is past the read). Not for someone you view as.
+ */
+function keepReads(threads) {
+  const now = Date.now();
+  for (const [k, r] of readsSent) if (r.until < now) readsSent.delete(k);
+  if (!readsSent.size || state.as) return;
+  for (const t of threads) {
+    if (!t.unread) continue;
+    const ms = t.members || [t];
+    const read = (m) => { const at = memberLast(m, t.kind); return !at || readsSent.get(m.thread)?.at >= at; };
+    if (ms.some((m) => readsSent.has(m.thread)) && ms.every(read)) seeRead(t);
+  }
 }
 // Live updates reload the inbox (and the open thread, when it changed) half a second after the
 // room's announcement. A tab in the background does not: most inbox loads were tabs nobody was
@@ -4888,6 +4916,7 @@ async function loadInbox(early = null) {
   }
   state.data = first;
   settleFolds();
+  keepReads(first.threads);
   // Personal's rooms grow once you are in a channel of another team: listen there too.
   if (first.rooms && !first.rooms.every((r) => state.rooms?.includes(r))) {
     state.rooms = first.rooms;
@@ -4909,6 +4938,7 @@ function addPage(p) {
   dropEntries(foldedIn(added));
   state.data.threads.push(...added);
   settleFolds();
+  keepReads(added);
   state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
   state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
   if (p.elsewhere) state.data.elsewhere = p.elsewhere;
