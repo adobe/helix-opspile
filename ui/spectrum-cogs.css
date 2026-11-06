@@ -98,7 +98,6 @@ h2.split .seg { font-weight: 400; }
 .treemap text.tl { pointer-events: none;
   paint-order: stroke; stroke-width: var(--spectrum-border-width-200); }
 
-.treemap text.tl.light { fill: var(--spectrum-white); }
 .legend { display: flex; flex-wrap: wrap; }
 .legend button { display: inline-flex; align-items: center; }
 .legend button:hover { color: var(--ink); }
@@ -338,6 +337,8 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
   border-radius: var(--spectrum-corner-radius-100);
   font-size: var(--spectrum-font-size-75);
 }
+/* Other customers or teams: an entry, nothing to pick, so not faded as a disabled button. */
+.spectrum .legend button:disabled { opacity: 1; }
 .spectrum .legend button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
 .spectrum .legend button[aria-pressed="true"], .spectrum .legend button[aria-pressed="true"]:hover:not(:disabled) {
   color: var(--spectrum-neutral-content-color-default);
@@ -373,9 +374,24 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 .spectrum [data-series="artifacts"] { --s2-series: var(--spectrum-red-700); }
 .spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
 .spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
-/* Over the style attribute, which only !important does. */
-/* What no customer or team in particular uses (the treemap's shared tile): S2's neutral gray. */
+/*
+ * The customers or teams the chart and the treemap are by (`data-series` g0 to g9, biggest
+ * first): the palette's first ten, A to J. The rest together, Other, are its M, silver.
+ */
+.spectrum [data-series="g0"] { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum [data-series="g1"] { --s2-series: var(--spectrum-magenta-900); }
+.spectrum [data-series="g2"] { --s2-series: var(--spectrum-orange-700); }
+.spectrum [data-series="g3"] { --s2-series: var(--spectrum-blue-700); }
+.spectrum [data-series="g4"] { --s2-series: var(--spectrum-purple-900); }
+.spectrum [data-series="g5"] { --s2-series: var(--spectrum-pink-700); }
+.spectrum [data-series="g6"] { --s2-series: var(--spectrum-seafoam-700); }
+.spectrum [data-series="g7"] { --s2-series: var(--spectrum-fuchsia-1000); }
+.spectrum [data-series="g8"] { --s2-series: var(--spectrum-green-1000); }
+.spectrum [data-series="g9"] { --s2-series: var(--spectrum-celery-700); }
+.spectrum [data-series="other"] { --s2-series: var(--spectrum-silver-1200); }
+/* What no customer or team in particular uses (the shared rows): S2's neutral gray. */
 .spectrum [data-series="shared"] { --s2-series: var(--spectrum-gray-visual-color); }
+/* Over the style attribute, which only !important does. */
 .spectrum .dot[data-series] { background: var(--s2-series) !important; }
 .spectrum .chart g.col rect[data-series]:not(.hover) { fill: var(--s2-series); }
 
@@ -487,11 +503,17 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 }
 
 /* ---- the treemap: where the flow goes ------------------------------------------------------
-   Its switch a SegmentedControl in the card's heading; the service tiles in the chart's
-   categorical colors (`data-series`), the customers' and teams' in the accent the page names
-   (--accent, mixed by size), the shared one gray; tiles parted by the card's own layer, the
-   picked one outlined in the content color; the
-   tooltip the chart's Popover. */
+   Under the chart, in its card, by what the switch in the card's heading (a SegmentedControl)
+   says, as the chart is; its tiles in the chart's categorical colors (`data-series`), parted by
+   the card's own layer, the picked one outlined in the content color; the tooltip the chart's
+   Popover; its heading a smaller Heading than the card's. */
+.spectrum .card h3 {
+  margin: var(--spectrum-spacing-400) 0 var(--spectrum-spacing-200);
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-xxs);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
 .spectrum h2.split { gap: var(--spectrum-spacing-200); }
 .spectrum h2.split .seg { font-size: var(--spectrum-font-size-75); }
 .spectrum h2.split .seg button {
@@ -510,18 +532,13 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
   stroke: var(--spectrum-neutral-content-color-default);
   stroke-width: var(--spectrum-border-width-200);
 }
-/* A service tile's label in gray-25: white on the light scheme's deep colors, near black on the
-   dark scheme's bright ones. The customers' and teams' (`light`), on the accent, stay white. */
+/* A tile's label in gray-25: white on the light scheme's deep colors, near black on the dark
+   scheme's bright ones. */
 .spectrum .treemap text.tl {
   fill: var(--spectrum-gray-25);
   stroke: none;
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-bold-font-weight);
-}
-.spectrum .treemap text.tl.light {
-  fill: var(--spectrum-white);
-  stroke: var(--spectrum-transparent-black-500);
-  stroke-width: var(--spectrum-border-width-200);
 }
 .spectrum .treemap text.tl.v { font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-regular-font-weight); }

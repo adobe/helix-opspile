@@ -1805,7 +1805,10 @@ period's messages: a team's (a room's) over that team's customers, nobody's over
 filters apply, so a customer's cost includes its share. The chart has about as many columns
 whatever the period: by the hour for a week or less (from `cogs_hours`, while it has them, up to
 the current hour), by the day up to 45 days, by the week (from Monday, cut to the period) for
-longer; the totals and tables always come from the days. Where Cloudflare's analytics and the meter
+longer; the totals and tables always come from the days. Its columns are by service, and asked
+(`by`), by customer or team too: a customer's own rows and its share of the shared ones, the ten
+biggest customers of what is selected apiece (or those picked) and the rest as `(other)`, so the
+answer stays small. Where Cloudflare's analytics and the meter
 count the same metric on the same day, Cloudflare's count is used. Per accepted draft (the flow
 over the agents' drafts a person sent) and per agent reply (over those and the agents' own posts)
 count from the first whole day of the drafts' events as well (`drafts.estimate`), so that a period

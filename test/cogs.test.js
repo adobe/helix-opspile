@@ -20,7 +20,7 @@ import {
   bedrockModel, costOf, isStock, priceList, unitPrice,
 } from '../src/cogs/prices.js';
 import {
-  allocate, chartUnit, cogsReport, columns, estimateWindow, period,
+  allocate, CHART_GROUPS, chartUnit, cogsReport, columns, estimateWindow, OTHER, period,
 } from '../src/cogs/report.js';
 import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, volumeRows,
@@ -863,6 +863,38 @@ describe('cogs: report', () => {
     close(r.chart.columns.at(-2).services.bedrock, 4);
     close(r.chart.columns.at(-1).services.workers, 1);
     close(r.chart.columns.reduce((n, c) => n + (c.services.workers || 0), 0), 2);
+  });
+
+  it('charts by customer or team as well: what is picked\'s own and its share, the rest as other', async () => {
+    const env = seeded();
+    const sumOf = (r, k) => r.chart.columns.reduce((n, c) => n + (c.groups?.[k] || 0), 0);
+    let r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&by=orgs'), { now: NOW });
+    assert.equal(r.chart.by, 'orgs');
+    // acme: $4 of Opus a day and 3/4 of $1 of shared Workers requests; globex the other 1/4.
+    close(sumOf(r, 'acme'), 2 * 4.75);
+    close(sumOf(r, 'globex'), 2 * 0.25);
+    close(daily(r)[1].services.workers, 1);
+    // The customers beyond the biggest are one series.
+    for (let i = 0; i < CHART_GROUPS; i += 1) {
+      usageRow(env.DB, {
+        day: '2026-11-02', hour: 9, service: 'bedrock', metric: 'input_tokens', detail: 'us.anthropic.claude-opus-5-5', org: `big${i}`, team: 'helix', quantity: 3e6,
+      });
+    }
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&by=orgs'), { now: NOW });
+    close(sumOf(r, OTHER), 9.5 + 0.5);
+    assert.equal(sumOf(r, 'acme'), 0);
+    close(sumOf(r, 'big0'), 12);
+    // Picked, a customer is its own whatever its size; not shared out, the shared rows are Shared.
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&by=orgs&org=acme,(shared)&allocate=none'), { now: NOW });
+    close(sumOf(r, 'acme'), 8);
+    close(sumOf(r, ''), 2);
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&by=teams&allocate=none'), { now: NOW });
+    close(sumOf(r, 'helix'), 8 + CHART_GROUPS * 12);
+    close(sumOf(r, ''), 2);
+    // By service, the columns have no groups.
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&by=nonsense'), { now: NOW });
+    assert.equal(r.chart.by, 'services');
+    assert.ok(r.chart.columns.every((c) => !c.groups));
   });
 
   it('shares a team\'s costs over its customers, and nobody\'s over everyone', () => {
