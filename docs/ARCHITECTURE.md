@@ -256,7 +256,19 @@ someone has answered it in its thread already (then the new one is a message of 
 next of several questions each in its thread). A root that only greets ("Hello Ada", "Hi team
 :wave:": a salutation, the people it is addressed to and emoji, `greets`) says nothing of its own,
 and its author's next root within 15 minutes continues it the same way: people greet, then take
-minutes to write what it is about, and Clef reads a greeting as a conversation of its own. When a
+minutes to write what it is about, and Clef reads a greeting as a conversation of its own. A root
+that says nothing but @-mentions ("@<the bot>", "@Ada Lovelace", at most emoji and punctuation
+besides, or not even a mention: "?", ":eyes:"; `mentionsOnly`) continues its author's previous
+root within those 15 minutes the same way, with the same conditions (nobody else's root between
+them, that root not deleted and not answered in its thread yet): its author is calling the bot or a
+colleague to the question they just asked, and it has no words for Clef or vector search to place
+it by. A mention is `@` and up to four capitalized words, what the platforms write for one, so
+"@Ada can you check" says something and is Clef's to decide. Somebody else's bare mention is not
+theirs to continue: one of a conversation's people, @-mentioned by name, is an addressed reply
+(below), and the same mention by its own asker, after somebody else's root, or later than 15
+minutes, is Clef's. In the case that showed it, a customer asked whether a tool had an issue,
+then pinged the bot three and a half minutes later, 30 seconds past BURST_MS, and the ping's own
+entry got an agent that asked the customer what he needed. When a
 root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
@@ -331,7 +343,8 @@ A match sets `logicalThread` on that one message file and on its thread row, alw
 the group's first thread. The file stays where it is and the platform thread is never modified, so undoing
 the match is a one-field change. Replays arrive in any order, so an alert that is matched also
 pulls in near-identical later alerts that had found nothing earlier, and a root pulls in the
-next root by the same person within three minutes (15 after a greeting). A conversation's root is decided from the
+next root by the same person within three minutes (15 after a greeting, or for a root that only
+mentions). A conversation's root is decided from the
 conversations before it, so re-threading a channel again goes oldest root first
 (`scripts/replay.mjs --rethread --channel <id>`). The inbox shows a group as
 one entry: the first thread's title, the latest activity and the latest member's label, the most

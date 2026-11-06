@@ -17,7 +17,7 @@ import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import { routeReply, target } from '../src/post.js';
 import {
-  addresses, ago, dethread, greets, REPLY, rethread, skeleton, SPLIT,
+  addresses, ago, dethread, greets, mentionsOnly, REPLY, rethread, skeleton, SPLIT,
 } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -379,6 +379,164 @@ describe('greetings', () => {
       assert.equal(r.result, 'new-topic', `other ${other}, ${minutes} minutes`);
       assert.equal(env.clefCalls.length, 1, 'Clef decides instead');
     }
+  });
+});
+
+/**
+ * A root that only @-mentions: its author calls the bot (or a colleague) to the question they
+ * posted minutes before, as a message of its own. Made-up names and texts only.
+ */
+describe('roots that only mention', () => {
+  const sec = (s) => new Date(T0 + s * 1000).toISOString();
+  const post = (env, k, id, when, user, author = null) => env.DB.sqlite.prepare(`INSERT INTO messages
+    (source, tenant, channel_id, id, thread, at, author, author_key, counted)
+    VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, ?, 1)`).run(id, k, when, author, `slack:E1:${user}`);
+  const rows = (env) => env.DB.rows(`SELECT thread, logical_thread, logical_via FROM threads
+    ORDER BY root_at`).map((r) => [r.thread.split(':').pop(), r.logical_thread, r.logical_via]);
+
+  it('tells a root that only mentions from one that says something', () => {
+    for (const text of ['@Acme Support Bot', '@Ada Lovelace', '@Lovelace, Ada', '@here',
+      '@Ada @Grace Hopper', '@Ada :pray:', '@Ada \u{1F440}', '@U0123ABC', '@AEM Bot!', '?',
+      ':eyes:', '@Jean-Luc Picard']) {
+      assert.equal(mentionsOnly(text), true, text);
+    }
+    for (const text of ['@Ada can you look at this?', '@Grace Hi! I heard you are working on it',
+      '@Mina Okafor when that happens to me, I reconnect', 'Hello Ada', 'cc @Ada', 'thanks @Ada',
+      '@Ada Lovelace @Grace Hopper Bo Berg Kit Alder Ivy', 'Attachments:\n\n![shot](x.png)', '',
+      '+1']) {
+      assert.equal(mentionsOnly(text), false, text);
+    }
+  });
+
+  /**
+   * A customer thanks for one answer and asks a question, in three roots seconds apart (a burst),
+   * then, three and a half minutes later, posts a root that only mentions the bot.
+   */
+  async function pinged(env, { last = '@Acme Support Bot', gap = 210, user = 'U1' } = {}) {
+    const keys = [
+      await seed(env, '50.0', 'Thanks Bo, the redirect works now', sec(0), 'Kim Lee'),
+      await seed(env, '50.1', '@Bo Berg', sec(5), 'Kim Lee'),
+      await seed(env, '50.2', 'Is preview down at the moment? Our authors get errors', sec(30), 'Kim Lee'),
+      await seed(env, '50.3', last, sec(30 + gap), user === 'U1' ? 'Kim Lee' : 'Kit Alder'),
+    ];
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    keys.forEach((k, i) => post(env, k, `50.${i}`, [sec(0), sec(5), sec(30), sec(30 + gap)][i], i === 3 ? user : 'U1'));
+    return keys;
+  }
+
+  it('folds it into its author\'s question minutes before, in any order', async () => {
+    for (const order of [[0, 1, 2, 3], [3, 2, 1, 0], [0, 3, 1, 2]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+      // eslint-disable-next-line no-await-in-loop
+      const keys = await pinged(env);
+      for (const i of order) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, keys[i]);
+      }
+      assert.deepEqual(rows(env), [
+        ['50.0', null, null], ['50.1', keys[0], 'burst'], ['50.2', keys[0], 'burst'],
+        ['50.3', keys[0], 'burst'],
+      ], `order ${order}`);
+      assert.equal(env.clefCalls.length, 0, `order ${order}`);
+      // eslint-disable-next-line no-await-in-loop
+      const file = parse(await (await env.CHANNELS.get('channels/acme/helix/slack-C1/50.3/50.3.md')).text());
+      assert.equal(file.meta.logicalThread, keys[0]);
+    }
+  });
+
+  it('does not much later, after someone else\'s root, once the question was answered, or for another author', async () => {
+    const cases = [
+      ['20 minutes later', { gap: 20 * 60 }],
+      ['someone else posted between', { other: true }],
+      ['answered in its thread', { answered: true }],
+      ['by somebody else', { user: 'U2' }],
+      ['saying something', { last: '@Acme Support Bot is the sitemap job still running?' }],
+    ];
+    for (const [label, opts] of cases) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+      // eslint-disable-next-line no-await-in-loop
+      const keys = await pinged(env, opts);
+      if (opts.other) {
+        // eslint-disable-next-line no-await-in-loop
+        const o = await seed(env, '50.25', 'Is preview down for anyone else?', sec(120), 'Ivy Chen');
+        env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+        post(env, o, '50.25', sec(120), 'U3');
+      }
+      if (opts.answered) {
+        post(env, keys[2], '50.2.1', sec(60), 'U3');
+      }
+      for (const k of keys) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, k);
+      }
+      assert.deepEqual(rows(env).find((r) => r[0] === '50.3'), ['50.3', null, null], label);
+      assert.equal(env.clefCalls.length, 1, `${label}: Clef decides instead`);
+      // Nor does the root before it pull it in, decided again.
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, keys[2], { force: true });
+      assert.deepEqual(rows(env).find((r) => r[0] === '50.3'), ['50.3', null, null], label);
+    }
+  });
+
+  it('goes along when the root before it is split out of its group', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
+    const a = await seed(env, '51.0', 'Rolling out the banner shows the dates in the wrong format', sec(0));
+    const b = await seed(env, '51.5', 'I cannot roll out to the other site either', sec(600));
+    const c = await seed(env, '51.6', '@Acme Support Bot', sec(840));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '51.0', sec(0), 'U1');
+    post(env, b, '51.5', sec(600), 'U2');
+    post(env, c, '51.6', sec(840), 'U2');
+    for (const k of [a, b, c]) {
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, k);
+    }
+    assert.deepEqual(rows(env), [['51.0', null, null], ['51.5', a, 'clef'], ['51.6', a, 'burst']]);
+    post(env, b, '51.7', sec(900), 'U3');
+    assert.deepEqual((await dethread(env, b)).split, [b, c]);
+    assert.deepEqual(rows(env), [['51.0', null, null], ['51.5', null, SPLIT], ['51.6', b, 'burst']]);
+  });
+
+  it('leaves a colleague\'s reply posted top-level to Clef, as the asker\'s', async () => {
+    // Somebody else answers the question as a root of its own, seconds later, @-mentioning its
+    // asker: a reply that landed top-level (REPLY), not this rule's.
+    for (const body of ['@Kim Lee when that happens to me, I reconnect the account', '@Kim Lee']) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.9 }) };
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '52.0', 'our chatbot is gone, can we get it back?', sec(0), 'Kim Lee');
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '52.5', body, sec(36), 'Kit Alder');
+      env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+      post(env, a, '52.0', sec(0), 'U1', 'Kim Lee');
+      post(env, b, '52.5', sec(36), 'U2', 'Kit Alder');
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, a);
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await rethread(env, b), { result: 'rethreaded', via: REPLY, p: 0.9 }, body);
+      assert.equal(env.clefCalls.length, 1, body);
+    }
+  });
+
+  it('leaves one on its own that follows nothing of its author, and the join it caused', async () => {
+    // A customer @-mentions a colleague who is not in the channel yet, who joins seconds later;
+    // the channel's root before it is somebody else's, days earlier.
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+    const old = await seed(env, '53.0', 'Content fragment migration to sheets', sec(-5 * 86400), 'Ivy Chen');
+    const a = await seed(env, '53.5', '@Ada Lovelace', sec(0), 'Kim Lee');
+    const j = 'slack:E1:C1:53.6';
+    env.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      kind, path, root_at, any_at, updated_at) VALUES (?, 'slack', 'E1', 'C1', '53.6', 'acme', 'helix',
+      'channel', 'channels/acme/helix/slack-C1/53.6/', ?, ?, ?)`).run(j, sec(4), sec(4), sec(4));
+    await env.CHANNELS.put('channels/acme/helix/slack-C1/53.6/53.6.md', render({
+      source: 'slack', thread: j, id: '53.6', at: sec(4), author: { kind: 'system', name: 'Slack' },
+    }, '@Ada Lovelace has joined the channel'));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, old, '53.0', sec(-5 * 86400), 'U3');
+    post(env, a, '53.5', sec(0), 'U1');
+    await rethread(env, old);
+    assert.equal((await rethread(env, a)).result, 'new-topic');
+    assert.deepEqual(await rethread(env, j), { result: 'skip', reason: 'system message' });
+    assert.deepEqual(rows(env), [['53.0', null, null], ['53.5', null, null], ['53.6', null, null]]);
   });
 });
 

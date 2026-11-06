@@ -32,7 +32,9 @@ import { teamsOf } from './shares.js';
  * replies when it is decided is not folded, and one that gets them after it was folded is split
  * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
  * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
- * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too.
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
+ * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
+ * later, as a burst (`mentionsOnly`, GREETING_MS).
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -68,6 +70,10 @@ export const BURST_MS = 3 * 60 * 1000;
  * this soon, with nobody else's root between them, continues it, as a burst does: in the channels
  * where people greet first, it came three to six minutes later, past BURST_MS, and Clef, reading
  * a greeting as a conversation of its own, was not sure enough (0.77) to fold it.
+ * It is also how soon a root that says nothing but @-mentions (the bot, a colleague,
+ * `mentionsOnly`) continues its author's previous root: a ping for the question they just asked,
+ * whose words, if any, neither Clef nor vector search can place. The one that showed it came three
+ * and a half minutes after its question, past BURST_MS, and got an entry of its own.
  */
 export const GREETING_MS = 15 * 60 * 1000;
 /**
@@ -278,8 +284,47 @@ export function greets(body) {
   return i > 0 && rest.length <= 4 && rest.every((w) => w.startsWith('@')
     || ADDRESSEE.test(w.toLowerCase()) || /^\p{Lu}[\p{Ll}'’]*(?:-\p{Lu}?[\p{Ll}'’]+)*$/u.test(w));
 }
-/** How soon after a root its author's next one continues it (BURST_MS, GREETING_MS). */
-const burstMs = (body) => (greets(body) ? GREETING_MS : BURST_MS);
+/** How many words a mention's name has at most (`mentionsOnly`). */
+const MENTION_WORDS = 4;
+/**
+ * Whether a root says nothing but @-mentions: one or more (`@Ada Lovelace`, `@Lovelace, Ada`, the
+ * bot by its name, `@here`), and at most emoji and punctuation besides, or not even a mention
+ * ("?", ":eyes:"). Its author is calling someone to what they posted just before (see
+ * GREETING_MS). A mention is `@` and the name's words, each capitalized (what the platforms write
+ * for one, src/markdown.js), so "@Ada can you look" says something.
+ */
+export function mentionsOnly(body) {
+  const text = String(body || '')
+    .replace(/:[a-z0-9_+'-]+:/gi, ' ')
+    .replace(/\p{Extended_Pictographic}|\p{Emoji_Modifier}|\u200d|\ufe0f/gu, ' ')
+    .replace(/[!.,;:?…()\-–—]+/g, ' ')
+    .trim();
+  if (!text) {
+    return Boolean(String(body || '').trim());
+  }
+  const words = text.split(/\s+/);
+  if (text.length > 120 || !words[0].startsWith('@')) {
+    return false;
+  }
+  let name = 0;
+  return words.every((w) => {
+    if (w.length > 1 && w.startsWith('@')) {
+      name = 1;
+      return true;
+    }
+    name += 1;
+    return name <= MENTION_WORDS && /^\p{Lu}[\p{L}\p{N}'’]*$/u.test(w);
+  });
+}
+/**
+ * Whether `next`, its author's root right after `prev` (nobody else's root between them),
+ * continues it as a burst: within BURST_MS, or GREETING_MS when `prev` only greets or `next` only
+ * mentions (`mentionsOnly`).
+ */
+const continues = (prev, prevBody, next, nextBody) => {
+  const gap = Date.parse(next.root_at) - Date.parse(prev.root_at);
+  return gap <= BURST_MS || (gap <= GREETING_MS && (greets(prevBody) || mentionsOnly(nextBody)));
+};
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
 /**
@@ -586,10 +631,9 @@ export async function rethread(env, key, { force = false } = {}) {
     ).first();
   // Not once someone answered it in its thread: the next root is no piece of it then, but a
   // message of its own (the next of several questions, each in its thread). Later than BURST_MS,
-  // only a greeting's (GREETING_MS).
+  // only a greeting's, or a root that only mentions (GREETING_MS).
   const soon = previous && previous.author_key === author
-    && (Date.parse(thread.root_at) - Date.parse(previous.root_at) <= BURST_MS
-      || greets((await rootBody(env, previous))?.parsed.body));
+    && continues(previous, (await rootBody(env, previous))?.parsed.body, thread, root.parsed.body);
   const burst = soon && !await answered(env, previous, thread.root_at) ? previous : null;
 
   const values = await embed(env, text);
@@ -739,15 +783,15 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) + burstMs(root.parsed.body)).toISOString(),
+      new Date(Date.parse(thread.root_at) + GREETING_MS).toISOString(),
     ).first();
   const nextFree = next && next.logical_via !== SPLIT
     && (!next.logical_thread || joined.includes(next.logical_thread));
-  const nextBurst = nextFree && next.author_key === author
-    && !await answered(env, thread, next.root_at);
-  const nextRoot = nextBurst && await rootBody(env, next);
+  const nextRoot = nextFree && next.author_key === author && await rootBody(env, next);
   const nextBody = nextRoot && nextRoot.parsed.body;
-  const nextOwn = nextRoot && (quotes(nextBody) || announcesThread(nextBody));
+  const nextBurst = nextRoot && continues(thread, root.parsed.body, next, nextBody)
+    && !await answered(env, thread, next.root_at);
+  const nextOwn = nextBurst && (quotes(nextBody) || announcesThread(nextBody));
   if (nextBurst && !nextOwn) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
         rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
@@ -846,10 +890,15 @@ export async function dethread(env, key) {
         thread.channel_id,
         last.thread,
         last.root_at,
-        new Date(Date.parse(last.root_at) + burstMs(lastBody)).toISOString(),
+        new Date(Date.parse(last.root_at) + GREETING_MS).toISOString(),
       ).first();
     if (!next || next.author_key !== author.author_key || next.logical_thread !== group
       || next.logical_via !== 'burst' || next.routed_at) {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const nextBody = (await rootBody(env, next))?.parsed.body;
+    if (!continues(last, lastBody, next, nextBody)) {
       break;
     }
     // eslint-disable-next-line no-await-in-loop
@@ -859,8 +908,7 @@ export async function dethread(env, key) {
     await markRootFile(env, next, key);
     split.push(next.thread);
     last = next;
-    // eslint-disable-next-line no-await-in-loop
-    lastBody = (await rootBody(env, next))?.parsed.body;
+    lastBody = nextBody;
   }
   // Open inboxes reload the group, which has these no more, and list them on their own.
   const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
