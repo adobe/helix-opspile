@@ -99,7 +99,7 @@ const ORGS = [
   ['bluesun', 'Blue Sun', 'customer'], ['opspile', 'opspile', 'internal'],
 ];
 // The products the threads of a topic name (Clairic's `product` facts), and how often: most of
-// them the tech stack's (migrations 0043 and 0056), some not (the Sidekick, the Config Service,
+// them the tech stack's (migrations 0043, 0056 and 0061), some not (the Config Service,
 // Jira, a crawler), so the preview shows gaps beside the products.
 const PRODUCTS = {
   0: { Akamai: 0.3, Fastly: 0.3, 'Edge Functions': 0.15 },

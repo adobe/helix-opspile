@@ -2185,7 +2185,8 @@ function headLinks(facts = []) {
 /**
  * The thread's tech stack, from what the thread view says: what the thread shows (`thread_tech`),
  * likeliest first, then the rest of the channel's (`tech`), then Clef's topics of the thread.
- * The label is the first of them.
+ * The label is what the thread shows, else its first topic, else the channel's likeliest: the
+ * channel's are the customer's, and a thread that shows none of them is not about them.
  */
 function headTech(data) {
   const name = (kind, id) => data.vocab?.[kind]?.[id] || id;
@@ -2193,7 +2194,7 @@ function headTech(data) {
   const shown = new Set(here.map((t) => t.id));
   const also = (data.tech || []).filter((t) => !shown.has(t.tech)).map((t) => ({ id: t.tech, name: name('tech', t.tech), p: t.p }));
   const topics = (data.topics || []).map((id) => ({ id, name: name('topics', id) }));
-  const first = here[0] || also[0] || topics[0];
+  const first = here[0] || topics[0] || also[0];
   return {
     here, also, topics, label: first ? first.name : '', count: here.length + also.length + topics.length,
   };

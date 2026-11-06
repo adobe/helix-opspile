@@ -771,11 +771,13 @@ and an unchanged thread is never labeled twice):
   team's elsewhere.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
   threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
-  asked of Clef.
+  asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM
+  Sidekick was an alias of Edge Delivery until migration 0061, so Clef never asked about it, the
+  Topics page drew it as Edge Delivery, and a thread about it showed nothing of its own.
   Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
   it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
-  (Edge Delivery, Document Authoring, Universal Editor, Experience Workspace, AEM as a Cloud
-  Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
+  (Edge Delivery, Document Authoring, the AEM Sidekick, Universal Editor, Experience Workspace,
+  AEM as a Cloud Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
   Assets; CX Enterprise Coworker, Brand Concierge, Brand Visibility, Journey Optimizer, … are
   their own), or a category for other companies' (CDN, Code hosting, Consent, …). Clef is asked
   about each entry; the product groups them, on the Agents page and the Topics page, where an
@@ -1055,7 +1057,10 @@ two dropdowns, each named by what matters most for the thread:
 - **Tech stack:** what the thread shows (`labels.tech` of its members, the likeliest first),
   then the rest of the channel's (`channel_tech`), then Clef's topics of the thread. A thread
   labeled before labels kept their technologies counts those it set the channel's highest
-  probability for (`channel_tech.thread`), until it is labeled again.
+  probability for (`channel_tech.thread`), until it is labeled again. The dropdown is named by
+  what the thread shows, else by its first topic, and only then by the channel's likeliest: that
+  is the customer's, and a da.live link in one thread would otherwise name every other thread of
+  the channel Document Authoring.
 - **Links:** the pages mentioned in the thread (Clairic's `affected_url` first, then the
   rules' `url` facts), then each Edge Delivery site's production URL
   (`main--<site>--<org>.aem.live`), then links to documentation and code (`aem.live`,

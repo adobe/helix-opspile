@@ -1024,7 +1024,7 @@ describe('inbox page', () => {
       assert.deepEqual(urlParts('https://da.example/#/org/site'), { lead: 'da.example', tail: '/#/org/site' });
     });
 
-    it('names the tech stack by what the thread shows, then the customer\'s, then its topics', () => {
+    it('names the tech stack by what the thread shows, then its topics, then the customer\'s', () => {
       const { headTech } = header();
       const vocab = { tech: { eds: 'Edge Delivery', akamai: 'Akamai' }, topics: { cdn: 'CDN and caching' } };
       const data = {
@@ -1039,8 +1039,11 @@ describe('inbox page', () => {
       assert.deepEqual(t.also.map((x) => x.name), ['Edge Delivery', 'fastly']);
       assert.deepEqual(t.topics.map((x) => x.name), ['CDN and caching']);
       assert.equal(t.count, 4);
-      // Nothing the thread shows: the customer's likeliest, else the first topic.
-      assert.equal(headTech({ ...data, thread_tech: [] }).label, 'Edge Delivery');
+      // Nothing the thread shows: its first topic, not the customer's likeliest (a da.live link
+      // elsewhere in the channel does not make a Sidekick thread Document Authoring's); with
+      // no topic either, the customer's likeliest.
+      assert.equal(headTech({ ...data, thread_tech: [] }).label, 'CDN and caching');
+      assert.equal(headTech({ ...data, thread_tech: [], topics: [] }).label, 'Edge Delivery');
       assert.equal(headTech({ vocab, topics: ['cdn'] }).label, 'CDN and caching');
       assert.equal(headTech({ vocab }).count, 0);
     });

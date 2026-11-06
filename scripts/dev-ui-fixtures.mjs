@@ -768,6 +768,18 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A thread about the Sidekick in a channel whose tech stack has Document Authoring: what it
+  // shows is not known yet, so the header names its topic, not the channel's likeliest.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 300, 'Is there an issue with the Sidekick right now? We are running into errors.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1, resolved_p: 0.1, topics: ['auth'],
+    },
+  });
+
   // The kinds about people and meetings, not work: a farewell and handover, a call moved.
   seed({
     ch: CHANNELS.aemGlobex,
