@@ -188,8 +188,9 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .count .order button:hover { color: var(--ink); }
 #threads .count .order button[aria-checked="true"] {
  cursor: default; }
-/* Unread only: an icon, filled with the accent colour while it filters. */
-#threads .count .unread { display: grid; place-items: center; padding: 0;
+/* Unread only, and the personal view's Mentions: icons, filled with the accent colour while
+   they filter. */
+#threads .count :is(.unread, .atme) { display: grid; place-items: center; padding: 0;
  }
 
 #threads .rows > .older { display: block; width: calc(100% - calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400))); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-100); color: var(--mute); }
@@ -197,8 +198,8 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .rows > .end { margin: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-100) var(--spectrum-spacing-75); color: var(--mute);
   font-size: var(--spectrum-font-size-100); line-height: 1.5; text-align: center; }
 #threads .rows > .end .linkish { font: inherit; font-weight: 650; }
-#threads .count .unread:hover { color: var(--ink); }
-#threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+#threads .count :is(.unread, .atme):hover { color: var(--ink); }
+#threads .count :is(.unread, .atme)[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
 /* The bell: notifications for the view on screen (its team and filters), filled while on. */
 #threads .count .bell, #threads .count .newpost { display: grid; place-items: center; padding: 0; margin-left: var(--spectrum-spacing-50);
  }
@@ -1266,9 +1267,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   box-shadow: none;
   font-weight: var(--spectrum-bold-font-weight);
 }
-/* Unread only, the bell, a new thread, Filters, Clear: quiet ActionButtons; toggled on, in
+/* Unread only, Mentions, the bell, a new thread, Filters, Clear: quiet ActionButtons; toggled on, in
    ActionButton's selected state. */
-.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq) {
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost, .filt, .clearq) {
   height: var(--spectrum-component-height-75);
   color: var(--spectrum-neutral-content-color-default);
   background: transparent;
@@ -1276,18 +1277,18 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--s2-radius);
   transition: background-color var(--s2-ease), color var(--s2-ease);
 }
-.spectrum #threads .count :is(.unread, .bell, .newpost) { width: var(--spectrum-component-height-75); }
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost) { width: var(--spectrum-component-height-75); }
 .spectrum #threads .count :is(.filt, .clearq) { padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
-.spectrum #threads .count :is(.unread, .bell, .newpost, .filt) svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
-.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):active { background: var(--spectrum-gray-300); }
-.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"],
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost, .filt) svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost, .filt, .clearq):hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost, .filt, .clearq):active { background: var(--spectrum-gray-300); }
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost)[aria-pressed="true"],
 .spectrum #threads .count .filt[aria-expanded="true"] {
   color: var(--spectrum-gray-25);
   background: var(--spectrum-neutral-background-color-selected-default);
   border-color: transparent;
 }
-.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"]:hover,
+.spectrum #threads .count :is(.unread, .atme, .bell, .newpost)[aria-pressed="true"]:hover,
 .spectrum #threads .count .filt[aria-expanded="true"]:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-hover); }
 .spectrum #threads .count .found { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* The list's end: "Show older" a secondary Button, the closing note subdued. */
