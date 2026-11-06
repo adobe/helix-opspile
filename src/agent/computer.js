@@ -30,6 +30,22 @@ import {
 
 export const COMPUTER_CWD = '/workspace';
 
+/**
+ * Makes COMPUTER_CWD when it is not there yet. Only then: the uploads mount (src/threadfiles.js)
+ * is read-only, and the Workspace refuses any change to a directory a read-only mount is in,
+ * even a `mkdir -p` of one that exists (EROFS), which would fail every command.
+ */
+export async function ensureCwd(fs) {
+  try {
+    await fs.stat(COMPUTER_CWD);
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      throw e;
+    }
+    await fs.mkdir(COMPUTER_CWD, { recursive: true });
+  }
+}
+
 const unsupported = async (path) => err(new FileError('not_supported', 'only the shell is available; use bash', path));
 
 /**
