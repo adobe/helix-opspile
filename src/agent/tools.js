@@ -23,7 +23,9 @@ import { UPLOADS_DIR } from '../threadfiles.js';
 import {
   config, deleteRule, deleteTech, GLOBAL_TEAM, saveRule, saveTech, testRule,
 } from '../extract.js';
-import { findExperts, MAX_SUGGESTED, suggestExpert } from '../experts.js';
+import {
+  findExperts, listTopics, MAX_SUGGESTED, suggestExpert, topicExperts,
+} from '../experts.js';
 import { threadMessages } from '../label.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
@@ -96,7 +98,7 @@ What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
 - Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. To tag someone, write @ and their full name as the thread shows it; update_draft says who it tagged, and any other @Name stays plain text and notifies nobody. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
 - Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
-- When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Leave it when Adobe staff are handling the thread, and suggest only someone you can give a reason for.
+- When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Do it in your first turn when no Adobe staff have answered yet and the thread is more than you can settle with the draft (an incident, an error, a question about how the product works inside), alongside the draft rather than instead of it. Once you know what the thread is really about, pass that to list_experts as \`about\`, in a sentence with the product's own names ("the AI assistant panel of Experience Workspace is missing"): its title and first message often say it vaguely. list_topics shows the topics of the whole inbox and who works on each, for when the list does not convince you. Suggest only someone the evidence backs (similar threads they worked on, a topic they work on, what they know), say it in the reason, and leave it when Adobe staff are handling the thread.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
 - Look things up: the knowledge bases first, then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
@@ -415,16 +417,63 @@ export function opspileExtension(ctx) {
       }),
       defineTool({
         name: 'list_experts',
-        description: 'Adobe colleagues who are not in your thread yet and could help, best first: their id (for suggest_expert), name, and why (they know about the topic, how fast they usually answer a mention, whether they work this channel or customer, whether they are in the channel at all). Your own suggestions come first.',
-        parameters: Type.Object({}),
+        description: 'Adobe colleagues who are not in your thread yet and could help, best first: their id (for suggest_expert), name, and why (similar threads of any channel they worked on, with the topics those are in and when they last did; whether they know about the topic; how fast they usually answer a mention; whether they work this channel or customer; whether they are in the channel at all). First, the topics of the whole inbox that the threads closest to yours are in (list_topics names them all). With `about`, it looks for people who know about that instead of what the thread\'s own words say. Your own suggestions come first.',
+        parameters: Type.Object({
+          about: Type.Optional(Type.String({ description: 'What the thread is really about, in a sentence with the product\'s own names, when its title or first message say it vaguely: "the AI assistant panel of Experience Workspace is missing for one author"' })),
+        }),
         replay: 'safe',
-        async execute() {
+        async execute(args = {}) {
           const t = await ctx.target();
-          const found = await findExperts(env, t.key);
+          const found = await findExperts(env, t.key, { about: args.about || null });
+          const topics = found && found.topics && found.topics.length
+            ? `Closest threads are in the topics: ${found.topics.slice(0, 3).map((x) => `${x.label} (${x.threads})`).join('; ')}\n`
+            : '';
           if (!found || !found.experts.length) {
-            return text('Nobody stands out for this thread.');
+            return text(`${topics}Nobody stands out for this thread.`);
           }
-          return text(found.experts.map((e) => `- ${e.id} | ${e.name} | ${e.suggested ? 'you suggested them: ' : ''}${e.reasons.join('; ')}`).join('\n'));
+          const day = (at) => String(at || '').slice(0, 10);
+          const line = (e) => {
+            const parts = [e.id, e.name, `${e.suggested ? 'you suggested them: ' : ''}${e.reasons.join('; ')}`];
+            if (e.similar) {
+              const where = e.similar.topics.length ? ` in ${e.similar.topics.slice(0, 3).join(', ')}` : '';
+              parts.push(`similar threads: ${e.similar.threads}${where}, last ${day(e.similar.last)}`);
+            }
+            return `- ${parts.join(' | ')}`;
+          };
+          return text(`${topics}${found.experts.map(line).join('\n')}`);
+        },
+      }),
+      defineTool({
+        name: 'list_topics',
+        description: 'The topics of the whole inbox, found from what was said in the threads of every channel (the topic map, built weekly): without `topic`, each one\'s name, what its customers need and how many threads it has; with `topic`, the Adobe colleagues who worked its threads and are not in yours, the most threads first, with their id (for suggest_expert), when they last did, and whether they are in your channel. Topic names never name a customer.',
+        parameters: Type.Object({
+          topic: Type.Optional(Type.String({ description: 'A topic\'s name (or part of it) or id, as list_topics or list_experts give them' })),
+        }),
+        replay: 'safe',
+        async execute(args = {}) {
+          if (!args.topic) {
+            const all = await listTopics(env);
+            if (!all) {
+              return text('There is no topic map yet.');
+            }
+            return text(`Topics as of ${all.built_at.slice(0, 10)}:\n${all.topics.map((x) => `- ${x.id} | ${x.label} | ${x.size} threads | ${x.theme}`).join('\n')}`);
+          }
+          const t = await ctx.target();
+          const res = await topicExperts(env, t.key, args.topic);
+          if (res.error) {
+            return fail(res.error);
+          }
+          const head = `${res.topic.label} (${res.topic.size} threads): ${res.topic.theme}`;
+          if (!res.people.length) {
+            return text(`${head}\nNobody who worked it can be pulled into your thread.`);
+          }
+          const member = (m) => {
+            if (m === null) {
+              return '';
+            }
+            return m ? ' | in your channel' : ' | not in your channel';
+          };
+          return text(`${head}\n${res.people.map((p) => `- ${p.id} | ${p.name} | ${p.threads} ${p.threads === 1 ? 'thread' : 'threads'}, last ${String(p.last || '').slice(0, 10)}${member(p.member)}`).join('\n')}`);
         },
       }),
       defineTool({

@@ -38,7 +38,8 @@ export {
  * common part, and without it the clusters are fewer big ones and many of one or two threads.
  *
  * A map is built by the cron once it is STALE_DAYS old, and by the admin team on the page; one
- * row of `topic_maps` each, the newest KEEP kept. Nothing else reads them.
+ * row of `topic_maps` each, the newest KEEP kept. The expert finder reads the newest
+ * (src/topicindex.js).
  */
 
 export const MIN_MESSAGES = 3;
