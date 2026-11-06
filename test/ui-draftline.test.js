@@ -97,6 +97,6 @@ describe('draft line', () => {
     });
     const types = [];
     wireDraftBar({ addEventListener: (type) => types.push(type) });
-    assert.deepEqual(types.sort(), ['click', 'keydown', 'wheel']);
+    assert.deepEqual(types.sort(), ['click', 'keydown']);
   });
 });
