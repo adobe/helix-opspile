@@ -93,6 +93,24 @@ const AGENT_VARS = [
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
 ] as const;
 
+// Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
+// service bindings to the admins' bots, Workers of the same account, named by
+// TEAMS_ADMIN_WORKER (teams-admin-agent, admin-bot on Teams) and SLACK_AUTOMATION_WORKER (the
+// slack-automation relay, AEM Ops Automation on Slack); each is bound only where it is named.
+// Slack also needs MEMBERSHIP_SLACK_CHANNEL (the channel where requests are posted) and
+// MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
+const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
+
+function membershipBindings() {
+  const bound = (binding: string, worker: string | undefined) => (worker
+    ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
+    : {});
+  return {
+    ...bound('TEAMS_ADMIN', process.env.TEAMS_ADMIN_WORKER),
+    ...bound('SLACK_AUTOMATION', process.env.SLACK_AUTOMATION_WORKER),
+  };
+}
+
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
   // Posting as the user: the Slack app's client secret, and the key that encrypts tokens.
@@ -187,7 +205,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
@@ -229,6 +247,7 @@ export default defineConfig(({ mode }) => {
       env: {
         ...vars(deployed),
         ...resources(mode),
+        ...membershipBindings(),
         COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),

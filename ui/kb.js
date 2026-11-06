@@ -831,6 +831,10 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
     off: (where) => `Agents of ${where} stop reading other channels' threads at once. What they read before stays in their transcripts.`,
   },
+  membership: {
+    on: (where) => `From their next message, the agents of ${where} can file add-user and remove-user requests that people make in their threads with the admins' bot: admin-bot on Teams, AEM Ops Automation in #general on Slack. Nobody is added until the request is approved.`,
+    off: (where) => `Agents of ${where} stop filing membership requests with their next message. Requests they filed stay with the admins.`,
+  },
 };
 
 /** The built-in tools, as the first group of the tools and MCP servers page. */

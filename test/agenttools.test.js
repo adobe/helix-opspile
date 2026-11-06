@@ -535,3 +535,147 @@ describe('the agent\'s switchable tools', () => {
     assert.deepEqual((on.tools || []).map((t) => t.name), ['post_message', 'add_reaction']);
   });
 });
+
+describe('requesting channel members', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** A thread whose first message asks for someone, and an agent with `membership` on. */
+  function setup(extra = {}) {
+    const calls = { teams: [], slack: [], posts: [] };
+    const e = env({
+      TEAMS_ADMIN: {
+        submit: async (input) => {
+          calls.teams.push(input);
+          return {
+            ok: true,
+            created: input.emails.map((x, i) => ({ id: i + 1, email: x })),
+            skipped: [],
+            failed: [],
+            replied: true,
+          };
+        },
+      },
+      SLACK_AUTOMATION: {
+        submit: async (input) => {
+          calls.slack.push(input);
+          return {
+            ok: true, posted: [{ userId: 'UG1', channelId: 'C1' }], notes: [], skipped: null, requester: input.requester,
+          };
+        },
+      },
+      MEMBERSHIP_SLACK_CHANNEL: 'CGEN1',
+      MEMBERSHIP_SLACK_BOT: 'UOPS1',
+      ...extra,
+    });
+    const message = (source, tenant, channel, id, key) => e.DB.sqlite.prepare(`INSERT INTO messages
+        (source, tenant, channel_id, id, thread, at, author, person) VALUES (?, ?, ?, ?, ?, ?, 'Bo', 2)`)
+      .run(source, tenant, channel, id, key, '2026-10-21T10:00:00Z');
+    message('teams', 'TN1', '19:abc@thread.tacv2', '1792584000000', TEAMS);
+    message('slack', 'E1', 'C1', '1792584000.000100', SLACK);
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at) VALUES
+      ('teams', 'TN1', 'aad-bo', 'user', 'Bo', 2, '2026-10-21T10:00:00Z'),
+      ('slack', 'E1', 'UBO1', 'user', 'Bo', 2, '2026-10-21T10:00:00Z')`);
+    e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+      VALUES ('membership', 'team', 'helix', 1, '2026-10-21T10:00:00Z')`);
+    globalThis.fetch = async (url, init = {}) => {
+      calls.posts.push({ url: String(url), body: JSON.parse(init.body) });
+      return Response.json({ ok: true, ts: '1792600000.000200' });
+    };
+    const tool = (t) => agentToolsExtension({
+      env: e, hasThread: true, target: async () => ({ ...t, permalink: 'https://acme.slack.example/archives/C1/p1792584000000100' }),
+    }, ['membership']).tools[0];
+    const run = async (t, args) => {
+      const res = await quiet(() => tool(t).execute(args, {}));
+      return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+    };
+    return {
+      e, calls, run, tool,
+    };
+  }
+
+  it('is on only where the platform\'s admin bot is bound', async () => {
+    const { e } = setup();
+    const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
+    const slack = target(SLACK, 'slack', 'C1');
+    assert.deepEqual(await toolsFor(e, teams), ['membership']);
+    assert.deepEqual(await toolsFor(e, slack), ['membership']);
+    assert.deepEqual(await toolsFor({ ...e, TEAMS_ADMIN: undefined }, teams), []);
+    assert.deepEqual(await toolsFor({ ...e, MEMBERSHIP_SLACK_BOT: undefined }, slack), []);
+    assert.deepEqual(await toolsFor(e, target(DISCORD, 'discord', '910')), []);
+  });
+
+  it('files a Teams request with admin-bot, for the person who asked', async () => {
+    const { calls, run } = setup();
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['New.Person@Client.example'], message: '1792584000000',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.match(r.text, /admin-bot filed new\.person@client\.example for the admins' approval\. admin-bot answered/);
+    assert.deepEqual(calls.teams, [{
+      action: 'add',
+      emails: ['new.person@client.example'],
+      teamId: 'G1',
+      conversationId: '19:abc@thread.tacv2;messageid=1792584000000',
+      requester: { name: 'Bo', email: 'bo@staff.example', aadObjectId: 'aad-bo' },
+      via: 'opspile',
+      message: 'Bo asked in the thread: add new.person@client.example',
+    }]);
+    assert.equal(calls.posts.length, 0);
+  });
+
+  it('posts a Slack request in #general for AEM Ops Automation, and hands it to the relay', async () => {
+    const { calls, run } = setup();
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.match(r.text, /Posted in #general \(message 1792600000\.000200\); AEM Ops Automation asked for 1 confirmation\(s\) there, which the person who asked or an admin has to click/);
+    const [post] = calls.posts;
+    assert.equal(post.url, 'https://slack.com/api/chat.postMessage');
+    assert.equal(post.body.channel, 'CGEN1');
+    assert.equal(post.body.text, '<@UOPS1> please add guest@client.example to <#C1>, for Bo'
+      + ' (<https://acme.slack.example/archives/C1/p1792584000000100|asked here>). Posted by the opspile agent.');
+    assert.deepEqual(calls.slack, [{
+      channel: 'CGEN1', ts: '1792600000.000200', text: post.body.text, requester: 'UBO1', via: 'opspile',
+    }]);
+  });
+
+  it('asks nothing for a message that is not in the thread, a bad address, or a tool switched off', async () => {
+    const { e, calls, run } = setup();
+    const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
+    let r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '999' });
+    assert.match(r.text, /Nothing was requested: give the id of the message/);
+    r = await run(teams, { action: 'add', emails: ['not an address'], message: '1792584000000' });
+    assert.match(r.text, /not an email address: not an address/);
+    r = await run(teams, { action: 'add', emails: [], message: '1792584000000' });
+    assert.match(r.text, /give the email address/);
+    e.DB.sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+    r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '1792584000000' });
+    assert.match(r.text, /not available in this channel/);
+    assert.equal(calls.teams.length + calls.slack.length + calls.posts.length, 0);
+  });
+
+  it('says what the bot refused', async () => {
+    const { run } = setup({ TEAMS_ADMIN: { submit: async () => ({ ok: false, error: 'teamId must be the team\'s group id' }) } });
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'remove', emails: ['a@client.example'], message: '1792584000000',
+    });
+    assert.equal(r.error, true);
+    assert.match(r.text, /admin-bot refused it: teamId must be the team's group id/);
+  });
+
+  it('says a Slack request went out when the relay then failed, so it is not posted twice', async () => {
+    const gone = async () => {
+      throw new Error('binding gone');
+    };
+    const { run } = setup({ SLACK_AUTOMATION: { submit: gone } });
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, true);
+    assert.match(r.text, /posted in #general \(message 1792600000\.000200\), but AEM Ops Automation refused it: binding gone\. Do not post it again/);
+  });
+});

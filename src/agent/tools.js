@@ -41,6 +41,7 @@ import { findMember } from './members.js';
 import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
 import { writtenMentions } from '../post.js';
 import { MAX_POST, postAsApp, reactAsApp } from './posting.js';
+import { MAX_PEOPLE, requestedNote, requestMembership } from './membership.js';
 import { invitedNote } from '../invite.js';
 import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
@@ -751,6 +752,18 @@ const ANY_THREAD = `The admin team turned on read_any_thread for this internal c
 - Do not write another customer's details into the knowledge bases, and post nothing from another customer's thread yourself. What the case needs goes into the draft, for a person to review.
 - Say in your note for the team which threads you read.`;
 
+const MEMBERSHIP = {
+  teams: 'On Teams it goes to admin-bot (the teams-admin-agent bot), as an "@admin-bot add <email>" would: admin-bot answers in the thread that the request waits for approval, and again once the admins have reviewed it in their Slack channel.',
+  slack: 'On Slack it is posted in #general for AEM Ops Automation, which threads a confirmation per person under it: the person who asked confirms it if they are a member of the workspace, an admin otherwise. It handles guests of the workspace; for an address with no Slack account yet, it says who has to invite them instead.',
+};
+
+const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel: you may ask the admins to add people to this channel (on Teams: its team), or remove them, when someone in your thread asks for it. Nobody is added until it is approved.
+- Only for a request someone wrote in the thread, for this channel, with each person's email address written there. Never guess an address, and never add or remove someone nobody asked for.
+- Give the message that asked (\`message\`, its id as your thread shows it): the request names its author.
+- First check that it has not been asked already: admin-bot's "Invitation request submitted" (Teams), an AEM Ops Automation thread in #general (Slack), or a colleague handling it. Do not ask twice.
+- The request waits for approval: never tell anyone that the person was added before the bot says so.
+- Say in your note for the team what you requested, for whom, and what the bot answered.`;
+
 /**
  * The tools the team turned on for this thread (src/agent/agenttools.js), as their own
  * extension, so that a change replaces it in place: `post_message` and `add_reaction` with
@@ -857,6 +870,40 @@ export function agentToolsExtension(ctx, tools) {
   if (on.has('extraction_rules')) {
     sections.push(section('extraction', () => EXTRACTION));
     list.push(...extractionTools(ctx));
+  }
+  if (on.has('membership') && ctx.hasThread) {
+    sections.push(section('membership', async () => {
+      const t = await ctx.target();
+      return `${MEMBERSHIP_GUIDE}\n- ${MEMBERSHIP[t.source === 'teams' ? 'teams' : 'slack']}`;
+    }));
+    list.push(defineTool({
+      name: 'request_membership',
+      description: `Ask the admins, through the platform's admin bot, to add people to your thread's channel (Teams: its team) or remove them, because someone in the thread asked for it. At most ${MAX_PEOPLE} people; it waits for approval.`,
+      parameters: Type.Object({
+        action: Type.Union([Type.Literal('add'), Type.Literal('remove')]),
+        emails: Type.Array(Type.String(), { description: 'Each person\'s email address, as the thread gives it' }),
+        message: Type.String({ description: 'The id of the message that asked for it, as your thread shows it ("message <id>")' }),
+      }),
+      executionMode: 'sequential',
+      async execute(args) {
+        const t = await ctx.target();
+        // Asked again each time: the tools an agent has are only as new as its latest message.
+        if (!(await toolsFor(env, t)).includes('membership')) {
+          return fail('request_membership is not available in this channel (any more).');
+        }
+        const r = await requestMembership(env, t, args);
+        if (r.error && r.ts) {
+          return fail(`The request was posted in #general (message ${r.ts}), but ${r.error}. Do not post it again: say so in your note, for a person to handle.`);
+        }
+        if (r.error) {
+          return fail(`Nothing was requested${r.unknown ? ', as far as is known' : ''}: ${r.error}`);
+        }
+        console.log(JSON.stringify({
+          route: 'agent', action: 'membership', platform: r.platform, team: t.team,
+        }));
+        return text(requestedNote(r));
+      },
+    }));
   }
   if (on.has('any_thread') && ctx.hasThread) {
     sections.push(section('any-thread', () => ANY_THREAD));
