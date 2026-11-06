@@ -13,10 +13,12 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import {
-  clearExpertLists, experts, findExperts, FINDER, hasPair, MAX_SUGGESTED, reasonsOf, responseTimes,
-  roughly, suggestExpert, titlePairs,
+  clearExpertLists, experts, findExperts, FINDER, hasPair, listTopics, MAX_SUGGESTED, reasonsOf,
+  responseTimes, roughly, suggestExpert, titlePairs, topicExperts,
 } from '../src/experts.js';
+import { QUERY_PREFIX } from '../src/expertise.js';
 import { recordExpertEvent } from '../src/expertevents.js';
+import { clearTopicIndex } from '../src/topicindex.js';
 import { d1 } from './d1.js';
 
 // Made-up ids, names and vectors only.
@@ -30,7 +32,9 @@ const STAFF = [
   [1, 'Ada'], [2, 'Bo'], [3, 'Cy'], [4, 'Di'], [5, 'Ed'], [6, 'Flo'], [7, 'Gus'],
 ];
 
-function env({ matches = [], chunks = [], search = true } = {}) {
+function env({
+  matches = [], threads = [], chunks = [], search = true,
+} = {}) {
   const DB = d1({
     teams: [{ slug: 'helix', name: 'Helix' }],
     people: STAFF.map(([id, name]) => ({
@@ -74,7 +78,9 @@ function env({ matches = [], chunks = [], search = true } = {}) {
     AI: { async run() { return { data: [[1, 0, 0]] }; } },
     CONTENT: {
       async getByIds(ids) { return ids.map((id) => ({ id, values: [1, 0, 0] })); },
-      async query() { return { matches }; },
+      async query(values, { filter } = {}) {
+        return { matches: filter && filter.type === 'thread' ? threads : matches };
+      },
     },
     ...(search ? { SEARCH: { async search() { return { chunks }; } } } : {}),
   };
@@ -83,11 +89,27 @@ function env({ matches = [], chunks = [], search = true } = {}) {
 const vector = (score, person, thread = 'slack:E1:C9:1.1') => ({
   score, metadata: { person, thread, author: `slack:E1:U${person}` },
 });
+const near = (score, thread) => ({ score, metadata: { type: 'thread', thread } });
+/** A made-up topic map, as src/topicmap.js keeps one: threads by key, staff by person id. */
+const topicMap = (e, threads, topics = [
+  {
+    id: 0, label: 'Assistant panel errors', theme: 'Customers need the assistant back.', size: 2,
+  },
+  {
+    id: 1, label: 'Cache purges', theme: 'Customers need purges to finish.', size: 1,
+  },
+]) => e.DB.sqlite.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
+  VALUES (?, 'cron', ?, ?, ?)`).run(ago(DAYS), threads.length, topics.length, JSON.stringify({
+  built_at: ago(DAYS), topics, threads,
+}));
 const word = (message, text, score = 1) => ({ score, text, item: { metadata: { message } } });
 const names = (found) => found.experts.map((e) => e.name);
 
 describe('expert finder', () => {
-  beforeEach(clearExpertLists);
+  beforeEach(() => {
+    clearExpertLists();
+    clearTopicIndex();
+  });
 
   it('says times in words', () => {
     assert.equal(roughly(2), 'within minutes');
@@ -254,9 +276,9 @@ describe('expert finder', () => {
     const e = env({ matches: [] });
     let asked = 0;
     const { query } = e.CONTENT;
-    e.CONTENT.query = (...args) => {
-      asked += 1;
-      return query(...args);
+    e.CONTENT.query = (values, options) => {
+      asked += options.filter.type === 'message' ? 1 : 0;
+      return query(values, options);
     };
     await findExperts(e, THREAD, { now: NOW });
     await findExperts(e, THREAD, { now: NOW + 1000 });
@@ -473,5 +495,123 @@ describe('expert finder', () => {
     const viewer = { id: 2, readonly: true };
     const as = await (await experts(e, THREAD, () => true, { me: viewer })).json();
     assert.equal(as.list, undefined);
+  });
+  it('credits whoever worked the closest threads of any channel, however little they said', async () => {
+    const e = env({
+      threads: [
+        // The thread itself, and threads much less similar than the closest, do not count.
+        near(0.99, THREAD), near(0.86, 'slack:E1:C9:7.7'), near(0.83, 'slack:E1:C8:6.6'),
+        near(0.7, 'slack:E1:C9:8.8'),
+      ],
+    });
+    e.addThread('slack:E1:C9:7.7', { org: 'other', channel: 'C9' });
+    e.addMessage('slack:E1:C9:7.7', 'x1', 6, DAYS, { channel: 'C9' });
+    e.addThread('slack:E1:C8:6.6', { org: 'other', channel: 'C8' });
+    e.addMessage('slack:E1:C8:6.6', 'x2', 6, 2 * DAYS, { channel: 'C8' });
+    e.addMessage('slack:E1:C8:6.6', 'x3', 5, 2 * DAYS, { channel: 'C8' });
+    e.addThread('slack:E1:C9:8.8', { org: 'other', channel: 'C9' });
+    e.addMessage('slack:E1:C9:8.8', 'x4', 7, DAYS, { channel: 'C9' });
+    topicMap(e, [
+      {
+        key: 'slack:E1:C9:7.7', topic: 0, last: ago(DAYS), staff: { 6: 1 },
+      },
+      {
+        key: 'slack:E1:C8:6.6', topic: 0, last: ago(2 * DAYS), staff: { 6: 1, 5: 1 },
+      },
+      {
+        key: 'slack:E1:C9:8.8', topic: 1, last: ago(DAYS), staff: { 7: 1 },
+      },
+    ]);
+    const found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(names(found), ['Flo', 'Ed']);
+    const flo = found.experts[0];
+    assert.deepEqual(flo.reasons, ['worked on 2 similar threads']);
+    assert.deepEqual(flo.similar, {
+      threads: 2, last: ago(DAYS), topics: ['Assistant panel errors'],
+    });
+    // Ed's one thread is the less similar: not enough to say so.
+    assert.equal(found.experts[1].similar, undefined);
+    assert.deepEqual(found.topics, [{
+      id: 0, label: 'Assistant panel errors', theme: 'Customers need the assistant back.', threads: 2,
+    }]);
+    const flos = found.candidates.find((c) => c.id === 'U6').features;
+    assert.equal(flos.similar, 1);
+    assert.equal(flos.similarThreads, 2);
+    // The page gets no topics.
+    const body = await (await experts(e, THREAD, () => true, { me: { id: 2 } })).json();
+    assert.equal(body.topics, undefined);
+  });
+
+  it('looks for what an agent says the thread is about, as a query, instead of its own words', async () => {
+    const said = [];
+    let searched = null;
+    const e = env({
+      matches: [vector(0.9, 3)],
+      chunks: [word('slack:E1:C9:5.5|5.5', 'The assistant panel is gone')],
+    });
+    e.AI.run = async (model, { text }) => {
+      said.push(...text);
+      return { data: [[0, 1, 0]] };
+    };
+    const asked = [];
+    const { query } = e.CONTENT;
+    e.CONTENT.query = (values, options) => {
+      asked.push([...values]);
+      return query(values, options);
+    };
+    e.CONTENT.getByIds = async () => {
+      throw new Error('the thread\'s own vector is not needed');
+    };
+    e.SEARCH.search = async ({ query: q }) => {
+      searched = q;
+      return { chunks: [word('slack:E1:C9:5.5|5.5', 'The assistant panel is gone')] };
+    };
+    e.addThread('slack:E1:C9:5.5', { org: 'other', channel: 'C9' });
+    e.addMessage('slack:E1:C9:5.5', '5.5', 4, 2 * DAYS, { channel: 'C9' });
+    e.addMessage('slack:E1:C9:5.5', 'x3', 3, 2 * DAYS, { channel: 'C9' });
+    const about = '  The assistant  panel of the editor is missing ';
+    const found = await findExperts(e, THREAD, { now: NOW, about });
+    assert.deepEqual(said, [`${QUERY_PREFIX}The assistant panel of the editor is missing`]);
+    assert.deepEqual(asked, [[0, 1, 0], [0, 1, 0]]);
+    assert.equal(searched, 'The assistant panel of the editor is missing');
+    assert.deepEqual(names(found), ['Cy', 'Di']);
+    // Kept apart from the list of the thread's own words.
+    e.CONTENT.getByIds = async (ids) => ids.map((id) => ({ id, values: [1, 0, 0] }));
+    await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(asked.at(-1), [1, 0, 0]);
+  });
+
+  it('lists the topics of the map, and who worked one that could be pulled in', async () => {
+    const e = env();
+    assert.equal(await listTopics(e), null);
+    assert.deepEqual(await topicExperts(e, THREAD, 'cache'), { error: 'there is no topic map yet' });
+    clearTopicIndex();
+    topicMap(e, [
+      {
+        key: 'slack:E1:C9:7.7', topic: 0, last: ago(DAYS), staff: { 6: 1, 1: 2 },
+      },
+      {
+        key: 'slack:E1:C9:7.8', topic: 0, last: ago(3 * DAYS), staff: { 6: 1, 4: 1, 5: 1 },
+      },
+      {
+        key: 'slack:E1:C9:8.8', topic: 1, last: ago(DAYS), staff: { 7: 1 },
+      },
+    ]);
+    for (const [person, at] of [[1, DAYS], [4, DAYS], [5, 200 * DAYS], [6, DAYS]]) {
+      e.addMessage('slack:E1:C9:7.7', `p${person}`, person, at, { channel: 'C9' });
+    }
+    e.DB.sqlite.prepare("DELETE FROM identities WHERE user_id = 'U4'").run();
+    e.addMessage(THREAD, 'y1', 1, 60);
+    const all = await listTopics(e);
+    assert.deepEqual(all.topics.map((t) => t.label), ['Assistant panel errors', 'Cache purges']);
+    assert.equal(all.built_at, ago(DAYS));
+    // Ada is in the thread, Di has no account here, Ed moved on, Gus works another topic.
+    const res = await topicExperts(e, THREAD, 'assistant PANEL');
+    assert.equal(res.topic.label, 'Assistant panel errors');
+    assert.deepEqual(res.people, [{
+      id: 'U6', name: 'Flo', threads: 2, last: ago(DAYS), member: null,
+    }]);
+    assert.equal((await topicExperts(e, THREAD, '1')).topic.label, 'Cache purges');
+    assert.match((await topicExperts(e, THREAD, 'nothing like it')).error, /^no topic is called/);
   });
 });

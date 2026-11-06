@@ -836,6 +836,40 @@ describe('the earlier conversations of the channel', () => {
     assert.equal((await run('suggest_expert', { id: 'U-nobody', reason: 'x' })).error, true);
   });
 
+  it('lists the topics of the inbox, and who works one', async () => {
+    const { e, run } = await setup();
+    assert.equal((await run('list_topics', {})).text, 'There is no topic map yet.');
+    assert.equal((await run('list_experts', { about: 'the assistant panel is gone' })).text, 'Nobody stands out for this thread.');
+    const { sqlite } = e.DB;
+    const person = staffId(sqlite);
+    const at = new Date().toISOString();
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
+      VALUES ('slack', 'E1', 'UEXP', 'person', 'Exa', ?, ?)`).run(person, at);
+    sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person, staff,
+      counted) VALUES ('slack', 'E1', 'C2', 'x1', 'slack:E1:C2:1792500000.000100', ?, ?, 1, 1)`)
+      .run(at, person);
+    const map = {
+      built_at: '2026-11-01T00:00:00.000Z',
+      topics: [{
+        id: 0, label: 'Cache purges', theme: 'Customers need purges to finish.', size: 1,
+      }],
+      threads: [{
+        key: 'slack:E1:C2:1792500000.000100', topic: 0, last: '2026-10-20T00:00:00Z', staff: { [person]: 1 },
+      }],
+    };
+    sqlite.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
+      VALUES (?, 'cron', 1, 1, ?)`).run(map.built_at, JSON.stringify(map));
+    // A new agent's tools, as the topic map is read again only now and then.
+    const fresh = await setup();
+    fresh.e.DB = e.DB;
+    assert.equal((await run('list_topics', {})).text, 'There is no topic map yet.');
+    const listed = await fresh.run('list_topics', {});
+    assert.equal(listed.text, 'Topics as of 2026-11-01:\n- 0 | Cache purges | 1 threads | Customers need purges to finish.');
+    const people = await fresh.run('list_topics', { topic: 'purges' });
+    assert.equal(people.text, 'Cache purges (1 threads): Customers need purges to finish.\n- UEXP | Exa | 1 thread, last 2026-10-20');
+    assert.equal((await fresh.run('list_topics', { topic: 'nothing like it' })).error, true);
+  });
+
   it('reads an earlier thread of the channel by key, link or message id, and no other channel\'s', async () => {
     const { e, run } = await setup();
     const link = 'https://acme.slack.com/archives/C1/p1792500060000200?thread_ts=1792500000.000100&cid=C1';

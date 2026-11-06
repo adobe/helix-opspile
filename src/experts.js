@@ -14,23 +14,30 @@ import { kept, keptAccounts } from './accounts.js';
 import { roster } from './agent/members.js';
 import { entryOf } from './drafts.js';
 import { recordList, rejectedBy } from './expertevents.js';
-import { affinities, entryRows, staffMatches } from './expertise.js';
+import {
+  affinities, entryRows, queryVector, similarThreads, staffMatches, vectorOf,
+} from './expertise.js';
 import { json } from './http.js';
 import { notifyRoom } from './notify.js';
 import {
   ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
+import { findTopic, topicIndex, topicsOfThreads } from './topicindex.js';
 
 /**
  * The expert finder of a thread: Adobe people worth pulling into it, who are not in it yet, each
- * with why (docs/ARCHITECTURE.md, "Expert finder"). Four signals, each scaled to its best person:
+ * with why (docs/ARCHITECTURE.md, "Expert finder"). Five signals, each scaled to its best person:
  * the threads someone worked in this channel and for this customer (D1), the staff messages
  * closest to the thread by meaning (CONTENT, src/expertise.js) and by words (SEARCH, the title
- * with BM25, for messages that have two neighbouring words of it). Measured on production threads,
+ * with BM25, for messages that have two neighbouring words of it), and the threads of any
+ * channel closest to it as a whole, which credits whoever worked them however little their own
+ * words say (a "still happening?" carries none of the topic). Measured on production threads,
  * channel and customer history say best who answers,
  * and the vectors and words find the people that history misses; their sum beat each alone.
- * Only names and numbers leave here, never text: the signals read channels of every team,
- * which neither the viewer nor a thread agent may read.
+ * A thread agent can say what the thread is about in its own words (`about`), when its title and
+ * first message say it badly. Only names, numbers and the topic map's names (src/topicindex.js)
+ * leave here, never text: the signals read channels of every team, which neither the viewer nor
+ * a thread agent may read.
  */
 
 /**
@@ -38,15 +45,17 @@ import {
  * (src/expertevents.js), so what people did with a list is learned with what made it; change
  * it when they change.
  */
-export const FINDER = 'signals-2026-10';
+export const FINDER = 'signals-2026-11';
 /** History older than this does not count. */
 const WINDOW_DAYS = 180;
 /** Someone who has not posted for this long has moved on. */
 const ACTIVE_DAYS = 90;
 /** The weights of the signals: customer history mostly repeats channel history. */
 const WEIGHTS = {
-  channel: 1, customer: 0.5, meaning: 1, words: 1,
+  channel: 1, customer: 0.5, meaning: 1, words: 1, similar: 1,
 };
+/** A person's closest similar threads that count, so that a prolific one does not win on volume. */
+const SIMILAR_THREADS = 3;
 /** What a signal needs, of its best person's, to say someone "knows about this topic". */
 const TOPIC = 0.5;
 /** A mention of someone outside the channel may never reach them, so they rank lower. */
@@ -149,11 +158,52 @@ async function byWords(env, title, threads) {
 }
 
 /** The people the vectors find, or nothing: without them the finder only knows less. */
-async function byMeaning(env, rows, threads) {
-  if (!env.CONTENT || !env.AI) {
+async function byMeaning(env, rows, threads, vector) {
+  if (!vector) {
     return new Map();
   }
-  return affinities(await staffMatches(env, rows), { threads }).people;
+  return affinities(await staffMatches(env, rows, { vector }), { threads }).people;
+}
+
+/**
+ * Who worked the threads closest to the entry (src/expertise.js `similarThreads`): `{ people,
+ * worked }`, `people` person id to what their SIMILAR_THREADS closest have over the weakest
+ * that counts, `worked` person id to `{ threads, last }` (those threads' keys, the closest
+ * first, and when they last posted in one).
+ */
+async function bySimilar(env, similar) {
+  const people = new Map();
+  const worked = new Map();
+  if (!similar.length) {
+    return { people, worked };
+  }
+  const { results } = await env.DB.prepare(`SELECT thread, person, MAX(at) AS last FROM messages
+    WHERE thread IN (SELECT value FROM json_each(?)) AND staff = 1 AND counted = 1 AND deleted = 0
+      AND person IS NOT NULL GROUP BY thread, person`)
+    .bind(JSON.stringify(similar.map((s) => s.thread))).all();
+  const gains = new Map();
+  for (const s of similar) {
+    for (const r of (results || []).filter((x) => x.thread === s.thread)) {
+      gains.set(r.person, [...(gains.get(r.person) || []), s.gain]);
+      const w = worked.get(r.person) || { threads: [], last: null };
+      w.threads.push(s.thread);
+      w.last = !w.last || r.last > w.last ? r.last : w.last;
+      worked.set(r.person, w);
+    }
+  }
+  for (const [person, list] of gains) {
+    people.set(person, list.sort((a, b) => b - a).slice(0, SIMILAR_THREADS)
+      .reduce((sum, g) => sum + g, 0));
+  }
+  return { people, worked };
+}
+
+/** The vector the entry's signals go by: `about` as a query, else the entry's own, or null. */
+async function entryVector(env, rows, about) {
+  if (!env.CONTENT || !env.AI) {
+    return null;
+  }
+  return about ? queryVector(env, about) : vectorOf(env, rows);
 }
 
 /** A signal that failed counts for nothing; the others still answer. */
@@ -228,6 +278,10 @@ export function reasonsOf(e) {
   const reasons = [];
   if (e.topic) {
     reasons.push('knows about this topic');
+  }
+  const similar = e.similar && e.similar.threads;
+  if (similar) {
+    reasons.push(`worked on ${similar} similar ${similar === 1 ? 'thread' : 'threads'}`);
   }
   if (reliable(e.response)) {
     const { minutes } = e.response;
@@ -335,28 +389,59 @@ const inChannel = (members, id, posted) => {
   return members ? false : null;
 };
 
-/** The people of an entry's list, best first, without what is the viewer's alone. */
-async function rank(env, t, rows, now) {
+/** What someone's similar threads say (`bySimilar`), for the reasons: names and dates only. */
+function workedOn(worked, index) {
+  if (!worked) {
+    return null;
+  }
+  return {
+    threads: worked.threads.length,
+    last: worked.last,
+    topics: topicsOfThreads(index, worked.threads.map((thread) => ({ thread })))
+      .map((t) => t.label),
+  };
+}
+
+/**
+ * The people of an entry's list, best first, without what is the viewer's alone, and the topics
+ * of the topic map its similar threads are in: `{ list, topics }`. With `about`, the vectors and
+ * words go by that instead of the thread's own (an agent's description of it).
+ */
+async function rank(env, t, rows, now, { about = null } = {}) {
   const threads = rows.map((r) => r.thread);
   const since = iso(now - WINDOW_DAYS * day);
-  const title = rows.map((r) => r.title).find(Boolean);
-  const [channel, customer, meaning, words] = await Promise.all([
+  const title = about || rows.map((r) => r.title).find(Boolean);
+  const vector = await entryVector(env, rows, about).catch((e) => {
+    console.log(JSON.stringify({ route: 'experts', signal: 'vector', error: e.message }));
+    return null;
+  });
+  const near = await similarThreads(env, vector, { threads }).catch((e) => {
+    console.log(JSON.stringify({ route: 'experts', signal: 'similar', error: e.message }));
+    return [];
+  });
+  const [channel, customer, meaning, words, similar, index] = await Promise.all([
     quietly('channel', workedIn(env, 'FROM messages m', 'm.source = ? AND m.tenant = ? AND m.channel_id = ?', [t.source, t.tenant, t.channel_id], threads, since)),
     t.org && !t.org.startsWith('_')
       ? quietly('customer', workedIn(env, 'FROM messages m JOIN threads t ON t.thread = m.thread', "t.org = ? AND t.kind <> 'alert'", [t.org], threads, since))
       : new Map(),
-    quietly('meaning', byMeaning(env, rows, threads)),
+    quietly('meaning', byMeaning(env, rows, threads, vector)),
     quietly('words', byWords(env, title, threads)),
+    bySimilar(env, near).catch((e) => {
+      console.log(JSON.stringify({ route: 'experts', signal: 'similar', error: e.message }));
+      return { people: new Map(), worked: new Map() };
+    }),
+    topicIndex(env, { now }),
   ]);
+  const topics = topicsOfThreads(index, near);
   const found = {
-    channel, customer, meaning, words,
+    channel, customer, meaning, words, similar: similar.people,
   };
   const signals = Object.fromEntries(Object.entries(found).map(([k, m]) => [k, scaled(m)]));
   const people = [...new Set(Object.values(signals).flatMap((m) => [...m.keys()]))];
   const inThread = await inEntry(env, threads);
   const open = people.filter((p) => !inThread.has(p));
   if (!open.length) {
-    return [];
+    return { list: [], topics };
   }
   const [known, recent] = await Promise.all([accounts(env, t, open, now), active(env, open, now)]);
   const listed = open.filter((p) => known.has(p) && recent.has(p));
@@ -374,24 +459,29 @@ async function rank(env, t, rows, now) {
       avatar: a.avatar || null,
       member,
       topic: Math.max(of('meaning'), of('words')) >= TOPIC,
+      similar: of('similar') >= TOPIC ? workedOn(similar.worked.get(person), index) : null,
       channel: of('channel') > 0,
       customer: of('customer') > 0,
       score: score * (member === false ? OUTSIDE : 1),
-      // Each signal scaled, as it is added up, and as it was found (threads; affinity; BM25).
+      // Each signal scaled, as it is added up, and as it was found (threads; affinity; BM25;
+      // what the closest threads have over the weakest).
       signals: {
         channel: of('channel'),
         customer: of('customer'),
         meaning: of('meaning'),
         words: of('words'),
+        similar: of('similar'),
         channelThreads: raw('channel'),
         customerThreads: raw('customer'),
         meaningRaw: raw('meaning'),
         wordsRaw: raw('words'),
+        similarRaw: raw('similar'),
+        similarThreads: (similar.worked.get(person) || { threads: [] }).threads.length,
       },
     };
   }).sort((a, b) => b.score - a.score).slice(0, MAX_MEASURED);
   const times = await responseTimes(env, ranked.map((e) => e.person), { now });
-  return ranked.map((e) => ({ ...e, response: times.get(e.person) || null }));
+  return { list: ranked.map((e) => ({ ...e, response: times.get(e.person) || null })), topics };
 }
 
 /**
@@ -461,6 +551,7 @@ function shape(e) {
     kind: 'person',
     reasons: e.reason ? [e.reason, ...reasonsOf(e)] : reasonsOf(e),
     response: reliable(e.response) ? e.response : null,
+    ...(e.similar ? { similar: e.similar } : {}),
     ...(e.reason ? { suggested: { at: e.at } } : {}),
   };
 }
@@ -494,11 +585,13 @@ function candidate(e) {
  * (a person id) is left out, and so is whom they said is not the right person for it (a
  * candidate still, `rejected`). With `whenNeeded` (the inbox's header), only agents'
  * suggestions while Adobe has the entry in hand (`inHand`), and `held` says so; the candidates
- * are all of them still, for the training to see whom the team pulled in anyway. Never throws
- * for a signal that fails.
+ * are all of them still, for the training to see whom the team pulled in anyway. `topics` are
+ * the topic map's topics the entry's closest threads are in (src/topicindex.js). With `about`
+ * (a thread agent's words for what the entry is about), the vectors and words go by that. Never
+ * throws for a signal that fails.
  */
 export async function findExperts(env, key, {
-  me = null, now = Date.now(), whenNeeded = false,
+  me = null, now = Date.now(), whenNeeded = false, about = null,
 } = {}) {
   const t = key && await target(env, key);
   const rows = t ? await entryRows(env, key) : [];
@@ -506,10 +599,11 @@ export async function findExperts(env, key, {
     return null;
   }
   const threads = rows.map((r) => r.thread);
-  const version = `${key}|${rows.map((r) => `${r.thread}:${r.embedded || r.title}`).join(',')}|${t.any_at}`;
+  const said = String(about || '').replace(/\s+/g, ' ').trim() || null;
+  const version = `${key}|${rows.map((r) => `${r.thread}:${r.embedded || r.title}`).join(',')}|${t.any_at}|${said || ''}`;
   let ranked = cache.get(version);
   if (!ranked || now - ranked.at >= CACHE_MS) {
-    ranked = { at: now, list: await rank(env, t, rows, now) };
+    ranked = { at: now, ...await rank(env, t, rows, now, { about: said }) };
     cache.delete(version);
     cache.set(version, ranked);
     while (cache.size > CACHE_MAX) {
@@ -539,6 +633,7 @@ export async function findExperts(env, key, {
     experts: all.filter((e) => !e.rejected && (!held || e.reason)).slice(0, MAX_EXPERTS)
       .map(shape),
     candidates: all.map(candidate),
+    topics: ranked.topics,
     ...(held ? { held: true } : {}),
   };
 }
@@ -595,7 +690,9 @@ export async function experts(env, key, canSee, { me, waitUntil, suggestedOnly =
   if (!found) {
     return json(found);
   }
-  const { candidates, held, ...body } = found;
+  // The topics are the agents': the page shows none.
+  const { candidates, held } = found;
+  const body = { platform: found.platform, experts: found.experts };
   const list = await recordList(env, me, e.key, { finder: FINDER, candidates, held })
     .catch((err) => {
       console.warn(JSON.stringify({ route: 'experts', record: 'list', error: err.message }));
@@ -657,6 +754,71 @@ export async function suggestExpert(env, key, {
     VALUES (?, ?, ?, ?, ?)`).bind(e.key, chosen, why, by, new Date().toISOString()).run();
   await notifyRoom(env, e.teams, { type: 'experts', thread: e.key });
   return { ok: true, name: person.name };
+}
+
+/** People a topic's list has at most (`topicExperts`). */
+export const MAX_TOPIC_PEOPLE = 10;
+
+/**
+ * The topics of the newest topic map (src/topicmap.js), the biggest first: `{ built_at, topics:
+ * [{ id, label, theme, size }] }`, or null when there is none.
+ */
+export async function listTopics(env, { now = Date.now() } = {}) {
+  const index = await topicIndex(env, { now });
+  if (!index) {
+    return null;
+  }
+  return {
+    built_at: index.built_at,
+    topics: [...index.topics.values()].sort((a, b) => b.size - a.size).map((t) => ({
+      id: t.id, label: t.label, theme: t.theme, size: t.size,
+    })),
+  };
+}
+
+/**
+ * Who worked the threads of topic `name` (a topic map's label, or its id) and could be pulled into
+ * inbox entry `key`: `{ topic: { id, label, theme, size }, people: [{ id, name, threads, last,
+ * member }] }`, the most threads first, or `{ error }`. Like the finder, it leaves out who is in
+ * the entry, `me`, who has not posted for ACTIVE_DAYS and who has no account on its platform.
+ */
+export async function topicExperts(env, key, name, { me = null, now = Date.now() } = {}) {
+  const index = await topicIndex(env, { now });
+  if (!index) {
+    return { error: 'there is no topic map yet' };
+  }
+  const topic = findTopic(index, name);
+  if (!topic) {
+    return { error: `no topic is called ${JSON.stringify(String(name || ''))}: list_topics without a topic lists them` };
+  }
+  const t = key && await target(env, key);
+  const rows = t ? await entryRows(env, key) : [];
+  if (!rows.length) {
+    return { error: 'no such thread' };
+  }
+  const inThread = await inEntry(env, rows.map((r) => r.thread));
+  const open = [...topic.people.keys()].filter((p) => p !== me && !inThread.has(p));
+  const [known, recent] = open.length
+    ? await Promise.all([accounts(env, t, open, now), active(env, open, now)])
+    : [new Map(), new Set()];
+  const listed = open.filter((p) => known.has(p) && recent.has(p))
+    .sort((a, b) => topic.people.get(b).threads - topic.people.get(a).threads
+      || String(topic.people.get(b).last).localeCompare(String(topic.people.get(a).last)))
+    .slice(0, MAX_TOPIC_PEOPLE);
+  const members = listed.length
+    ? await membersOf(env, t, listed.map((p) => known.get(p).id)) : null;
+  return {
+    topic: {
+      id: topic.id, label: topic.label, theme: topic.theme, size: topic.size,
+    },
+    people: listed.map((p) => {
+      const a = known.get(p);
+      const { threads, last } = topic.people.get(p);
+      return {
+        id: a.id, name: a.name, threads, last, member: inChannel(members, a.id, false),
+      };
+    }),
+  };
 }
 
 /** Forgets the kept lists (tests). */

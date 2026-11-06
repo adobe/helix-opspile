@@ -873,6 +873,9 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   are left out.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
+- The [expert finder](#replying) reads the newest (`src/topicindex.js`): which topic each thread
+  is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
+  similar threads are in, and list who works a topic (`list_topics`).
 
 The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
 person, topic, tag and customer, as big as its threads, a line between two that share threads,
@@ -1113,7 +1116,7 @@ there is one. The exception is the person who was mentioned and has not posted s
 for whom to hand it to. The list is still computed and recorded (`held`, below), for the training
 to see whom the team pulled in anyway. A thread agent's `list_experts` always gets the full list.
 
-Four signals add up, each scaled to its best person: the threads someone worked in this channel
+Five signals add up, each scaled to its best person: the threads someone worked in this channel
 and for this customer in the last 180 days (D1; the customer's counts half, as it mostly repeats
 the channel's), the staff messages closest to the thread by meaning (`CONTENT`, as for the
 mention suggestions) and by words (`SEARCH`, the title with BM25, for messages that have two
@@ -1124,7 +1127,37 @@ question, the first to answer was in the top 3 of 36 of them and in the top 5 of
 alone had 22 and 27, channel history alone 33 and 33. Labels' topics changed nothing and are not
 used. Asking for neighbouring words, on 70 such threads, moved the first to answer from first
 place on 13 of them to 18, from the top 3 of 25 to 28 and from the top 5 of 28 to 31; any two
-words of the title got 12, 28 and 32, and no words at all 18, 27 and 30. The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
+words of the title got 12, 28 and 32, and no words at all 18, 27 and 30.
+
+The fifth is **similar threads**: the channel threads of any channel closest to this one as a
+whole (`CONTENT` thread vectors, `similarThreads` in `src/expertise.js`, those no less than 0.6
+similar and within 0.08 of the closest), and each Adobe person who posted in them gets what their
+three closest have over the weakest that counts. The meaning signal only sees what someone wrote:
+whoever answered a customer's question with "is this still happening?" said nothing about the
+topic, and only the thread as a whole says what it was about. On 65 production threads (August to
+October, a customer asked without mentioning anyone from Adobe, Adobe answered; only what was there
+before the question, the root message's vector as the thread's, and without the words, which
+cannot be replayed), the first to answer was first, in the top 3 and in the top 5 of 17, 23 and 28
+of them before, and 15, 27 and 30 with it; on the 48 of those where they had not worked the channel
+before, 4, 8 and 11 before and 2, 11 and 13 with it. Someone whose similar threads count says so
+("worked on 2 similar threads"), with how many, when they last posted in one and the topics of the
+[topic map](#topic-maps) those are in (`similar`); the list says which topics the thread's closest
+threads are in (`topics`, for the agents: `GET /api/experts` answers without them).
+
+A thread agent can say what the thread is about (`list_experts` with `about`), when its title and
+first message say it vaguely (a customer's name for a feature is rarely the product's): the
+meaning and similar threads go by that sentence instead of the thread's vector,
+embedded as a query (with bge's `Represent this sentence for searching relevant passages: ` in
+front, `QUERY_PREFIX`: without it, a short sentence is closest to what every thread has in
+common), and the words by it instead of the title. On the 65 threads with their titles as `about`
+it ranked about as well (15, 23 and 30); on a vague one checked by hand, the colleague who had
+answered the same question in another channel came first with it, and was not listed without it. `list_topics` gives an agent the topic map itself: the topics,
+with what their customers need and their size, and for one of them the Adobe people who worked
+its threads and could be pulled in (`topicExperts`, with the same exclusions as the list). Topic
+names never name a customer, so they may say why someone fits to an agent of any team
+(`src/topicindex.js` reads the newest map, at most every ten minutes per isolate).
+
+The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
 in the thread itself does not count either), anyone who has not posted for 90 days, and anyone
 without an account on the thread's platform, who could not be mentioned. Someone with several
 accounts there is listed once, by their account for the thread ("One account a person"), with
@@ -1136,7 +1169,8 @@ included. It is only said with at least three answered mentions, most of those m
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
-suggestions do. The answer has names and numbers only, never message text: the signals read
+suggestions do. The answer has names, numbers and the topic map's names only, never message text
+or a thread's title: the signals read
 channels of every team, which neither the viewer nor a thread agent may read. It is kept for ten
 minutes per version of the thread, per isolate.
 
@@ -1364,7 +1398,7 @@ written by people outside its control.
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
 | `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
-| `list_experts`, `suggest_expert` | colleagues not in the thread yet who could help, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
+| `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
