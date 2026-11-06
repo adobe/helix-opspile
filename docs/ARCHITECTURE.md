@@ -181,7 +181,9 @@ the channels it moves (below).
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
-and Teams HTML are converted), so keeping each message in its own file avoids nesting one
+and Teams HTML are converted; a Teams system notice, whose body is an empty
+`<systemEventMessage/>`, is written from its `eventDetail`: "Meeting ended after 50 s. Only Ada
+joined.", with the names looked up where Graph leaves them out), so keeping each message in its own file avoids nesting one
 document inside another, and makes every file a natural retrieval chunk. There is no
 per-thread rollup file; reading a thread means listing its folder.
 
@@ -678,7 +680,7 @@ signed-in user's own state only coarsely, so opspile owns read state. Most of it
 | Person reacts to a message | Their watermark moves to that message (Slack `reaction_added`; Teams reports reactions on the message) |
 | Person opens the thread in opspile | Their watermark moves to the last message |
 | A message is edited, or a reaction is added by someone else | No change; edits never make a thread unread |
-| Bot or system message | Stored and shown, but does not count as new activity |
+| Bot or system message | Stored and shown, but does not count as new activity; a system notice is no reply either, and titles a thread only when nobody said anything in it |
 
 ### Status piles
 

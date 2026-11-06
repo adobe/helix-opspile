@@ -105,6 +105,11 @@ const APP = {
   kind: 'bot', name: 'opspile', org: null, staff: false,
 };
 
+/** Teams' system notices: a meeting started or ended, someone was added. */
+const SYSTEM = {
+  kind: 'system', name: 'Microsoft Teams', org: null, staff: false,
+};
+
 /** The thread agent, which saves shared drafts as this person (src/agent/tools.js). */
 const AGENT = { id: 900, name: 'opspile agent' };
 
@@ -444,6 +449,9 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (key === 'app') {
       return APP;
     }
+    if (key === 'system') {
+      return SYSTEM;
+    }
     const p = byKey.get(key);
     return {
       kind: 'person', name: p.name, org: p.org || null, staff: p.staff,
@@ -495,9 +503,14 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     const live = messages.filter((m) => !m.deletedAt);
     const root = messages.find((m) => m.id === rootId);
     const titled = (m) => titleOf(m.subject, m.body);
-    const titleSource = root && !root.deletedAt && titled(root)
-      ? root
-      : live.find((m) => titled(m));
+    // What was said titles a thread; a system notice only one without.
+    const said = (m) => m.author.kind !== 'system';
+    const titleSource = [
+      root && !root.deletedAt && said(root) && titled(root) ? root : null,
+      live.find((m) => said(m) && titled(m)),
+      root && !root.deletedAt && titled(root) ? root : null,
+      live.find((m) => titled(m)),
+    ].find(Boolean);
     const counted = live.filter((m) => m.author.kind === 'person')
       .sort((a, b) => a.at.localeCompare(b.at));
     const last = counted[counted.length - 1];
@@ -522,7 +535,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       last_staff: last ? Number(last.author.staff) : null,
       last_text: last ? previewOf(last.body) : null,
       any_at: ats.length ? ats[ats.length - 1] : null,
-      messages: live.length,
+      messages: live.filter((m) => m.author.kind !== 'system').length,
       // Re-threaded into another thread's group (src/rethread.js): that group's first thread.
       logical_thread: entry.logical || null,
       updated_at: new Date(now).toISOString(),
@@ -959,6 +972,22 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['lena', 3000, 'Heads-up: the cache flush job restarts the preview workers after every deploy, so preview can answer 503 for a minute.', { subject: 'Preview restarts after the cache flush' }],
       ['tom', 2990, 'Noted, thanks.'],
     ],
+  });
+
+  // A customer started a meeting in the channel and wrote in its chat, and nobody joined: Teams'
+  // notices say so (src/normalize.js), and are not counted as replies.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['system', 50, 'Meeting started by Mei Lin.'],
+      ['mei', 50, 'Hi,'],
+      ['mei', 49, 'We cannot get any further with the purge. Can we have a quick call?'],
+      ['system', 49, 'Meeting ended after 50 s. Only Mei Lin joined.'],
+      ['mei', 48, 'Please let us know a time.'],
+    ],
+    label: {
+      kind: 'meeting', next_actor: 'us', urgency: 0.7, resolved_p: 0.05,
+    },
   });
 
   seed({

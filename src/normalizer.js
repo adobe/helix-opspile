@@ -27,7 +27,9 @@ import { discordApi } from './discord.js';
 import {
   discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
 } from './markdown.js';
-import { normalize, slackLinkIn } from './normalize.js';
+import {
+  normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+} from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
@@ -175,7 +177,34 @@ async function discordMarkdown(env, message) {
   });
 }
 
+/**
+ * A Teams system notice in words, with the names of the people it names: Graph sends their ids,
+ * often without names.
+ */
+export async function teamsEventMarkdown(env, message) {
+  const found = new Map();
+  for (const u of teamsEventUsers(message.event).slice(0, MAX_MENTIONS)) {
+    // Someone who posted is known already: a replay asks Graph nothing, and a stale identity
+    // is not looked up again here, where a failed lookup would forget its name.
+    // eslint-disable-next-line no-await-in-loop
+    const cached = await env.DB.prepare(`SELECT COALESCE(p.name, i.name) AS name FROM identities i
+      LEFT JOIN people p ON p.id = i.person
+      WHERE i.source = 'teams' AND i.tenant = ? AND i.user_id = ?`).bind(message.tenant, u.id).first();
+    // eslint-disable-next-line no-await-in-loop
+    const identity = cached && cached.name ? { name: cached.name } : await getIdentity(env, {
+      source: 'teams', tenant: message.tenant, userId: u.id, name: u.displayName, home: u.tenantId,
+    });
+    const known = identity.person_name || identity.name;
+    // A failed lookup names the user by their id.
+    found.set(u.id, known && known !== u.id ? known : u.displayName);
+  }
+  return teamsEventText(message.event, (u) => found.get(u.id) || u.displayName);
+}
+
 async function toMarkdown(env, message) {
+  if (message.format === 'teams-event') {
+    return teamsEventMarkdown(env, message);
+  }
   if (message.format === 'html') {
     return htmlToMarkdown(message.text);
   }

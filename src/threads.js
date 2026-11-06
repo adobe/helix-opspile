@@ -131,14 +131,19 @@ export async function indexMessage(db, m, now = new Date()) {
     (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, title, path,
      root_at, last_at, last_id, last_author, last_staff, last_text, any_at, messages, updated_at)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+      -- What was said titles a thread; a system notice (a meeting started) only one without.
       COALESCE(
-        (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''),
+        (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''
+          AND COALESCE(author_kind, '') != 'system'),
+        (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
+          AND COALESCE(author_kind, '') != 'system' ORDER BY at LIMIT 1),
         (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
           ORDER BY at LIMIT 1)),
       ?11, ?12,
       l.at, l.id, l.author, l.staff, l.preview,
       (SELECT MAX(at) FROM messages WHERE thread = ?1 AND deleted = 0),
-      (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0),
+      (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0
+        AND COALESCE(author_kind, '') != 'system'),
       ?13
     FROM (SELECT NULL) LEFT JOIN (
       SELECT at, id, author, staff, preview FROM messages
