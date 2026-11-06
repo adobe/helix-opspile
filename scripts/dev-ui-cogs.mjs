@@ -23,13 +23,16 @@ import { AGENT_EMAIL } from '../src/draftevents.js';
  * flow is in `cogs_hours` too, busiest in the European and American working hours, for the chart
  * of a week. The agents' customers' drafts of the last DRAFT_DAYS days (`draft_events`, as
  * src/draftevents.js records them): most sent, some edited first, some discarded or withdrawn,
- * a few posts of the agents' own, and a few drafts open. Seeded, so every start shows the same
- * numbers. Made-up data only.
+ * a few posts of the agents' own, and a few drafts open. The agents' model use of the last
+ * EXPERIMENT_DAYS days is split between the cache experiment's arms (src/experiments.js).
+ * Seeded, so every start shows the same numbers. Made-up data only.
  */
 
 const DAYS = 120;
 const DAY_MS = 86400000;
 const AGENTS = new Set(['acme', 'hooli']);
+/** How many of the last days the agents were in the cache experiment's arms. */
+const EXPERIMENT_DAYS = 4;
 /** How long the agents' drafts have been counted, for the preview. */
 const DRAFT_DAYS = 40;
 
@@ -178,12 +181,31 @@ export function seedCogs(DB, now = Date.now()) {
       put('meter', 'ai_search', 'uploads', '', org, team, messages * 0.8);
       put('meter', 'ai_search', 'ingest_bytes', '', org, team, messages * 0.8 * 650);
       put('account', 'artifacts', 'operations', '', org, team, messages * 3);
-      if (AGENTS.has(org)) {
-        // The thread agents: Claude on Bedrock, their Durable Objects and their browser.
+      if (AGENTS.has(org) && i < EXPERIMENT_DAYS) {
+        // The cache experiment (src/experiments.js): half the work in each arm. The five-minute
+        // cache misses between turns, so it writes more, at a lower price per token.
+        const model = 'us.anthropic.claude-opus-5-5';
+        for (const [arm, part] of [['long', 0.52], ['short', 0.48]]) {
+          const m = messages * part;
+          const tag = `${model}#cache=${arm}`;
+          put('meter', 'bedrock', 'input_tokens', tag, org, team, m * 2400);
+          put('meter', 'bedrock', 'output_tokens', tag, org, team, m * 1300);
+          if (arm === 'long') {
+            put('meter', 'bedrock', 'cache_read_tokens', tag, org, team, m * 52000);
+            put('meter', 'bedrock', 'cache_write_1h_tokens', tag, org, team, m * 6100);
+          } else {
+            put('meter', 'bedrock', 'cache_read_tokens', tag, org, team, m * 49500);
+            put('meter', 'bedrock', 'cache_write_tokens', tag, org, team, m * 8600);
+          }
+        }
+      } else if (AGENTS.has(org)) {
         put('meter', 'bedrock', 'input_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 2400);
         put('meter', 'bedrock', 'output_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 1300);
         put('meter', 'bedrock', 'cache_read_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 52000);
         put('meter', 'bedrock', 'cache_write_1h_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 6100);
+      }
+      if (AGENTS.has(org)) {
+        // The thread agents: Claude on Bedrock (above), their Durable Objects and their browser.
         put('meter', 'workers_ai', 'input_tokens', '@cf/cloudflare/clef', org, team, messages * 400);
         put('meter', 'browser_run', 'browser_ms', '', org, team, messages * 900 * rnd());
         put('account', 'durable_objects', 'requests', '', org, team, messages * 9);

@@ -1271,6 +1271,14 @@ the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
 Prompt caching asks for the one-hour TTL (`cacheRetention: 'long'`). Turns are often minutes
 apart, past pi's five-minute default, and Bedrock bills a later hit inside the hour as a read.
+But every write costs 2× the input price for an hour against 1.25× for five minutes, so whether
+that pays depends on how far apart turns are. **Experiments** (`src/experiments.js`) settle it:
+for a fixed window, each thread is in one arm by a hash of its key (salted with the experiment,
+the same arm all along; knowledge-base agents take no part), and the provider asks for the arm's
+retention at every request (`retainingApi`, `src/agent/model.js`), so an agent that is running
+at the window's edges switches on its next request. The cache experiment puts half the threads
+on `short` from 2026-11-07 to 2026-11-14 (UTC); outside it every thread is on `long`. What an
+agent in an arm uses is counted for COGS with the arm in the detail (below).
 
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
@@ -1639,7 +1647,9 @@ per model and tool, cumulative). The agent reads it after each model round (a ho
 generation task) and before it is told something, and counts the difference since the last time
 (kept in its storage, `cogs:usage`) as Bedrock input, output, cache read and cache write tokens
 (five-minute and one-hour writes apart, as Bedrock prices them), and what pi's catalog says they
-cost, which prices a model the list does not know. An agent that was never metered starts from
+cost, which prices a model the list does not know. While an experiment runs, the arm the agent
+is in follows the model in the detail (`us.anthropic.claude-opus-5-5#cache=short`), which the
+prices read past. An agent that was never metered starts from
 its ledger as it is: what it used before is not counted on the day COGS started. Once a day it
 writes the size of its SQLite (`cogs_objects`), for the agents' storage.
 
@@ -1710,7 +1720,10 @@ over the agents' drafts a person sent) and per agent reply (over those and the a
 count from the first whole day of the drafts' events as well (`drafts.estimate`), so that a period
 before they were recorded does not divide by none; a service's per accepted draft is its own flow,
 so Bedrock's is what the agents' model cost per accepted draft. Costs are at the margin: the
-allowances of a plan are listed with the prices, not subtracted.
+allowances of a plan are listed with the prices, not subtracted. An experiment's arms are set side
+by side (`experiments`, of what is selected): per arm, the Bedrock tokens and cost, and the prompt
+(input, cache reads and writes), which a cache policy does not change, so what the prompt cost per
+million tokens compares the arms however the threads fell between them.
 
 ## People
 

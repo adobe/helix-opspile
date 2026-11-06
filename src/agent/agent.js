@@ -24,6 +24,7 @@ import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
+import { armTag, cacheRetention } from '../experiments.js';
 import { toolsFor } from './agenttools.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
@@ -130,7 +131,9 @@ export class ThreadAgent extends Agent {
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
-        models.setProvider(agentProvider(env));
+        // The prompt cache's retention, per request: the thread's arm while the experiment runs
+        // (src/experiments.js), else the `long` asked for below.
+        models.setProvider(agentProvider(env, { cacheRetention: () => cacheRetention(this.name) }));
         const agent = {
           env,
           // The object's name, which the computer's gateway knows it by (src/agent/secrets.js).
@@ -163,7 +166,8 @@ export class ThreadAgent extends Agent {
             // One-hour prompt cache. Turns on one thread are often minutes apart, past
             // pi's five-minute default, so that cache was rewritten on almost every
             // request. Bedrock bills a 1h write higher and a later hit as a read.
-            // Compaction requests ask for none.
+            // Compaction requests ask for none. The provider puts an experiment's arm in
+            // its place while one runs.
             stream: { cacheRetention: 'long' },
           },
         }, context);
@@ -475,6 +479,7 @@ export class ThreadAgent extends Agent {
       await this.ctx.storage.get('cogs:usage'),
       ledger,
       this.env.AGENT_MODEL,
+      armTag(this.name),
     );
     for (const [metric, model, q] of adds) {
       scope.add('bedrock', metric, model, q);
