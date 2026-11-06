@@ -17,7 +17,7 @@ import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import { routeReply, target } from '../src/post.js';
 import {
-  addresses, ago, dethread, REPLY, rethread, skeleton, SPLIT,
+  addresses, ago, dethread, greets, REPLY, rethread, skeleton, SPLIT,
 } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -309,6 +309,75 @@ describe('bursts', () => {
       }
       const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
       assert.deepEqual(rows.map((r) => r.logical_via), [null, null], `order ${order}`);
+    }
+  });
+});
+
+describe('greetings', () => {
+  const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+  const post = (env, k, id, when, user) => env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant,
+    channel_id, id, thread, at, author_key, counted) VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, 1)`)
+    .run(id, k, when, `slack:E1:${user}`);
+  const rows = (env) => env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
+
+  it('tells a root that only greets from one that says something', () => {
+    for (const text of ['Hello Ada', 'hi @Ada Lovelace', 'Hallo zusammen.', 'Hi Everyone',
+      'Hi \u{1F642}', 'hello, good morning', 'Hi team :wave:', 'Good morning all!', 'Bonjour à tous',
+      'Hey Ada, how are you?', 'Hi @Ada and @Grace']) {
+      assert.equal(greets(text), true, text);
+    }
+    for (const text of ['Hello I have imported the new catalog tonight', 'Hi, preview is down',
+      'Hi Ada, quick question', 'Good news: the fix is deployed', 'Hi CDN team', 'we are on call',
+      'Thanks Ada!', '']) {
+      assert.equal(greets(text), false, text);
+    }
+  });
+
+  it('folds the next root of the one who greeted, minutes later, in any order', async () => {
+    for (const order of [[0, 1], [1, 0]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '40.0', 'Hello Ada', at(0));
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '40.1', 'Publishing fails for one of our pages. Can you have a look?', at(6));
+      env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+      post(env, a, '40.0', at(0), 'U1');
+      post(env, b, '40.1', at(6), 'U1');
+      for (const i of order) {
+        // eslint-disable-next-line no-await-in-loop
+        await rethread(env, [a, b][i]);
+      }
+      assert.deepEqual(rows(env), [
+        { logical_thread: null, logical_via: null }, { logical_thread: a, logical_via: 'burst' },
+      ], `order ${order}`);
+      // Answered in its own platform thread, it stays in the group: a burst member.
+      post(env, b, '40.2', at(60), 'U3');
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    }
+  });
+
+  it('does not after someone else posted between them, nor much later', async () => {
+    for (const [other, minutes] of [[true, 6], [false, 20]]) {
+      const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'new' }) };
+      // eslint-disable-next-line no-await-in-loop
+      const a = await seed(env, '41.0', 'Hello Ada', at(0));
+      // eslint-disable-next-line no-await-in-loop
+      const o = other && await seed(env, '41.5', 'Is preview down for anyone else?', at(3));
+      // eslint-disable-next-line no-await-in-loop
+      const b = await seed(env, '41.1', 'Publishing fails for one of our pages', at(minutes));
+      env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+      post(env, a, '41.0', at(0), 'U1');
+      if (o) {
+        post(env, o, '41.5', at(3), 'U2');
+      }
+      post(env, b, '41.1', at(minutes), 'U1');
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, a);
+      // eslint-disable-next-line no-await-in-loop
+      const r = await rethread(env, b);
+      assert.equal(r.result, 'new-topic', `other ${other}, ${minutes} minutes`);
+      assert.equal(env.clefCalls.length, 1, 'Clef decides instead');
     }
   });
 });
