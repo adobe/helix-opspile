@@ -302,6 +302,56 @@ function draftsCard(d) {
   </div></div>`;
 }
 
+/**
+ * A metric's detail as the tables show it: an experiment's arm after the model
+ * (`…#cache=short`, src/experiments.js) as the arm's name.
+ */
+function detailText(d, detail) {
+  const m = /^(.*)#([a-z0-9_-]+)=([a-z0-9_-]+)$/.exec(detail || '');
+  if (!m) return detail || '';
+  const arm = d.experiments?.find((e) => e.id === m[2])?.arms.find((a) => a.id === m[3]);
+  return `${m[1]} · ${arm ? arm.label : `${m[2]} ${m[3]}`}`;
+}
+
+/** A change against the default arm: "+12%", "−8%". */
+function pctChange(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '–';
+  const pct = Math.round(v * 100);
+  return pct > 0 ? `+${pct}%` : `${pct < 0 ? '−' : '±'}${Math.abs(pct)}%`;
+}
+
+/**
+ * The experiments' arms side by side (src/cogs/report.js, `experimentsOf`): what the agents'
+ * model read and cost in each, of what is selected. The prompt does not depend on the cache
+ * policy, so its cost per million tokens compares the arms however the threads fell.
+ */
+function experimentsCard(d) {
+  return (d.experiments || []).filter((x) => x.arms.length).map((x) => {
+    const base = x.arms.find((a) => a.id === x.default);
+    const window = x.from && x.until
+      ? `${x.from.slice(0, 10)} – ${new Date(Date.parse(x.until) - 1).toISOString().slice(0, 10)} (UTC)`
+      : '';
+    const writes = (a) => (a.metrics.cache_write_tokens?.quantity || 0)
+      + (a.metrics.cache_write_1h_tokens?.quantity || 0);
+    const writesUsd = (a) => (a.metrics.cache_write_tokens?.usd || 0)
+      + (a.metrics.cache_write_1h_tokens?.usd || 0);
+    const rows = x.arms.map((a) => {
+      const pct = a.hitRate === null ? '–' : `${Math.round(a.hitRate * 100)}%`;
+      const vs = a === base ? '<span class="sub">baseline</span>' : `<span class="${a.vs < 0 ? 'better' : 'worse'}">${pctChange(a.vs)}</span>`;
+      return `<tr><td>${esc(a.label)}</td>
+        <td class="n">${quantity(a.prompt, 'tokens')}</td><td class="n">${pct}</td>
+        <td class="n">${quantity(writes(a), 'tokens')}<div class="sub">${usd(writesUsd(a))}</div></td>
+        <td class="n">${quantity(a.output, 'tokens')}</td>
+        <td class="n">${usd(a.usd)}</td><td class="n">${usd(a.perMPrompt)}</td><td class="n">${vs}</td></tr>`;
+    }).join('');
+    return `<div class="card experiment"><h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}half the threads each</span></h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Arm</th><th class="n" title="What the model read: input, cache reads and cache writes. The cache policy does not change it">Prompt</th><th class="n" title="The share of the prompt read from the cache">From cache</th><th class="n" title="Prompt tokens written to the cache, and what that cost">Cache writes</th><th class="n">Output</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="What the prompt cost per million prompt tokens: input, cache reads and writes">Per M prompt</th><th class="n" title="Per M prompt against the baseline">Change</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <p class="hint">Each thread is in one arm for the whole window, by a hash of its key. The prompt is the same whatever the cache keeps, so the cost per million prompt tokens compares the arms even where the threads fell unevenly; output is shown to see that the work was alike.</p></div>`;
+  }).join('');
+}
+
 /** The top of a chart's scale: 1, 2, 2.5 or 5 times a power of ten, at or above `v`. */
 function niceMax(v) {
   if (!(v > 0)) return 1;
@@ -470,7 +520,7 @@ function tmItems(d, by) {
       series: s.id,
       pick: `data-service="${esc(s.id)}"`,
       children: s.metrics.filter((m) => !m.stock && m.usd > 0)
-        .map((m) => ({ value: m.usd, name: m.detail ? `${m.label}, ${m.detail}` : m.label })),
+        .map((m) => ({ value: m.usd, name: m.detail ? `${m.label}, ${detailText(d, m.detail)}` : m.label })),
     }));
   }
   const key = by === 'orgs' ? 'org' : 'team';
@@ -529,7 +579,7 @@ function servicesTable(d) {
   if (!d.services.length) return '<div class="empty">No service counted anything in this period.</div>';
   const rows = d.services.map((s) => {
     const open = state.open.has(s.id);
-    const metrics = open ? s.metrics.map((m) => `<tr class="metric"><td>${esc(m.label)}${m.detail ? ` <span class="sub">${esc(m.detail)}</span>` : ''}</td>
+    const metrics = open ? s.metrics.map((m) => `<tr class="metric"><td>${esc(m.label)}${m.detail ? ` <span class="sub">${esc(detailText(d, m.detail))}</span>` : ''}</td>
       <td class="n" colspan="3">${quantity(m.quantity, m.unit)}${m.stock ? ' <span class="sub">on average</span>' : ''}</td>
       <td class="n m">${price(m.price, m.per, m.unit)}${m.stock ? ' a month' : ''}</td>
       <td class="n">${m.stock ? '' : usd(m.usd)}</td><td class="n">${m.stock ? usd(m.usd) : ''}</td></tr>`).join('') : '';
@@ -621,6 +671,7 @@ function render() {
   $('body').innerHTML = `${state.error ? `<p class="hint err">${esc(state.error)}</p>` : ''}
     ${kpis(d)}
     ${draftsCard(d)}
+    ${experimentsCard(d)}
     <div class="card"><h2>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
     <div class="card"><h2 class="split"><span>Where the flow goes</span><span class="seg" id="tmBy">${Object.entries(TM).map(([id, name]) => `<button type="button" data-tm-by="${id}" aria-pressed="${state.tm === id}">${name}</button>`).join('')}</span></h2><div class="treemap" id="treemap"></div></div>
     <div class="cols">

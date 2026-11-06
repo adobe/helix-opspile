@@ -485,14 +485,15 @@ export class Meter {
  * 'provider/model': Usage }, tools: { name: Usage } }`, cumulative): `now`, to keep for the next
  * time, and `adds`, `[metric, model, tokens]` of Bedrock. Without `before` (never metered), the
  * ledger is from before COGS counted and adds nothing. A ledger that went back (a new session)
- * counts from nothing. A tool's model use is the agent's model's (`model`).
+ * counts from nothing. A tool's model use is the agent's model's (`model`). `tag` follows the
+ * model in every metric's detail: the experiment arm the agent is in (src/experiments.js).
  */
-export function modelUsage(before, ledger, model = '') {
+export function modelUsage(before, ledger, model = '', tag = '') {
   const now = {};
   const adds = [];
   const buckets = [
-    ...Object.entries(ledger?.models || {}).map(([k, u]) => [`m:${k}`, k.slice(k.indexOf('/') + 1), u]),
-    ...Object.entries(ledger?.tools || {}).map(([k, u]) => [`t:${k}`, model || '', u]),
+    ...Object.entries(ledger?.models || {}).map(([k, u]) => [`m:${k}`, k.slice(k.indexOf('/') + 1) + tag, u]),
+    ...Object.entries(ledger?.tools || {}).map(([k, u]) => [`t:${k}`, model ? model + tag : '', u]),
   ];
   for (const [key, id, u] of buckets) {
     const cur = {

@@ -21,12 +21,19 @@ import { QUOTE_HEAD, quotesAsText } from './markdown.js';
 
 export const TITLE_MAX = 140;
 
+/** Markdown and Slack links as their text, and images dropped, for a title or a preview. */
+const unlink = (s) => s
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+  .replace(/<(https?:\/\/[^>\s]+)>/g, '$1');
+
 /** First meaningful line of a markdown body, for the thread title; not a quote's author line. */
 export function titleOf(subject, body) {
   const line = String(subject || body || '')
     .split('\n')
     .filter((l) => !QUOTE_HEAD.test(l))
-    .map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
+    .map((l) => unlink(l).replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
       // `_` only as emphasis at word edges, so `:rotating_light:` keeps its name.
       .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
       .trim())

@@ -295,6 +295,9 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 /* The agents' drafts: a stat panel inside a card, its figures a layer below it. */
 .spectrum .card .kpis { margin-bottom: 0; }
 .spectrum .card .kpi { background: var(--spectrum-background-layer-1-color); }
+/* An experiment's arms: cheaper than the baseline green, dearer red. */
+.spectrum .experiment .better { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .experiment .worse { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 
 /* ---- the chart --------------------------------------------------------------------------- */
 

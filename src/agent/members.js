@@ -65,10 +65,24 @@ export async function roster(env, where, { now = Date.now(), fresh = false, ...d
   };
 }
 
+/** Each person once: of the accounts of one mail address in `list`, the first. */
+const once = (list) => {
+  const seen = new Set();
+  return list.filter((m) => {
+    const mail = m.email && m.email.toLowerCase();
+    if (mail && seen.has(mail)) {
+      return false;
+    }
+    seen.add(mail);
+    return true;
+  });
+};
+
 /**
  * The members of the channel that match `query`, a name as in the mention suggestions (best
  * first) or a whole mail address, as `{ matches, members, unnamed, at, place }`, or `{ why }`.
- * `unnamed` members cannot match: Slack lists ids, and opspile has not seen these yet.
+ * `unnamed` members cannot match: Slack lists ids, and opspile has not seen these yet. A person
+ * with two accounts in the channel matches once.
  */
 export async function findMember(env, where, query, opts = {}) {
   const listed = await roster(env, where, { ...opts, fresh: true });
@@ -82,13 +96,13 @@ export async function findMember(env, where, query, opts = {}) {
     return {
       ...listed,
       unnamed,
-      matches: listed.members.filter((m) => m.email && m.email.toLowerCase() === mail),
+      matches: once(listed.members.filter((m) => m.email && m.email.toLowerCase() === mail)),
     };
   }
   const accounts = listed.members.map((m) => ({
     ...m, name: m.name || m.email || '', aliases: [m.email].filter(Boolean),
   }));
-  return { ...listed, unnamed, matches: rankMentions(accounts, q, MAX_MATCHES) };
+  return { ...listed, unnamed, matches: once(rankMentions(accounts, q)).slice(0, MAX_MATCHES) };
 }
 
 const isMember = (person, members) => members.some((m) => person.accounts.includes(m.user_id)

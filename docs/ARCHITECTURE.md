@@ -980,8 +980,8 @@ only once `TEAMS_EDITS` says it was given. A message you posted as the opspile a
 in `app_posts` (user state, like drafts) and is yours to edit as the app, where the app may
 still post: Slack `chat.update` with the bot token, the Teams bot's update activity, Discord
 `PATCH` with the bot, with mentions as when it was posted. Nobody else's messages, and nothing on Discord as a person, are offered.
-The accounts the message mentioned (`@Name` in its markdown, one account by that name, picked
-as for a thread agent's post: src/post.js `mentionsByName`) stay mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
+The accounts the message mentioned (`@Name` in its markdown, one person by that name, by their
+account for the thread, picked as for a thread agent's post: src/post.js `mentionsByName`) stay mentioned. Nothing is written to the piles: the edit comes back through ingestion like every
 edit made on the platform, and the inbox shows the new text and "(edited)" meanwhile. A Slack
 change without `edited` (a bot's `chat.update`) that changes the text counts as an edit too.
 
@@ -1015,7 +1015,8 @@ count. The affinities are kept for ten minutes per version of the thread's vecto
 typed letter asks again. Then anyone else who posted in the thread, the members of its channel,
 and everyone else; among those, the higher affinity first, then a match at the start of the
 name before one further in, then staff, then by name. The suggestion says "Adobe · related" for
-such an expert. The
+such an expert. A person with several accounts is suggested once, by their account for the
+thread (above, "One account a person"), and a mention of another of theirs goes to that one. The
 members are `channel_members`: Slack's `conversations.members` (on Teams, the team's members
 from Graph, where the app may list them) and whoever posted in the channel (on Teams, in any
 channel of the team). Opening the suggestions lists a channel's members when that is a week
@@ -1041,7 +1042,7 @@ which asks there; a thread agent still points out a mention of someone not in th
 (`src/agent/members.js`).
 
 The suggestions that open with the `@` bring along everything they are picked from (`pool` of
-`GET /api/mentionable`: the accounts of the workspace, each marked as in the thread, in the
+`GET /api/mentionable`: the accounts of the workspace, one a person, each marked as in the thread, in the
 channel or by its affinity, and the bots), and the page ranks what is typed after it itself,
 with the Worker's own `suggestMentions` (in the markdown bundle), so completing a name asks the
 Worker nothing. Until the pool is there, each typed letter asks the Worker, as before. The page
@@ -1132,7 +1133,9 @@ names never name a customer, so they may say why someone fits to an agent of any
 
 The list leaves out the viewer, whoever posted or is mentioned in the thread (what is said
 in the thread itself does not count either), anyone who has not posted for 90 days, and anyone
-without an account on the thread's platform, who could not be mentioned.
+without an account on the thread's platform, who could not be mentioned. Someone with several
+accounts there is listed once, by their account for the thread ("One account a person"), with
+the signals of all of them.
 
 A response time is the median between a mention and the person's next post in that thread (a
 re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
@@ -1305,6 +1308,14 @@ the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
 Prompt caching asks for the one-hour TTL (`cacheRetention: 'long'`). Turns are often minutes
 apart, past pi's five-minute default, and Bedrock bills a later hit inside the hour as a read.
+But every write costs 2× the input price for an hour against 1.25× for five minutes, so whether
+that pays depends on how far apart turns are. **Experiments** (`src/experiments.js`) settle it:
+for a fixed window, each thread is in one arm by a hash of its key (salted with the experiment,
+the same arm all along; knowledge-base agents take no part), and the provider asks for the arm's
+retention at every request (`retainingApi`, `src/agent/model.js`), so an agent that is running
+at the window's edges switches on its next request. The cache experiment puts half the threads
+on `short` from 2026-11-07 to 2026-11-14 (UTC); outside it every thread is on `long`. What an
+agent in an arm uses is counted for COGS with the arm in the detail (below).
 
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
@@ -1363,7 +1374,7 @@ written by people outside its control.
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
 | `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
-| `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
+| `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
@@ -1673,7 +1684,9 @@ per model and tool, cumulative). The agent reads it after each model round (a ho
 generation task) and before it is told something, and counts the difference since the last time
 (kept in its storage, `cogs:usage`) as Bedrock input, output, cache read and cache write tokens
 (five-minute and one-hour writes apart, as Bedrock prices them), and what pi's catalog says they
-cost, which prices a model the list does not know. An agent that was never metered starts from
+cost, which prices a model the list does not know. While an experiment runs, the arm the agent
+is in follows the model in the detail (`us.anthropic.claude-opus-5-5#cache=short`), which the
+prices read past. An agent that was never metered starts from
 its ledger as it is: what it used before is not counted on the day COGS started. Once a day it
 writes the size of its SQLite (`cogs_objects`), for the agents' storage.
 
@@ -1744,7 +1757,10 @@ over the agents' drafts a person sent) and per agent reply (over those and the a
 count from the first whole day of the drafts' events as well (`drafts.estimate`), so that a period
 before they were recorded does not divide by none; a service's per accepted draft is its own flow,
 so Bedrock's is what the agents' model cost per accepted draft. Costs are at the margin: the
-allowances of a plan are listed with the prices, not subtracted.
+allowances of a plan are listed with the prices, not subtracted. An experiment's arms are set side
+by side (`experiments`, of what is selected): per arm, the Bedrock tokens and cost, and the prompt
+(input, cache reads and writes), which a cache policy does not change, so what the prompt cost per
+million tokens compares the arms however the threads fell between them.
 
 ## People
 
@@ -1761,6 +1777,38 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
   derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
+
+**One account a person** (`src/accounts.js`). Someone can have several accounts in one
+workspace or tenant: on Slack, besides their account of the Enterprise Grid, one of another
+workspace of the grid, or their own workspace's account seen through Slack Connect (a shared
+channel's `user_team`, kept as `identities.home`), or a guest account. D1 already knows them as
+one: identities are linked to their person by mail address (`identities.person`), and accounts
+of people outside Adobe, who have no `people` row, are one person's when they have one mail
+address. Wherever people are listed or ranked for a thread, each person is there once, by their
+**account for the thread**, and their other accounts count as that one: the mention suggestions
+and their pool (`GET /api/mentionable`), the mentions a reply, an edit or an agent's `@Name`
+makes (`knownMentions`, `mentionsByName`, and so the colleagues a post adds to the channel), the
+expert finder (`findExperts`, `GET /api/experts`, `list_experts`), the agents' suggestions
+(`suggest_expert`) and the ✕ on one, and `find_member`. The account for the thread is, of the
+person's, the first by:
+
+1. of the thread's own workspace or tenant (no other `home`, or the channel's workspace) and in
+   its channel (listed in `channel_members`, or posted there; on Teams, in its Teams team);
+2. in its channel at all, then of its own workspace at all: a mention reaches someone in the
+   channel, and the inbox can add a colleague of its own workspace to it (an account of another
+   workspace it cannot);
+3. a full member before a guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
+   `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
+4. the one that posted in the last 90 days, then the one with the most messages in the last 180,
+   in the most channels, that posted last, and by id.
+
+What the signals say of the person adds up over all of their accounts and goes to that one: the
+finder's history, response times and affinities are by person already (`messages.person`,
+`mentions.person`); a suggestion is in the thread or channel when any of their accounts is, finds
+them by the names and logins of all of them, and has the affinity of the person (or, for someone
+D1 has no person for, of their accounts together). An agent's suggestion is kept as the person's
+account for the thread, and one kept by another of their accounts (made before) shows as it; a ✕
+on any of them leaves the person out.
 
 **Profile cards.** Hovering over (focusing, or tapping) a name or avatar in the inbox shows
 what opspile knows about the person: name, picture, platform account, job title and company

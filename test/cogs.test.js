@@ -121,6 +121,9 @@ describe('cogs: prices', () => {
     assert.equal(unitPrice('workers_ai', 'input_tokens', '@cf/unknown/model'), null);
     assert.equal(bedrockModel('us.anthropic.claude-opus-5-5'), 'claude-opus-5-5');
     assert.equal(bedrockModel('anthropic.claude-opus-5-5-v1:0'), 'claude-opus-5-5');
+    // An experiment's arm after the model is not part of it.
+    assert.equal(bedrockModel('us.anthropic.claude-opus-5-5#cache=short'), 'claude-opus-5-5');
+    close(costOf('bedrock', 'cache_write_tokens', 'us.anthropic.claude-opus-5-5#cache=short', 1e6), 5);
     close(costOf('bedrock', 'input_tokens', 'us.anthropic.claude-opus-5-5', 1e6), 4);
     close(costOf('bedrock', 'cache_write_1h_tokens', 'us.anthropic.claude-opus-5-5', 1e6), 8);
     // The catalog's cost counts only for a model not priced here.
@@ -285,6 +288,15 @@ describe('cogs: meter', () => {
       ['catalog_usd', 'us.anthropic.claude-opus-5-5', 0.5],
       ['input_tokens', 'us.anthropic.claude-opus-5-5', 10],
       ['output_tokens', 'us.anthropic.claude-opus-5-5', 5],
+    ]);
+    // An agent in an experiment's arm: the arm follows the model in every detail.
+    const tagged = modelUsage(next.now, {
+      models: { [key]: u(7100, 300, { cacheWrite: 900, cacheWrite1h: 600, cost: { total: 0.5 } }) },
+      tools: { codemode: u(12, 5) },
+    }, 'us.anthropic.claude-opus-5-5', '#cache=short');
+    assert.deepEqual(tagged.adds, [
+      ['input_tokens', 'us.anthropic.claude-opus-5-5#cache=short', 100],
+      ['input_tokens', 'us.anthropic.claude-opus-5-5#cache=short', 2],
     ]);
     // A new session: its ledger starts again.
     const reset = modelUsage(next.now, { models: { [key]: u(40, 2) } });
@@ -666,6 +678,45 @@ describe('cogs: report', () => {
     // A month at the rate of the period so far: a day and a half.
     assert.deepEqual(r.estimate, { from: '2026-11-01', days: 1.5 });
     close(r.totals.flowMonthly, (10 / 1.5) * 30.44);
+  });
+
+  it('sets an experiment\'s arms side by side, per million prompt tokens', async () => {
+    const env = seeded();
+    const arm = (a, metric, quantity) => usageRow(env.DB, {
+      day: '2026-11-02', service: 'bedrock', metric, detail: `us.anthropic.claude-opus-5-5#cache=${a}`, org: 'acme', team: 'helix', quantity,
+    });
+    // One hour: 1M prompt tokens, 0.8M read ($0.16) and 0.2M written at $8 ($1.60).
+    arm('long', 'cache_read_tokens', 8e5);
+    arm('long', 'cache_write_1h_tokens', 2e5);
+    arm('long', 'output_tokens', 1e5);
+    // Five minutes: 2M prompt tokens, 1.2M read ($0.24) and 0.8M written at $5 ($4).
+    arm('short', 'cache_read_tokens', 1.2e6);
+    arm('short', 'cache_write_tokens', 8e5);
+    arm('short', 'output_tokens', 2e5);
+    let r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW });
+    assert.equal(r.experiments.length, 1);
+    const [x] = r.experiments;
+    assert.equal(x.id, 'cache');
+    assert.equal(x.default, 'long');
+    assert.deepEqual(x.arms.map((a) => a.id), ['long', 'short']);
+    const [long, short] = x.arms;
+    assert.equal(long.prompt, 1e6);
+    close(long.hitRate, 0.8);
+    close(long.perMPrompt, 1.76);
+    close(long.usd, 1.76 + 2);
+    assert.equal(long.vs, null);
+    assert.equal(short.prompt, 2e6);
+    close(short.perMPrompt, 4.24 / 2);
+    close(short.vs, 2.12 / 1.76 - 1);
+    assert.equal(short.output, 2e5);
+    assert.equal(short.label, '5-minute cache');
+    // Priced as the model: nothing unpriced, and the service table keeps the arms apart.
+    assert.deepEqual(r.unpriced, ['workers_ai/input_tokens (@cf/someone/new)']);
+    const bedrock = r.services.find((s) => s.id === 'bedrock');
+    assert.ok(bedrock.metrics.some((m) => m.detail.endsWith('#cache=short') && m.price === 5));
+    // Of what is selected: another customer has none.
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&org=globex'), { now: NOW });
+    assert.deepEqual(r.experiments, []);
   });
 
   it('filters by customer, team and service, after sharing out', async () => {

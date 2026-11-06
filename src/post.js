@@ -13,6 +13,9 @@
 import {
   FILES_SCOPE, checkFiles, hasScope, personRule, slackUpload, teamsAttachments,
 } from './attach.js';
+import {
+  CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
+} from './accounts.js';
 import { json } from './http.js';
 import { invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
@@ -660,58 +663,6 @@ export async function postableChannels(env, me) {
 }
 
 /**
- * Who counts as a member of the thread's channel: whoever is listed in it or posted there; on
- * Teams, in any channel of its team (`?4`, its Teams team, or '' for none). One query, so the
- * suggestions wait for one round trip less.
- */
-const CHANNEL_PEOPLE = `WITH chans(id) AS (SELECT ?3 UNION SELECT channel_id FROM channels
-    WHERE ?4 != '' AND source = 'teams' AND tenant = ?2 AND group_id = ?4)
-  SELECT user_id FROM channel_members
-    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
-  UNION SELECT DISTINCT SUBSTR(author_key, LENGTH(source || ':' || tenant || ':') + 1) FROM messages
-    WHERE source = ?1 AND tenant = ?2 AND channel_id IN (SELECT id FROM chans)
-      AND author_key IS NOT NULL`;
-
-/** `CHANNEL_PEOPLE`'s ?1 to ?4 for the thread or channel `t`. */
-const placeArgs = (t) => [
-  t.source, t.tenant, t.channel_id, t.source === 'teams' && t.group_id ? t.group_id : '',
-];
-
-/**
- * The accounts of the people `persons` (a query of `person`s, with `CHANNEL_PEOPLE`'s ?1 to ?4)
- * who have more than one in the thread's workspace or tenant: people with a second account in
- * another workspace of a Slack Enterprise Grid, or as a guest of another one. Each with whether
- * it is in the thread's channel (`here`) and how many channels it is listed in (`channels`).
- */
-const TWINS = (persons) => `SELECT i.user_id AS id, i.person,
-    i.user_id IN (${CHANNEL_PEOPLE}) AS here,
-    (SELECT COUNT(*) FROM channel_members m
-      WHERE m.source = ?1 AND m.tenant = ?2 AND m.user_id = i.user_id) AS channels
-  FROM identities i
-  WHERE i.source = ?1 AND i.tenant = ?2 AND i.kind = 'person' AND i.person IN (
-    SELECT person FROM identities WHERE source = ?1 AND tenant = ?2 AND kind = 'person'
-      AND person IN (${persons}) GROUP BY person HAVING COUNT(*) > 1)`;
-
-/**
- * Of each person's accounts (`TWINS` rows), the one a mention reaches, as `mentionsByName`
- * picks it: the one in the channel, else the one in the most channels. A map from every one
- * of their accounts to that one.
- */
-function reachedAccounts(twins) {
-  const byPerson = new Map();
-  for (const r of twins || []) {
-    byPerson.set(r.person, [...(byPerson.get(r.person) || []), r]);
-  }
-  const out = new Map();
-  for (const accounts of byPerson.values()) {
-    const [best] = accounts.sort((a, b) => Number(b.here) - Number(a.here)
-      || Number(b.channels) - Number(a.channels) || String(a.id).localeCompare(String(b.id)));
-    accounts.forEach((a) => out.set(a.id, best.id));
-  }
-  return out;
-}
-
-/**
  * The accounts a reply mentions, as opspile knows them: only platform accounts already in
  * D1, in the thread's workspace or tenant, can be mentioned, and on Teams the bots seen in
  * the thread's Teams team. The name is D1's, so the text of a mention is the same `@Name`
@@ -723,12 +674,9 @@ export async function knownMentions(env, t, ids) {
   if (!asked.length) {
     return [];
   }
-  // A person's other account where it is the one the mention reaches (`TWINS`).
-  const { results: twins } = await env.DB.prepare(TWINS(`SELECT person FROM identities
-    WHERE source = ?1 AND tenant = ?2 AND user_id IN (SELECT value FROM json_each(?5))
-      AND person IS NOT NULL`)).bind(...placeArgs(t), JSON.stringify(asked)).all();
-  const reached = reachedAccounts(twins);
-  const wanted = [...new Set(asked.map((id) => reached.get(id) || id))];
+  // One account a person: a mention of another of theirs mentions the one for the thread.
+  const reached = await keptAccounts(env, t, { ids: asked });
+  const wanted = [...new Set(asked.map((id) => kept(reached, id)))];
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
     AND i.user_id IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
@@ -798,25 +746,12 @@ const parseAliases = (s) => {
   }
 };
 
-/**
- * Whether each of the accounts `ids` is in the thread's channel (`here`, as `CHANNEL_PEOPLE`
- * has it) and how many channels of its workspace or tenant it is listed in (`channels`), by id.
- */
-async function accountStanding(env, t, ids) {
-  const { results } = await env.DB.prepare(`SELECT j.value AS id,
-      j.value IN (${CHANNEL_PEOPLE}) AS here,
-      (SELECT COUNT(*) FROM channel_members m
-        WHERE m.source = ?1 AND m.tenant = ?2 AND m.user_id = j.value) AS channels
-    FROM json_each(?5) j`).bind(
-    t.source,
-    t.tenant,
-    t.channel_id,
-    t.source === 'teams' && t.group_id ? t.group_id : '',
-    JSON.stringify([...new Set(ids)]),
-  ).all();
-  return new Map((results || []).map((r) => [r.id, {
-    here: Boolean(r.here), channels: Number(r.channels) || 0,
-  }]));
+/** Of the accounts `ids`, those in the thread's channel (as `CHANNEL_PEOPLE` has it). */
+async function inChannelOf(env, t, ids) {
+  const { results } = await env.DB.prepare(`SELECT j.value AS id FROM json_each(?5) j
+    WHERE j.value IN (${CHANNEL_PEOPLE})`)
+    .bind(...placeArgs(t), JSON.stringify([...new Set(ids)])).all();
+  return new Set((results || []).map((r) => r.id));
 }
 
 /**
@@ -824,11 +759,12 @@ async function accountStanding(env, t, ids) {
  * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
  * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
  *
- * A name that stands for several accounts is still one mention when only one of them is in the
- * thread's channel (`CHANNEL_PEOPLE`), or when all of them are one person's (people with a
- * second account in another workspace of a Slack Enterprise Grid): then the account in the
- * channel, else the one in the most channels. Different people of one name, none or several
- * of them in the channel, stay text: nobody is guessed.
+ * A person's account is the one for the thread (src/accounts.js), and a name that stands for
+ * several accounts of one person is that one mention. A name of several people (or bots) is
+ * still one mention when only one of them is in the thread's channel (`CHANNEL_PEOPLE`; a
+ * person with any account in it, as their account for the thread then is). Different people of
+ * one name, none or several of them in the channel, stay text: nobody is guessed. The mention
+ * keeps the name it was written with.
  */
 export async function mentionsByName(env, t, names) {
   const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
@@ -855,25 +791,24 @@ export async function mentionsByName(env, t, names) {
     }
     byName.set(a.name, ids);
   }
-  const tied = [...byName.values()].filter((ids) => ids.size > 1)
-    .flatMap((ids) => [...ids.values()]).filter((a) => a.kind === 'person').map((a) => a.id);
-  const standing = tied.length ? await accountStanding(env, t, tied) : new Map();
+  const reached = await keptAccounts(env, t, {
+    ids: found.filter((a) => a.kind === 'person').map((a) => a.id),
+  });
+  // Who a name stands for: each person once, by their account for the thread.
+  const whom = (ids) => [...new Map([...ids.values()].map((a) => {
+    const id = a.kind === 'person' ? kept(reached, a.id) : a.id;
+    return [`${a.kind}:${id}`, { ...a, id }];
+  })).values()];
+  const tied = [...byName.values()].map(whom).filter((list) => list.length > 1).flat()
+    .map((a) => a.id);
+  const here = tied.length ? await inChannelOf(env, t, tied) : new Set();
   const pick = (ids) => {
-    const accounts = [...ids.values()];
+    const accounts = whom(ids);
     if (accounts.length === 1) {
       return accounts[0];
     }
-    const here = accounts.filter((a) => standing.get(a.id)?.here);
-    if (here.length === 1) {
-      return here[0];
-    }
-    const person = accounts[0].person ?? null;
-    if (person === null || accounts.some((a) => a.kind !== 'person' || a.person !== person)) {
-      return null;
-    }
-    const channels = (a) => standing.get(a.id)?.channels || 0;
-    return [...(here.length ? here : accounts)]
-      .sort((a, b) => channels(b) - channels(a) || a.id.localeCompare(b.id))[0];
+    const present = accounts.filter((a) => here.has(a.id));
+    return present.length === 1 ? present[0] : null;
   };
   return [...byName.values()].map(pick).filter(Boolean)
     .map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
@@ -956,8 +891,7 @@ export async function mentionable(env, key, q, inTeam, {
       .bind(key, key).all() : { results: [] },
     env.DB.prepare(CHANNEL_PEOPLE).bind(...placeArgs(t)).all(),
     me && key ? threadExperts(env, key, { me: me.id }) : null,
-    env.DB.prepare(TWINS(`SELECT person FROM identities
-      WHERE source = ?1 AND tenant = ?2 AND person IS NOT NULL`)).bind(...placeArgs(t)).all(),
+    keptAccounts(env, t),
   ]);
   // Awaited below once the viewer may see it; not an unhandled rejection before that.
   found.catch(() => {});
@@ -971,28 +905,41 @@ export async function mentionable(env, key, q, inTeam, {
   }
   const [
     { results: botRows }, { results: accounts }, { results: posters }, { results: members },
-    experts, { results: twins },
+    experts, reached,
   ] = await found;
-  // One suggestion a person: the account a mention reaches (two of one name, and the wrong one
-  // picked, mention someone where they never look).
-  const reached = reachedAccounts(twins);
   const prefix = `${t.source}:${t.tenant}:`;
-  const affinity = (r) => (!experts || !r.staff || (me && r.person === me.id) ? 0 : Math.max(
-    experts.authors.get(`${prefix}${r.id}`) || 0,
-    (r.person !== null && experts.people.get(r.person)) || 0,
-  ));
   const here = new Set((posters || []).map((r) => String(r.author_key || ''))
     .filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)));
   const inChannel = new Set((members || []).map((r) => r.user_id));
+  // One suggestion a person: their account for the thread (src/accounts.js), with what all of
+  // theirs have (in the thread or channel, their names, what they know), so neither shows twice
+  // and a mention never goes to an account they do not look at.
+  const byKept = new Map();
+  for (const r of accounts || []) {
+    const id = kept(reached, r.id);
+    byKept.set(id, [...(byKept.get(id) || []), r]);
+  }
+  const affinity = (r, list) => {
+    if (!experts || !list.some((a) => a.staff) || (me && r.person === me.id)) {
+      return 0;
+    }
+    const authors = list.reduce((sum, a) => sum + (experts.authors.get(`${prefix}${a.id}`) || 0), 0);
+    // A known person's messages are added up already, over all of their accounts.
+    return Math.max(authors, (r.person !== null && experts.people.get(r.person)) || 0);
+  };
   const all = {
-    accounts: (accounts || []).filter((r) => (reached.get(r.id) || r.id) === r.id)
-      .map((r) => poolAccount({
+    accounts: [...byKept].map(([id, list]) => {
+      const r = list.find((a) => a.id === id) || list[0];
+      return poolAccount({
         ...r,
-        aliases: otherNames(r),
-        here: here.has(r.id),
-        member: inChannel.has(r.id),
-        affinity: affinity(r),
-      })),
+        aliases: [...new Set(list.flatMap(otherNames).concat(list.map((a) => a.name)))]
+          .filter((n) => n !== r.name),
+        staff: list.some((a) => a.staff),
+        here: list.some((a) => here.has(a.id)),
+        member: list.some((a) => inChannel.has(a.id)),
+        affinity: affinity(r, list),
+      });
+    }),
     bots: (botRows || []).map((r) => ({
       id: r.id,
       name: r.name,
