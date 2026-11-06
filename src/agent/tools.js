@@ -378,7 +378,10 @@ export function opspileExtension(ctx) {
           if (res.image) {
             return { output: [{ type: 'text', text: `${head}:` }, res.image] };
           }
-          const how = f.converted ? ', converted to Markdown' : '';
+          let how = f.converted ? ', converted to Markdown' : '';
+          if (f.pixels) {
+            how = `, ${f.pixels.width}×${f.pixels.height} pixels, too large for you to see${how}`;
+          }
           const more = res.more ? `\n[… ${f.chars - res.more} more characters: offset=${res.more}]` : '';
           return text(`${head}${how}:\n<file>\n${res.text}\n</file>${more}`);
         },

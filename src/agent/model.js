@@ -13,6 +13,7 @@
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { createProvider } from '@earendil-works/pi-ai/models';
 import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models';
+import { fitImages } from './images.js';
 
 /**
  * The agents' model: Claude on Amazon Bedrock, through Cloudflare AI Gateway. Bedrock's
@@ -98,6 +99,27 @@ export function authHeaders(env) {
   };
 }
 
+/**
+ * The Anthropic Messages API without the images it would refuse (src/agent/images.js): one
+ * in the history would fail every turn after it.
+ */
+export function fittingApi(api) {
+  const fit = (context) => {
+    let messages;
+    try {
+      messages = fitImages(context.messages);
+    } catch {
+      return context;
+    }
+    return messages === context.messages ? context : { ...context, messages };
+  };
+  return {
+    ...api,
+    stream: (model, context, options) => api.stream(model, fit(context), options),
+    streamSimple: (model, context, options) => api.streamSimple(model, fit(context), options),
+  };
+}
+
 /** A pi-ai provider with one model, authenticated from the Worker's secrets. */
 export function agentProvider(env) {
   return createProvider({
@@ -112,7 +134,7 @@ export function agentProvider(env) {
       },
     },
     models: env.AGENT_MODEL ? [agentModel(env)] : [],
-    api: anthropicMessagesApi(),
+    api: fittingApi(anthropicMessagesApi()),
   });
 }
 
