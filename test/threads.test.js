@@ -93,6 +93,17 @@ describe('indexMessage', () => {
     assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.1', '2026-10-21T10:00:00Z']);
   });
 
+  it('titles and counts a thread by what people and bots said, not by system notices', async () => {
+    const D = db();
+    const notice = { author: 'Microsoft Teams', authorKind: 'system', counted: false };
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z', { ...notice, title: 'Meeting started by Cy.' }));
+    const row = () => [thread(D).title, thread(D).messages, thread(D).last_at, thread(D).any_at];
+    assert.deepEqual(row(), ['Meeting started by Cy.', 0, null, '2026-10-21T10:00:00Z']);
+    await indexMessage(D, msg('1.2', '2026-10-21T10:01:00Z', { authorKind: 'person', title: 'Can we talk?' }));
+    await indexMessage(D, msg('1.3', '2026-10-21T10:02:00Z', { ...notice, title: 'Meeting ended after 50 s.' }));
+    assert.deepEqual(row(), ['Can we talk?', 1, '2026-10-21T10:01:00Z', '2026-10-21T10:02:00Z']);
+  });
+
   it('follows a rule change: org, team and the pile-2 folder move together', async () => {
     const D = db();
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));

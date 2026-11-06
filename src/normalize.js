@@ -396,6 +396,146 @@ export function normalizeDiscord(key, envelope) {
   };
 }
 
+/**
+ * Graph's ISO 8601 duration (`PT1H2M5.3S`) in words (`1 h 2 min 5 s`), or null.
+ */
+export function durationText(duration) {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(String(duration || ''));
+  if (!m) {
+    return null;
+  }
+  const [d, h, min, s] = m.slice(1).map((x) => Number(x) || 0);
+  const parts = [
+    [d, 'd'], [h, 'h'], [min, 'min'], [Math.round(s), 's'],
+  ].filter(([n]) => n > 0).map(([n, u]) => `${n} ${u}`);
+  return parts.length ? parts.join(' ') : '0 s';
+}
+
+/** The user of a Teams identity set (`initiator`, a participant), or the user itself. */
+const teamsUser = (x) => (x && x.user) || (x && x.id ? x : null);
+
+/**
+ * The users a Teams event names (`eventDetail`: who started it, took part, was added), as
+ * `{ id, displayName, tenantId }`, so their names can be looked up: Graph often leaves
+ * `displayName` empty.
+ */
+export function teamsEventUsers(detail) {
+  const d = detail || {};
+  const all = [
+    d.initiator, d.meetingOrganizer, d.conversationMemberUser,
+    ...(d.callParticipants || []).map((p) => p && p.participant),
+    ...(d.members || []),
+  ].map(teamsUser).filter((u) => u && u.id);
+  return [...new Map(all.map((u) => [u.id, u])).values()];
+}
+
+const escName = (s) => String(s).replace(/[\\`*_[\]<>]/g, '\\$&');
+
+/** `a`, `a and b`, `a, b and c`; past ten names, how many more. */
+function names(list) {
+  const shown = list.length > 10 ? [...list.slice(0, 9), `${list.length - 9} more`] : list;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0] || '';
+}
+
+const CALL_KIND = { meeting: 'Meeting', call: 'Call', screenShare: 'Screen sharing' };
+
+/**
+ * What a Teams system notice (`eventDetail`) says, as a line of markdown: "Meeting ended after
+ * 50 s. Only Ada joined." `name(user)` names a user (`{ id, displayName }`), by default by
+ * the name Graph sent; an app is named by its display name.
+ */
+export function teamsEventText(detail, name = (u) => u.displayName) {
+  const d = detail || {};
+  const who = (x) => {
+    const u = teamsUser(x);
+    const n = (u && name(u)) || (x && x.application && x.application.displayName);
+    return n ? escName(n) : null;
+  };
+  const by = who(d.initiator);
+  const subject = by || 'Someone';
+  const quoted = (s) => (s ? ` “${escName(s)}”` : '');
+  const people = (list) => names((list || []).map((u) => who(u) || 'someone'));
+  const type = String(d['@odata.type'] || '').replace(/^#?microsoft\.graph\./, '')
+    .replace(/EventMessageDetail$/, '');
+  const call = CALL_KIND[d.callEventType] || 'Call';
+  switch (type) {
+    case 'callStarted':
+      return by ? `${call} started by ${by}.` : `${call} started.`;
+    case 'callEnded': {
+      const after = durationText(d.callDuration);
+      const joined = (d.callParticipants || []).map((p) => p && p.participant);
+      let line = after ? `${call} ended after ${after}.` : `${call} ended.`;
+      if (joined.length === 1) {
+        line += ` Only ${people(joined)} joined.`;
+      } else if (joined.length) {
+        line += ` Joined: ${people(joined)}.`;
+      }
+      return line;
+    }
+    case 'callRecording': {
+      const length = durationText(d.callRecordingDuration);
+      const label = d.callRecordingDisplayName || 'Recording';
+      const what = d.callRecordingUrl ? mdLink(label, d.callRecordingUrl) : escName(label);
+      if (d.callRecordingStatus === 'failure') {
+        return `Recording failed: ${what}.`;
+      }
+      return `Recording: ${what}${length ? ` (${length})` : ''}.`;
+    }
+    case 'callTranscript':
+      return `Transcript of the ${call.toLowerCase()} is available.`;
+    case 'membersAdded':
+      return `${subject} added ${people(d.members)}.`;
+    case 'membersDeleted':
+      return `${subject} removed ${people(d.members)}.`;
+    case 'membersJoined':
+      return `${people(d.members)} joined.`;
+    case 'membersLeft':
+      return `${people(d.members)} left.`;
+    case 'conversationMemberRoleUpdated': {
+      const roles = (d.conversationMemberRoles || []).join(', ') || 'member';
+      return `${subject} made ${who(d.conversationMemberUser) || 'someone'} ${roles}.`;
+    }
+    case 'channelAdded':
+      return `${subject} created the channel${quoted(d.channelDisplayName)}.`;
+    case 'channelRenamed':
+      return `${subject} renamed the channel to${quoted(d.channelDisplayName)}.`;
+    case 'channelDeleted':
+      return `${subject} deleted the channel${quoted(d.channelDisplayName)}.`;
+    case 'channelDescriptionUpdated':
+      return `${subject} changed the channel's description.`;
+    case 'teamRenamed':
+      return `${subject} renamed the team to${quoted(d.teamDisplayName)}.`;
+    case 'teamDescriptionUpdated':
+      return `${subject} changed the team's description.`;
+    case 'teamCreated':
+      return `${subject} created the team${quoted(d.teamDisplayName)}.`;
+    case 'teamArchived':
+      return `${subject} archived the team.`;
+    case 'teamUnarchived':
+      return `${subject} restored the team.`;
+    case 'messagePinned':
+      return `${subject} pinned a message.`;
+    case 'messageUnpinned':
+      return `${subject} unpinned a message.`;
+    case 'tabUpdated':
+      return `${subject} changed a tab.`;
+    case 'teamsAppInstalled':
+      return `${subject} added the app${quoted(d.teamsAppDisplayName)}.`;
+    case 'teamsAppRemoved':
+      return `${subject} removed the app${quoted(d.teamsAppDisplayName)}.`;
+    case 'teamsAppUpgraded':
+      return `${subject} updated the app${quoted(d.teamsAppDisplayName)}.`;
+    default: {
+      // One Graph adds later: its type in words (`fooBarUpdated`: "Foo bar updated").
+      const words = type.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+      if (!words) {
+        return '';
+      }
+      return `${words[0].toUpperCase()}${words.slice(1)}${by ? ` (${by})` : ''}.`;
+    }
+  }
+}
+
 export function normalizeTeams(key, msg) {
   const [, tenant] = key.split('/');
   if (key.split('/').pop().startsWith('notification-')) {
@@ -403,6 +543,9 @@ export function normalizeTeams(key, msg) {
   }
   const identity = msg.channelIdentity || {};
   const rootId = msg.replyToId || msg.id;
+  // A system notice says what happened in `eventDetail` only: its body is `<systemEventMessage/>`.
+  const event = msg.messageType && msg.messageType !== 'message' && msg.eventDetail
+    && typeof msg.eventDetail === 'object' ? msg.eventDetail : null;
   let authorRef;
   if (msg.messageType && msg.messageType !== 'message') {
     authorRef = { kind: 'system', name: 'Microsoft Teams' };
@@ -467,11 +610,18 @@ export function normalizeTeams(key, msg) {
     version: teamsVersion(msg.lastModifiedDateTime || msg.createdDateTime),
     authorRef,
     subject: msg.subject || undefined,
-    format: html ? 'html' : 'text',
-    // The same list as for Slack files; a plain-text body gets no HTML around it.
-    text: [body, ...after, attachments
-      && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
-      .filter(Boolean).join('\n'),
+    ...(event ? {
+      // Names resolved by the normalizer (src/normalizer.js); this text is the fallback.
+      format: 'teams-event',
+      event,
+      text: teamsEventText(event),
+    } : {
+      format: html ? 'html' : 'text',
+      // The same list as for Slack files; a plain-text body gets no HTML around it.
+      text: [body, ...after, attachments
+        && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
+        .filter(Boolean).join('\n'),
+    }),
     permalink: msg.webUrl,
     raw: key,
     reactions: (msg.reactions || [])

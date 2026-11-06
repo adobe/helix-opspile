@@ -20,7 +20,9 @@ import {
 } from '../src/backfill.js';
 import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
-import { consume, processKey, recordBots } from '../src/normalizer.js';
+import {
+  consume, processKey, recordBots, teamsEventMarkdown,
+} from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
@@ -1051,5 +1053,27 @@ describe('recordBots', () => {
     await recordBots(e, { ...teamsMessage({ botMentions: [{ id: 'b-1', name: 'x' }] }), source: 'slack' });
     await recordBots(e, teamsMessage({ groupId: undefined, botMentions: [{ id: 'b-1', name: 'x' }] }));
     assert.deepEqual(e.DB.rows('SELECT * FROM bot_teams'), []);
+  });
+});
+
+describe('teamsEventMarkdown', () => {
+  it('names the people of a Teams notice as the inbox knows them', async () => {
+    const e = env({});
+    e.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
+      VALUES ('teams', 'T', 'u-1', 'person', 'ada.l', 7, ?), ('teams', 'T', 'u-2', 'person', 'Cy', NULL, ?)`)
+      .bind(NOW_ISO, NOW_ISO).run();
+    const who = (id, displayName = null) => ({ user: { id, displayName, userIdentityType: 'aadUser' } });
+    const text = await teamsEventMarkdown(e, {
+      tenant: 'T',
+      event: {
+        '@odata.type': '#microsoft.graph.callEndedEventMessageDetail',
+        callDuration: 'PT50S',
+        callEventType: 'meeting',
+        callParticipants: [{ participant: who('u-1') }, { participant: who('u-2', 'Cy Graph') }],
+        initiator: who('u-1'),
+      },
+    });
+    // The person's name first, then the identity's; Graph asked nothing.
+    assert.equal(text, 'Meeting ended after 50 s. Joined: Ada Staff and Cy.');
   });
 });
