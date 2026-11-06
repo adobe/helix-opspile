@@ -1144,6 +1144,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     reads: { dana: 3990 },
   });
 
+  // Three unread mentions of the viewer: in the personal view's customer column, opspile comes
+  // first, before ACME (two) and the customers with one, whatever their names.
+  seed({
+    ch: CHANNELS.edgeQ,
+    messages: [
+      ['dana', 300, 'Who owns the rate limits on the edge workers?'],
+      ['lena', 240, '@Dana Ops Tom does, but he is out until Monday.'],
+      ['tom', 120, '@Dana Ops back early: what do you need?'],
+      ['lena', 30, '@Dana Ops Tom raised them, can you check?'],
+    ],
+    reads: { dana: 300 },
+    mentioned: [['dana', 240], ['dana', 120], ['dana', 30]],
+  });
+
   // Read and unread side by side, for the thread list: critical and
   // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
   seed({

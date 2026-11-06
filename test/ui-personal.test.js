@@ -303,6 +303,35 @@ describe('the simple personal view', () => {
     });
   });
 
+  describe('the customer column', () => {
+    const column = () => [...page.simpleCustomers().matchAll(/data-v="([^"]+)"/g)].map((m) => m[1]);
+
+    it('puts the customers with unread mentions first, then the unread ones, then the rest', () => {
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // ACME has unread threads still, Globex a mention.
+      read('a1');
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+      // Both unread, no mentions: by name.
+      read('g2');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      read('a2');
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+      read('g1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+    });
+
+    it('puts the most mentions first, and goes by name, not by latest activity, within a pile', () => {
+      const i1 = state.data.threads.find((t) => t.thread === 'i1');
+      Object.assign(i1, { unread: true, unreadMentions: 5, mentionedMe: true });
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+      i1.unreadMentions = 2;
+      // ACME and Initech have two each: by name.
+      assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+      state.data.threads.find((t) => t.thread === 'g1').last_at = '2026-11-06T10:00Z';
+      assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+    });
+  });
+
   describe('the red badge', () => {
     it('counts the unread messages that mention you: beside each customer, in all, and on the rows', () => {
       assert.equal(badge(columnRow('acme')), '2');

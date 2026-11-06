@@ -1047,27 +1047,36 @@ function wireLogos() {
   addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
 }
 /**
- * The simple personal view's only card: its customers, latest activity first, by logo and
- * name, bold while they have unread threads, with the red badge. "All customers" first,
- * picked while no customer is.
+ * The customers' order in the column: those with unread mentions of you first, most mentions
+ * first, then those with unread threads, then the rest; by name within each. `c.name` is
+ * looked up once per customer, not in every comparison.
+ */
+const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
+const columnPile = (c) => {
+  if (c.you > 0) return 0;
+  return c.unread ? 1 : 2;
+};
+const columnOrder = ([, a], [, b]) => columnPile(a) - columnPile(b) || b.you - a.you
+  || byName.compare(a.name, b.name);
+/**
+ * The simple personal view's only card: its customers, by logo and name, bold while they have
+ * unread threads, with the red badge. "All customers" first, picked while no customer is. The
+ * customers go by `columnOrder`.
  */
 function simpleCustomers() {
   const all = listed().filter((t) => passes(t, 'customer'));
   const by = new Map();
   for (const t of all) {
-    const c = by.get(t.org) || { at: '', unread: false, you: 0 };
-    if (activityOf(t) > c.at) c.at = activityOf(t);
+    const c = by.get(t.org) || { unread: false, you: 0 };
     c.unread ||= Boolean(t.unread);
     c.you += youCount(t);
     by.set(t.org, c);
   }
   const on = state.sel.customer || new Set();
-  for (const v of on) if (!by.has(v)) by.set(v, { at: '', unread: false, you: 0 });
-  const rows = [...by].sort((a, b) => b[1].at.localeCompare(a[1].at)).map(([v, c]) => {
-    const name = customerName(v);
-    return `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(name)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(name)}</span>${youBadge(c.you)}</div>`;
-  }).join('');
+  for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
+  for (const [v, c] of by) c.name = customerName(v);
+  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${youBadge(c.you)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
