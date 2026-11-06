@@ -45,7 +45,11 @@ const USERS = {
     team_id: 'T1',
   },
   U2: {
-    id: 'U2', real_name: 'Cy', profile: { email: 'cy@customer.example', title: 'CTO' }, team_id: 'T9',
+    id: 'U2',
+    real_name: 'Cy',
+    profile: { email: 'cy@customer.example', title: 'CTO' },
+    team_id: 'T9',
+    is_restricted: true,
   },
 };
 
@@ -169,8 +173,8 @@ describe('processKey', () => {
       kind: 'person', name: 'Cy', org: 'customer.example', staff: false,
     });
     assert.deepEqual(meta.raw, [key]);
-    const [who] = e.DB.rows("SELECT title FROM identities WHERE user_id = 'U2'");
-    assert.equal(who.title, 'CTO');
+    const [who] = e.DB.rows("SELECT title, guest FROM identities WHERE user_id = 'U2'");
+    assert.deepEqual([who.title, who.guest], ['CTO', 1]);
   });
 
   it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
@@ -437,8 +441,10 @@ describe('processKey', () => {
     await processKey(e, k2);
     assert.deepEqual(calls, ['/api/conversations.info', '/api/team.info', '/api/users.info']);
     // The login and the display name, which people type after @ to mention her.
-    const { aliases } = e.DB.sqlite.prepare("SELECT aliases FROM identities WHERE user_id = 'U1'").get();
+    const { aliases, guest } = e.DB.sqlite.prepare("SELECT aliases, guest FROM identities WHERE user_id = 'U1'").get();
     assert.deepEqual(JSON.parse(aliases), ['alove', 'Countess']);
+    // A full member, not a guest (src/accounts.js prefers those).
+    assert.equal(guest, 0);
     const reply = parse(e.CHANNELS.objects.get('channels/acme/helix/slack-C1/1.1/1.2.md').body);
     assert.deepEqual(reply.meta.author, {
       kind: 'person', name: 'Ada Staff', org: 'staff.example', staff: true,

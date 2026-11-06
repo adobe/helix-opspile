@@ -365,6 +365,56 @@ describe('expert finder', () => {
     assert.deepEqual(names(await asked(3)), ['Ed', 'Ada']);
   });
 
+  it('lists a person with two accounts once, by their account for the thread', async () => {
+    const e = env({ matches: [vector(0.9, 3)] });
+    const { sqlite } = e.DB;
+    // Ada (person 1) also has an account from another workspace (seen through Slack Connect);
+    // that one posted in the channel, hers of its own workspace in no channel here.
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, home,
+      fetched_at) VALUES ('slack', 'E1', 'U1x', 'person', 'Ada', 1, 'T-ELSE', ?)`).run(ago(0));
+    e.addThread('slack:E1:C1:1.1');
+    sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person, staff,
+      counted, author_key) VALUES ('slack', 'E1', 'C1', 'x1', 'slack:E1:C1:1.1', ?, 1, 1, 1,
+        'slack:E1:U1x')`).run(ago(DAYS));
+    // Her own account's work in another channel adds to her history.
+    e.addThread('slack:E1:C9:1.1', { channel: 'C9' });
+    e.addMessage('slack:E1:C9:1.1', 'x2', 1, DAYS, { channel: 'C9' });
+    e.addMessage('slack:E1:C9:1.1', 'x3', 3, DAYS, { channel: 'C9' });
+    e.member(3);
+    let found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(found.experts.map((x) => [x.name, x.id, x.member]), [
+      ['Ada', 'U1x', true], ['Cy', 'U3', true],
+    ]);
+    assert.deepEqual(found.candidates.map((c) => [c.id, c.person, c.features.customerThreads]), [
+      ['U1x', 1, 2], ['U3', 3, 1],
+    ]);
+    // Once hers of the channel's own workspace is in the channel, that one.
+    clearExpertLists();
+    e.member(1);
+    found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(found.experts.map((x) => [x.name, x.id]), [['Ada', 'U1'], ['Cy', 'U3']]);
+
+    // An agent naming her other account suggests her, once, by that one.
+    const by = 'opspile-agent/test';
+    assert.equal((await suggestExpert(e, THREAD, { id: 'U1x', reason: 'Knows it', by })).ok, true);
+    found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(found.experts.map((x) => [x.name, x.id, Boolean(x.suggested)]), [
+      ['Ada', 'U1', true], ['Cy', 'U3', false],
+    ]);
+    // A suggestion kept by her other account (made before) shows the same.
+    sqlite.prepare("UPDATE expert_suggestions SET user_id = 'U1x'").run();
+    found = await findExperts(e, THREAD, { now: NOW });
+    assert.deepEqual(found.experts.map((x) => [x.name, x.id]), [['Ada', 'U1'], ['Cy', 'U3']]);
+    // Withdrawing either account withdraws her.
+    assert.equal((await suggestExpert(e, THREAD, { id: 'U1', withdraw: true, by })).ok, true);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM expert_suggestions').get().n, 0);
+
+    // Whom the viewer said is not the right person, by any of their accounts, stays out.
+    sqlite.prepare(`INSERT INTO expert_events (person, at, thread, action, account)
+      VALUES (2, ?, ?, 'reject', 'U1x')`).run(ago(1), THREAD);
+    assert.deepEqual(names(await findExperts(e, THREAD, { me: 2, now: NOW })), ['Cy']);
+  });
+
   it('takes suggestions only of staff on the platform, with a reason, and only so many', async () => {
     const e = env();
     const by = 'opspile-agent/test';

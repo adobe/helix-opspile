@@ -235,9 +235,12 @@ describe('mentions', () => {
       return [people.filter((p) => p.name === 'Ada').map((p) => p.id),
         pool.accounts.filter((p) => p.name === 'Ada').map((p) => p.id)];
     };
-    // Neither in a channel: one of them all the same.
+    // Neither in a channel: the one of the thread's own workspace.
+    assert.deepEqual(await adaIds(), [['U1'], ['U1']]);
+    // The other one, in the channel: that one.
+    member.run('C1', 'U0');
     assert.deepEqual(await adaIds(), [['U0'], ['U0']]);
-    // Hers, in the channel.
+    // Both in it: hers, of the thread's own workspace.
     member.run('C1', 'U1');
     assert.deepEqual(await adaIds(), [['U1'], ['U1']]);
 
@@ -246,6 +249,47 @@ describe('mentions', () => {
     assert.deepEqual(await knownMentions(e, t, [{ id: 'U0' }, { id: 'U1' }, { id: 'U2' }]), [
       { id: 'U1', name: 'Ada', kind: 'person' }, { id: 'U2', name: 'Bob Builder', kind: 'person' },
     ]);
+  });
+
+  it('suggests a person once with what all of their accounts have', async () => {
+    const e = withAccounts(env());
+    const { sqlite } = e.DB;
+    // Ada's account from another workspace posted in the thread, under another login; hers of
+    // the thread's own workspace is in the channel.
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, home,
+      aliases, fetched_at) VALUES ('slack', 'E1', 'U0', 'person', 'ada', 1, 'T-ELSE',
+      '["countess"]', '2026-10-21T10:00:00Z')`).run();
+    sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
+      VALUES ('slack', 'E1', 'C1', '1.3', 'slack:E1:C1:1.1', '2026-10-21T10:00:00Z',
+        'slack:E1:U0')`).run();
+    sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U1')`).run();
+    // Someone outside Adobe with two accounts of one mail address: a guest one in the grid,
+    // and a full one, neither in the channel.
+    const customer = sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      email, guest, fetched_at) VALUES ('slack', 'E1', ?, 'person', 'Cy Cust', ?, ?,
+      '2026-10-21T10:00:00Z')`);
+    customer.run('U8', 'cy@customer.example', 1);
+    customer.run('U9', 'Cy@Customer.example', 0);
+    const { people, pool } = await (await mentionable(e, 'slack:E1:C1:1.1', '', inTeam, {
+      pool: true,
+    })).json();
+    const hers = pool.accounts.filter((a) => a.name === 'Ada');
+    assert.deepEqual(hers.map((a) => [a.id, a.here, a.member, a.staff]), [['U1', true, true, true]]);
+    // Her other account's names find her too.
+    assert.ok(hers[0].aliases.includes('countess'));
+    assert.ok(hers[0].aliases.includes('ada.l'));
+    assert.deepEqual(pool.accounts.filter((a) => a.name === 'Cy Cust').map((a) => a.id), ['U9']);
+    assert.equal(people.filter((p) => p.name === 'Ada').length, 1);
+    const found = await (await mentionable(e, 'slack:E1:C1:1.1', 'countess', inTeam)).json();
+    assert.deepEqual(found.people.map((p) => p.id), ['U1']);
+    // Written by name, or picked by either account, the mention goes to that one.
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    assert.deepEqual(await knownMentions(e, t, ['U8', 'U0']), [
+      { id: 'U1', name: 'Ada', kind: 'person' }, { id: 'U9', name: 'Cy Cust', kind: 'person' },
+    ]);
+    const written = await writtenMentions(e, 'slack:E1:C1:1.1', 'cc @Cy Cust and @Ada');
+    assert.deepEqual(written.map((m) => `${m.id} ${m.name}`).sort(), ['U1 Ada', 'U9 Cy Cust']);
   });
 
   // Made-up: a colleague who never posted in the thread, with a login unlike her name.
