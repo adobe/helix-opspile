@@ -61,6 +61,18 @@ describe('draft line', () => {
     assert.ok(html.includes('<div class="tx md bubble line"><p>md:Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
   });
 
+  it('closed, keeps a single newline from breaking the line: a line break is a space', () => {
+    const soft = { body: 'Hi,\nthanks.\nMore', updated_at: draft.updated_at };
+    const br = (src) => `<p>${esc(src).replace(/\n/g, '<br />\n')}</p>`;
+    const { draftLine: line } = piece('const viewedDraft', '/** The draft line: who saved', 'draftLine', {
+      esc, md: br, draftBy: () => 'opspile agent', ago: () => '8m', sourcesLine: () => '',
+    });
+    const closed = line(soft, {}).match(/<div class="tx md bubble line">(.*?)<\/div>/s)[1];
+    assert.doesNotMatch(closed, /<br/);
+    assert.equal(closed, '<p>Hi, \nthanks. \nMore</p>');
+    assert.equal(line(soft, { open: true }).match(/<br \/>/g).length, 2);
+  });
+
   it('says Hide draft once viewed, and shows all of it as the message will be', () => {
     rendered.length = 0;
     const html = draftLine(draft, { open: true, thread: 'slack:T:C:1' });

@@ -3004,9 +3004,15 @@ const draftPeek = { key: null, timer: 0 };
 /**
  * The draft as the line shows it, as the thread will once it is sent: Markdown, rendered as a
  * message is (`md`, with the images of thread `thread`). Viewed (`open`), all of it; closed, how
- * it starts, on one line (`.line`: the stylesheet runs its blocks on, and leaves out images).
+ * it starts, on one line (`.line`: its line breaks are spaces, and the stylesheet runs its blocks
+ * on and leaves out images).
  */
-const viewedDraft = (d, thread, open = true) => `<div class="tx md bubble${open ? '' : ' line'}">${md(d.body, thread)}</div>`;
+const viewedDraft = (d, thread, open = true) => {
+  const html = md(d.body, thread);
+  // Closed, a line break (`<br>`, from a single newline) is a space: Chrome gives a `<br>` no
+  // pseudo-elements, so the stylesheet cannot turn it into one, and the line would break.
+  return `<div class="tx md bubble${open ? '' : ' line'}">${open ? html : html.replace(/<br\s*\/?>/g, ' ')}</div>`;
+};
 
 // The draft line's icons, drawn as the page's others are (16 by 16, a 1.5 stroke).
 const ICON = (paths) => `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
