@@ -247,6 +247,14 @@ describe('titleOf', () => {
     assert.equal(titleOf('Outage', 'body'), 'Outage');
     assert.equal(titleOf(undefined, '\n> **Site down** since 9\nmore'), 'Site down since 9');
     assert.equal(titleOf(undefined, 'x'.repeat(200)).length, 140);
+    assert.equal(
+      titleOf(undefined, 'removed. [Learn more](https://x.example/l)'),
+      'removed. Learn more',
+    );
+    assert.equal(
+      titleOf(undefined, '![shot](https://x.example/a.png)\nsee <https://x.example|it>'),
+      'see it',
+    );
   });
 });
 
