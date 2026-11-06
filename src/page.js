@@ -31,7 +31,9 @@ const TOKEN = /var\(--(spectrum-[a-z0-9-]+)/g;
  * The Spectrum 2 tokens a stylesheet uses, and those they are made of, as custom properties
  * on :root: the light color scheme and the medium scale, the dark color scheme where the
  * browser prefers it and the large scale on a touch screen, as Spectrum's classes would set
- * them (@spectrum-css/tokens, src/ui-spectrum.bundle.js).
+ * them (@spectrum-css/tokens, src/ui-spectrum.bundle.js). The color scheme picked in your
+ * menu (ui/header.js, `data-scheme` on <html>) wins over the browser's: `light` keeps the
+ * light one, `dark` takes the dark one whatever the browser prefers.
  *
  * @param {string} css
  * @param {Record<string, Record<string, string>>} tokens the sets, by `global`, `light`, …
@@ -61,10 +63,11 @@ export function spectrumTokens(css, tokens = TOKENS) {
     .filter(([name]) => used.has(name))
     .map(([name, value]) => `  --${name}: ${value};`)
     .join('\n');
-  const root = (from) => (block(...from) ? `:root {\n${block(...from)}\n}\n` : '');
-  const media = (query, from) => (root(from) ? `@media ${query} {\n${root(from)}}\n` : '');
+  const root = (from, sel = ':root') => (block(...from) ? `${sel} {\n${block(...from)}\n}\n` : '');
+  const media = (query, from, sel) => (root(from, sel) ? `@media ${query} {\n${root(from, sel)}}\n` : '');
   return root(['global', 'light', 'medium'])
-    + media('(prefers-color-scheme: dark)', ['dark'])
+    + media('(prefers-color-scheme: dark)', ['dark'], ':root:not([data-scheme="light"])')
+    + root(['dark'], ':root[data-scheme="dark"]')
     + media('(hover: none) and (pointer: coarse)', ['large']);
 }
 

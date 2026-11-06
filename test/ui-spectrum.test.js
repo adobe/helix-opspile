@@ -81,10 +81,14 @@ describe('Spectrum 2', () => {
   --spectrum-size: 14px;
 }
 @media (prefers-color-scheme: dark) {
-:root {
+:root:not([data-scheme="light"]) {
   --spectrum-b: rgba(var(--spectrum-b-rgb));
   --spectrum-b-rgb: 9, 9, 9;
 }
+}
+:root[data-scheme="dark"] {
+  --spectrum-b: rgba(var(--spectrum-b-rgb));
+  --spectrum-b-rgb: 9, 9, 9;
 }
 @media (hover: none) and (pointer: coarse) {
 :root {

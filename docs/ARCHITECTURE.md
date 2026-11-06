@@ -460,6 +460,8 @@ the file (or the history), and each one opened is a history entry, so the browse
 Forward step through them; going between the admin sections is one too. The editor itself is
 always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
 the page you are on, with a menu of the others.
+Your menu, on every page, has **Appearance**: the color scheme, the system's (the default),
+light or dark, kept per browser.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is

@@ -120,6 +120,10 @@ header .note { white-space: nowrap; }
  text-decoration: none; text-align: left; }
 .menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
 .menu .item[hidden] { display: none; }
+.menu .item .ck { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
+/* A switch's ✓ shows while it is on, a choice's (Appearance's) while it is the one picked. */
+.menu .item:is([role="switch"], [role="radio"]) .ck { visibility: hidden; }
+.menu .item[aria-checked="true"] .ck { visibility: visible; }
 .menu .item svg { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
 .menu .keys { display: grid; grid-template-columns: 1fr auto; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); color: var(--mute); }
 .menu .keys dd { margin: 0; text-align: right; }
@@ -213,6 +217,9 @@ header .note { white-space: nowrap; }
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+/* The scheme picked in your menu (ui/header.js), over the browser's; the tokens follow it too. */
+:root.spectrum[data-scheme="light"] { color-scheme: light; }
+:root.spectrum[data-scheme="dark"] { color-scheme: dark; }
 :where(.spectrum) body { background: var(--bg); color: var(--ink); }
 :where(.spectrum) code, :where(.spectrum) kbd, :where(.spectrum) pre, :where(.spectrum) .mono { font-family: var(--s2-code); }
 :where(.spectrum) a { color: var(--link); }

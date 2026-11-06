@@ -24,6 +24,11 @@
  * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
  * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
+ *
+ * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
+ * dark, per browser (localStorage `opspile.scheme`), set as `data-scheme` on <html>, which the
+ * tokens follow (src/page.js, `spectrumTokens`), and so does the browser's chrome (theme-color).
+ * It is set before the page under the header is drawn, and follows a change made in another tab.
 
  */
 window.Header = (() => {
@@ -48,6 +53,56 @@ window.Header = (() => {
   };
   let shut = 0;
 
+  const SCHEME = 'opspile.scheme';
+  const SCHEMES = [
+    { id: 'system', label: 'System', title: 'Light or dark, as this device is set' },
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+  ];
+  /** The color scheme picked in this browser: `light`, `dark` or `system`. */
+  function scheme() {
+    let s = null;
+    try { s = localStorage.getItem(SCHEME); } catch { /* storage is off */ }
+    return s === 'light' || s === 'dark' ? s : 'system';
+  }
+  /** The page in the scheme picked: the tokens, the browser's chrome, the menu's ✓. */
+  function applyScheme(s = scheme()) {
+    const root = document.documentElement;
+    if (s === 'system') delete root.dataset.scheme;
+    else root.dataset.scheme = s;
+    // theme-color takes no custom properties: each scheme's has its own tag, picked by media.
+    for (const meta of document.querySelectorAll('meta[name="theme-color"][media]')) {
+      if (!meta.dataset.media) meta.dataset.media = meta.media;
+      const own = meta.dataset.media.includes(`prefers-color-scheme: ${s}`);
+      meta.media = s === 'system' ? meta.dataset.media : own ? 'all' : 'not all';
+    }
+    for (const b of document.querySelectorAll('#schemes [data-scheme]')) {
+      b.setAttribute('aria-checked', String(b.dataset.scheme === s));
+    }
+  }
+  /** Appearance in your menu, before the keyboard's shortcuts and logging out. */
+  function schemeMenu() {
+    const menu = $('menu');
+    if (!menu || $('schemes')) return;
+    const box = document.createElement('section');
+    box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
+      SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck">✓</span>${o.label}</button>`).join('')}</div>`;
+    const sections = [...menu.querySelectorAll(':scope > section')];
+    const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
+    menu.insertBefore(box, before || null);
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-scheme]');
+      if (!b) return;
+      try {
+        if (b.dataset.scheme === 'system') localStorage.removeItem(SCHEME);
+        else localStorage.setItem(SCHEME, b.dataset.scheme);
+      } catch { /* storage is off: this page only */ }
+      applyScheme(b.dataset.scheme);
+    });
+  }
+  schemeMenu();
+  applyScheme();
+  addEventListener('storage', (e) => { if (e.key === SCHEME || e.key === null) applyScheme(); });
   /** Which page an address on this origin is, or null. */
   function pageOf(url) {
     let u;
@@ -254,6 +309,6 @@ window.Header = (() => {
   sync();
 
   return {
-    init, sync, setCount, user, role, remember, href, pageOf, stats,
+    init, sync, setCount, user, role, remember, href, pageOf, stats, scheme,
   };
 })();
