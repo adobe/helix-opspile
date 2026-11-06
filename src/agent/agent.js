@@ -27,7 +27,7 @@ import { entryOf } from '../drafts.js';
 import { toolsFor } from './agenttools.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
-import { COMPUTER_CWD, computerEnv } from './computer.js';
+import { COMPUTER_CWD, computerEnv, ensureCwd } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { seed, seedPin } from './seed.js';
@@ -242,7 +242,7 @@ export class ThreadAgent extends Agent {
       const ws = this.workspace();
       await ws.ready();
       if (!this.computerReady) {
-        await ws.fs.mkdir(COMPUTER_CWD, { recursive: true });
+        await ensureCwd(ws.fs);
         this.computerReady = true;
       }
       return ws;
