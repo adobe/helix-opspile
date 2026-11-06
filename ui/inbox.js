@@ -1129,11 +1129,23 @@ function flags(t) {
   return out;
 }
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
-const draftMark = (t) => (t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">✎ Draft</span>` : '');
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
-/** A row's one status mark: the status dot, or a ✓ in its place once the thread is resolved. */
+// A pencil, the draft's mark, in a 16 by 16 box: drawn along the box's diagonal, nib down to
+// the left, or smaller, inside a ring as wide as the ringed status dot's, while the team has
+// not read the thread.
+const PENCIL = '<path d="M1 8l3-2.2v4.4zM4.8 5.8H12v4.4H4.8zM12.8 5.8h1a1.2 1.2 0 0 1 1.2 1.2v2a1.2 1.2 0 0 1-1.2 1.2h-1z"/>';
+const pencil = (ring) => `<svg viewBox="0 0 16 16" aria-hidden="true">${ring ? '<circle cx="8" cy="8" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/>' : ''}<g fill="currentColor" transform="rotate(-45 8 8)${ring ? ' translate(8 8) scale(.68) translate(-8 -8)' : ''}">${PENCIL}</g></svg>`;
+/**
+ * A row's one status mark: the status dot, a ✓ in its place once the thread is resolved, or a
+ * pencil in the status's color while the thread has a draft (resolved or not: the draft waits
+ * to be sent or discarded), ringed while the team has not read the thread.
+ */
 function statusMark(t, status) {
   const title = esc(statusTitle(t, status));
+  if (t.draft) {
+    const hint = `Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`;
+    return `<span class="pen s-${status}${t.unread ? ' ring' : ''}" title="${esc(hint)} · ${title}">${pencil(t.unread)}</span>`;
+  }
   if (isResolved(t)) return `<span class="ok" title="Resolved · ${title}">✓</span>`;
   return `<span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${title}"></span>`;
 }
@@ -1168,7 +1180,7 @@ function row(t, hit = null) {
     : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
     <div class="l1">${statusMark(t, status)}
-      ${draftMark(t)}<span class="title">${titleHtml(t, hit)}</span>
+      <span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
     <div class="l2">${cust}
       <span class="faces">${faces}</span>
@@ -1184,8 +1196,8 @@ function row(t, hit = null) {
 const grouped = () => simple() && !searching();
 /**
  * A thread's row in the simple personal view: its title (bold while unread) and how long ago,
- * then Draft and the latest reply, and the red mark (GROUPS.mark) when it mentions you. The
- * customer is its heading, or picked; only a search result names it. No status, people,
+ * then the latest reply, and the red mark (GROUPS.mark) when it mentions you. The
+ * customer is its heading, or picked; only a search result names it. No status, drafts, people,
  * counts or reactions: the expert view has them.
  */
 function simpleRow(t, hit = null) {
@@ -1193,12 +1205,11 @@ function simpleRow(t, hit = null) {
   const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
   const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
-  const draft = t.draft ? `<span class="drafted" title="${esc(`Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`)}">Draft</span>` : '';
   const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you"` : ''}></span>` : '';
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${draft}${said}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${said}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer

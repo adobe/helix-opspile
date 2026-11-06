@@ -794,7 +794,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .srcpop .view .none { margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--mute); font-size: var(--spectrum-font-size-100); }
 .srcpop .view .none a { color: var(--link); }
 .srcpop iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--spectrum-white); }
-.t .drafted { flex: none; }
 /* Quick reactions on hovering a message, like Slack: held at the avatar's side of the bubble, so
    a short one's row grows into the pane, not past its edge. */
 .msg .quick { position: absolute; top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); left: var(--spectrum-spacing-100); z-index: 3; display: none;
@@ -905,6 +904,13 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 /* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
 .t .ok { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
  }
+/* A draft's pencil does too, in the status's color (the dot's), as wide as a ringed dot. */
+.t .pen { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
+  color: var(--faint); }
+.t .pen svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.t .pen.s-critical { color: var(--spectrum-red-1100); } .t .pen.s-hot { color: var(--red); } .t .pen.s-you { color: var(--accent); }
+.t .pen.s-waiting { color: var(--yellow); } .t .pen.s-silent { color: var(--purple); }
+.t .pen.s-team { color: var(--green); }
 #threads { background: var(--row-read); }
 .t { --row-bg: var(--row-read); background: var(--row-bg); }
 .t.unread { --row-bg: var(--row-unread); }
@@ -1188,7 +1194,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .ok { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .t .drafted { font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-accent-content-color-default); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */
 .spectrum .moods .em { background: var(--spectrum-gray-100); }
@@ -2018,7 +2023,6 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum main.simple .t.mention .you { background: var(--spectrum-negative-background-color-default); }
 .spectrum main.simple .t .cust { color: var(--spectrum-neutral-content-color-default); }
 .spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
-.spectrum main.simple .t .drafted { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
 .spectrum #threads .rows > .grp {
   background: var(--spectrum-background-layer-1-color);
   color: var(--spectrum-neutral-subdued-content-color-default);
