@@ -1131,14 +1131,16 @@ function flags(t) {
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
 const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
 // A pencil, the draft's mark, in a 16 by 16 box: drawn along the box's diagonal, nib down to
-// the left, or smaller, inside a ring as wide as the ringed status dot's, while the team has
-// not read the thread.
+// the left. While the team has not read the thread, a smaller one sits inside an outline of
+// the pencil's own shape, a gap away, as the ringed status dot sits inside its ring.
 const PENCIL = '<path d="M1 8l3-2.2v4.4zM4.8 5.8H12v4.4H4.8zM12.8 5.8h1a1.2 1.2 0 0 1 1.2 1.2v2a1.2 1.2 0 0 1-1.2 1.2h-1z"/>';
-const pencil = (ring) => `<svg viewBox="0 0 16 16" aria-hidden="true">${ring ? '<circle cx="8" cy="8" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/>' : ''}<g fill="currentColor" transform="rotate(-45 8 8)${ring ? ' translate(8 8) scale(.68) translate(-8 -8)' : ''}">${PENCIL}</g></svg>`;
+const PENCIL_IN = '<path d="M3.6 8l2-1.5v3zM6.3 6.5h5.2v3H6.3zM12.1 6.5h.7a.7.7 0 0 1 .7.7v1.6a.7.7 0 0 1-.7.7h-.7z"/>';
+const PENCIL_OUTLINE = '<path d="M.9 8l3.7-3.3h8.6a2.2 2.2 0 0 1 2.2 2.2v2.2a2.2 2.2 0 0 1-2.2 2.2H4.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>';
+const pencil = (outlined) => `<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor" transform="rotate(-45 8 8)">${outlined ? PENCIL_OUTLINE + PENCIL_IN : PENCIL}</g></svg>`;
 /**
  * A row's one status mark: the status dot, a ✓ in its place once the thread is resolved, or a
  * pencil in the status's color while the thread has a draft (resolved or not: the draft waits
- * to be sent or discarded), ringed while the team has not read the thread.
+ * to be sent or discarded), outlined while the team has not read the thread.
  */
 function statusMark(t, status) {
   const title = esc(statusTitle(t, status));

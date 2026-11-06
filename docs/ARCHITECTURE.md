@@ -1253,7 +1253,7 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   holds it unchanged follows the draft, one with your own changes keeps them (and the line says
   the draft changed since). What you type and do not save stays with its thread in the tab.
 - In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
-  one shows ✓), in the status's color and ringed while the team has not read the thread; the
+  one shows ✓), in the status's color and outlined while the team has not read the thread; the
   personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
   colleague, or none. A draft does not change the status pile.
 - A draft can carry **sources** (`drafts.sources`, src/sources.js): what an agent says it rests
