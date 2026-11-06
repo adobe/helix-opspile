@@ -772,11 +772,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
   .draftbar .sends button { flex: 1; }
 }
-/* The draft shown in the reply box while one of its sources is shown beside it. */
-.composer textarea.previewing { border-style: dashed; border-color: var(--accent); color: var(--mute);
-  background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
-/* Long drafts are read here, so the box may take most of the pane while it shows one. */
-.composer textarea.previewing, .composer.checking textarea { max-height: min(62vh, calc(100dvh - calc(var(--spectrum-spacing-100) * 30))); }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
 .draftbar .srcs { grid-area: srcs; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
 .draftbar .srcs .lb { cursor: help; }
@@ -1807,12 +1802,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-100);
 }
 .spectrum .draftbar .src:hover, .spectrum .draftbar .src:focus-visible { border-color: var(--spectrum-gray-800); }
-.spectrum .composer textarea.previewing {
-  border-style: dashed;
-  border-color: var(--spectrum-accent-visual-color);
-  color: var(--spectrum-neutral-subdued-content-color-default);
-  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
-}
 /* Held Send's other ways to send: a stack of secondary Buttons, floating (elevated); Resolve
    outlined in positive, Save draft in the accent. */
 .spectrum .sendwrap .hold { gap: var(--spectrum-spacing-75); }

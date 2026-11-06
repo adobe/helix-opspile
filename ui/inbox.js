@@ -2542,9 +2542,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const wasNear = prevScroller ? nearBottom(prevScroller) : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   const keepHeight = prevScroller ? prevScroller.scrollHeight : 0;
-  // A draft shown in the reply box beside a source gives the box back first: what it held counts.
   if (switching) hideSource();
-  endDraftPreview();
   const typed = $('reply')?.value;
   const focused = document.activeElement === $('reply');
   const caret = focused ? [$('reply').selectionStart, $('reply').selectionEnd] : null;
@@ -2741,11 +2739,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
     box.onblur = () => setTimeout(closeMentions, 150);
     grow();
     box.onkeydown = (e) => {
-      // Typing while a source shows the draft in the box: the box is yours again.
-      if (draftPreview.key) {
-        hideSource();
-        endDraftPreview();
-      }
       if (mentionKey(e, key)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); send(key, thread); }
       if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value, undefined, { fromBox: true }); }
@@ -2868,59 +2861,12 @@ const tookDraft = (c, d) => Boolean(c && d && c.base === d.updated_at && c.text.
 
 function growReply(box) {
   box.style.height = 'auto';
-  // The stylesheet's limit: a draft being looked at (.previewing, .checking) may take more room,
-  // but only what the feed above can give up. A box taller than that made the composer overflow
-  // the pane and pushed the draft's line down, from under the pointer resting on it.
-  let max = parseFloat(getComputedStyle(box).maxHeight) || 180;
-  const feed = box.closest('#pane')?.querySelector('.scroller');
-  if (feed && (box.classList.contains('previewing') || box.closest('.checking'))) {
-    max = Math.min(max, box.offsetHeight + feed.clientHeight);
-  }
+  const max = parseFloat(getComputedStyle(box).maxHeight) || 180;
   box.style.height = `${Math.min(max, box.scrollHeight)}px`;
 }
 
-// The draft shown in the reply box while one of its sources is shown beside it, and what the
-// box held before (`value`, `sel`). Reading the draft itself is "View draft", on its line.
-const draftPreview = { key: null, value: '', sel: [0, 0] };
 // Threads whose draft line shows all of the draft ("View draft"), not only how it starts.
 const draftOpen = new Set();
-
-function startDraftPreview(key) {
-  const box = $('reply');
-  const d = state.cache.get(key)?.data?.draft;
-  if (!box || !d || draftPreview.key || state.open !== key) return;
-  if (tookDraft(state.composers.get(key), d)) return;
-  const shown = withDraft(box.value, d);
-  if (shown === box.value) return;
-  Object.assign(draftPreview, { key, value: box.value, sel: [box.selectionStart, box.selectionEnd] });
-  closeMentions();
-  box.value = shown;
-  box.readOnly = true;
-  box.classList.add('previewing');
-  growReply(box);
-  // The draft alone reads from its start; after your text, the box shows where it begins.
-  box.scrollTop = shown === d.body ? 0 : box.scrollHeight;
-}
-
-/** Gives the reply box back as it was before the draft was shown in it. */
-function endDraftPreview() {
-  const { key, value, sel } = draftPreview;
-  if (!key) return;
-  draftPreview.key = null;
-  const box = $('reply');
-  if (!box?.classList.contains('previewing')) return;
-  box.readOnly = false;
-  box.classList.remove('previewing');
-  if (state.open !== key) return;
-  box.value = value;
-  box.setSelectionRange(...sel);
-  growReply(box);
-}
-
-function syncDraftPreview(key) {
-  if (sourcePop.url) startDraftPreview(key);
-  else endDraftPreview();
-}
 
 // The sources of a draft: what an agent says the draft rests on, as links on the draft's line.
 // Only the inbox has them; a reply never does. Resting the pointer on one, or moving the
@@ -3008,7 +2954,6 @@ async function showSource(key, i) {
   composerEl.classList.toggle('checking', wide);
   const box = $('reply');
   if (box) growReply(box);
-  syncDraftPreview(key);
   placeSource(el, wide ? line : composerEl, wide);
   const v = await sourceView(key, s.url);
   if (sourcePop.url === s.url) el.querySelector('.view').innerHTML = sourceBody(v);
@@ -3017,14 +2962,12 @@ async function showSource(key, i) {
 function hideSource() {
   clearTimeout(sourcePop.timer);
   if (!sourcePop.url) return;
-  const { key } = sourcePop;
   Object.assign(sourcePop, { key: null, url: null });
   sourcePop.el.hidden = true;
   sourcePop.el.innerHTML = '';
   const box = $('reply');
   $('draftbar')?.closest('.composer')?.classList.remove('checking');
   if (box) growReply(box);
-  syncDraftPreview(key);
 }
 
 function leaveSource() {
@@ -3130,11 +3073,8 @@ function renderDraftBar(key, force = false) {
     el.innerHTML = html;
     el.hidden = !d;
     el.classList.toggle('open', draftOpen.has(key));
-    // The draft changed while shown in the box: show the new one.
-    endDraftPreview();
   }
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
-  if (d) syncDraftPreview(key); else endDraftPreview();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
 }
@@ -3158,7 +3098,6 @@ function wireDraftBar(el) {
       el.querySelector('.view')?.focus();
       return;
     }
-    endDraftPreview();
     if (act === 'edit') adoptDraft(key);
     else if (act === 'discard') discardDraft(key);
     else sendDraft(key, act === 'bot');
@@ -3171,14 +3110,6 @@ function wireDraftBar(el) {
     renderDraftBar(el.__key);
     el.querySelector('.view')?.focus();
   });
-  // While a source shows the draft in the box, the pointer is on the line: the wheel reads the
-  // box from there (an opened line scrolls its own text).
-  el.addEventListener('wheel', (e) => {
-    const box = $('reply');
-    if (!draftPreview.key || !box || (el.classList.contains('open') && e.target.closest('.pv'))) return;
-    e.preventDefault();
-    box.scrollTop += e.deltaY;
-  }, { passive: false });
 }
 
 /** Takes the draft into the reply box, to edit: after what you typed, if anything. */
@@ -3186,7 +3117,6 @@ function adoptDraft(key) {
   const d = state.cache.get(key)?.data?.draft;
   const box = $('reply');
   if (!d || !box || state.open !== key) return;
-  endDraftPreview();
   const c = takeDraft(key, d, box.value);
   state.composers.set(key, c);
   box.value = c.text;
@@ -6241,7 +6171,6 @@ function replyBlocked(data) {
 }
 
 function fillReply(text) {
-  endDraftPreview();
   const box = $('reply');
   box.value = text;
   box.dispatchEvent(new Event('input'));

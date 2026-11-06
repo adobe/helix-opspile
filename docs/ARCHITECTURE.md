@@ -1236,9 +1236,8 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   (`update_draft`, `post_draft`) replace a draft's sources with each save, so they describe its
   text; a person's edit in the inbox keeps them, and Undo of a discard brings them back.
 - The sources sit on a row of the draft's line. Resting the pointer on one (or moving the
-  keyboard focus to it) shows it beside the draft, which the reply box shows meanwhile (dashed,
-  and given back as it was after; it grows only into what the feed can give up, so the line
-  stays under the pointer), with the agent's quote above it; clicking it
+  keyboard focus to it) shows it beside the draft's line, with the agent's quote above it; the
+  reply box keeps what it held (the line's View draft shows all of the draft); clicking it
   opens it in a new tab. `GET /api/draft/source` tells the inbox how: a browser cannot tell why
   a frame stayed empty, so the Worker fetches the page, without the viewer's credentials, and
   reads its `X-Frame-Options` and `frame-ancestors`. A page that may be framed shows in a
