@@ -276,6 +276,12 @@ the latest question.
 **Knowledge-base editor.** clean → editing → saving → saved, or conflict, unnamed or problem
 (`fileState` in `ui/kb.js`). One save at a time, and a save names the blob it was written from.
 
+**Knowledge-base prefetch.** not here → in flight → text, or not here again (`blobs` in
+`ui/kb.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
+says which hash a path has, and is the watermark: a save relists (unless another save started while
+it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
+not here, and opening one reads it by its path.
+
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
 text, and loaded is part of the key of what is rendered, so the list and the open thread render

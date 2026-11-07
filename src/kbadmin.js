@@ -16,7 +16,7 @@ import {
 import { writeKnowledge } from './agent/kbwrite.js';
 import { isEntry, SYSTEM_PROMPT } from './agent/okf.js';
 import {
-  commitLog, countFiles, listFiles, readText,
+  commitLog, countFiles, listFiles, readBlobs, readText,
 } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
@@ -236,6 +236,24 @@ async function files(env, repo) {
   });
 }
 
+const MAX_BLOBS = 50;
+const BLOB_HASH = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/**
+ * GET /api/kb/blobs?repo=&hashes=: files of the listing (`/api/kb/files`) by their hash, at most
+ * MAX_BLOBS at once, `{ blobs: { [hash]: text } }`. A blob never changes, so the browser keeps
+ * them; the editor fetches the files this way before they are opened.
+ */
+async function blobs(env, repo, param) {
+  const hashes = [...new Set(String(param || '').split(',').filter((h) => BLOB_HASH.test(h)))];
+  if (!hashes.length || hashes.length > MAX_BLOBS) {
+    return json({ error: `between 1 and ${MAX_BLOBS} blob hashes` }, 400);
+  }
+  const res = json({ repo, blobs: await readBlobs(env, repo, hashes) });
+  res.headers.set('cache-control', 'private, max-age=86400');
+  return res;
+}
+
 /** PUT or DELETE /api/kb/file `{ repo, path, content?, base?, message? }`. */
 async function change(env, me, body, remove) {
   const path = String(body.path || '').replace(/^\/+/, '');
@@ -412,6 +430,9 @@ export async function kbAdmin(request, env, url, me) {
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {
     return files(env, repo);
+  }
+  if (url.pathname === '/api/kb/blobs' && request.method === 'GET') {
+    return blobs(env, repo, url.searchParams.get('hashes'));
   }
   if (url.pathname === '/api/kb/log' && request.method === 'GET') {
     return json({ repo, ...await commitLog(env, repo, 30) });

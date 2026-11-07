@@ -30,6 +30,9 @@ const state = {
   me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
   channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {}, openPer: new Set(),
   extraction: null,
+  // Saves started (a listing read meanwhile may predate one), and when the files were listed.
+  saves: 0,
+  listedAt: 0,
   // The computer's secret being added ('new') or edited (its id), or null.
   secretEditing: null,
 };
@@ -50,6 +53,68 @@ async function call(path, options = {}) {
   });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, ok: res.ok, body };
+}
+
+// ---- prefetch ---------------------------------------------------------------------------
+// Reading one file takes the Worker about a second (the head, a tree per directory, the blob,
+// one after the other), so the files of the open knowledge base are fetched ahead, by the blob
+// hashes of the listing, in batches (/api/kb/blobs, all of a batch's blobs read at once), and
+// opening one shows it at once. A blob's text never changes: kept by its hash, it is never
+// stale for that hash; the listing says which hash a path has.
+
+const BLOB_BATCH = 25;
+const BLOB_PARALLEL = 2;
+/** Blob hash → its text (string), or the read in flight (a promise of the text or null). */
+const blobs = new Map();
+
+/** Reads `hashes` of `repo` in one request; each hash's entry then holds its text, or none. */
+function fetchBlobs(repo, hashes) {
+  const read = call(`/api/kb/blobs?repo=${encodeURIComponent(repo)}&hashes=${hashes.join(',')}`)
+    .catch(() => ({ ok: false }));
+  for (const h of hashes) {
+    const one = read.then(({ ok, body }) => {
+      const text = ok && typeof body.blobs?.[h] === 'string' ? body.blobs[h] : null;
+      if (text === null) blobs.delete(h);
+      else blobs.set(h, text);
+      return text;
+    });
+    blobs.set(h, one);
+  }
+  return read;
+}
+
+/** The text of a blob, if it is here already; else undefined. */
+function blobNow(hash) {
+  const v = blobs.get(hash);
+  return typeof v === 'string' ? v : undefined;
+}
+
+/** The text of a file of the listing by its hash: kept, in flight, or read now; null if not. */
+function blobText(repo, hash) {
+  if (!hash) return Promise.resolve(null);
+  if (!blobs.has(hash)) fetchBlobs(repo, [hash]);
+  return Promise.resolve(blobs.get(hash));
+}
+
+/** Fetches the files of the listing not here yet, BLOB_PARALLEL batches at a time. */
+function prefetchFiles(repo) {
+  const queue = [...new Set(state.files.map((f) => f.hash).filter((h) => h && !blobs.has(h)))];
+  const next = async () => {
+    while (queue.length && state.repo === repo) {
+      const batch = queue.splice(0, BLOB_BATCH).filter((h) => !blobs.has(h));
+      // eslint-disable-next-line no-await-in-loop -- one batch after the other, per lane
+      if (batch.length) await fetchBlobs(repo, batch);
+    }
+  };
+  for (let i = 0; i < BLOB_PARALLEL; i += 1) next();
+}
+
+/** A file's listing entry has a new hash and text (saved here): keep both. */
+function keepFile(path, hash, text) {
+  if (!hash) return;
+  if (typeof text === 'string') blobs.set(hash, text);
+  const f = state.files.find((x) => x.path === path);
+  if (f) f.hash = hash;
 }
 
 function systemPromptTemplate(b) {
@@ -218,12 +283,15 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.files = body.files;
   state.hasSystemPrompt = body.hasSystemPrompt;
   state.truncated = body.truncated;
+  state.listedAt = Date.now();
   renderFiles();
   if (state.view === 'history') showHistory({ force: true, nav });
   else if (state.view === 'agents') showAgents({ force: true, nav });
   else if (state.view === 'mcp') showMcp({ force: true, nav });
   else if (state.view === 'extraction' && state.extraction) showExtraction({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
+  // After the open file's own read, so that one goes first.
+  prefetchFiles(repo);
   return true;
 }
 
@@ -258,6 +326,11 @@ function renderFiles() {
     ${mayEdit() ? '' : `<div class="empty ro pad">Read-only: ${esc(whoEdits())} change it.</div>`}`;
   for (const el of $('files').querySelectorAll('[data-path]')) {
     el.onclick = () => openFile(el.dataset.path);
+    // Pointing at a file not fetched yet reads it now, ahead of the prefetch's turn.
+    el.onpointerenter = () => {
+      const f = state.files.find((x) => x.path === el.dataset.path);
+      if (f?.hash && !blobs.has(f.hash)) blobText(state.repo, f.hash);
+    };
   }
   if ($('new')) $('new').onclick = newFile;
   $('history').onclick = () => showHistory();
@@ -1593,7 +1666,12 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
   if (!force) showPane('editor');
   state.view = 'file';
   const b = base();
-  const exists = state.files.some((f) => f.path === path);
+  const listed = state.files.find((f) => f.path === path);
+  const exists = Boolean(listed);
+  const opening = { path };
+  state.opening = opening;
+  // Another file, or another view, was opened while this one was read: that one shows.
+  const overtaken = () => state.opening !== opening || state.view !== 'file';
   if (!exists && !mayEdit()) {
     // Nothing to read: only those who edit it start one.
     state.file = null;
@@ -1608,15 +1686,25 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
     const draft = path === SYSTEM_PROMPT ? systemPromptTemplate(b) : conceptTemplate(path);
     state.file = { path, hash: null, isNew: true, baseline: draft };
   } else {
-    $('editor').innerHTML = '<div class="empty">Loading…</div>';
-    const { ok, body } = await call(`/api/kb/file?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`);
-    if (!ok) {
-      $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
-      return true;
+    // Fetched ahead (see prefetch) by the hash of the listing; else read by its path.
+    let read = { hash: listed.hash, text: blobNow(listed.hash) };
+    if (read.text === undefined) {
+      $('editor').innerHTML = '<div class="empty">Loading…</div>';
+      read.text = await blobText(state.repo, listed.hash);
+      if (read.text === null) {
+        const { ok, body } = await call(`/api/kb/file?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`);
+        if (overtaken()) return true;
+        if (!ok) {
+          $('editor').innerHTML = `<div class="empty">${esc(body.error || 'Could not read the file.')}</div>`;
+          return true;
+        }
+        read = body;
+      }
+      if (overtaken()) return true;
     }
     const generated = GENERATED.has(path.split('/').pop());
     state.file = {
-      path, hash: body.hash, baseline: body.text, readonly: generated || !mayEdit(), generated,
+      path, hash: read.hash, baseline: read.text, readonly: generated || !mayEdit(), generated,
     };
   }
   renderFiles();
@@ -1740,6 +1828,7 @@ async function commit(f) {
     return;
   }
   setNote('', 'Saving…');
+  state.saves += 1;
   const { status, ok, body } = await call('/api/kb/file', {
     method: 'PUT',
     body: JSON.stringify({ repo: state.repo, path, content, base: f.hash }),
@@ -1762,6 +1851,8 @@ async function commit(f) {
   f.problem = null;
   f.baseline = content;
   if (body.hash) f.hash = body.hash;
+  // The listing has the hash it was read at: the next opening shows this text, not that one.
+  keepFile(path, body.hash, content);
   const created = f.isNew;
   f.isNew = false;
   if (f.choosePath) {
@@ -1783,6 +1874,9 @@ async function commit(f) {
     }
     await reloadFiles();
     toUrl('replace');
+  } else {
+    // A save writes index.md and log.md too: their new hashes, to show them as they are now.
+    relist();
   }
   showHash();
   setNote('ok', body.unchanged ? 'Saved (nothing changed).' : `Saved · ${String(body.commit).slice(0, 12)}`);
@@ -1798,6 +1892,7 @@ function resolveConflict(f, keep) {
   f.hash = theirs ? theirs.hash : null;
   f.isNew = !theirs;
   if (theirs && !state.files.some((x) => x.path === f.path)) reloadFiles();
+  if (theirs) keepFile(f.path, theirs.hash, theirs.text);
   if (keep === 'theirs') {
     f.baseline = theirs ? theirs.text : '';
     state.editor.value = f.baseline;
@@ -1826,11 +1921,23 @@ async function remove() {
 
 async function reloadFiles() {
   refreshBases();
-  const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(state.repo)}`);
-  if (ok) {
+  await relist();
+}
+
+/**
+ * The listing again, and the files whose hash changed fetched ahead. A save while it was read
+ * may be newer than it, so then it is dropped (that save lists again); the open file stays.
+ */
+async function relist() {
+  const { repo, saves } = state;
+  const { ok, body } = await call(`/api/kb/files?repo=${encodeURIComponent(repo)}`);
+  if (state.repo !== repo) return;
+  if (ok && state.saves === saves) {
     state.files = body.files;
     state.hasSystemPrompt = body.hasSystemPrompt;
     state.truncated = body.truncated;
+    state.listedAt = Date.now();
+    prefetchFiles(repo);
   }
   renderFiles();
 }
@@ -1852,6 +1959,14 @@ async function showHistory({ force = false, nav = 'push' } = {}) {
 }
 
 // ---- start ------------------------------------------------------------------------------
+
+// Back to the page after a while: agents and other people may have changed files meanwhile,
+// and the prefetched files are those of the listing, so list them again.
+const RELIST_MS = 30 * 1000;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.repo && state.listedAt
+    && Date.now() - state.listedAt > RELIST_MS) relist();
+});
 
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 's') {

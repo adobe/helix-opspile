@@ -268,6 +268,18 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       const file = await (await call(env, ADMIN, 'GET', '/api/kb/file?repo=kb-team-helix&path=systemprompt.md')).json();
       assert.match(file.text, /type: System Prompt[\s\S]*generated: \{ by: human:ada@staff\.example, at: [^}]+\}[\s\S]*Sign as the team\./);
       assert.equal(file.hash, created.hash);
+      // The listing's hashes read its files at once, as the editor fetches them ahead; a hash
+      // the repo does not have is left out, and the Artifacts calls show in Server-Timing.
+      const missing = '0'.repeat(40);
+      const hashes = [...files.files.map((f) => f.hash), missing].join(',');
+      res = await call(env, ADMIN, 'GET', `/api/kb/blobs?repo=kb-team-helix&hashes=${hashes}`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('server-timing'), /artifacts;dur=[\d.]+;desc="\d+ calls in \d+ rounds"/);
+      const read = (await res.json()).blobs;
+      assert.deepEqual(Object.keys(read).sort(), files.files.map((f) => f.hash).sort());
+      assert.equal(read[file.hash], file.text);
+      assert.equal((await call(env, ADMIN, 'GET', '/api/kb/blobs?repo=kb-team-helix&hashes=nope')).status, 400);
+      assert.equal((await call(env, ADMIN, 'GET', `/api/kb/blobs?repo=kb-team-other&hashes=${missing}`)).status, 404);
       assert.match(srv.show('kb-team-helix', 'log.md'), /\*\*Update\*\*: Add agent instructions \(Ada\)/);
 
       // Creating it again, or saving from an old version, is a conflict that returns the file.
