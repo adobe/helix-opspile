@@ -41,7 +41,8 @@ import { draftCounts, draftsSince, openDrafts } from '../draftevents.js';
  *
  * The chart has about as many columns whatever the period (`chartUnit`): an hour each for a week
  * or less (from `cogs_hours`, while it has the hours), a day each up to DAILY_DAYS, a week (from
- * Monday, UTC) each for longer.
+ * Monday, UTC) each for longer. Its columns are by service, and by customer or team too when
+ * asked (`by`): the customers the CHART_GROUPS biggest of what is selected, the rest as OTHER.
  */
 
 const MAX_DAYS = 400;
@@ -53,6 +54,11 @@ const DAY_MS = 86400000;
 const HOUR_MS = 3600000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SHARED = '';
+/** What the chart can be by, as well as by service: customers or teams. */
+const BY = ['services', 'orgs', 'teams'];
+/** The most customers the chart has apiece; the rest are OTHER, together. */
+export const CHART_GROUPS = 10;
+export const OTHER = '(other)';
 
 const ms = (day) => Date.parse(`${day}T00:00:00Z`);
 /** A list parameter; `(shared)` (a customer) and `(none)` (a team) stand for the shared rows. */
@@ -106,7 +112,8 @@ const mondayOf = (day) => dayOf(ms(day) - ((new Date(ms(day)).getUTCDay() + 6) %
 /**
  * The chart's columns, `{ at, services }` (and `until`, a week's last day): an hour's `at` is
  * `YYYY-MM-DDTHH:00:00Z`, up to the hour of `now`; a day's and a week's `YYYY-MM-DD`, a week cut
- * to the period. `costs` maps a day (and hour, `YYYY-MM-DD HH`) to its costs per service.
+ * to the period. `costs` maps a day (and hour, `YYYY-MM-DD HH`) to its costs per service (or
+ * customer, or team: `services` is then theirs).
  */
 export function columns(unit, from, to, costs, now = Date.now()) {
   const out = [];
@@ -219,11 +226,25 @@ const acceptedOf = (d) => (d.drafts_sent || 0) + (d.drafts_edited || 0);
 
 /**
  * The flow per day (`hourly`: and hour) and service, of what is selected: the rows of the
- * customers picked (all, when none are), and the shared ones by team, to be shared out.
+ * customers picked (all, when none are), and the shared ones by team, to be shared out. By
+ * customer (`by`), the customers `top` (the others as OTHER) or those picked; by team, the teams.
  */
-async function chartRows(env, from, to, orgs, teams, hourly) {
+async function chartRows(env, from, to, {
+  orgs, teams, hourly, by, top,
+}) {
   const filters = [];
-  const binds = [from, to, ...STOCKS];
+  // The placeholders in the order of the statement: the columns' before the conditions'.
+  const binds = [];
+  let org = "''";
+  if (orgs.length) {
+    org = "CASE WHEN org = '' THEN '' ELSE org END";
+  } else if (by === 'orgs') {
+    org = top.length
+      ? `CASE WHEN org = '' THEN '' WHEN org IN (${top.map(() => '?').join(', ')}) THEN org ELSE '${OTHER}' END`
+      : `CASE WHEN org = '' THEN '' ELSE '${OTHER}' END`;
+    binds.push(...top);
+  }
+  binds.push(from, to, ...STOCKS);
   if (orgs.length) {
     filters.push(`(org = '' OR org IN (${orgs.map(() => '?').join(', ')}))`);
     binds.push(...orgs);
@@ -231,8 +252,8 @@ async function chartRows(env, from, to, orgs, teams, hourly) {
   const { results } = await env.DB.prepare(`SELECT day, ${hourly ? 'hour' : '0'} AS hour,
       service, metric, detail,
       CASE WHEN org = '' THEN '' ELSE '*' END AS who, CASE WHEN org = '' THEN team ELSE '' END AS pool,
-      ${orgs.length ? "CASE WHEN org = '' THEN '' ELSE org END" : "''"} AS org,
-      ${teams.length ? 'team' : "''"} AS team, SUM(quantity) AS quantity
+      ${org} AS org, ${teams.length || by === 'teams' ? 'team' : "''"} AS team,
+      SUM(quantity) AS quantity
     FROM ${hourly ? 'cogs_hours' : 'cogs_usage'} WHERE day >= ? AND day <= ? AND service != 'volume'
       AND service || '/' || metric NOT IN (${STOCKS.map(() => '?').join(', ')})
       ${filters.length ? `AND ${filters.join(' AND ')}` : ''}
@@ -386,7 +407,7 @@ export function experimentsOf(rows) {
   });
 }
 
-/** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate. */
+/** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate, by. */
 export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const { from, to, days } = period(url, now);
   const unit = chartUnit({ from, days }, now);
@@ -394,10 +415,16 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const orgs = csv(url.searchParams.get('org'));
   const teams = csv(url.searchParams.get('team'));
   const spread = url.searchParams.get('allocate') !== 'none';
+  const by = BY.includes(url.searchParams.get('by')) ? url.searchParams.get('by') : 'services';
+  const chartOf = (top) => chartRows(env, from, to, {
+    orgs, teams, hourly: unit === 'hour', by, top,
+  });
+  // By customer, but none picked: the biggest customers' first, then their chart.
+  const later = by === 'orgs' && !orgs.length;
 
-  const [rows, dayRows, firstDay, firstDraft, open] = await Promise.all([
+  const [rows, early, firstDay, firstDraft, open] = await Promise.all([
     periodRows(env, from, to),
-    chartRows(env, from, to, orgs, teams, unit === 'hour'),
+    later ? null : chartOf([]),
     env.DB.prepare('SELECT source, MIN(day) AS day FROM cogs_usage GROUP BY source').all()
       .then((r) => r.results || []).catch(() => []),
     draftsSince(env).catch(() => null),
@@ -430,6 +457,9 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
   const perOf = (flow, n) => (est ? per(flow, n) : null);
   const perDraftOf = (flow) => (estD ? per(flow, acceptedOf(estD.drafts)) : null);
   const { chosen, messages, threads } = all;
+  const top = later ? [...all.org.values()].filter((g) => g.key !== SHARED && g.flow > 0)
+    .sort((a, b) => b.flow - a.flow).slice(0, CHART_GROUPS).map((g) => g.key) : null;
+  const dayRows = later ? await chartOf(top) : early;
   const flowUsd = all.flow;
 
   const byService = SERVICES.map((s) => {
@@ -483,20 +513,55 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     }
     return part.get(pool);
   };
+  // By customer or team: whose a shared row of a pool is, `[customer or team, part]` of what is
+  // picked, adding up to its `shareOf`; the customers not in `top` as OTHER.
+  const keyOf = (org, team) => {
+    if (by === 'teams') {
+      return team;
+    }
+    return !top || org === SHARED || top.includes(org) ? org : OTHER;
+  };
+  const whose = new Map();
+  const whoseOf = (pool) => {
+    if (!whose.has(pool)) {
+      const split = spread ? shares(weights, pool) : null;
+      whose.set(pool, split
+        ? split.filter(([org, team]) => pick({ org, team }))
+          .map(([org, team, p]) => [keyOf(org, team), p])
+        : [[keyOf(SHARED, pool), Number(pick({ org: SHARED, team: pool }))]]);
+    }
+    return whose.get(pool);
+  };
   const costs = new Map();
+  const groups = new Map();
+  const add = (map, key, id, usd) => {
+    if (usd) {
+      const d = map.get(key) || {};
+      d[id] = (d[id] || 0) + usd;
+      map.set(key, d);
+    }
+  };
   for (const r of dayRows) {
     if (!known(r) || !inServices(r)) {
       // eslint-disable-next-line no-continue
       continue;
     }
     const f = r.who === SHARED ? shareOf(r.pool) : Number(pick(r));
-    const usd = f ? costOf(r.service, r.metric, r.detail, r.quantity) * f : 0;
-    if (usd) {
-      const key = unit === 'hour' ? `${r.day} ${pad(r.hour)}` : r.day;
-      const d = costs.get(key) || {};
-      d[r.service] = (d[r.service] || 0) + usd;
-      costs.set(key, d);
+    const cost = f ? costOf(r.service, r.metric, r.detail, r.quantity) : 0;
+    const key = unit === 'hour' ? `${r.day} ${pad(r.hour)}` : r.day;
+    add(costs, key, r.service, cost * f);
+    if (cost && by !== 'services') {
+      const parts = r.who === SHARED ? whoseOf(r.pool) : [[by === 'orgs' ? r.org : r.team, 1]];
+      for (const [g, p] of parts) {
+        add(groups, key, g, cost * p);
+      }
     }
+  }
+  const chartColumns = columns(unit, from, to, costs, now);
+  if (by !== 'services') {
+    columns(unit, from, to, groups, now).forEach((col, i) => {
+      chartColumns[i].groups = col.services;
+    });
   }
 
   // Customers and teams: what they cost, of what is selected (but every customer, or team), and
@@ -561,7 +626,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     drafts,
     services: byService,
     experiments: experimentsOf(chosen),
-    chart: { unit, columns: columns(unit, from, to, costs, now) },
+    chart: { unit, by, columns: chartColumns },
     orgs: group('org').map((g) => ({
       ...g,
       org: g.key,

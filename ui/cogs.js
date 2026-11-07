@@ -17,8 +17,9 @@
  * the period, the services and the customers and teams; they are the page's address, so a view
  * can be linked, and the header brings it back as it was left. A click on a service in the legend
  * picks it, on a customer or a team picks them; a service's row opens its metrics. Under the
- * chart, a treemap shows where the period's flow went: by service (and its metrics), customer or
- * team; a click on a tile picks it too.
+ * chart, a treemap shows where the period's flow went. The chart and the treemap are both by
+ * service (the treemap's tiles holding their metrics), by customer or by team, as the switch in
+ * their card's heading says (`by`, in the address too); a click on a tile picks it too.
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -26,6 +27,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 }[c]));
 
 const DAY_MS = 86400000;
+/** What the chart and the treemap are by, with the names their switch shows. */
+const TM = { services: 'Services', orgs: 'Customers', teams: 'Teams' };
 const RANGES = [
   { id: '7d', label: '7 days', title: 'The last 7 days, today included' },
   { id: '30d', label: '30 days', title: 'The last 30 days, today included' },
@@ -51,19 +54,26 @@ const COLORS = {
   analytics_engine: '#b9c7d8',
 };
 const color = (id) => COLORS[id] || '#8b929b';
+/**
+ * The customers' or teams' colours, biggest first (`data-series` g0 to g9), as many as the chart
+ * has customers apiece (src/cogs/report.js, CHART_GROUPS); the rest are Other, the shared rows
+ * Shared.
+ */
+const GROUPS = ['#5258e4', '#d83790', '#e68619', '#2680eb', '#9256d9', '#e2499b', '#0fb5ae',
+  '#b33ec1', '#33ab84', '#7fb800'];
+const OTHER = '(other)';
+const GREY = '#8b929b';
 
 const state = {
   me: null,
   q: {
-    range: '30d', from: '', to: '', service: [], org: [], team: [], allocate: true,
+    range: '30d', from: '', to: '', service: [], org: [], team: [], allocate: true, by: 'services',
   },
   data: null,
   error: '',
   open: new Set(),
   sort: { orgs: 'flow', teams: 'flow' },
   all: { orgs: false },
-  // What the treemap is of: services, orgs or teams.
-  tm: 'services',
   loading: 0,
 };
 
@@ -146,6 +156,7 @@ function fromUrl() {
     org: list('org'),
     team: list('team'),
     allocate: u.searchParams.get('allocate') !== 'none',
+    by: TM[u.searchParams.get('by')] ? u.searchParams.get('by') : 'services',
   };
   if (!q.range && !q.from) q.range = '30d';
   if (q.range && q.range !== 'custom') Object.assign(q, rangeDays(q.range));
@@ -164,6 +175,7 @@ function toUrl({ push = true } = {}) {
   }
   for (const k of ['service', 'org', 'team']) if (q[k].length) u.searchParams.set(k, q[k].join(','));
   if (!q.allocate) u.searchParams.set('allocate', 'none');
+  if (q.by !== 'services') u.searchParams.set('by', q.by);
   const next = `${u.pathname}${u.search}`;
   if (next !== `${location.pathname}${location.search}`) history[push ? 'pushState' : 'replaceState'](null, '', next);
 }
@@ -173,6 +185,7 @@ function apiUrl() {
   const p = new URLSearchParams({ from: q.from, to: q.to });
   for (const k of ['service', 'org', 'team']) if (q[k].length) p.set(k, q[k].join(','));
   if (!q.allocate) p.set('allocate', 'none');
+  if (q.by !== 'services') p.set('by', q.by);
   return `/api/admin/cogs?${p}`;
 }
 
@@ -390,15 +403,87 @@ function labelled(unit, cols, bw) {
   return (x, i) => (i % every === 0 ? x.at.slice(5, 10) : '');
 }
 
+/** What `d` is by: services, orgs or teams (the answer's, which the switch may be ahead of). */
+const byOf = (d) => (TM[d.chart.by] ? d.chart.by : 'services');
+
+/**
+ * The series of the chart and its legend, biggest first: `{ id, name, series, color, pick, on,
+ * title }` (`pick` the attributes a click picks it by, none for Other), and `of(column)`, a
+ * column's flow per series `id`. By customer or team, the biggest in the chart have a colour each
+ * (`slots`, their series), the shared rows are Shared, and the rest Other. Ranked by the chart's
+ * own columns, which are of what is picked, not by `d.orgs` or `d.teams`: those list every
+ * customer, or team, whatever is picked, so that another can be.
+ */
+function seriesOf(d) {
+  const by = byOf(d);
+  if (by === 'services') {
+    return {
+      list: d.services.filter((s) => s.flow > 0).map((s) => ({
+        id: s.id,
+        name: s.name,
+        series: s.id,
+        color: color(s.id),
+        pick: `data-service="${esc(s.id)}"`,
+        on: state.q.service.includes(s.id),
+        title: `Only ${s.name} (again: all)`,
+      })),
+      of: (x) => x.services,
+      slots: new Map(),
+    };
+  }
+  const key = by === 'orgs' ? 'org' : 'team';
+  const flows = new Map();
+  for (const x of d.chart.columns) {
+    for (const [k, v] of Object.entries(x.groups || {})) {
+      if (k !== OTHER) flows.set(k, (flows.get(k) || 0) + v);
+    }
+  }
+  const ranked = [...flows].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const slots = new Map(ranked.filter((k) => k !== '').slice(0, GROUPS.length)
+    .map((k, i) => [k, i]));
+  const names = new Map(d[by].map((g) => [g[key], g.name]));
+  const fold = (k) => (k === '' || slots.has(k) ? k : OTHER);
+  const of = (x) => {
+    const out = {};
+    for (const [k, v] of Object.entries(x.groups || {})) out[fold(k)] = (out[fold(k)] || 0) + v;
+    return out;
+  };
+  const list = ranked.filter((k) => k === '' || slots.has(k)).map((k) => {
+    const on = state.q[key].includes(k || (key === 'org' ? SHARED_ORG : NO_TEAM));
+    return {
+      id: k,
+      name: names.get(k) ?? (key === 'org' ? orgName(k) : teamName(k)),
+      series: k === '' ? 'shared' : `g${slots.get(k)}`,
+      color: k === '' ? GREY : GROUPS[slots.get(k)],
+      pick: `data-pick="${key}" data-value="${esc(k)}"`,
+      on,
+      title: on ? 'Picked: click to drop' : 'Only this one',
+    };
+  });
+  if (ranked.length > list.length || d.chart.columns.some((x) => x.groups?.[OTHER] > 0)) {
+    list.push({
+      id: OTHER,
+      name: by === 'orgs' ? 'Other customers' : 'Other teams',
+      series: 'other',
+      color: GREY,
+      pick: '',
+      on: false,
+      title: `The ${by === 'orgs' ? 'customers' : 'teams'} past the ${GROUPS.length} biggest, together`,
+    });
+  }
+  return { list, of, slots };
+}
+
 /**
  * Stacked bars, an hour, a day or a week each (as many columns, roughly, whatever the period), a
- * colour per service, biggest at the bottom; drawn at the width it has (`width`, in CSS pixels),
- * so the text is not stretched.
+ * colour per service, customer or team (`seriesOf`), biggest at the bottom; drawn at the width it
+ * has (`width`, in CSS pixels), so the text is not stretched.
  */
 function chart(d, width) {
-  const order = d.services.filter((s) => s.flow > 0).map((s) => s.id);
-  const { unit, columns } = d.chart;
-  const totals = columns.map((x) => order.reduce((n, id) => n + (x.services[id] || 0), 0));
+  const { list, of } = seriesOf(d);
+  const { unit } = d.chart;
+  const columns = d.chart.columns.map(of);
+  const totals = columns.map((x) => list.reduce((n, s) => n + (x[s.id] || 0), 0));
   const top = Math.max(...totals, 0);
   if (!top) return '<div class="empty">Nothing counted in this period yet.</div>';
   const max = niceMax(top);
@@ -414,26 +499,28 @@ function chart(d, width) {
   const grid = steps.map((f) => `<line x1="${L}" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}"/>`).join('');
   // Labels on the halves: a quarter of 2.5 or 5 is not a round number.
   const ticks = [0, 0.5, 1].map((f) => `<text x="${L - 8}" y="${y(max * f) + 4}" text-anchor="end">${usd(max * f)}</text>`).join('');
-  const label = labelled(unit, columns, bw);
+  const at = d.chart.columns;
+  const label = labelled(unit, at, bw);
   // By the hour, a line at each midnight.
-  const days = unit === 'hour' ? columns.map((x, i) => (i && x.at.slice(11, 13) === '00' ? `<line x1="${L + i * bw}" x2="${L + i * bw}" y1="8" y2="${H - B}"/>` : '')).join('') : '';
+  const days = unit === 'hour' ? at.map((x, i) => (i && x.at.slice(11, 13) === '00' ? `<line x1="${L + i * bw}" x2="${L + i * bw}" y1="8" y2="${H - B}"/>` : '')).join('') : '';
   const cols = columns.map((x, i) => {
     const x0 = L + i * bw;
     let acc = 0;
-    const rects = order.map((id) => {
-      const v = x.services[id] || 0;
+    const rects = list.map((s) => {
+      const v = x[s.id] || 0;
       if (!v) return '';
       const t = y(acc + v);
-      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${color(id)}" data-series="${esc(id)}"/>`;
+      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${s.color}" data-series="${esc(s.series)}"/>`;
       acc += v;
       return r;
     }).join('');
-    const text = label(x, i);
+    const text = label(at[i], i);
     const tick = text ? `<text x="${x0 + bw / 2}" y="${H - 5}" text-anchor="middle">${text}</text>` : '';
     return `<g class="col" data-i="${i}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${tick}</g></g>`;
   }).join('');
-  const legend = order.map((id) => `<button type="button" data-service="${esc(id)}" aria-pressed="${state.q.service.includes(id)}" title="Only ${esc(serviceName(id))} (again: all)"><span class="dot" data-series="${esc(id)}" style="background:${color(id)}"></span>${esc(serviceName(id))}</button>`).join('');
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Flow cost per ${UNITS[unit]}, by service">
+  // Other is no one to pick: an entry, but not a button that does anything.
+  const legend = list.map((s) => `<button type="button" ${s.pick || 'disabled'} aria-pressed="${s.on}" title="${esc(s.title)}"><span class="dot" data-series="${esc(s.series)}" style="background:${s.color}"></span>${esc(s.name)}</button>`).join('');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Flow cost per ${UNITS[unit]}, by ${esc(TM[byOf(d)].toLowerCase())}">
     <g class="grid">${grid}${days}</g><g class="axis">${ticks}</g>${cols}</svg><div class="tip" id="tip" hidden></div>
     <div class="legend">${legend}</div>`;
 }
@@ -504,12 +591,10 @@ const fit = (text, w) => {
   return text.length > n ? `${text.slice(0, n - 1)}…` : text;
 };
 
-/** What the treemap is of, with the names its switch shows. */
-const TM = { services: 'Services', orgs: 'Customers', teams: 'Teams' };
-
 /**
- * The tiles of the treemap, `{ value, name, color, series, pick, children }`: the services' flow (and their
- * metrics' inside), or the customers' or teams' (the shared rows grey).
+ * The tiles of the treemap, `{ value, name, color, series, pick, children }`: the services' flow
+ * (and their metrics' inside), or the customers' or teams', in the chart's colours (`seriesOf`):
+ * the biggest their own, the shared rows Shared's, the rest Other's.
  */
 function tmItems(d, by) {
   if (by === 'services') {
@@ -524,30 +609,35 @@ function tmItems(d, by) {
     }));
   }
   const key = by === 'orgs' ? 'org' : 'team';
-  return [...d[by]].filter((g) => g.flow > 0).sort((a, b) => b.flow - a.flow).map((g, i) => ({
+  const { slots } = seriesOf(d);
+  const seriesFor = (k) => {
+    if (k === '') return 'shared';
+    return slots.has(k) ? `g${slots.get(k)}` : 'other';
+  };
+  return [...d[by]].filter((g) => g.flow > 0).sort((a, b) => b.flow - a.flow).map((g) => ({
     value: g.flow,
     name: g.name,
-    // The biggest the strongest, the shared rows grey.
-    color: g[key] === '' ? '#8b929b' : `color-mix(in srgb, var(--accent) ${Math.max(35, 100 - i * 8)}%, var(--card))`,
-    series: g[key] === '' ? 'shared' : null,
+    color: slots.has(g[key]) ? GROUPS[slots.get(g[key])] : GREY,
+    series: seriesFor(g[key]),
     pick: `data-pick="${key}" data-value="${esc(g[key])}"`,
     picked: state.q[key].includes(g[key] || (key === 'org' ? SHARED_ORG : NO_TEAM)),
   }));
 }
 
-/** The treemap of what `state.tm` says, at the width it has (`width`, in CSS pixels). */
+/** The treemap by what the chart is by, at the width it has (`width`, in CSS pixels). */
 function treemap(d, width) {
-  const items = tmItems(d, state.tm);
+  const by = byOf(d);
+  const items = tmItems(d, by);
   const total = items.reduce((n, it) => n + it.value, 0);
   if (!total) return '<div class="empty">Nothing counted in this period yet.</div>';
   const W = Math.max(320, Math.round(width));
   const H = 280;
   const share = (v) => `${((v / total) * 100).toFixed(v / total < 0.1 ? 1 : 0)}%`;
-  const label = (t, name, v, light) => {
+  const label = (t, name, v) => {
     if (t.w < 44 || t.h < 20) return '';
     const head = fit(name, t.w);
     const sub = t.h >= 36 ? fit(`${usd(v)} · ${share(v)}`, t.w) : '';
-    const cls = light ? 'tl light' : 'tl';
+    const cls = 'tl';
     return `<text class="${cls}" x="${t.x + 6}" y="${t.y + 15}">${esc(head)}</text>${sub ? `<text class="${cls} v" x="${t.x + 6}" y="${t.y + 30}">${esc(sub)}</text>` : ''}`;
   };
   const tiles = squarify(items, {
@@ -563,10 +653,10 @@ function treemap(d, width) {
       inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''} fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
       t.kids = kids;
     }
-    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''}/>${label(t, t.name, t.value, state.tm !== 'services')}</g>${inner}`;
+    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''}/>${label(t, t.name, t.value)}</g>${inner}`;
   }).join('');
   state.tmTiles = { items, total };
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the flow goes, by ${esc(TM[state.tm].toLowerCase())}">${tiles}</svg><div class="tip" id="tmtip" hidden></div>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the flow goes, by ${esc(TM[by].toLowerCase())}">${tiles}</svg><div class="tip" id="tmtip" hidden></div>`;
 }
 
 /** The treemap again, at the width its card has now. */
@@ -672,8 +762,8 @@ function render() {
     ${kpis(d)}
     ${draftsCard(d)}
     ${experimentsCard(d)}
-    <div class="card"><h2>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></h2><div class="chart" id="chart"></div></div>
-    <div class="card"><h2 class="split"><span>Where the flow goes</span><span class="seg" id="tmBy">${Object.entries(TM).map(([id, name]) => `<button type="button" data-tm-by="${id}" aria-pressed="${state.tm === id}">${name}</button>`).join('')}</span></h2><div class="treemap" id="treemap"></div></div>
+    <div class="card"><h2 class="split"><span>Flow per ${UNITS[d.chart.unit]} <span class="sub">${esc(d.from)} – ${esc(d.to)}</span></span><span class="seg" id="tmBy" role="group" aria-label="By">${Object.entries(TM).map(([id, name]) => `<button type="button" data-tm-by="${id}" aria-pressed="${state.q.by === id}" title="The chart and the treemap by ${name.toLowerCase()}">${name}</button>`).join('')}</span></h2><div class="chart" id="chart"></div>
+      <h3>Where the flow goes</h3><div class="treemap" id="treemap"></div></div>
     <div class="cols">
       <div class="card"><h2>Services</h2>${servicesTable(d)}</div>
       <div class="card"><h2>Customers</h2>${whoTable('orgs', d.orgs)}</div>
@@ -712,9 +802,11 @@ function tooltip(e) {
   if (!g || !state.data) { tip.hidden = true; return; }
   const { unit, columns } = state.data.chart;
   const x = columns[Number(g.dataset.i)];
-  const items = Object.entries(x.services).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  const total = items.reduce((n, [, v]) => n + v, 0);
-  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map(([id, v]) => `<div class="row"><span class="dot" data-series="${esc(id)}" style="background:${color(id)}"></span><span>${esc(serviceName(id))}</span><span>${usd(v)}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
+  const { list, of } = seriesOf(state.data);
+  const values = of(x);
+  const items = list.filter((s) => values[s.id] > 0).sort((a, b) => values[b.id] - values[a.id]);
+  const total = items.reduce((n, s) => n + values[s.id], 0);
+  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map((s) => `<div class="row"><span class="dot" data-series="${esc(s.series)}" style="background:${s.color}"></span><span>${esc(s.name)}</span><span>${usd(values[s.id])}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
   tip.hidden = false;
   const box = $('chart').getBoundingClientRect();
   const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);
@@ -766,9 +858,9 @@ function wire() {
   $('body').addEventListener('click', (e) => {
     const by = e.target.closest('[data-tm-by]');
     if (by) {
-      state.tm = by.dataset.tmBy;
+      if (by.dataset.tmBy === state.q.by) return;
       $('tmBy').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === by)));
-      drawTreemap();
+      change((q) => { q.by = by.dataset.tmBy; });
       return;
     }
     const svc = e.target.closest('[data-service]');
