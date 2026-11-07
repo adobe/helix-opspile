@@ -409,8 +409,10 @@ const byOf = (d) => (TM[d.chart.by] ? d.chart.by : 'services');
 /**
  * The series of the chart and its legend, biggest first: `{ id, name, series, color, pick, on,
  * title }` (`pick` the attributes a click picks it by, none for Other), and `of(column)`, a
- * column's flow per series `id`. By customer or team, the biggest have a colour each
- * (`slots`, their series), the shared rows are Shared, and the rest Other.
+ * column's flow per series `id`. By customer or team, the biggest in the chart have a colour each
+ * (`slots`, their series), the shared rows are Shared, and the rest Other. Ranked by the chart's
+ * own columns, which are of what is picked, not by `d.orgs` or `d.teams`: those list every
+ * customer, or team, whatever is picked, so that another can be.
  */
 function seriesOf(d) {
   const by = byOf(d);
@@ -430,21 +432,27 @@ function seriesOf(d) {
     };
   }
   const key = by === 'orgs' ? 'org' : 'team';
-  const ranked = d[by].filter((g) => g.flow > 0).sort((a, b) => b.flow - a.flow);
-  const slots = new Map(ranked.filter((g) => g[key] !== '').slice(0, GROUPS.length)
-    .map((g, i) => [g[key], i]));
+  const flows = new Map();
+  for (const x of d.chart.columns) {
+    for (const [k, v] of Object.entries(x.groups || {})) {
+      if (k !== OTHER) flows.set(k, (flows.get(k) || 0) + v);
+    }
+  }
+  const ranked = [...flows].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const slots = new Map(ranked.filter((k) => k !== '').slice(0, GROUPS.length)
+    .map((k, i) => [k, i]));
+  const names = new Map(d[by].map((g) => [g[key], g.name]));
   const fold = (k) => (k === '' || slots.has(k) ? k : OTHER);
   const of = (x) => {
     const out = {};
     for (const [k, v] of Object.entries(x.groups || {})) out[fold(k)] = (out[fold(k)] || 0) + v;
     return out;
   };
-  const list = ranked.filter((g) => g[key] === '' || slots.has(g[key])).map((g) => {
-    const k = g[key];
+  const list = ranked.filter((k) => k === '' || slots.has(k)).map((k) => {
     const on = state.q[key].includes(k || (key === 'org' ? SHARED_ORG : NO_TEAM));
     return {
       id: k,
-      name: g.name,
+      name: names.get(k) ?? (key === 'org' ? orgName(k) : teamName(k)),
       series: k === '' ? 'shared' : `g${slots.get(k)}`,
       color: k === '' ? GREY : GROUPS[slots.get(k)],
       pick: `data-pick="${key}" data-value="${esc(k)}"`,
