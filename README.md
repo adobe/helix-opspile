@@ -172,12 +172,21 @@ deploy, and load teams, people and rules (data, never committed) with `cf d1 que
 
 `/inbox`, `/api` and `/spectrum` (with `/inbox/admin` and `/inbox/kb` under them) are one
 Cloudflare Access application. People sign in with **Slack** (Slack's OpenID Connect, through the opspile
-Slack app), **Microsoft** (Entra ID, the opspile app registration, our tenant only) or a
-**one-time code** by email. Whichever they use, the application's allow policy decides, by
+Slack app), **Microsoft** (Entra ID, the opspile app registration, our tenant only), a
+**one-time code** by email, or a **passkey**. Whichever they use, the application's allow policy decides, by
 email: it lists the staff members of the ops teams, and the Worker keeps it so (see
 `ACCESS_APP_ID` above) after every membership change in the admin pages and on the cron. The
 Worker trusts only a verified `Cf-Access-Jwt-Assertion` whose email is a person in D1 on an ops
 team, and shows them the threads of their own teams.
+
+**Passkeys** are Access's own login method (the account's *Passkeys* identity provider, allowed
+in the application's login methods; the login page does not open the browser's passkey prompt by
+itself). Anyone the policy lets in may add one: on the Access login page, *Sign in with a
+passkey*, then *Don't have a passkey? Set one up*, and sign in once with Slack, Microsoft or a
+code, which ties the passkey to that email. After that the passkey alone signs them in, to
+the same email, so the policy and the Worker see no difference. *Manage passkeys* on the same
+page renames or deletes one; an admin removes a lost one under Zero Trust, *Users*. A passkey
+lets nobody in by itself: someone the policy drops (off every team) is out, passkey or not.
 
 **No-team mode.** With `SIGNIN_DOMAINS`, anyone with an email at one of those domains may sign
 in too, team or not (the policy gets those domains, see `SIGNIN_DOMAINS` above). Someone on no
