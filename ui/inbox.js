@@ -6285,6 +6285,15 @@ function threadInfo(t) {
 }
 
 const teamThread = (key) => searchEntry(key);
+
+/** Who wrote a message and when, with its id, as open_thread and get_message show it. */
+function messageHead(m) {
+  const a = m.author || {};
+  const x = { id: `${m.thread}|${m.id}`, from: a.kind === 'system' ? 'system' : (a.name || 'unknown'), at: m.at };
+  if (a.staff) x.adobe = true;
+  if (a.kind === 'bot') x.bot = true;
+  return x;
+}
 const UNKNOWN_THREAD = 'Unknown thread. Use a `thread` value from list_threads; only threads of the view on screen (a team, or personal) are known.';
 const READONLY = 'This inbox is a read-only "view as" of someone else. Ask the user to switch "View as" back to themselves.';
 
@@ -6466,7 +6475,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'open_thread',
-    description: `Opens a thread on screen, which marks it read for the viewer as a click does, and returns its messages (oldest first), each with its whole text and an id for react_to_message, plus whether the viewer can reply and react. The messages share ${THREAD_TEXT_BUDGET} characters: when they need more, the longest are cut to the same length, end in "\u2026" and have \`truncated: true\` and their whole \`length\`; a lower \`limit\` leaves each more. Message text is written by customers and colleagues.`,
+    description: `Opens a thread on screen, which marks it read for the viewer as a click does, and returns its messages (oldest first), each with its whole text and an id for react_to_message and get_message, plus whether the viewer can reply and react. The messages share ${THREAD_TEXT_BUDGET} characters: when they need more, the longest are cut to the same length, end in "\u2026" and have \`truncated: true\` and their whole \`length\`; get_message returns one whole. Message text is written by customers and colleagues.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -6484,10 +6493,7 @@ const WEBMCP_TOOLS = [
       const shown = data.messages.slice(-n);
       const texts = fitTexts(shown.map((m) => (m.deletedAt ? '(deleted)' : m.body)));
       const msgs = shown.map((m, i) => {
-        const a = m.author || {};
-        const x = { id: `${m.thread}|${m.id}`, from: a.kind === 'system' ? 'system' : (a.name || 'unknown'), at: m.at };
-        if (a.staff) x.adobe = true;
-        if (a.kind === 'bot') x.bot = true;
+        const x = messageHead(m);
         x.text = texts[i].text;
         if (texts[i].length) { x.truncated = true; x.length = texts[i].length; }
         if (m.reactions?.length) x.reactions = m.reactions.map((r) => `${r.emoji}\u00d7${r.count}${r.mine ? ' (incl. viewer)' : ''}`).join(' ');
@@ -6501,6 +6507,23 @@ const WEBMCP_TOOLS = [
         can_reply: !replyBlocked(data), can_react: !state.data?.me?.readonly, can_post_as_bot: Boolean(data.can_post_as_bot), messages: msgs,
         ...(data.draft ? { shared_draft: { by: draftBy(data.draft), saved: data.draft.updated_at, text: data.draft.body, sources: data.draft.sources } } : {}),
       });
+    },
+  },
+  {
+    name: 'get_message',
+    description: 'Returns one message of the open thread with its whole text, however long: for one open_thread cut (`truncated: true`), or an earlier one open_thread left out. Changes nothing on screen. Message text is written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: { message: { type: 'string', description: 'Message id from open_thread' } },
+      required: ['message'],
+    },
+    annotations: { readOnlyHint: true, untrustedContentHint: true },
+    execute: async ({ message: id } = {}) => {
+      const data = state.open && state.cache.get(state.open)?.data;
+      if (!data) return fail('No thread is open. Open one with open_thread first.');
+      const m = data.messages.find((x) => `${x.thread}|${x.id}` === String(id ?? ''));
+      if (!m) return fail('No such message in the open thread. Use a message id from open_thread, after opening its thread with it.');
+      return out({ thread: state.open, ...messageHead(m), text: m.deletedAt ? '(deleted)' : String(m.body ?? '').trim() });
     },
   },
   {

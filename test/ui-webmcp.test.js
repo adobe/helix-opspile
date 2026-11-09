@@ -132,3 +132,38 @@ describe('open_thread', () => {
     assert.match(tools.find((t) => t.name === 'list_threads').description, /`thread`/);
   });
 });
+
+describe('get_message', () => {
+  const call = async (args) => JSON.parse(await tools.find((t) => t.name === 'get_message').execute(args));
+
+  it('returns a message open_thread cut, whole, without opening anything', async () => {
+    const long = `${'z'.repeat(budget)}\n\nThe end.`;
+    const res = await open([message('1', long), message('2', 'x'.repeat(budget))]);
+    assert.equal(res.messages[0].truncated, true);
+    const opened = state.cache.get(KEY);
+    assert.deepEqual(await call({ message: res.messages[0].id }), {
+      thread: KEY, id: `${KEY}|1`, from: 'Person 1', at: '2026-11-09T10:00:00Z', text: long,
+    });
+    assert.equal(state.cache.get(KEY), opened);
+  });
+
+  it('also returns an earlier message open_thread left out', async () => {
+    const res = await open([message('1', 'first', { author: { name: 'Ada', staff: true } }), message('2', 'second')], { limit: 1 });
+    assert.equal(res.earlier_messages, 1);
+    const m = await call({ message: `${KEY}|1` });
+    assert.equal(m.text, 'first');
+    assert.equal(m.adobe, true);
+  });
+
+  it('needs the message\'s thread open', async () => {
+    assert.match((await call({ message: `${KEY}|1` })).error, /No thread is open/);
+    await open([message('1', 'first')]);
+    assert.match((await call({ message: 'slack:T1:C2:1.1|1' })).error, /No such message in the open thread/);
+  });
+
+  it('is read-only, and marks its output as untrusted', () => {
+    const tool = tools.find((t) => t.name === 'get_message');
+    assert.deepEqual(tool.annotations, { readOnlyHint: true, untrustedContentHint: true });
+    assert.match(tool.description, /written by customers and colleagues/);
+  });
+});
