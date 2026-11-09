@@ -27,7 +27,8 @@ import { DIMENSIONS, DO_GB, isStock } from './prices.js';
  *   what the buckets and indexes hold.
  * - `d1`: the day's messages and new threads per customer and team (`volume`), and, once a day,
  *   what is kept that only D1 knows: its own size, the agents' storage (`cogs_objects`), the
- *   full-text items (their number times the average size of an upload), and the Workers Paid plan.
+ *   full-text items (their number times the average size of an upload), and the Workers Paid plan;
+ *   and, once a day too, the account's Cloudflare Access seats, from the Access API (`seatRows`).
  *
  * Each run rolls up today and yesterday (late data), and up to BACKFILL_PER_RUN of the last
  * BACKFILL_DAYS that have no `account` or `d1` rows yet. A row is written only when it changed.
@@ -335,6 +336,63 @@ export async function storedRows(env, day) {
   return rowsOf(rows);
 }
 
+const API = 'https://api.cloudflare.com/client/v4';
+/** Access users a page (the API's most), and how many pages are read at most. */
+const SEAT_PAGE = 1000;
+const SEAT_PAGES = 20;
+
+/** Whether the Access seats can be counted: the Access API token and account are set. */
+export const seatsConfigured = (env) => Boolean(env.ACCESS_API_TOKEN && env.ACCESS_ACCOUNT_ID);
+
+/**
+ * The account's Cloudflare Access seats as of now, for `day`: everyone who signed in to an Access
+ * application (or the WARP client) and was not removed since holds one, and every one is priced
+ * (the Free plan's 50 are not taken off: past them, every seat is billed). A holder who is a
+ * person on ops teams is theirs, split evenly between them; anyone else's is shared. Emails stay
+ * here.
+ */
+export async function seatRows(env, day, { fetchImpl = fetch } = {}) {
+  const headers = { authorization: `Bearer ${env.ACCESS_API_TOKEN}` };
+  const holders = [];
+  for (let page = 1; page <= SEAT_PAGES; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await fetchImpl(`${API}/accounts/${env.ACCESS_ACCOUNT_ID}/access/users`
+      + `?per_page=${SEAT_PAGE}&page=${page}`, { headers });
+    // eslint-disable-next-line no-await-in-loop
+    const got = await res.json().catch(() => ({}));
+    if (!got.success) {
+      throw new Error(`access users: ${res.status} ${JSON.stringify(got.errors || []).slice(0, 200)}`);
+    }
+    const users = got.result || [];
+    for (const u of users) {
+      if (u.access_seat || u.gateway_seat) {
+        holders.push(String(u.email || '').toLowerCase());
+      }
+    }
+    const pages = Number(got.result_info?.total_pages) || 1;
+    if (page >= pages || users.length < SEAT_PAGE) {
+      break;
+    }
+  }
+  const { results } = await env.DB.prepare(`SELECT LOWER(p.email) AS email, m.team AS team
+    FROM people p JOIN team_members m ON m.person = p.id WHERE p.email IS NOT NULL`).all();
+  const teamsOf = new Map();
+  for (const r of results || []) {
+    teamsOf.set(r.email, [...(teamsOf.get(r.email) || []), r.team]);
+  }
+  const rows = [];
+  for (const email of holders) {
+    const teams = (email && teamsOf.get(email)) || [''];
+    for (const team of teams) {
+      const share = 1 / teams.length;
+      rows.push({
+        day, team, service: 'zero_trust', metric: 'seats', quantity: share,
+      });
+    }
+  }
+  return rowsOf(rows);
+}
+
 /** The rows of `day` and `source` in `table` (`cogs_usage`, or `cogs_hours`) replaced. */
 async function replace(env, table, day, source, rows, services, now) {
   const at = new Date(now).toISOString();
@@ -405,8 +463,11 @@ async function missingDays(env, source, today, table = 'cogs_usage', back = BACK
   return out;
 }
 
-/** Cron: rolls up today, yesterday and a few missing days. Says how many rows each wrote. */
-export async function rollupCogs(env, { now = Date.now() } = {}) {
+/**
+ * Cron: rolls up today, yesterday and a few missing days. Says how many rows each wrote.
+ * `fetchImpl`: for the Access API (the seats).
+ */
+export async function rollupCogs(env, { now = Date.now(), fetchImpl = fetch } = {}) {
   if (!env.DB) {
     return { skipped: 'no D1' };
   }
@@ -476,6 +537,19 @@ export async function rollupCogs(env, { now = Date.now() } = {}) {
       'd1',
       await storedRows(env, today),
       ['workers', 'd1', 'durable_objects', 'ai_search'],
+      now,
+    ));
+  }
+  // The seats, once a day too: until the first run of the day that could count them.
+  const seated = seatsConfigured(env) && await env.DB.prepare(`SELECT 1 AS one FROM cogs_usage
+    WHERE day = ? AND source = 'd1' AND service = 'zero_trust'`).bind(today).first();
+  if (seatsConfigured(env) && !seated) {
+    await run(`seats ${today}`, async () => replaceDay(
+      env,
+      today,
+      'd1',
+      await seatRows(env, today, { fetchImpl }),
+      ['zero_trust'],
       now,
     ));
   }

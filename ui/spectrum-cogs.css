@@ -358,7 +358,7 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
  * the same in both schemes' values. ui/cogs.js names the service of every dot and column
  * (`data-series`): Amazon Bedrock A, Workers AI B, AI Search C, Durable Objects D, Workers E,
  * Workers Logs F, R2 G, D1 H, Vectorize I, Queues J, Artifacts K, Browser Run L, Workers
- * Analytics Engine M; any other service is F, as Workers Logs.
+ * Analytics Engine M, Cloudflare Access N; any other service is F, as Workers Logs.
  */
 .spectrum [data-series] { --s2-series: var(--spectrum-pink-700); }
 .spectrum [data-series="bedrock"] { --s2-series: var(--spectrum-indigo-1100); }
@@ -374,6 +374,7 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 .spectrum [data-series="artifacts"] { --s2-series: var(--spectrum-red-700); }
 .spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
 .spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
+.spectrum [data-series="zero_trust"] { --s2-series: var(--spectrum-turquoise-1000); }
 /*
  * The customers or teams the chart and the treemap are by (`data-series` g0 to g9, biggest
  * first): the palette's first ten, A to J. The rest together, Other, are its M, silver.

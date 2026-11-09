@@ -53,7 +53,8 @@ const VARS = [
 // in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
 // region (default us-east-2).
 // The sign-in allow list (Cloudflare Access policy of the inbox) follows the ops teams when
-// these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write).
+// these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write). With
+// Access: Audit Logs Read too, the token counts the account's Access seats for COGS.
 const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_ID'] as const;
 // No-team mode, optional: SIGNIN_DOMAINS, comma-separated mail domains whose people may sign in
 // without being on an ops team (their personal view only); the allow list gets them as domains.

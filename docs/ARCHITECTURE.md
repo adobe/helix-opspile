@@ -1786,6 +1786,12 @@ day, what only D1 knows is kept: its own size (`meta.size_after`), the agents' s
 (`cogs_objects`), the full-text items (their number times the average upload of the last 30 days)
 and the Workers Paid plan.
 
+**The Access API** (`seatRows`, with `ACCESS_API_TOKEN` and `ACCESS_ACCOUNT_ID`), once a day too,
+and written as `d1` rows: the account's Zero Trust seats (users with `access_seat` or
+`gateway_seat`), one `seats` each, every one at $7 (the Free plan's 50 are not taken off: past
+them, Pay-as-you-go bills every seat). A holder whose email is a person on ops teams is those teams', split evenly; anyone else's seat is
+shared. The emails stay in the run. A failed read writes nothing, and the next run tries again.
+
 **The rollup.** The cron rolls up today and yesterday every run, and up to three of the last 30 days
 that have no rows of a source yet (backfilling what Cloudflare's analytics and D1 still have; the
 meter's counts start with it). A day of a source is replaced whole, writing only the rows that

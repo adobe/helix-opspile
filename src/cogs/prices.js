@@ -292,6 +292,18 @@ export const SERVICES = [
       },
     ],
   },
+  {
+    id: 'zero_trust',
+    name: 'Cloudflare Access',
+    about: 'The sign-in: a Zero Trust seat for everyone who signed in (the account\'s)',
+    url: 'https://www.cloudflare.com/plans/zero-trust-services/',
+    // Free up to 50 users, but past them Pay-as-you-go bills every seat: every seat costs here.
+    metrics: [
+      {
+        id: 'seats', label: 'Seats', unit: 'seats', per: 1, usd: 7, stock: true,
+      },
+    ],
+  },
 ];
 
 /** What is counted but not priced: how many messages and threads there were. */
