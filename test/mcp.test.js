@@ -386,6 +386,56 @@ describe('mcp tools', () => {
     assert.equal(res.body.result.isError, true);
   });
 
+  /** The test thread, with these texts as its two messages. */
+  const withBodies = (a, b) => {
+    const e = env();
+    const author = { kind: 'person', name: 'Cy', staff: false };
+    const file = (mid, at, body) => render({
+      source: 'slack', thread: SLACK, id: mid, at, author,
+    }, body);
+    e.CHANNELS = bucket({
+      'p/1.1.md': file('1.1', '2026-10-21T10:00:00Z', a),
+      'p/1.2.md': file('1.2', '2026-10-21T10:05:00Z', b),
+    });
+    return e;
+  };
+
+  it('get_thread returns long messages whole, line breaks and all', async () => {
+    const report = `The root cause is a bug in the client.\n\n${'Steps and details. '.repeat(160)}`.trim();
+    assert.ok(report.length > 3000);
+    const t = structured(await callTool(withBodies(report, 'ok'), 'get_thread', { thread: SLACK }));
+    assert.deepEqual(t.messages.map((m) => m.text), [report, 'ok']);
+    assert.ok(t.messages.every((m) => !m.truncated && !('length' in m)));
+  });
+
+  it('get_thread cuts only the longest messages over its budget, and get_message returns one whole', async () => {
+    const long = 'x'.repeat(30000);
+    const e = withBodies(long, long.replace(/x/g, 'y'));
+    const t = structured(await callTool(e, 'get_thread', { thread: SLACK }));
+    const total = t.messages.reduce((n, m) => n + m.text.length, 0);
+    assert.ok(total <= 40000 && total > 39990, `${total}`);
+    for (const m of t.messages) {
+      assert.equal(m.truncated, true);
+      assert.equal(m.length, 30000);
+      assert.ok(m.text.endsWith('\u2026'));
+    }
+    const one = await callTool(e, 'get_message', { message: t.messages[1].message });
+    assert.equal(one.body.result.isError, undefined);
+    assert.deepEqual(structured(one), {
+      thread: SLACK, message: `${SLACK}|1.2`, from: 'Cy', at: '2026-10-21T10:05:00Z', text: long.replace(/x/g, 'y'),
+    });
+  });
+
+  it('get_message explains a bad id, and finds nothing for other teams', async () => {
+    const text = (r) => r.body.result.content[0].text;
+    assert.match(text(await callTool(env(), 'get_message', { message: 'nope' })), /looks like <thread>\|<id>/);
+    assert.match(text(await callTool(env(), 'get_message', { message: `${SLACK}|9.9` })), /No such message/);
+    const other = { ...ME, teams: [{ slug: 'edge', name: 'Edge' }] };
+    const res = await send(env(), req('tools/call', { name: 'get_message', arguments: { message: `${SLACK}|1.1` } }), other);
+    assert.equal(res.body.result.isError, true);
+    assert.match(text(res), /Not found/);
+  });
+
   it('post_as_user posts as the person when the client cannot ask the user', async () => {
     const r = await callTool(await connected(), 'post_as_user', { thread: SLACK, text: 'Looking now' });
     assert.equal(structured(r).ok, true);
