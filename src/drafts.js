@@ -11,6 +11,7 @@
  */
 
 import { json } from './http.js';
+import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
@@ -39,8 +40,8 @@ const PREVIEW = 140;
  * inbox has it (a shared channel's too), and every member thread.
  */
 export async function entryOf(env, key) {
-  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, channel_id
-    FROM threads WHERE thread = ?`).bind(String(key)).first();
+  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, tenant,
+    channel_id FROM threads WHERE thread = ?`).bind(String(key)).first();
   if (!row) {
     return null;
   }
@@ -53,6 +54,7 @@ export async function entryOf(env, key) {
     team: row.team,
     // The channel, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
+    tenant: row.tenant,
     channel_id: row.channel_id,
     teams: await teamsOf(env, row),
     keys: [...new Set([k, row.thread, ...(results || []).map((r) => r.thread)])],
@@ -264,7 +266,10 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
 
 /**
  * GET /api/draft/source?thread=&url=: how the inbox can show one of the sources of the entry's
- * draft (src/sources.js). Any other address is not fetched.
+ * draft (src/sources.js). Any other address is not fetched. A Slack or Teams message is not
+ * fetched either: it is the message as opspile has it (`view: 'message'`, src/messagelinks.js),
+ * which the inbox shows as it shows a message link, else nothing (the platform's page needs
+ * the viewer signed in there, which a frame is not).
  */
 export async function draftSource(env, key, address, canSee, { own, fetchImpl } = {}) {
   const e = await entryOf(env, key);
@@ -274,6 +279,16 @@ export async function draftSource(env, key, address, canSee, { own, fetchImpl } 
   const draft = draftOf(await draftsFor(env, e.keys), e.keys);
   if (!draft?.sources.some((s) => s.url === address)) {
     return json({ error: 'not a source of this draft' }, 404);
+  }
+  const ref = messageRef(address);
+  if (ref) {
+    const message = await linkedMessage(env, address, { near: e, canSee });
+    const where = ref.source === 'teams' ? 'Teams' : 'Slack';
+    return json(message ? { view: 'message', url: address, message } : {
+      view: 'none',
+      url: address,
+      reason: `The inbox does not have this ${where} message, or it is not yours to see.`,
+    });
   }
   return json(await lookAt(address, { own, fetchImpl }));
 }

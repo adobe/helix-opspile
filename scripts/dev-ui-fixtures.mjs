@@ -758,6 +758,16 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
   {
+    // A message of this thread cited too, once its id is known: the source shows its card, not
+    // Slack's page (src/messagelinks.js).
+    const { ch, rootId, messages } = threads.get(preview503);
+    const reply = String(messages[2].id).replace('.', '');
+    drafts.get(preview503).sources.push({
+      url: `https://acme.slack.com/archives/${ch.channelId}/p${reply}?thread_ts=${rootId}&cid=${ch.channelId}`,
+      title: 'Sam: the paths affected',
+    });
+  }
+  {
     // Reactions on the bubbles' edge: two of a kind (one yours) show a count, a single one not.
     const entry = threads.get(preview503);
     const [, , , , ravi, blocked] = entry.messages;

@@ -1335,6 +1335,12 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   a sign-in, is a reason and a link. The route fetches only the sources of the thread's current
   draft, follows at most 4 redirects, each checked (public names, never an address or the
   inbox's own host), and reads at most 512 KB.
+- A source that links to a Slack or Teams message is never fetched (the platform's page needs a
+  sign-in a frame does not have). It is the message as opspile has it (`view: 'message'`,
+  src/messagelinks.js), for a viewer who may see its channel, and the inbox shows it as the card
+  a link to that message in a thread shows (src/ui-markdown.js), in a popover only as tall as
+  the card. Its time shows the message in the inbox: where it is in the open thread, else its
+  thread, opened at it. A message opspile does not have, or the viewer may not see, is a reason.
 
 ### Steering reactions
 

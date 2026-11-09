@@ -1457,6 +1457,27 @@ function searchRows(box) {
   cardGone();
   state.order = hits.map((h) => h.thread);
 }
+/** Scrolls the thread to message `el`, a little below its top. */
+const scrollToMessage = (scroller, el) => { scroller.scrollTop = Math.max(0, el.offsetTop - scroller.offsetTop - 80); };
+/** Marks message `el` for a moment: the one a search or a link was for. */
+function markFound(el) {
+  el.classList.add('found');
+  setTimeout(() => el.classList.remove('found'), 2400);
+}
+/** Shows message `id` of thread `thread`: where it is if the open thread has it, else opens its thread at it. */
+function openMessage(thread, id) {
+  const mid = `${thread}|${id}`;
+  const scroller = $('pane').querySelector('.scroller');
+  const el = scroller?.querySelector(`[data-id="${CSS.escape(mid)}"]`);
+  if (el) {
+    scroller.scrollTo({ top: Math.max(0, el.offsetTop - scroller.offsetTop - 80), behavior: 'smooth' });
+    markFound(el);
+    return;
+  }
+  state.jump = { key: thread, id: mid };
+  openThread(thread);
+}
+
 /** Opens a result at the message that matched. */
 function openHit(key) {
   const el = document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"][data-msg]`);
@@ -2788,9 +2809,9 @@ async function openThread(key, { live = false, cached = false } = {}) {
     const found = jump && scroller.querySelector(`[data-id="${CSS.escape(jump.id)}"]`);
     const firstUnread = myRead && messages.find((m) => m.at > myRead && m.author?.name !== state.me.name);
     const el = found || (firstUnread && scroller.querySelector(`[data-id="${CSS.escape(`${firstUnread.thread}|${firstUnread.id}`)}"]`));
-    if (el) scroller.scrollTop = Math.max(0, el.offsetTop - scroller.offsetTop - 80);
+    if (el) scrollToMessage(scroller, el);
     else scroller.scrollTop = scroller.scrollHeight;
-    if (found) { found.classList.add('found'); setTimeout(() => found.classList.remove('found'), 2400); }
+    if (found) markFound(found);
   }
   wireEditor(key);
   const box = $('reply');
@@ -2941,14 +2962,15 @@ const draftOpen = new Set();
 // The sources of a draft: what an agent says the draft rests on, as links on the draft's line.
 // Only the inbox has them; a reply never does. Resting the pointer on one, or moving the
 // keyboard focus to it, shows the page beside the draft, to check one against the other: in a
-// frame where the site allows that, else as Markdown (GET /api/draft/source says which). It
-// stays while the pointer is on it. Clicking a source opens it in a new tab, also on touch.
+// frame where the site allows that, else as Markdown (GET /api/draft/source says which). A Slack
+// or Teams message is the card a link to it in a thread is (`view: 'message'`), its time opening
+// it here, and the popover only as tall as that. It stays while the pointer is on it. Clicking a source opens it in a new tab, also on touch.
 // The popover hangs off the page, not the line, so a live update leaves its frame alone.
 const SOURCE_DELAY = 180;
 const SOURCE_GRACE = 300;
 const SOURCE_SIDE_BY_SIDE = 860; // the pane's width from which a source fits beside the draft
 const sourcePop = {
-  el: null, key: null, url: null, timer: 0,
+  el: null, key: null, url: null, message: null, timer: 0,
 };
 const sourceViews = new Map(); // `thread\0url` -> the promise of how to show it
 
@@ -2971,7 +2993,19 @@ function sourceView(key, url) {
   return sourceViews.get(k);
 }
 
+// A Teams message link (src/messagelinks.js); Slack's are `Markdown.slackMessageKey`'s.
+const TEAMS_MESSAGE = /^https:\/\/(?:[a-z0-9-]+\.)*teams\.(?:microsoft\.com|cloud\.microsoft)\/l\/message\//i;
+/** A link to a Slack or Teams message: the Worker answers it with the message, not a page. */
+const chatLink = (u) => Boolean(Markdown.slackMessageKey(u)) || TEAMS_MESSAGE.test(u);
+
+/** A cited message as a link to it in a thread shows it (src/ui-markdown.js). */
+function messageSource(m) {
+  const authorKey = m.authorKey || (m.author ? profileKey(null, { name: m.author, platform: m.source || 'slack' }) : '');
+  return Markdown.quoteCardFromHit({ ...m, authorKey, href: pileHref(m.thread) });
+}
+
 function sourceBody(v) {
+  if (v.view === 'message') return `<div class="bubble">${messageSource(v.message)}</div>`;
   if (v.view === 'frame') {
     // No top navigation, no forms, no cookies of the viewer's: an agent picked this page, and
     // what agents read is written by strangers. The header above it says whose page it is.
@@ -2993,19 +3027,33 @@ function sourcePopEl() {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hideSource();
   });
+  // A cited message's time: the message, here (another thread opens at it).
+  el.addEventListener('click', (e) => {
+    const m = sourcePop.message;
+    if (!m || !e.target.closest('a[data-thread]') || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
+    e.preventDefault();
+    hideSource();
+    openMessage(m.thread, m.id);
+  });
   addEventListener('resize', hideSource);
   document.body.append(el);
   sourcePop.el = el;
   return el;
 }
 
-/** Over the pane: its right half above the draft's line, in a narrow one above the reply box. */
-function placeSource(el, under, wide) {
+/**
+ * Over the pane: its right half above the draft's line, in a narrow one above the reply box.
+ * Down to the pane's top, or (`fit`, a message) as tall as what it shows, up to there.
+ */
+function placeSource(el, under, wide, fit = false) {
   const pane = $('pane').getBoundingClientRect();
+  const top = pane.top + 8;
+  const bottom = under.getBoundingClientRect().top - 6;
   el.style.left = `${wide ? pane.left + pane.width / 2 : pane.left + 8}px`;
   el.style.right = `${innerWidth - pane.right + 12}px`;
-  el.style.top = `${pane.top + 8}px`;
-  el.style.bottom = `${innerHeight - under.getBoundingClientRect().top + 6}px`;
+  el.style.top = fit ? 'auto' : `${top}px`;
+  el.style.maxHeight = fit ? `${Math.max(0, bottom - top)}px` : '';
+  el.style.bottom = `${innerHeight - bottom}px`;
 }
 
 async function showSource(key, i) {
@@ -3014,7 +3062,7 @@ async function showSource(key, i) {
   const line = $('draftbar');
   if (!s || !line || state.open !== key || sourcePop.url === s.url) return;
   const el = sourcePopEl();
-  Object.assign(sourcePop, { key, url: s.url });
+  Object.assign(sourcePop, { key, url: s.url, message: null });
   el.innerHTML = `<div class="head"><b>${esc(s.title || hostOf(s.url))}</b><span class="host">${esc(hostOf(s.url))}</span>
     <span class="only">Only your team sees this</span>${sourceLink(s.url, 'Open ↗')}</div>
     ${s.quote ? `<blockquote class="bubble">${md(s.quote)}</blockquote>` : ''}<div class="view"><p class="none">Loading…</p></div>`;
@@ -3024,15 +3072,17 @@ async function showSource(key, i) {
   composerEl.classList.toggle('checking', wide);
   const box = $('reply');
   if (box) growReply(box);
-  placeSource(el, wide ? line : composerEl, wide);
+  placeSource(el, wide ? line : composerEl, wide, chatLink(s.url));
   const v = await sourceView(key, s.url);
-  if (sourcePop.url === s.url) el.querySelector('.view').innerHTML = sourceBody(v);
+  if (sourcePop.url !== s.url) return;
+  sourcePop.message = v.view === 'message' ? v.message : null;
+  el.querySelector('.view').innerHTML = sourceBody(v);
 }
 
 function hideSource() {
   clearTimeout(sourcePop.timer);
   if (!sourcePop.url) return;
-  Object.assign(sourcePop, { key: null, url: null });
+  Object.assign(sourcePop, { key: null, url: null, message: null });
   sourcePop.el.hidden = true;
   sourcePop.el.innerHTML = '';
   const box = $('reply');

@@ -1286,8 +1286,13 @@ async function api(req, res, url) {
     return json(res, { platform: entry.row.source, experts });
   }
   if (url.pathname === '/api/draft/source') {
-    // As src/sources.js would answer about each fixture's source.
+    // As src/sources.js would answer about each fixture's source; a Slack message as
+    // src/messagelinks.js does, the message the store has.
     const u = url.searchParams.get('url');
+    const [message] = slackLinksFor([u]);
+    if (message) {
+      return json(res, { view: 'message', url: u, message: { source: 'slack', ...message } });
+    }
     return json(res, store.sourceViews.get(u) || { view: 'none', url: u, reason: 'The site answered 403: it may need a sign-in.' });
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {

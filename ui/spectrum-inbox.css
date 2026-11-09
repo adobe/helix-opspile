@@ -806,7 +806,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .srcpop .head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srcpop .host, .srcpop .only { color: var(--faint); font-size: var(--spectrum-font-size-75); }
 .srcpop .head a { margin-left: auto; color: var(--link); }
-.srcpop blockquote { flex: none; max-height: 30%; overflow: auto; margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); max-width: none; font-size: var(--spectrum-font-size-100);
+.srcpop > blockquote { flex: none; max-height: 30%; overflow: auto; margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); max-width: none; font-size: var(--spectrum-font-size-100);
   border-radius: 0; border-left: var(--spectrum-border-width-200) solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card)); color: var(--ink); }
 .srcpop .view { flex: 1; min-height: 0; overflow: auto; margin-top: var(--spectrum-spacing-100); }
 .srcpop .view .bubble { max-width: none; background: none; color: var(--ink); padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-200); border-radius: 0; font-size: var(--spectrum-font-size-100); }
@@ -1767,7 +1767,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
 .spectrum .srcpop .head { font-size: var(--spectrum-font-size-75); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum .srcpop .host, .spectrum .srcpop .only { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .srcpop blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
+.spectrum .srcpop > blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
 .spectrum .srcpop .view .none { color: var(--spectrum-neutral-subdued-content-color-default); }
 
 /* The thread's shared draft under the reply box: a dashed card in the accent's subtle fill,
