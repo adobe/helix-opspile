@@ -18,7 +18,7 @@ import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import {
-  fileKind, mentionPattern, render, splitAttachments,
+  channelUrlKey, fileKind, mentionPattern, messageHtml, render, splitAttachments,
 } from '../src/ui-markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
@@ -143,6 +143,13 @@ describe('ui markdown', () => {
     assert.equal(md('- a\n- b\n\n1. c'), '<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol>');
   });
 
+  it('ends a quote where its `>` lines do, as Slack does, but not in code', () => {
+    assert.equal(md('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
+    assert.equal(md('> one\n> two\nthree\nfour'), '<blockquote><p>one<br />two</p></blockquote><p>three<br />four</p>');
+    assert.equal(md('```\n> a\nb\n```'), '<pre><code>&gt; a\nb\n</code></pre>'.replace(/\n/g, ''));
+    assert.equal(messageHtml('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
+  });
+
   it('shows raw HTML and indented text as text', () => {
     assert.equal(md('<b>x</b> <script>alert(1)</script>'), '<p>&lt;b&gt;x&lt;/b&gt; &lt;script&gt;alert(1)&lt;/script&gt;</p>');
     assert.equal(md('    indented'), '<p>indented</p>');
@@ -167,6 +174,23 @@ describe('ui markdown', () => {
       + '<code>#C0AAAAAAAA1</code> or <a target="_blank" rel="noopener" href="https://x.example">#beta-help</a></p>');
     // Without channels, the text stays as it was.
     assert.equal(md('see #C0AAAAAAAA1'), '<p>see #C0AAAAAAAA1</p>');
+  });
+
+  it('links channel links, on any platform, to where the inbox has the channel', () => {
+    const teams = 'https://teams.microsoft.com/l/channel/19%3Acdn%40thread.tacv2/CDN?groupId=G1&tenantId=TN1';
+    const known = {
+      'teams:19:cdn@thread.tacv2': {
+        name: 'CDN tickets', href: '/inbox?team=ops&filters=1', inbox: true, title: '#CDN tickets: Ops',
+      },
+      'slack:C0BBBBBBBB2': { name: 'beta-help', title: '#beta-help is not in your inbox: open it in Slack' },
+    };
+    const html = render(`${teams} or [the CDN channel](${teams}), https://acme.slack.com/archives/C0BBBBBBBB2 and https://acme.slack.com/archives/C0ZZZZZZZZ9`, {
+      channelUrl: (href) => known[channelUrlKey(href)],
+    }).replace(/\n/g, '');
+    assert.equal(html, '<p><a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">#CDN tickets</a> '
+      + 'or <a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">the CDN channel</a>, '
+      + '<a target="_blank" rel="noopener" class="channel" href="https://acme.slack.com/archives/C0BBBBBBBB2" title="#beta-help is not in your inbox: open it in Slack">#beta-help</a> '
+      + 'and <a target="_blank" rel="noopener" href="https://acme.slack.com/archives/C0ZZZZZZZZ9">https://acme.slack.com/archives/C0ZZZZZZZZ9</a></p>');
   });
 
   it('links bare and bracketed URLs, and strikes through only with two tildes', () => {
@@ -260,12 +284,81 @@ describe('ui markdown', () => {
   });
 });
 
+const SLACK = 'https://acme.slack.com/archives/C0ACMEAEM/p1700000000000001?thread_ts=1700000000.000001&cid=C0ACMEAEM';
+const KNOWN = {
+  channel: 'C0ACMEAEM',
+  id: '1700000000.000001',
+  thread: 'slack:E1:C0ACMEAEM:1700000000.000001',
+  href: '/inbox?view=personal&filters=1&t=slack%3AE1%3AC0ACMEAEM%3A1700000000.000001',
+  author: 'Sam Reyes',
+  authorKey: 'slack:E1:sam',
+  at: '2026-10-21T11:43:20.000Z',
+  preview: 'Preview is **down**.',
+};
+const slackMd = (src, slack = (url) => (url.split('?')[0] === SLACK.split('?')[0] || url === SLACK ? KNOWN : undefined)) => render(src, { ...opts, slack }).replace(/\n/g, '');
+
 describe('quoted messages', () => {
-  it('shows a quoted message as a card: its author, linked to it, and when it was posted', () => {
+  it('shows a quoted message as a card: the name is a person, the time opens Slack', () => {
     const html = md(`Any news?\n\n${quoteMarkdown({
       author: 'Ada Lovelace', url: 'https://example.slack.com/archives/C1/p1?thread_ts=0.1&cid=C1', at: '2026-10-21T11:43:20.000Z', text: 'Preview is *down* for :eyes:',
     })}`);
-    assert.match(html, /^<p>Any news\?<\/p><blockquote class="quote"><p class="quote-by"><a target="_blank" rel="noopener" href="https:\/\/example\.slack\.com\/archives\/C1\/p1\?thread_ts=0\.1&amp;cid=C1" title="Open the quoted message"><b>Ada Lovelace<\/b><\/a> <time datetime="2026-10-21T11:43:20\.000Z">[^<]+<\/time><\/p><p>Preview is <em>down<\/em> for 👀<\/p><\/blockquote>$/);
+    assert.match(html, /^<p>Any news\?<\/p><blockquote class="quote"><p class="quote-by"><b data-quote-author="Ada Lovelace" role="button" tabindex="0">Ada Lovelace<\/b> <a target="_blank" rel="noopener" href="https:\/\/example\.slack\.com\/archives\/C1\/p1\?thread_ts=0\.1&amp;cid=C1" title="Open the quoted message"><time datetime="2026-10-21T11:43:20\.000Z">[^<]+<\/time><\/a><\/p><p>Preview is <em>down<\/em> for 👀<\/p><\/blockquote>$/);
+  });
+
+  it('points a known quote at opspile, and keeps the name a profile', () => {
+    const html = slackMd(`Any news?\n\n${quoteMarkdown({
+      author: 'Ada Lovelace', url: SLACK, at: '2026-10-21T11:43:20.000Z', text: 'Preview is *down* for :eyes:',
+    })}`);
+    assert.match(html, /<blockquote class="quote"><p class="quote-by"><b data-p="slack:E1:sam" role="button" tabindex="0">Ada Lovelace<\/b> <a href="\/inbox\?view=personal&amp;filters=1&amp;t=slack%3AE1%3AC0ACMEAEM%3A1700000000\.000001" data-thread="slack:E1:C0ACMEAEM:1700000000\.000001" title="Open in opspile"><time datetime="2026-10-21T11:43:20\.000Z">[^<]+<\/time><\/a><\/p>/);
+    assert.equal(html.includes('target="_blank"'), false);
+    assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 1);
+  });
+
+  it('embeds a permalink that is the whole paragraph, and offers a link in a sentence', () => {
+    const other = 'https://acme.slack.com/archives/C0ACMEAEM/p1700000000000002';
+    const hits = {
+      [SLACK.split('?')[0]]: KNOWN,
+      [other]: {
+        ...KNOWN, id: '1700000000.000002', preview: 'A <b>note', author: 'Priya', authorKey: '',
+      },
+    };
+    const html = slackMd(`See ${other} too.\n\n${SLACK.split('?')[0]}`, (url) => hits[url.split('?')[0]]);
+    assert.match(html, /<p>See <a data-pile="\/inbox\?view=personal&amp;filters=1&amp;t=slack%3AE1%3AC0ACMEAEM%3A1700000000\.000001" data-thread="slack:E1:C0ACMEAEM:1700000000\.000001" aria-haspopup="menu" title="Open in Opspile or Slack" target="_blank" rel="noopener" href="https:\/\/acme\.slack\.com\/archives\/C0ACMEAEM\/p1700000000000002">/);
+    assert.match(html, /<blockquote class="quote"><p class="quote-by"><b data-quote-author="Priya" role="button" tabindex="0">Priya<\/b>.*<p>A &lt;b&gt;note<\/p><\/blockquote><blockquote class="quote">/);
+    assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 2);
+  });
+
+  it('keeps the other words when a paragraph has more than one link', () => {
+    const report = SLACK.split('?')[0];
+    const status = 'https://status.example.com/incidents/1';
+    const html = slackMd(
+      `[Original report](${report}) IMPORTANT: compare this with [the status page](${status})`,
+      (link) => (link === report ? KNOWN : undefined),
+    );
+    assert.match(html, /<p><a data-pile="[^"]*" data-thread="slack:E1:C0ACMEAEM:1700000000\.000001" aria-haspopup="menu" title="Open in Opspile or Slack" target="_blank" rel="noopener" href="https:\/\/acme\.slack\.com\/archives\/C0ACMEAEM\/p1700000000000001">Original report<\/a> IMPORTANT: compare this with <a target="_blank" rel="noopener" href="https:\/\/status\.example\.com\/incidents\/1">the status page<\/a><\/p><blockquote class="quote">/);
+    assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 1);
+  });
+
+  it('embeds a paragraph that is one formatted link', () => {
+    const html = slackMd(`[*Original report*](${SLACK.split('?')[0]})`);
+    assert.equal(html.startsWith('<blockquote class="quote">'), true);
+    assert.equal(html.includes('Original report'), false);
+  });
+
+  it('does not embed a second card when the quote is the same message', () => {
+    const html = slackMd(`${SLACK.split('?')[0]}\n\n${quoteMarkdown({
+      author: 'Sam Reyes', url: SLACK, at: '2026-10-21T11:43:20.000Z', text: 'hello',
+    })}`);
+    assert.equal((html.match(/<blockquote class="quote">/g) || []).length, 1);
+    assert.match(html, /data-pile="/);
+  });
+
+  it('leaves a permalink inside code as code', () => {
+    const url = SLACK.split('?')[0];
+    const html = slackMd(`Use \`${url}\` or\n\n\`\`\`\n${url}\n\`\`\``);
+    assert.equal(html.includes('blockquote'), false);
+    assert.equal(html.includes('data-pile'), false);
+    assert.match(html, /<code>[^<]*acme\.slack\.com[^<]*<\/code>/);
   });
 
   it('keeps a quote typed by hand a quote', () => {

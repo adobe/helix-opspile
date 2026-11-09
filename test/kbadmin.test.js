@@ -136,6 +136,107 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
     }
   });
 
+  it('shows the teams that own a customer its knowledge base, and lets their managers change it', async () => {
+    const srv = await gitServer();
+    try {
+      srv.create('kb-org-acme');
+      const DB = d1({
+        teams: [{ slug: 'helix', name: 'Helix ops' }, { slug: 'edge', name: 'Edge ops' }, { slug: 'cdn', name: 'CDN ops' }],
+      });
+      // acme: a channel filed under helix, shared with edge. initech: only an ignored channel
+      // of helix's. globex: another team's.
+      DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+          ('kb-org-acme', 'org', 'acme', 'r', '2026-10-22T00:00:00Z'),
+          ('kb-org-initech', 'org', 'initech', 'r', '2026-10-22T00:00:00Z'),
+          ('kb-org-globex', 'org', 'globex', 'r', '2026-10-22T00:00:00Z'),
+          ('kb-team-helix', 'team', 'helix', 'r', '2026-10-22T00:00:00Z');
+        INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name,
+            path, last_at, any_at, updated_at) VALUES
+          ('slack:E1:C1:1', 'slack', 'E1', 'C1', '1', 'acme', 'helix', 'channel', 'aem-acme', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z'),
+          ('slack:E1:C2:1', 'slack', 'E1', 'C2', '1', 'initech', 'helix', 'ignore', 'initech-random', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z'),
+          ('slack:E1:C3:1', 'slack', 'E1', 'C3', '1', 'globex', 'cdn', 'channel', 'globex-cdn', 'p', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z');
+        INSERT INTO channel_teams (source, channel_id, team, added_at) VALUES ('slack', 'C1', 'edge', 'x');
+        INSERT INTO mcp_servers (scope, slug, name, url, enabled, updated_at) VALUES
+          ('org', 'acme', 'status', 'https://u:p@s.example/mcp?token=t0ken', 1, 'x')`);
+      const env = { DB, ARTIFACTS: srv.artifacts };
+      const EDGE = { ...MEMBER, teams: [{ slug: 'edge' }] };
+      const HELIX_MANAGER = { ...MEMBER, teams: [{ slug: 'helix', role: 'manager' }] };
+      const EDGE_MANAGER = { ...MEMBER, teams: [{ slug: 'edge', role: 'manager' }] };
+      const CDN_MANAGER = { ...MEMBER, teams: [{ slug: 'cdn', role: 'manager' }] };
+      const put = (me, path, content, base) => call(env, me, 'PUT', '/api/kb/file', {
+        repo: 'kb-org-acme', path, content, base,
+      });
+      const concept = (title) => `---\ntype: Reference\ntitle: ${title}\n---\nBody\n`;
+      for (const [me, repos, may] of [
+        [MEMBER, [['kb-team-helix', false], ['kb-org-acme', false]], false],
+        [EDGE, [['kb-org-acme', false]], false],
+        [HELIX_MANAGER, [['kb-team-helix', true], ['kb-org-acme', true]], true],
+        [EDGE_MANAGER, [['kb-org-acme', true]], true],
+      ]) {
+        // eslint-disable-next-line no-await-in-loop
+        const bases = await (await call(env, me, 'GET', '/api/kb')).json();
+        assert.deepEqual(bases.bases.map((b) => [b.repo, b.may]), repos);
+        for (const path of ['files', 'log', 'channels', 'mcp', 'tools']) {
+          // eslint-disable-next-line no-await-in-loop
+          assert.equal((await call(env, me, 'GET', `/api/kb/${path}?repo=kb-org-acme`)).status, 200, path);
+          for (const repo of ['kb-org-initech', 'kb-org-globex']) {
+            // eslint-disable-next-line no-await-in-loop
+            assert.equal((await call(env, me, 'GET', `/api/kb/${path}?repo=${repo}`)).status, 404, `${path} ${repo}`);
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const mcp = await (await call(env, me, 'GET', '/api/kb/mcp?repo=kb-org-acme')).json();
+        assert.deepEqual([mcp.may, mcp.servers.map((s) => s.url)], [
+          may, [may ? 'https://u:p@s.example/mcp?token=t0ken' : 'https://s.example/mcp'],
+        ]);
+      }
+
+      // The members only read it.
+      for (const me of [MEMBER, EDGE]) {
+        for (const [method, path, body] of [
+          ['PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: concept('A') }],
+          ['DELETE', '/api/kb/file', { repo: 'kb-org-acme', path: 'index.md' }],
+          ['POST', '/api/kb/mcp', { repo: 'kb-org-acme', name: 'x', url: 'https://x.example/mcp' }],
+        ]) {
+          // eslint-disable-next-line no-await-in-loop
+          assert.equal((await call(env, me, method, path, body)).status, 403, `${method} ${path}`);
+        }
+      }
+      // The managers of helix (acme's channel is filed under it) and of edge (shared with it)
+      // change it, as themselves.
+      let res = await put(HELIX_MANAGER, 'sites/www.md', concept('www'));
+      assert.equal(res.status, 200);
+      res = await put(EDGE_MANAGER, 'sites/www.md', concept('www, again'), (await res.json()).hash);
+      assert.equal(res.status, 200);
+      res = await call(env, EDGE_MANAGER, 'DELETE', '/api/kb/file', {
+        repo: 'kb-org-acme', path: 'sites/www.md', base: (await res.json()).hash,
+      });
+      assert.equal(res.status, 200);
+      const { commits } = await (await call(env, HELIX_MANAGER, 'GET', '/api/kb/log?repo=kb-org-acme')).json();
+      assert.deepEqual(commits.map((c) => [c.message, c.author]), [
+        ['Delete sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'],
+      ]);
+      // Not the managers of a team that does not own the customer, nor through an ignored channel.
+      assert.equal((await put(CDN_MANAGER, 'a.md', concept('A'))).status, 404);
+      assert.equal((await call(env, HELIX_MANAGER, 'PUT', '/api/kb/file', {
+        repo: 'kb-org-initech', path: 'a.md', content: concept('A'),
+      })).status, 404);
+      const server = DB.rows("SELECT id FROM mcp_servers WHERE slug = 'acme'")[0].id;
+      assert.equal((await call(env, CDN_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 404);
+
+      // Once the channel is no longer shared with edge, edge no longer owns acme.
+      DB.sqlite.exec('DELETE FROM channel_teams');
+      assert.deepEqual((await (await call(env, EDGE, 'GET', '/api/kb')).json()).bases, []);
+      assert.equal((await call(env, EDGE, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+      assert.equal((await put(EDGE_MANAGER, 'a.md', concept('A'))).status, 404);
+      assert.equal((await call(env, EDGE_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 404);
+      // helix's manager still does: deleting the server works.
+      assert.equal((await call(env, HELIX_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 200);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('lists knowledge bases and files, reads, creates, edits and deletes as the person', async () => {
     const srv = await gitServer();
     try {
@@ -263,8 +364,10 @@ describe('thread agents in the knowledge-base editor', () => {
     let bases = await (await call(env, ADMIN, 'GET', '/api/kb')).json();
     assert.deepEqual(bases.bases.map((b) => [b.repo, b.agents]), [['kb-team-edge', 1], ['kb-team-helix', 0], ['kb-org-acme', 1]]);
 
-    // A manager of helix sees helix's channels, and switches its agents.
-    assert.equal((await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-org-acme')).status, 404);
+    // A manager of helix sees helix's channels, and switches its agents; acme's channels too,
+    // since helix owns acme, but switches only helix's there.
+    res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-org-acme')).json();
+    assert.deepEqual(res.channels.map((c) => [c.channelId, c.may]), [['C1', true], ['C2', false], ['C3', false]]);
     res = await (await call(env, MANAGER, 'GET', '/api/kb/channels?repo=kb-team-helix')).json();
     assert.deepEqual(res.channels.map((c) => [c.channelId, c.may]), [['C1', true], ['C3', false]]);
     res = await quietly(() => call(env, MANAGER, 'PUT', '/api/kb/agent', { channel: 'C1', enabled: true }));

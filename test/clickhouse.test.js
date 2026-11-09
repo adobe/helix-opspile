@@ -541,6 +541,42 @@ describe('klickhaus export', () => {
     assert.equal(rowsOf(posts[1])[0].team, 'sites');
   });
 
+  it('keeps a re-filed thread behind for the sweep when the jobs cannot be queued', async () => {
+    const env = setup();
+    env.CONTENT = {};
+    env.DB.sqlite.prepare(`INSERT INTO rules (id, target, priority, source, field, pattern, value)
+      VALUES (1, 'team', 100, NULL, 'name', '^aem-', 'sites'),
+        (2, 'org', 100, NULL, 'name', '^aem-(.+)$', '$1')`).run();
+    env.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('slack', 'E1', 'C1', 'aem-acme', ?)`).run(iso(0));
+    thread(env);
+    message(env, '1.1', 0);
+    await exportThreads(env, KEY, { now: NOW });
+    env.DB.sqlite.prepare(`UPDATE threads SET embedded = 'h', vectorized_through = any_at,
+      indexed_through = any_at`).run();
+    env.DB.sqlite.prepare("UPDATE messages SET embedded = 'h'").run();
+    const job = {
+      source: 'slack', tenant: 'E1', channelId: 'C1', threads: [[KEY, PATH]],
+    };
+    env.NORMALIZE.sendBatch = async () => {
+      throw new Error('the queue is down');
+    };
+    await assert.rejects(refile(env, job), /the queue is down/);
+    const expected = {
+      team: 'sites', exported_through: null, embedded: null, vectorized_through: null, indexed_through: null,
+    };
+    const row = () => ({
+      ...env.DB.rows(`SELECT team, exported_through, embedded, vectorized_through, indexed_through
+        FROM threads`)[0],
+    });
+    assert.deepEqual(row(), expected);
+    assert.deepEqual(env.DB.rows('SELECT embedded FROM messages').map((m) => m.embedded), [null]);
+    // The job's retry sees nothing to do, and the sweeps have it.
+    env.NORMALIZE.sendBatch = async () => {};
+    await refile(env, job);
+    assert.deepEqual(row(), expected);
+  });
+
   it('counts files and buckets urgency as the inbox does', () => {
     assert.equal(attachmentsOf('no files, just https://example.com/x'), 0);
     assert.equal(attachmentsOf('> [Someone](https://acme.slack.com/archives/C1/p1 "Quoted message")\n> '

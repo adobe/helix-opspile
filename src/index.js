@@ -13,34 +13,54 @@
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
 import kbHtml from '../ui/kb.html';
+import cogsHtml from '../ui/cogs.html';
+import topicsHtml from '../ui/topics.html';
 // The pages' scripts, as text (src/page.js inlines them).
 import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
 import kbJs from '../ui/kb.js' with { type: 'text' };
+import cogsJs from '../ui/cogs.js' with { type: 'text' };
+import topicsJs from '../ui/topics.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
-import headerCss from '../ui/header.css' with { type: 'text' };
+import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
+// Spectrum 2's look of every page (README, "Spectrum 2").
+import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
+import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
+import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
+import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
+import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
+import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
+import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
+import { followed, Meter } from './cogs/meter.js';
+import { rollupCogs } from './cogs/rollup.js';
 import { syncAccessQuietly } from './accesssync.js';
-import { keepOAuthAlive } from './agent/mcpoauth.js';
+import { clientDocumentResponse, keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
+import { listDead, pruneDead, redrive } from './deadjobs.js';
+import { sweepLabels } from './label.js';
+import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
+import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
-import { oauth } from './oauth.js';
+import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
-import { inboxPage, page } from './page.js';
+import {
+  fromPreview, highlightScript, inboxPage, page,
+} from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { ensureSubscription } from './subscription.js';
@@ -49,23 +69,38 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepTopicMap } from './topicmap.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
+import { sweepBackfills } from './backfill.js';
+import { pruneExpertEvents } from './expertevents.js';
+import { prunePostKeys } from './postkeys.js';
 
 const SCRIPTS = {
   'inbox.js': inboxJs,
   'admin.js': adminJs,
   'kb.js': kbJs,
+  'cogs.js': cogsJs,
+  'topics.js': topicsJs,
   'app.js': appJs,
   'header.js': headerJs,
   'rank.js': rankJs,
   'table.js': tableJs,
-  'header.css': headerCss,
+  'topicgraph.js': topicGraphJs,
+  'spectrum-fonts.css': spectrumFontsCss,
+  'spectrum.css': spectrumCss,
+  'spectrum-inbox.css': spectrumInboxCss,
+  'spectrum-admin.css': spectrumAdminCss,
+  'spectrum-kb.css': spectrumKbCss,
+  'spectrum-cogs.css': spectrumCogsCss,
+  'spectrum-topics.css': spectrumTopicsCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
 const KB_PAGE = page(kbHtml, SCRIPTS);
+const COGS_PAGE = page(cogsHtml, SCRIPTS);
+const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -74,10 +109,11 @@ function authorizedDiag(request, env) {
   return Boolean(env.DIAG_TOKEN) && request.headers.get('x-opspile-diag') === env.DIAG_TOKEN;
 }
 
-/** The favicon and touch icon, decoded once per isolate. */
+/** The favicon, the touch icon and the notifications' sound, decoded once per isolate. */
+const ASSETS = { ...ICONS, ...SOUNDS };
 const iconBytes = new Map();
 function icon(pathname) {
-  const entry = ICONS[pathname];
+  const entry = ASSETS[pathname];
   if (!entry) {
     return null;
   }
@@ -89,7 +125,8 @@ function icon(pathname) {
   });
 }
 
-export default {
+/** The Worker's handlers, with `env` counted for COGS (the default export, below). */
+const handlers = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
@@ -117,6 +154,18 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (pathname === '/diag/dead') {
+      // The queue jobs that used up their retries: GET lists them; POST `{ ids? }` sends them
+      // out again, those of `ids` or the oldest.
+      if (!authorizedDiag(request, env)) {
+        return text('forbidden\n', 403);
+      }
+      if (request.method === 'POST') {
+        const { ids = null } = await request.json().catch(() => ({}));
+        return json(await redrive(env, { ids }));
+      }
+      return json(await listDead(env));
     }
     if (pathname === '/diag/discord') {
       // The Discord poller: GET says how the last poll went; POST polls now (and reads the
@@ -147,6 +196,12 @@ export default {
     if (pathname === '/mcp') {
       return mcp(request, env);
     }
+    // opspile's client ID metadata document, for the authorization servers of the agents' MCP
+    // servers: public, they fetch it.
+    const clientDocument = clientDocumentResponse(request, env, url);
+    if (clientDocument) {
+      return clientDocument;
+    }
     // OAuth for MCP clients: discovery, registration and tokens are public; the consent page
     // is under /api, behind Access.
     const oauthResponse = await oauth(request, env, url, {
@@ -171,10 +226,32 @@ export default {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
+    if (pathname === '/inbox/cogs') {
+      // What the inbox costs (admin team; the API checks), under /inbox like the others.
+      return new Response(COGS_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
+    if (pathname === '/inbox/topics') {
+      // The topic map (admin team; the API checks), under /inbox like the others.
+      return new Response(TOPICS_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      });
+    }
+    // The Spectrum 2 preview's addresses, from before it was every page's look.
+    const preview = fromPreview(pathname, url.search);
+    if (preview) {
+      return Response.redirect(new URL(preview, url.origin).href, 301);
+    }
     if (pathname === '/inbox') {
       return new Response(INBOX_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
+    }
+    // The inbox's code highlighter, which it imports with the first code block it shows.
+    const highlighter = highlightScript(request, pathname);
+    if (highlighter) {
+      return highlighter;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);
@@ -199,11 +276,6 @@ export default {
     return text('not found\n', 404);
   },
 
-  /** NORMALIZE queue: pile 1 → pile 2 (#6). */
-  async queue(batch, env) {
-    await consume(batch, env);
-  },
-
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
  * entries of the knowledge bases not counted yet, keep the
@@ -213,9 +285,14 @@ export default {
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
  * behind, fill in the latest message's text of threads indexed before it was kept, delete
  * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js), and enqueue the
- * threads whose klickhaus rows are behind.
+ * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
+ * what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
+    // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
+    ctx.waitUntil(rollupCogs(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', cogs: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', cogs: 'error', error: e.message }))));
     ctx.waitUntil(ensureSubscription(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cron: controller.cron, ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', error: e.message }))));
@@ -250,22 +327,85 @@ export default {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    ctx.waitUntil(pruneOauth(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    ctx.waitUntil(sweepRethreads(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', rethreads: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', rethreads: 'error', error: e.message }))));
+    ctx.waitUntil(sweepLabels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', labels: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', labels: 'error', error: e.message }))));
+    ctx.waitUntil(pruneDead(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', deadJobs: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', deadJobs: 'error', error: e.message }))));
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    // The Topics page's map (src/topicmap.js), once it is a week old.
+    ctx.waitUntil(sweepTopicMap(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', topicMap: 'error', error: e.message }))));
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
+    ctx.waitUntil(sweepBackfills(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', backfills: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', backfills: 'error', error: e.message }))));
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));
+    ctx.waitUntil(prunePostKeys(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', postKeys: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', postKeys: 'error', error: e.message }))));
+    ctx.waitUntil(pruneExpertEvents(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));
     // The klickhaus export (CLICKHOUSE_*): the threads that changed since, and the backfill.
     ctx.waitUntil(sweepExports(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', exports: 'error', error: e.message }))));
+  },
+};
+
+/**
+ * COGS (src/cogs/meter.js): every request, its work after the answer (`waitUntil`) included, is
+ * counted for the thread it names, if it names one; every queue job for its thread; a cron run as
+ * shared work. Each is one Workers request.
+ */
+export default {
+  async fetch(request, rawEnv, rawCtx) {
+    const meter = new Meter(rawEnv, { via: 'fetch' });
+    const env = meter.env({ thread: new URL(request.url).searchParams.get('thread') || null });
+    env.meter?.add('workers', 'requests', '', 1);
+    const ctx = followed(rawCtx);
+    try {
+      return await handlers.fetch(request, env, ctx);
+    } finally {
+      rawCtx?.waitUntil(ctx.settled().then(() => meter.flush()).catch(() => {}));
+    }
+  },
+
+  /** NORMALIZE queue: pile 1 → pile 2 (#6). */
+  async queue(batch, env) {
+    const meter = new Meter(env, { via: 'queue' });
+    try {
+      await consume(batch, env, meter);
+    } finally {
+      await meter.flush();
+    }
+  },
+
+  async scheduled(controller, rawEnv, rawCtx) {
+    const meter = new Meter(rawEnv, { via: 'cron' });
+    const env = meter.env({});
+    env.meter?.add('workers', 'requests', '', 1);
+    const ctx = followed(rawCtx);
+    await handlers.scheduled(controller, env, ctx);
+    rawCtx?.waitUntil(ctx.settled().then(() => meter.flush()).catch(() => {}));
   },
 };
 
@@ -274,3 +414,5 @@ export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
 // The way back from an agent's shell (a Dynamic Worker) to its files (src/agent/computer.js).
 export { WorkspaceServiceProxy } from '@cloudflare/computer';
+// Where the shells of the agents' computers reach the network, with their secrets.
+export { SecretGateway } from './agent/gateway.js';

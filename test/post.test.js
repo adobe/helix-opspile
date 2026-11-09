@@ -15,9 +15,12 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import {
-  checkState, connections, finishAuth, learnMembers, makeState, mentionable, post, seal, slackText,
-  splitMentions, teamsMessage, unseal,
+  channelPlace, checkState, connections, finishAuth, knownMentions, learnMembers, makeState,
+  mentionable, post,
+  postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
+import { htmlToMarkdown } from '../src/markdown.js';
+import { suggestMentions } from '../src/mention-match.js';
 import { d1 } from './d1.js';
 
 // Made-up keys, ids and people only.
@@ -108,6 +111,36 @@ describe('mentions', () => {
     assert.deepEqual(teamsMessage('no one', [ada]), { body: { contentType: 'html', content: 'no one' } });
   });
 
+  it('writes Teams messages as HTML from their Markdown', () => {
+    const html = (md, mentions) => teamsMessage(md, mentions).body.content;
+    assert.equal(
+      html('**Rename** `a<b`, see the [docs](https://example.com/a?b=1&c=2) ~~now~~'),
+      '<strong>Rename</strong> <code>a&lt;b</code>, see the <a href="https://example.com/a?b=1&amp;c=2">docs</a> <s>now</s>',
+    );
+    assert.equal(html('one\ntwo\n\nthree'), 'one<br>two<br><br>three');
+    assert.equal(html('Steps:\n\n- one\n- two\n\nDone'), '<p>Steps:</p><ul><li>one</li><li>two</li></ul><p>Done</p>');
+    assert.equal(html('```\na\n  b\n```'), '<pre><code>a\n  b\n</code></pre>');
+    assert.equal(html('> quoted\n> twice'), '<blockquote><p>quoted<br>twice</p></blockquote>');
+    assert.equal(html('<b>typed</b> &amp;'), '&lt;b&gt;typed&lt;/b&gt; &amp;');
+    assert.equal(html('**@Ada** and `x`', [ada]), '<strong><at id="0">Ada</at></strong> and <code>x</code>');
+    assert.equal(html(''), '');
+  });
+
+  it('reads back what it writes to Teams', () => {
+    for (const md of [
+      '**One** and *two*\nline\n\n- a\n- b\n\n> c\n> d\n\n```\ne\n  f\n```\n\n[g](https://example.com/)',
+      '| Service | Status |\n| --- | --- |\n| API | Down |\n| Web | Up |',
+      '| a | b | c |\n| :--- | ---: | :---: |\n| **d** | e \\| f | `g` |',
+      '- [ ] open\n- [x] done',
+      'above\n\n---\n\nbelow',
+      '- a\n  - b\n    - c\n- d\n\n1. e\n   - f\n2. g',
+    ]) {
+      assert.equal(htmlToMarkdown(teamsMessage(md).body.content), md);
+    }
+    // A hard break is one break.
+    assert.equal(teamsMessage('a  \nb').body.content, 'a<br>b');
+  });
+
   it('writes a Teams bot mention as an application, so the bot receives it', () => {
     const bot = { id: 'b-help', name: 'helper', kind: 'bot' };
     assert.deepEqual(teamsMessage('@helper add x@example.com', [bot]), {
@@ -139,6 +172,124 @@ describe('mentions', () => {
       id: 'b-help', name: 'helper', avatar: null, here: false, staff: false, kind: 'bot',
     });
     assert.equal((await mentionable(e, 'slack:E1:C1:1.1', 'b', () => false)).status, 404);
+  });
+
+  it('finds the accounts of the @Names a text is written with', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const bob = { id: 'U2', name: 'Bob Builder', kind: 'person' };
+    assert.deepEqual(await writtenMentions(e, key, 'Hi @Bob Builder, thanks.'), [bob]);
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder and @Bob Builder'), [bob]);
+    // Only whole names, of this workspace, of people: the rest stays text.
+    assert.deepEqual(await writtenMentions(e, key, 'Hi @Bob, @Bob Elsewhere and @Bobbot'), []);
+    assert.deepEqual(await writtenMentions(e, key, 'no one here'), []);
+    assert.deepEqual(await writtenMentions(e, 'slack:E1:C1:9.9', '@Bob Builder'), []);
+    // Two accounts with one name: neither is guessed.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U9', 'person', 'Bob Builder', '2026-10-21T10:00:00Z')`).run();
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), []);
+    // Unless only one of them is in the channel.
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U9')`).run();
+    assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), [{ ...bob, id: 'U9' }]);
+  });
+
+  it('mentions the account a person uses when they have two of one name', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const add = e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      person, fetched_at) VALUES ('slack', 'E1', ?, 'person', 'Ada', 1, '2026-10-21T10:00:00Z')`);
+    const member = e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id,
+      user_id) VALUES ('slack', 'E1', ?, ?)`);
+    // Ada (person 1) has a second account, from another workspace of the grid.
+    add.run('U7');
+    const adaAs = (id) => [{ id, name: 'Ada', kind: 'person' }];
+    // Neither is in the channel: the one in more channels.
+    member.run('C2', 'U7');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U7'));
+    member.run('C2', 'U1');
+    member.run('C3', 'U1');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U1'));
+    // The one in the channel.
+    member.run('C1', 'U7');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U7'));
+    // Both in it: again the one in more channels.
+    member.run('C1', 'U1');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), adaAs('U1'));
+    // Someone else of that name, in the channel too: nobody.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U8', 'person', 'Ada', '2026-10-21T10:00:00Z')`).run();
+    member.run('C1', 'U8');
+    assert.deepEqual(await writtenMentions(e, key, 'cc @Ada'), []);
+  });
+
+  it('suggests one account a person: the one a mention reaches', async () => {
+    const e = withAccounts(env());
+    // Ada (person 1) also has a guest account in another workspace, in no channel here.
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, home,
+      fetched_at) VALUES ('slack', 'E1', 'U0', 'person', 'ada', 1, 'T-ELSE', '2026-10-21T10:00:00Z')`).run();
+    const member = e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id,
+      user_id) VALUES ('slack', 'E1', ?, ?)`);
+    const adaIds = async () => {
+      const { people, pool } = await (await mentionable(e, 'slack:E1:C1:1.1', 'ad', inTeam, { pool: true })).json();
+      return [people.filter((p) => p.name === 'Ada').map((p) => p.id),
+        pool.accounts.filter((p) => p.name === 'Ada').map((p) => p.id)];
+    };
+    // Neither in a channel: the one of the thread's own workspace.
+    assert.deepEqual(await adaIds(), [['U1'], ['U1']]);
+    // The other one, in the channel: that one.
+    member.run('C1', 'U0');
+    assert.deepEqual(await adaIds(), [['U0'], ['U0']]);
+    // Both in it: hers, of the thread's own workspace.
+    member.run('C1', 'U1');
+    assert.deepEqual(await adaIds(), [['U1'], ['U1']]);
+
+    // Mentioning the other one mentions the one in the channel, once.
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    assert.deepEqual(await knownMentions(e, t, [{ id: 'U0' }, { id: 'U1' }, { id: 'U2' }]), [
+      { id: 'U1', name: 'Ada', kind: 'person' }, { id: 'U2', name: 'Bob Builder', kind: 'person' },
+    ]);
+  });
+
+  it('suggests a person once with what all of their accounts have', async () => {
+    const e = withAccounts(env());
+    const { sqlite } = e.DB;
+    // Ada's account from another workspace posted in the thread, under another login; hers of
+    // the thread's own workspace is in the channel.
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, home,
+      aliases, fetched_at) VALUES ('slack', 'E1', 'U0', 'person', 'ada', 1, 'T-ELSE',
+      '["countess"]', '2026-10-21T10:00:00Z')`).run();
+    sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key)
+      VALUES ('slack', 'E1', 'C1', '1.3', 'slack:E1:C1:1.1', '2026-10-21T10:00:00Z',
+        'slack:E1:U0')`).run();
+    sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U1')`).run();
+    // Someone outside Adobe with two accounts of one mail address: a guest one in the grid,
+    // and a full one, neither in the channel.
+    const customer = sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      email, guest, fetched_at) VALUES ('slack', 'E1', ?, 'person', 'Cy Cust', ?, ?,
+      '2026-10-21T10:00:00Z')`);
+    customer.run('U8', 'cy@customer.example', 1);
+    customer.run('U9', 'Cy@Customer.example', 0);
+    const { people, pool } = await (await mentionable(e, 'slack:E1:C1:1.1', '', inTeam, {
+      pool: true,
+    })).json();
+    const hers = pool.accounts.filter((a) => a.name === 'Ada');
+    assert.deepEqual(hers.map((a) => [a.id, a.here, a.member, a.staff]), [['U1', true, true, true]]);
+    // Her other account's names find her too.
+    assert.ok(hers[0].aliases.includes('countess'));
+    assert.ok(hers[0].aliases.includes('ada.l'));
+    assert.deepEqual(pool.accounts.filter((a) => a.name === 'Cy Cust').map((a) => a.id), ['U9']);
+    assert.equal(people.filter((p) => p.name === 'Ada').length, 1);
+    const found = await (await mentionable(e, 'slack:E1:C1:1.1', 'countess', inTeam)).json();
+    assert.deepEqual(found.people.map((p) => p.id), ['U1']);
+    // Written by name, or picked by either account, the mention goes to that one.
+    const t = { source: 'slack', tenant: 'E1', channel_id: 'C1' };
+    assert.deepEqual(await knownMentions(e, t, ['U8', 'U0']), [
+      { id: 'U1', name: 'Ada', kind: 'person' }, { id: 'U9', name: 'Cy Cust', kind: 'person' },
+    ]);
+    const written = await writtenMentions(e, 'slack:E1:C1:1.1', 'cc @Cy Cust and @Ada');
+    assert.deepEqual(written.map((m) => `${m.id} ${m.name}`).sort(), ['U1 Ada', 'U9 Cy Cust']);
   });
 
   // Made-up: a colleague who never posted in the thread, with a login unlike her name.
@@ -236,6 +387,38 @@ describe('mentions', () => {
     assert.deepEqual(await learnMembers(e, { ...t, source: 'discord' }), { skipped: 'members are not listed here' });
   });
 
+  it('answers with the pool, from which the page suggests as the Worker does', async () => {
+    const e = withColleagues(withAccounts(env()));
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('slack', 'E1', 'C1', 'U27')`).run();
+    const ask = async (thread, q, opts) => (await mentionable(e, thread, q, inTeam, opts)).json();
+    const { pool } = await ask('slack:E1:C1:1.1', '', { pool: true });
+    const kira = pool.accounts.find((a) => a.name === 'Kira Selby');
+    // Only what is set, and the mail without its domain.
+    assert.deepEqual(kira, {
+      id: 'U10', name: 'Kira Selby', aliases: ['kselby', 'Kiki', 'kira.s'], staff: true,
+    });
+    assert.equal(pool.accounts.find((a) => a.id === 'U27').member, true);
+    for (const [thread, typed] of [['slack:E1:C1:1.1', ['', 'k', 'KSEL', 'kira.s', 'b', 'bob b', 'staff', 'x y']],
+      ['teams:T:G:19:c:5', ['', 'b', 'help', 'h']]]) {
+      // eslint-disable-next-line no-await-in-loop
+      const { pool: p } = await ask(thread, '', { pool: true });
+      for (const q of typed) {
+        // eslint-disable-next-line no-await-in-loop
+        const { people, pool: none } = await ask(thread, q);
+        assert.equal(none, undefined);
+        assert.deepEqual(suggestMentions(p, q), people, `${thread} ${q}`);
+      }
+    }
+  });
+
+  it('gives no pool to a viewer who may not see the thread', async () => {
+    const e = withAccounts(env());
+    const res = await mentionable(e, 'slack:E1:C1:1.1', 'b', async () => false, { pool: true });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'not found' });
+  });
+
   it('lists the members in the background when the suggestions open', async () => {
     const e = withAccounts(env());
     const waited = [];
@@ -244,6 +427,64 @@ describe('mentions', () => {
     await mentionable(e, 'slack:E1:C1:1.1', '', inTeam, { waitUntil: (p) => waited.push(p) });
     assert.equal(waited.length, 1);
     await waited[0];
+  });
+});
+
+describe('channels to start a thread in', () => {
+  const thread = (e, id, channel, {
+    source = 'slack', team = 'helix', kind = 'channel', at = '2026-10-21T10:00:00Z',
+  } = {}) => e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id,
+    org, team, path, kind, channel_name, any_at, updated_at) VALUES (?, ?, 'E1', ?, ?, 'acme', ?,
+    'r/', ?, ?, ?, ?)`).run(id, source, channel, id, team, kind, `name-${channel}`, at, at);
+  const list = async (e, me = ME) => (await (await postableChannels(e, me)).json()).channels;
+
+  it('lists the viewer\'s teams\' conversations, latest first, without Discord', async () => {
+    const e = env();
+    thread(e, 'n1', 'C2', { at: '2026-10-22T10:00:00Z' });
+    thread(e, 'n2', 'CA', { kind: 'alert' });
+    thread(e, 'n3', 'CI', { kind: 'ignore' });
+    thread(e, 'n4', 'D1', { source: 'discord' });
+    thread(e, 'n5', 'CO', { team: 'other' });
+    assert.deepEqual((await list(e)).map((c) => c.ref), ['slack:E1:C2', 'slack:E1:C1', 'teams:T:19:c']);
+    assert.deepEqual((await list(e))[0], {
+      ref: 'slack:E1:C2',
+      source: 'slack',
+      name: 'name-C2',
+      group: null,
+      org: 'acme',
+      orgName: 'acme',
+      teams: ['helix'],
+      personal: false,
+    });
+  });
+
+  it('lists channels shared with a team, and those of the personal view', async () => {
+    const e = env();
+    thread(e, 'n1', 'CS', { team: 'other' });
+    thread(e, 'n2', 'CP', { team: 'other' });
+    thread(e, 'n3', 'CX', { team: 'other' });
+    e.DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('slack', 'CS', 'helix', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person)
+      VALUES ('slack', 'E1', 'CP', 'm1', 'n2', '2026-10-21T10:00:00Z', 1)`).run();
+    const channels = await list(e);
+    assert.deepEqual(channels.find((c) => c.ref === 'slack:E1:CS').teams, ['other', 'helix']);
+    assert.equal(channels.find((c) => c.ref === 'slack:E1:CP').personal, true);
+    assert.equal(channels.some((c) => c.ref === 'slack:E1:CX'), false);
+    // Someone on no team has their personal view only.
+    assert.deepEqual((await list(e, { ...ME, teams: [] })).map((c) => c.ref), ['slack:E1:CP']);
+  });
+
+  it('suggests people for a channel, none of them in a thread yet', async () => {
+    const e = withAccounts(env());
+    const names = async (channel, ok = inTeam) => {
+      const res = await mentionable(e, null, 'bob', ok, { channel });
+      return res.ok ? (await res.json()).people.map((p) => [p.name, p.here]) : res.status;
+    };
+    assert.deepEqual(await names('slack:E1:C1'), [['Bob Builder', false]]);
+    assert.deepEqual(await names('teams:T:19:c'), [['Bob Builder', false]]);
+    assert.equal(await names('slack:E1:C1', () => false), 404);
+    assert.equal(await names('slack:E1:nope'), 404);
   });
 });
 
@@ -297,7 +538,7 @@ describe('connecting and posting', () => {
       if (u.includes('/v1.0/users/')) {
         return Response.json({ displayName: 'Ada', mail: 'ada@staff.example' });
       }
-      if (u.includes('/replies')) {
+      if (u.includes('/replies') || u.endsWith('/messages')) {
         return Response.json({ id: '9' }, { status: 201 });
       }
       throw new Error(`unexpected ${u}`);
@@ -326,6 +567,29 @@ describe('connecting and posting', () => {
     const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
     assert.equal(sent.init.headers.authorization, 'Bearer xoxp-ada');
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
+  });
+
+  it('keeps a folded root in its group once a reply of the group goes to its thread', async () => {
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, any_at, logical_thread, logical_via, updated_at) VALUES ('slack:E1:C1:1.5', 'slack', 'E1',
+      'C1', '1.5', 'acme', 'helix', 'p/', '2026-10-21T11:00:00Z', 'slack:E1:C1:1.1', 'clef',
+      '2026-10-21T11:00:00Z')`).run();
+    const routed = () => e.DB.rows('SELECT thread FROM threads WHERE routed_at IS NOT NULL')
+      .map((r) => r.thread);
+    // The member's own entry (a link to it): the person chose that thread.
+    await post(e, ME, { thread: 'slack:E1:C1:1.5', text: 'Hi.' }, inTeam);
+    assert.deepEqual(routed(), []);
+    // The group's entry: the inbox picks the latest member, which is held in the group now.
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'On it.' }, inTeam);
+    assert.equal(res.status, 200);
+    assert.equal(JSON.parse(calls.at(-1).init.body).thread_ts, '1.5');
+    assert.deepEqual(routed(), ['slack:E1:C1:1.5']);
+    const [{ routed_at: first }] = e.DB.rows('SELECT routed_at FROM threads WHERE routed_at IS NOT NULL');
+    await post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'Again.' }, inTeam);
+    assert.deepEqual(e.DB.rows('SELECT routed_at FROM threads WHERE routed_at IS NOT NULL'), [{ routed_at: first }]);
   });
 
   it('sends emoji names as the platform knows them, and says what it sent', async () => {
@@ -401,6 +665,67 @@ describe('connecting and posting', () => {
       mentionText: 'helper',
       mentioned: { application: { id: 'b-help', displayName: 'helper', applicationIdentityType: 'bot' } },
     }]);
+  });
+
+  it('starts a Slack thread in a channel, and says which entry it will be', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${await makeState(e, 1, 'slack')}`));
+    const res = await post(e, ME, { channel: 'slack:E1:C1', text: 'Heads-up.' }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
+    assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', text: 'Heads-up.' });
+    const { thread, id } = await res.json();
+    assert.equal(thread, `slack:E1:C1:${id}`);
+    assert.ok(id);
+  });
+
+  it('starts a Teams thread in a channel, whose id has colons of its own', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const res = await post(e, ME, { channel: 'teams:T:19:c', text: 'Heads-up.' }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = calls.find((c) => c.u.includes('graph.microsoft.com') && c.u.includes('/messages'));
+    assert.match(sent.u, /\/teams\/G1\/channels\/19%3Ac\/messages$/);
+    const { thread, id } = await res.json();
+    assert.equal(thread, `teams:T:G1:19:c:${id}`);
+  });
+
+  it('replies in a thread it started before the inbox has it, on Slack and on Teams', async () => {
+    const e = env();
+    await finishAuth(e, ME, 'slack', new URL(`https://opspile.test/api/auth/slack/callback?code=c&state=${await makeState(e, 1, 'slack')}`));
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const slack = await post(e, ME, { channel: 'slack:E1:C1', root: '1793799329.853649', text: 'And one more thing.' }, inTeam);
+    assert.equal(slack.status, 200);
+    assert.equal((await slack.json()).thread, undefined);
+    const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
+    assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1793799329.853649', text: 'And one more thing.' });
+    const teams = await post(e, ME, { channel: 'teams:T:19:c', root: '1793796088682', text: 'And one more thing.' }, inTeam);
+    assert.equal(teams.status, 200);
+    const reply = calls.find((c) => c.u.includes('graph.microsoft.com') && c.u.includes('/messages'));
+    assert.match(reply.u, /\/teams\/G1\/channels\/19%3Ac\/messages\/1793796088682\/replies$/);
+    // Only a thread's id: nothing else goes into the platform's path.
+    calls.length = 0;
+    for (const root of ['', '../x', '1.2/../3', 42.5]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await post(e, ME, { channel: 'teams:T:19:c', root, text: 'x' }, inTeam)).status, 400);
+    }
+    assert.equal((await post(e, ME, { channel: 'slack:E1:C1', root: '1.2', text: 'x' }, () => false)).status, 404);
+    assert.deepEqual(calls, []);
+  });
+
+  it('starts no thread without a channel, or in one that is not a conversation', async () => {
+    const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      path, kind, any_at, updated_at) VALUES ('slack:E1:CA:1.1', 'slack', 'E1', 'CA', '1.1', 'acme',
+      'helix', 'a/', 'alert', '2026-10-21T10:00:00Z', '2026-10-21T10:00:00Z')`).run();
+    const start = (channel, ok = inTeam) => post(e, ME, { channel, text: 'x' }, ok);
+    assert.equal((await start(undefined)).status, 404);
+    assert.equal((await start('slack:E1')).status, 404);
+    assert.equal((await start('slack:E1:C-unknown')).status, 404);
+    assert.equal((await start('slack:E1:CA')).status, 404);
+    assert.equal((await start('slack:E1:C1', () => false)).status, 404);
+    assert.equal(await channelPlace(e, 'slack:E1:CA'), null);
+    assert.deepEqual(calls, []);
   });
 
   it('only lets staff reply, and only in their teams', async () => {

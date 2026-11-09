@@ -18,9 +18,10 @@ import {
  * The agent's computer (its `computer` tool): pi's own `bash` tool, run on Cloudflare
  * Computer (@cloudflare/computer). The ThreadAgent object holds a Workspace, a filesystem in
  * its own SQLite, with a WorkerShellBackend: just-bash in a Dynamic Worker (env.LOADER) that
- * reads and writes that filesystem over RPC, with jq and curl, and the Dynamic Worker's own
- * network access (egress `direct`, no filter). Each thread keeps its files from one turn to
- * the next, under COMPUTER_CWD.
+ * reads and writes that filesystem over RPC, with jq and curl, and network access through the
+ * Worker's SecretGateway (egress `http-gateway`: no filter, but
+ * the team's and the customer's secrets go in where a request names them, src/agent/secrets.js).
+ * Each thread keeps its files from one turn to the next, under COMPUTER_CWD.
  *
  * This file is the bridge: an ExecutionEnv for pi-durable whose `exec` runs a command on the
  * workspace. pi's file tools (read, write, edit) are not installed, so the rest of the
@@ -28,6 +29,22 @@ import {
  */
 
 export const COMPUTER_CWD = '/workspace';
+
+/**
+ * Makes COMPUTER_CWD when it is not there yet. Only then: the uploads mount (src/threadfiles.js)
+ * is read-only, and the Workspace refuses any change to a directory a read-only mount is in,
+ * even a `mkdir -p` of one that exists (EROFS), which would fail every command.
+ */
+export async function ensureCwd(fs) {
+  try {
+    await fs.stat(COMPUTER_CWD);
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      throw e;
+    }
+    await fs.mkdir(COMPUTER_CWD, { recursive: true });
+  }
+}
 
 const unsupported = async (path) => err(new FileError('not_supported', 'only the shell is available; use bash', path));
 

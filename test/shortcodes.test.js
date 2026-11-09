@@ -19,7 +19,7 @@ import { emojiLookup, matchEmoji, squash } from '../src/emojinames.js';
 import { CLEF } from '../src/label.js';
 import {
   candidates, closestEmoji, COMMON, emojiChar, forget, MAX_ASK, rankEmoji, resolveShortcodes,
-  workspaceEmoji,
+  slackEmojiName, workspaceEmoji,
 } from '../src/shortcodes.js';
 import { d1 } from './d1.js';
 
@@ -54,6 +54,18 @@ describe('emoji aliases', () => {
     // An emoji without tones keeps none.
     assert.equal(lookup('rocket::skin-tone-3'), 'rocket');
     assert.equal(emojiChar('thumbsup::skin-tone-4'), '👍🏽');
+  });
+
+  it('names an emoji as Slack does, from a name in any spelling or the character', () => {
+    assert.equal(slackEmojiName(':thumbs-up:'), 'thumbsup');
+    assert.equal(slackEmojiName('raised_hands'), 'raised_hands');
+    assert.equal(slackEmojiName('🚀'), 'rocket');
+    assert.equal(slackEmojiName('❤'), 'heart');
+    assert.equal(slackEmojiName('❤️'), 'heart');
+    assert.equal(slackEmojiName(emojiChar('+1::skin-tone-4')), '+1::skin-tone-4');
+    assert.equal(slackEmojiName('🚀🏽'), 'rocket');
+    assert.equal(slackEmojiName('completed'), undefined);
+    assert.equal(slackEmojiName('ü'), undefined);
   });
 
   it('knows nothing it should not', () => {
@@ -400,6 +412,45 @@ describe('emoji suggestions in the composer', () => {
     // Remembered.
     assert.deepEqual(await rankEmoji({ AI }, 'celebr'), ranked);
     assert.equal(calls.length, 1);
+  });
+
+  it('keeps rankings in the data center for other isolates, not failures', async () => {
+    const stored = new Map();
+    globalThis.caches = {
+      default: {
+        match: async (url) => (stored.has(url) ? new Response(stored.get(url)) : undefined),
+        put: async (url, res) => {
+          stored.set(url, await res.text());
+        },
+      },
+    };
+    try {
+      let asked = 0;
+      const AI = {
+        async run() {
+          asked += 1;
+          return { answers: { emoji: { choice: 'e1', probabilities: { e1: 0.9 } } } };
+        },
+      };
+      const waits = [];
+      const ranked = await rankEmoji({ AI }, 'party', undefined, { waitUntil: (p) => waits.push(p) });
+      await Promise.all(waits);
+      assert.equal(stored.size, 1);
+      forget();
+      assert.deepEqual(await rankEmoji({ AI }, 'party'), ranked);
+      assert.equal(asked, 1);
+      const failing = {
+        AI: {
+          run: async () => {
+            throw new Error('overloaded');
+          },
+        },
+      };
+      assert.deepEqual(await rankEmoji(failing, 'celeb'), []);
+      assert.equal(stored.size, 1);
+    } finally {
+      delete globalThis.caches;
+    }
   });
 
   it('suggests nothing without Clef, for too little, or when Clef fails or is slow', async () => {

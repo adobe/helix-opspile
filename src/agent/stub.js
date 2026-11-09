@@ -33,8 +33,12 @@ export async function agentStub(env, name) {
   return stub;
 }
 
-/** Queue job `{ agent: thread }`: the thread's agent reads what is new. */
-export async function pokeAgent(env, thread) {
+/**
+ * Queue job `{ agent: thread }`: the thread's agent reads what is new. With `retry`, the queue
+ * will deliver this job again, so a failed injection check throws instead of telling the agent
+ * that the messages are withheld.
+ */
+export async function pokeAgent(env, thread, { retry = false } = {}) {
   if (!env.AGENTS) {
     return { result: 'skip', reason: 'no AGENTS binding' };
   }
@@ -43,7 +47,7 @@ export async function pokeAgent(env, thread) {
     return { result: 'skip', reason: 'unknown thread' };
   }
   const agent = await agentStub(env, entry.key);
-  return { agent: entry.key, ...await agent.deliver() };
+  return { agent: entry.key, ...await agent.deliver({ retry }) };
 }
 
 async function threadTarget(env, key) {

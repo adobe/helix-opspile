@@ -11,12 +11,12 @@
  */
 
 /*
- * The header of every page (ui/header.css), as the global `Header`. It runs right after the
+ * The header of every page (its styles in ui/spectrum.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
  * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
- * Teams too for team managers, and Orgs and Requests too for the admin team (with the number
- * of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
+ * Teams too for team managers, and Orgs, Requests and COGS (what the inbox costs) too for the
+ * admin team (with the number of open requests on Requests), and Topics (the topic map); and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -24,6 +24,12 @@
  * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
  * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
+ *
+ * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
+ * dark, per browser (localStorage `opspile.scheme`), set as `data-scheme` on <html>, which the
+ * tokens follow (src/page.js, `spectrumTokens`), and so does the browser's chrome (theme-color).
+ * It is set before the page under the header is drawn, and follows a change made in another tab.
+
  */
 window.Header = (() => {
   const PAGES = [
@@ -32,6 +38,8 @@ window.Header = (() => {
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
     { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their topics, found from what was said, with the Adobe people, customers and Clef topics on each', admin: true },
+    { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
     { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
   ];
@@ -45,6 +53,56 @@ window.Header = (() => {
   };
   let shut = 0;
 
+  const SCHEME = 'opspile.scheme';
+  const SCHEMES = [
+    { id: 'system', label: 'System', title: 'Light or dark, as this device is set' },
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+  ];
+  /** The color scheme picked in this browser: `light`, `dark` or `system`. */
+  function scheme() {
+    let s = null;
+    try { s = localStorage.getItem(SCHEME); } catch { /* storage is off */ }
+    return s === 'light' || s === 'dark' ? s : 'system';
+  }
+  /** The page in the scheme picked: the tokens, the browser's chrome, the menu's ✓. */
+  function applyScheme(s = scheme()) {
+    const root = document.documentElement;
+    if (s === 'system') delete root.dataset.scheme;
+    else root.dataset.scheme = s;
+    // theme-color takes no custom properties: each scheme's has its own tag, picked by media.
+    for (const meta of document.querySelectorAll('meta[name="theme-color"][media]')) {
+      if (!meta.dataset.media) meta.dataset.media = meta.media;
+      const own = meta.dataset.media.includes(`prefers-color-scheme: ${s}`);
+      meta.media = s === 'system' ? meta.dataset.media : own ? 'all' : 'not all';
+    }
+    for (const b of document.querySelectorAll('#schemes [data-scheme]')) {
+      b.setAttribute('aria-checked', String(b.dataset.scheme === s));
+    }
+  }
+  /** Appearance in your menu, before the keyboard's shortcuts and logging out. */
+  function schemeMenu() {
+    const menu = $('menu');
+    if (!menu || $('schemes')) return;
+    const box = document.createElement('section');
+    box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
+      SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck">✓</span>${o.label}</button>`).join('')}</div>`;
+    const sections = [...menu.querySelectorAll(':scope > section')];
+    const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
+    menu.insertBefore(box, before || null);
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-scheme]');
+      if (!b) return;
+      try {
+        if (b.dataset.scheme === 'system') localStorage.removeItem(SCHEME);
+        else localStorage.setItem(SCHEME, b.dataset.scheme);
+      } catch { /* storage is off: this page only */ }
+      applyScheme(b.dataset.scheme);
+    });
+  }
+  schemeMenu();
+  applyScheme();
+  addEventListener('storage', (e) => { if (e.key === SCHEME || e.key === null) applyScheme(); });
   /** Which page an address on this origin is, or null. */
   function pageOf(url) {
     let u;
@@ -52,6 +110,8 @@ window.Header = (() => {
     if (u.origin !== location.origin) return null;
     if (u.pathname === '/inbox') return 'inbox';
     if (u.pathname === '/inbox/kb') return 'agents';
+    if (u.pathname === '/inbox/cogs') return 'cogs';
+    if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
     return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
@@ -173,15 +233,30 @@ window.Header = (() => {
     sync();
   }
 
-  /** You, at the right end: your face, your name, and under it `sub`; and your menu. */
+  /** You, at the right end: your face (picture over initials), your name, `sub` under it; your menu. */
   function user(me, sub = '') {
     const name = me.name || me.email || '';
     let h = 0;
     for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     const initials = name.replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
     for (const id of ['userAv', 'menuAv']) {
-      $(id).textContent = initials;
-      $(id).style.background = COLORS[h % COLORS.length];
+      const av = $(id);
+      av.style.background = COLORS[h % COLORS.length];
+      av.dataset.hue = String(h % COLORS.length);
+      // Every render calls this: the face is only built again when it changes.
+      const face = `${initials} ${me.avatar || ''}`;
+      if (av.dataset.face === face) continue;
+      av.dataset.face = face;
+      av.textContent = initials;
+      // The picture on top; one that does not load (Gravatar's 404) leaves the initials.
+      if (me.avatar) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        img.onerror = () => img.remove();
+        img.src = me.avatar;
+        av.append(img);
+      }
     }
     $('me').textContent = name;
     $('userSub').textContent = sub;
@@ -234,6 +309,6 @@ window.Header = (() => {
   sync();
 
   return {
-    init, sync, setCount, user, role, remember, href, pageOf, stats,
+    init, sync, setCount, user, role, remember, href, pageOf, stats, scheme,
   };
 })();

@@ -16,6 +16,7 @@
  *
  *   npm run ui:dev                 # http://localhost:8787/inbox
  *   PORT=9000 npm run ui:dev
+ *   UI_SCHEME=light npm run ui:dev     # light (or dark) whatever the browser prefers
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
@@ -32,12 +33,14 @@
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does; with
  * `&mention=1` the message mentions Dana, who gets a notification (once the browser allows it).
+ * `POST /__dev/rethread?into=<key>&after=<ms>` starts a thread in the channel of `into` and
+ * folds it into `into`'s group `after` ms later (30 s by default), as re-threading does.
  *
  * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
  * disk on every request (the Worker imports the same files) as src/page.js puts them together,
  * and the pure helpers `readState`, `waitingOn`, `titleOf`, `previewOf`
- * (src/threads.js) and `parse`, `render` (src/channels.js). What is replaced: D1, R2, the
- * TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
+ * (src/threads.js), `fold` (src/api.js) and `parse`, `render` (src/channels.js). What is
+ * replaced: D1, R2, the TeamRoom Durable Object and Cloudflare Access, which are an in-memory store
  * (dev-ui-fixtures.mjs) and "signed in as Dana".
  *
  * With a production session (see scripts/dev-ui-session.mjs), `/api/*` is proxied to the
@@ -61,12 +64,16 @@ import {
 } from '../src/attach.js';
 import { parse } from '../src/channels.js';
 import { channelTokens, SLACK_CHANNEL_ID } from '../src/channelrefs.js';
+import { channelUrlRefs } from '../src/channelurl.js';
 import { CHANNEL_REF } from '../src/markdown.js';
 import { ICONS } from '../src/icons.js';
+import { SOUNDS } from '../src/sound.js';
 import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
-import { rankMentions } from '../src/mention-match.js';
-import { inboxPage as servedInbox, page as servedPage } from '../src/page.js';
+import { suggestMentions } from '../src/mention-match.js';
+import {
+  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+} from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
 } from '../src/shortcodes.js';
@@ -76,7 +83,9 @@ import { statsFor } from '../src/klickhaus.js';
 import { vocab } from '../src/label.js';
 import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
-import { readState, waitingOn } from '../src/threads.js';
+import { slackMessageRefs } from '../src/slackurl.js';
+import { previewOf, readState, waitingOn } from '../src/threads.js';
+import { fold, readMembers, threadTech } from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -96,11 +105,14 @@ const MEMBER = process.argv.includes('--member');
 // of every team's channels she posted or was mentioned in.
 const NO_TEAM = process.argv.includes('--no-team');
 const SIM_EVERY_MS = 25 * 1000;
+// A new root is re-threaded this long after it arrives (src/rethread.js: 30 s).
+const RETHREAD_MS = 30 * 1000;
 const LATENCY_MS = Number(process.argv.find((a) => a.startsWith('--latency='))?.slice(10)) || 0;
 // Sending a reply, as production's take: the platform takes it in about 900 ms (POST
-// /api/post), and it comes back through the normalize queue some eight seconds later.
+// /api/post), and it comes back through the normalize queue some ten seconds later (half of
+// them; one in ten takes 20 s or more, now and then over a minute: `--arrive=` to try that).
 const SEND_MS = Number(process.argv.find((a) => a.startsWith('--send='))?.slice(7)) || 900;
-const ARRIVE_MS = 8000;
+const ARRIVE_MS = Number(process.argv.find((a) => a.startsWith('--arrive='))?.slice(9)) || 8000;
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
@@ -108,7 +120,9 @@ const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
-const store = createStore(Date.now(), { big: process.argv.includes('--big') });
+const store = createStore(Date.now(), {
+  big: process.argv.includes('--big'), admin: ADMIN,
+});
 if (NO_TEAM) {
   for (const t of store.teams) {
     t.members = t.members.filter((id) => id !== store.me.id);
@@ -122,7 +136,7 @@ const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: k
 let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
-// Dana's notification settings (src/settings.js): mentions on, and a bell on Edge ops'
+// Dana's notification settings (src/settings.js): mentions and threads on, and a bell on Edge ops'
 // incidents, so the user menu lists one.
 let settings = withDefaults(store.me, {
   bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
@@ -175,17 +189,6 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
-const EXPERTS = [
-  {
-    id: 'lena', name: 'Lena Berg', member: true, reasons: ['knows about this topic', 'typically responds in about 40 minutes', 'is active in this channel'],
-  },
-  {
-    id: 'priya', name: 'Priya Nair', member: true, reasons: ['typically responds in about 4 hours', 'is active in this channel'],
-  },
-  {
-    id: 'tom', name: 'Tom Okafor', member: false, reasons: ['knows about this topic', 'not in this channel'],
-  },
-];
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
 
 // ---- reactions, as D1's `reactions` would hold them ---------------------------------------
@@ -316,6 +319,22 @@ function members(...teams) {
 /** A person's identity key on a platform, like `messages.author_key`. */
 const keyOf = (p, source) => `${source}:T-FAKE:${p ? p.key : 'bot'}`;
 
+/** `/api/me`'s picture of the signed-in person (src/api.js `avatarOf`): a made-up face. */
+const FACE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#8fb8de"/><circle cx="32" cy="25" r="12" fill="#f1d3b8"/><path d="M10 64c2-14 11-21 22-21s20 7 22 21z" fill="#35577d"/></svg>')}`;
+
+/**
+ * A made-up face for every other person (the rest show their initials, as people without a
+ * picture do): FACE in a colour of their own, so avatars and notifications have pictures.
+ */
+const SHIRTS = ['#35577d', '#7d3557', '#357d4f', '#7d6a35', '#4f357d'];
+function faceOf(p) {
+  if (!p || p.id % 2) {
+    return null;
+  }
+  const shirt = SHIRTS[p.id % SHIRTS.length];
+  return FACE.replace(encodeURIComponent('#35577d'), encodeURIComponent(shirt));
+}
+
 /** Profile cards for these identity keys, as src/profiles.js builds them from D1. */
 function profiles(keys) {
   const out = {};
@@ -326,7 +345,7 @@ function profiles(keys) {
     const partner = partnerOf(domain, store.partners);
     out[k] = p ? {
       name: p.name,
-      avatar: null,
+      avatar: faceOf(p),
       platform: source,
       kind: 'person',
       title: p.title || null,
@@ -353,13 +372,38 @@ function people(entry) {
   const domains = [...seen.values()].filter((p) => p && !p.staff).map((p) => p.email.split('@').pop());
   return {
     participants: [...seen].slice(0, 5).map(([name, p]) => ({
-      name, staff: Boolean(p?.staff), avatar: null, key: p ? keyOf(p, entry.ch.source) : null,
+      name, staff: Boolean(p?.staff), avatar: faceOf(p), key: p ? keyOf(p, entry.ch.source) : null,
     })),
     customerDomain: domains[0] || null,
   };
 }
 
 /** The channels ME posted or was mentioned in, as `source:channelId`: the personal view's. */
+/** Whether a person counts as in the channel of `entry`: listed there, or posted there. */
+function channelMember(entry) {
+  const posted = new Set([...store.threads.values()]
+    .filter((t) => t.ch.channelId === entry.ch.channelId)
+    .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
+  const listed = new Set(entry.ch.members || []);
+  return (p) => listed.has(p.key) || posted.has(p.name);
+}
+
+/**
+ * As src/invite.js answers a Slack post: the Adobe people it mentions who are not in the
+ * channel were added to it first (`invited`). They stay out here, so the case shows again.
+ */
+function invitedFor(entry, mentions) {
+  if (!entry || entry.row.source !== 'slack') {
+    return {};
+  }
+  const inChannel = channelMember(entry);
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const invited = [...store.people.values(), ...store.members]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p))
+    .map((p) => ({ id: `slack-${p.key}`, name: p.name }));
+  return invited.length ? { invited } : {};
+}
+
 function myChannels() {
   const { name } = store.people.get(ME);
   const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
@@ -367,6 +411,18 @@ function myChannels() {
   return new Set([...store.threads.values()]
     .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
     .map(at));
+}
+
+/** The channels ME may start a thread in, latest activity first, as src/post.js lists them. */
+function postable() {
+  const mine = myChannels();
+  const latest = (e) => e.row.last_at || e.row.any_at;
+  const channels = new Map();
+  [...store.threads.values()].sort((a, b) => String(latest(b)).localeCompare(String(latest(a))))
+    .filter(({ ch }) => (ch.kind || 'channel') === 'channel' && ch.source !== 'discord'
+      && (inTeam(ch.team) || mine.has(`${ch.source}:${ch.channelId}`)))
+    .forEach(({ ch, row }) => channels.set(`${ch.source}:${row.tenant}:${ch.channelId}`, ch));
+  return channels;
 }
 
 /** As src/channelrefs.js's nameChannelIds: Slack channel ids (`#C…`) as the channels' names. */
@@ -379,6 +435,32 @@ function nameIds(s) {
     && names.has(token) ? `${before}#${names.get(token)}` : m));
 }
 
+/**
+ * Unread threads in Dana's team inboxes that her personal view does not show, as
+ * src/api.js's `unreadElsewhere`: alerts count, a channel she posted or was mentioned in
+ * does not. The preview files each channel under one team.
+ */
+function elsewhereCounts() {
+  const channels = myChannels();
+  const mine = store.teams.filter((t) => t.members.includes(ME));
+  const rows = [...store.threads.values()].map((e) => e.row).filter((r) => r.kind !== 'ignore');
+  const unread = (r) => {
+    const last = r.kind === 'alert' ? r.any_at : r.last_at;
+    if (!last) {
+      return false;
+    }
+    const mark = store.watermarks.get(`${ME}|${r.thread}`);
+    return !(mark && mark.read_at >= last);
+  };
+  const inPersonal = (r) => r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`);
+  return mine.map((t) => ({
+    slug: t.slug,
+    name: t.name,
+    members: t.members.length,
+    unread: rows.filter((r) => r.team === t.slug && unread(r) && !inPersonal(r)).length,
+  })).filter((t) => t.unread > 0);
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -388,17 +470,22 @@ function inbox(team, before = null, personal = false, only = null) {
   const inScope = (r) => (personal
     ? r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
     : r.team === team);
-  const all = [...store.threads.values()]
+  // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
+  const groupOf = (r) => r.logical_thread || r.thread;
+  const entries = [...store.threads.values()]
     .map((e) => e.row)
-    .filter((r) => inScope(r) && r.kind !== 'ignore' && (!only || only.has(r.thread)))
-    .sort((a, b) => latest(b).localeCompare(latest(a)) || b.thread.localeCompare(a.thread));
+    .filter((r) => inScope(r) && r.kind !== 'ignore' && (!only || only.has(groupOf(r))));
+  const groups = [...Map.groupBy(entries, groupOf)]
+    .map(([g, ms]) => ({ g, latest: ms.map(latest).sort().pop() }))
+    .sort((a, b) => b.latest.localeCompare(a.latest) || b.g.localeCompare(a.g));
   const [at, key] = before ? String(before).split('|') : [null, null];
-  const after = at === null ? all
-    : all.filter((r) => latest(r) < at || (latest(r) === at && r.thread < key));
-  const pageRows = only ? after : after.slice(0, INBOX_PAGE);
-  const lastRow = pageRows[pageRows.length - 1];
-  const page = { next: after.length > INBOX_PAGE && lastRow ? `${latest(lastRow)}|${lastRow.thread}` : null };
-  const rows = pageRows
+  const after = at === null ? groups
+    : groups.filter((x) => x.latest < at || (x.latest === at && x.g < key));
+  const pageGroups = only ? after : after.slice(0, INBOX_PAGE);
+  const lastGroup = pageGroups[pageGroups.length - 1];
+  const page = { next: after.length > INBOX_PAGE && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
+  const onPage = new Set(pageGroups.map((x) => x.g));
+  const rows = entries.filter((r) => onPage.has(groupOf(r)))
     .map((r) => ({
       ...r, root_known: r.root_at !== null, org_type: ORG_TYPES[r.org] || 'customer',
     }));
@@ -419,13 +506,13 @@ function inbox(team, before = null, personal = false, only = null) {
     }));
   const mentions = store.mentions.filter((m) => keys.has(m.thread) && teamIds.has(m.person));
   const byName = new Map([...store.people.values()].map((p) => [p.name, p]));
-  const threads = readState(rows, marks, mentions, ME)
+  // A re-threaded group is one entry, as src/api.js folds it.
+  const threads = fold(readState(rows, marks, mentions, ME)
     .map((t) => ({
       ...t,
       label: store.labels.get(t.thread) || null,
       tech: store.threads.get(t.thread).ch.tech || [],
       ...people(store.threads.get(t.thread)),
-      members: [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }],
       posters: [...new Set(store.threads.get(t.thread).messages
         .map((m) => byName.get(m.author.name)?.id).filter(Boolean))],
       mentioned: store.mentions.filter((m) => m.thread === t.thread)
@@ -437,8 +524,9 @@ function inbox(team, before = null, personal = false, only = null) {
         }), {})),
       resolution: resolutionOf(store.threads.get(t.thread)),
       draft: draftSummary(drafts.get(t.thread)) || null,
-    }))
-    .map((t) => ({
+    })))
+    // src/api.js's `resolution` is made from these; here `resolutionOf` did it already.
+    .map(({ resolutionFacts: _, ...t }) => ({
       ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
     }));
   return {
@@ -456,6 +544,7 @@ function inbox(team, before = null, personal = false, only = null) {
     vocab: vocabNames,
     threads,
     page,
+    ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
   };
 }
 
@@ -497,7 +586,8 @@ function search(team, q, personal = false) {
     const score = topic + 0.7 * said + (all ? 0.8 * title + 0.5 * (1 - title) : 0)
       + (fact ? 0.4 : 0);
     hits.push({
-      thread: r.thread,
+      // A re-threaded group is one entry, under its first thread's key, as src/search.js finds it.
+      thread: r.logical_thread || r.thread,
       score: Math.round(score * 1000) / 1000,
       matched: [all && title > 0 && 'title', all && title < 1 && 'place', fact && 'fact', said && 'text', topic && 'topic'].filter(Boolean),
       ...(fact ? { fact: { field: fact.field, value: fact.value } } : {}),
@@ -512,6 +602,9 @@ function search(team, q, personal = false) {
     });
   }
   hits.sort((a, b) => b.score - a.score);
+  // The best hit of each entry.
+  const firsts = hits.filter((h, i) => hits.findIndex((x) => x.thread === h.thread) === i);
+  hits.splice(0, hits.length, ...firsts);
   const view = inbox(team, null, personal, new Set(hits.map((h) => h.thread)));
   const shown = new Set(view.threads.map((t) => t.thread));
   return {
@@ -528,6 +621,28 @@ function editableOf(meta, source) {
   }
   const mine = meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name;
   return mine && source !== 'discord' ? 'user' : null;
+}
+
+/** As src/slacklinks.js: Slack permalinks in the texts, matched to messages in the store. */
+function slackLinksFor(bodies) {
+  const index = new Map();
+  for (const entry of store.threads.values()) {
+    if (entry.ch.source === 'slack') {
+      for (const m of entry.messages.filter((msg) => !msg.deletedAt)) {
+        const person = [...store.people.values()].find((p) => p.name === m.author.name);
+        index.set(`${entry.ch.channelId}:${m.id}`, {
+          channel: entry.ch.channelId,
+          id: m.id,
+          thread: entry.key,
+          at: m.at,
+          author: m.author.name || null,
+          authorKey: m.author.kind === 'system' ? null : keyOf(person, entry.ch.source),
+          preview: previewOf(m.body || ''),
+        });
+      }
+    }
+  }
+  return slackMessageRefs(bodies).map((r) => index.get(`${r.channel}:${r.id}`)).filter(Boolean);
 }
 
 /** As src/channelrefs.js: the channels the texts name, and where the viewer finds them. */
@@ -550,20 +665,100 @@ function channelRefs(source, texts) {
     }));
 }
 
-function thread(key) {
-  const entry = store.threads.get(key);
+/** As src/channelrefs.js channelLinks: the channels links in the texts are to, any platform. */
+function channelLinksFor(texts) {
+  const channels = new Map([...store.threads.values()].map((e) => [`${e.ch.source}:${e.ch.channelId}`, e.ch]));
+  const mine = myChannels();
+  const teams = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+  return channelUrlRefs(texts).map((r) => channels.get(`${r.source}:${r.channel}`)).filter(Boolean)
+    .map((ch) => ({
+      id: ch.channelId,
+      source: ch.source,
+      name: ch.name,
+      org: ch.org,
+      teams: teams.includes(ch.team) ? [ch.team] : [],
+      personal: mine.has(`${ch.source}:${ch.channelId}`),
+      url: null,
+    }));
+}
+
+const AGENT_NOTE = 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
+  + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
+  + '- Filed *cdn-503-after-config-change* in the ACME knowledge base';
+
+// When GET /api/agent first asked about a thread, by entry.
+const agentAsked = new WeakMap();
+
+/**
+ * The thread agent's latest turn (src/agent/turn.js), made up: undefined where the channel has
+ * no agent (all but ACME's). In ACME's latest thread it works for a few seconds after the thread
+ * is first asked about (`asked`: GET /api/agent), then leaves a note; in the others it finished
+ * a minute after the thread's last message, and that turn is kept (src/agent/kept.js), so it
+ * comes with the thread.
+ */
+function agentTurn(entry, { asked = false } = {}) {
+  if (entry.row.channel_id !== 'C0ACMEAEM') {
+    return undefined;
+  }
+  const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
+    .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
+  if (entry !== latest) {
+    const end = Date.parse(entry.row.last_at) + 75000;
+    return {
+      state: 'done', startedAt: new Date(end - 55000).toISOString(), endedAt: new Date(end).toISOString(), text: AGENT_NOTE,
+    };
+  }
+  if (asked && !agentAsked.has(entry)) {
+    agentAsked.set(entry, Date.now());
+  }
+  const at = agentAsked.get(entry);
+  if (!at) {
+    return null;
+  }
+  const startedAt = new Date(at).toISOString();
+  return Date.now() - at < 8000
+    ? {
+      state: 'working', text: 'Checking a web page', startedAt, endedAt: null,
+    }
+    : {
+      state: 'done', startedAt, endedAt: new Date(at + 8000).toISOString(), text: AGENT_NOTE,
+    };
+}
+
+/**
+ * An inbox entry, as src/api.js's `thread`: the thread, or the group it was re-threaded into,
+ * with every member's messages. A member's key opens its group: `thread.thread` is the entry's.
+ */
+const DEV_READ_MEMBERS = 8;
+
+/** The channel's tech stack (channel_tech), likeliest first. */
+const channelTech = (entry) => (entry.ch.tech || [])
+  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
+
+function thread(asked) {
+  const own = store.threads.get(asked);
+  const entry = own && store.threads.get(own.row.logical_thread || asked);
   if (!entry || !inTeam(entry.row.team)) {
     return null;
   }
+  const key = entry.row.thread;
+  const group = [...store.threads.values()]
+    .filter((e) => e.row.thread === key || e.row.logical_thread === key)
+    .sort((a, b) => String(a.row.root_at).localeCompare(String(b.row.root_at)));
+  // As src/api.js: a very large group reads its latest posts only. The fixtures' storm of
+  // alerts stands for thousands, so the preview reads fewer than the Worker does.
+  const read = readMembers(group.map((e) => e.row), [key, asked], DEV_READ_MEMBERS);
+  const paths = read.map((m) => m.path);
+  const readSet = new Set(read.map((m) => m.thread));
   const teamIds = new Set(members(entry.row.team).map((m) => m.id));
   const messages = [...store.files.entries()]
-    .filter(([path]) => path.startsWith(entry.row.path))
+    .filter(([path]) => paths.some((p) => path.startsWith(p)))
     .map(([, body]) => parse(body))
     .filter(Boolean)
     .map(({ meta, body }) => ({
       ...meta,
       body,
-      avatar: null,
+      avatar: faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
       authorKey: meta.author.kind === 'system' ? null : keyOf(
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,
@@ -572,21 +767,31 @@ function thread(key) {
       mine: meta.author.kind === 'person' && meta.author.name === store.people.get(ME).name,
       // As src/api.js's editableAs: the viewer's own (not on Discord), or posted as the app.
       editable: editableOf(meta, entry.row.source),
-      reactions: reactionsOn(key, meta.id),
+      reactions: reactionsOn(meta.thread, meta.id),
     }))
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const links = slackLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body));
+  const keys = new Set(group.map((e) => e.row.thread));
   const watermarks = [...store.watermarks.values()]
-    .filter((w) => w.thread === key && teamIds.has(w.person))
-    .map(({ person, read_at: readAt, via }) => ({
-      person, thread: key, read_at: readAt, via,
+    .filter((w) => keys.has(w.thread) && teamIds.has(w.person))
+    .map(({
+      person, thread: t, read_at: readAt, via,
+    }) => ({
+      person, thread: t, read_at: readAt, via,
     }));
   return {
     thread: entry.row,
-    members: [{
-      thread: key, root_at: entry.row.root_at, last_at: entry.row.last_at, any_at: entry.row.any_at,
-    }],
+    members: group.map(({ row: m }) => ({
+      thread: m.thread,
+      root_at: m.root_at,
+      last_at: m.last_at,
+      any_at: m.any_at,
+      ...(group.length > 1 ? { title: m.title || null, permalink: m.permalink } : {}),
+      ...(readSet.has(m.thread) ? {} : { left_out: true }),
+    })),
     messages,
-    profiles: profiles(messages.map((m) => m.authorKey)),
+    earlier_posts: group.length - read.length,
+    profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
     // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
     // the platform's accounts (a channel member who never posted) alike.
     mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
@@ -595,16 +800,27 @@ function thread(key) {
       .filter(([, p]) => p)
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
+    channel_links: channelLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body)),
+    links,
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
-    tech: (entry.ch.tech || []).map((tech, i) => ({ tech, p: 0.95 - i * 0.05 })),
+    tech: channelTech(entry),
+    // As src/api.js: what the members' labels say the thread shows (labels.tech).
+    thread_tech: threadTech(group.map(({ row: m }) => ({
+      thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
+    })), channelTech(entry), group.map(({ row: m }) => m.thread)),
     topics: store.labels.get(key)?.topics || [],
     vocab: vocabNames,
     reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
+    // As src/api.js: the agent's latest finished turn, kept when it ended.
+    agent_turn: (() => {
+      const t = agentTurn(entry);
+      return t && t.state !== 'working' ? t : null;
+    })(),
   };
 }
 
@@ -664,17 +880,20 @@ async function proxyApi(req, res, url, b) {
 
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
-  // A manager edits their teams' knowledge bases only, as in src/kbadmin.js, and a member
-  // reads their teams'.
-  const mine = new Set(store.me.teams.map((t) => `kb-team-${t.slug}`));
-  const allowed = (repo) => (MEMBER ? mine.has(repo) : !MANAGER || repo === 'kb-team-edge');
+  // Who reads and who changes a knowledge base's files: as src/kbadmin.js lists them (a
+  // manager changes their teams'; a member reads their teams' and their customers').
+  const listed = async (repo) => {
+    const list = await adminApi.kb({ method: 'GET' }, new URL('http://localhost/api/kb'), null);
+    return (await list.json()).bases.find((b) => b.repo === repo);
+  };
   if (MEMBER && req.method !== 'GET') {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
   }
   const body = req.method === 'GET' ? {} : await readJson(req);
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools, and the teams' extraction rules: src/kbadmin.js itself.
-  if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools'].includes(url.pathname)
+  if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools', '/api/kb/tools/secrets']
+    .includes(url.pathname)
     || url.pathname === '/api/kb/mcp' || url.pathname.startsWith('/api/kb/mcp/')
     || url.pathname === '/api/kb/extraction' || url.pathname.startsWith('/api/kb/extraction/')) {
     const r = await adminApi.kb(req, url, req.method === 'GET' ? null : body);
@@ -695,8 +914,12 @@ async function kbApi(req, res, url) {
     return json(res, out, r.status);
   }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
-  if (!kb.has(repo) || !allowed(repo)) {
+  const listing = kb.has(repo) && await listed(repo);
+  if (!listing) {
     return json(res, { error: 'no such knowledge base' }, 404);
+  }
+  if (req.method !== 'GET' && !listing.may) {
+    return json(res, { error: 'the admin team and the managers of the teams it belongs to change it' }, 403);
   }
   if (url.pathname === '/api/kb/files') {
     const files = await kb.files(repo);
@@ -817,10 +1040,10 @@ async function api(req, res, url) {
     const {
       id, name, email, teams,
     } = store.me;
-    // Dana is not in the admin team (unless --admin), except on the admin pages, so they can
-    // be tried.
+    // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
+    // they can be tried.
     const admin = !MANAGER && !MEMBER
-      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin)\b/.test(req.headers.referer || ''));
+      && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
@@ -831,6 +1054,7 @@ async function api(req, res, url) {
       manages: MANAGER ? ['edge'] : [],
       // The header's Stats link (src/klickhaus.js): Dana is in Edge ops, unless --no-team.
       ...statsOf(teams),
+      avatar: FACE,
       // The person's teams and the teams of the personal view's channels (src/shares.js).
       rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
         .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
@@ -948,7 +1172,7 @@ async function api(req, res, url) {
     if (!f || !thread(url.searchParams.get('t'))) {
       return json(res, { error: 'not a file of this thread' }, 404);
     }
-    if (!/^text\/|json/.test(f.type)) {
+    if (!/^text\/|json/.test(f.type) && !/\.har$/i.test(f.name)) {
       return json(res, { error: `cannot preview this kind of file (${f.type})` }, 415);
     }
     res.writeHead(200, {
@@ -957,30 +1181,12 @@ async function api(req, res, url) {
     return res.end(Buffer.from(f.bytes));
   }
   if (url.pathname === '/api/agent' && req.method === 'GET') {
-    // The thread agent's latest turn (src/agent/turn.js), made up: in ACME's channel, it works
-    // for a few seconds after the thread is first asked about, then leaves a note.
     const entry = store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
-    if (entry.row.channel_id !== 'C0ACMEAEM') {
-      return json(res, { enabled: false });
-    }
-    entry.agentAsked ??= Date.now();
-    const startedAt = new Date(entry.agentAsked).toISOString();
-    const turn = Date.now() - entry.agentAsked < 8000
-      ? {
-        state: 'working', text: 'Checking a web page', startedAt, endedAt: null,
-      }
-      : {
-        state: 'done',
-        startedAt,
-        endedAt: new Date(entry.agentAsked + 8000).toISOString(),
-        text: 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
-          + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
-          + '- Filed *cdn-503-after-config-change* in the ACME knowledge base',
-      };
-    return json(res, { enabled: true, turn });
+    const turn = agentTurn(entry, { asked: true });
+    return json(res, turn === undefined ? { enabled: false } : { enabled: true, turn });
   }
   if (url.pathname === '/api/emoji') {
     // As src/shortcodes.js ranks them, with a Clef that keeps the candidates' order.
@@ -996,22 +1202,39 @@ async function api(req, res, url) {
       emoji: Object.fromEntries(names.map((n, i) => [n, found[i]]).filter(([, e]) => e)),
     });
   }
+  if (url.pathname === '/api/channels') {
+    const mine = myChannels();
+    return json(res, {
+      channels: [...postable()].map(([ref, ch]) => ({
+        ref,
+        source: ch.source,
+        name: ch.name,
+        group: ch.teamId ? store.teams.find((t) => t.slug === ch.team)?.name : null,
+        org: ch.org,
+        orgName: ch.org,
+        teams: [ch.team],
+        personal: mine.has(`${ch.source}:${ch.channelId}`),
+      })),
+    });
+  }
   if (url.pathname === '/api/mentionable') {
     // As D1 would answer (src/post.js): the accounts of the platform, ranked as the Worker
-    // ranks them, those who posted in the thread first, then the channel's members.
-    const entry = store.threads.get(url.searchParams.get('thread'));
+    // ranks them, those who posted in the thread first, then the channel's members. For a
+    // thread being started (`channel`), nobody is in it, and nothing says what it is about.
+    const starting = postable().get(url.searchParams.get('channel'));
+    const entry = starting ? [...store.threads.values()].find((t) => t.ch === starting)
+      : store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
-    const here = new Set(thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
-    const posted = new Set([...store.threads.values()]
-      .filter((t) => t.ch.channelId === entry.ch.channelId)
-      .flatMap((t) => t.messages.map((m) => m.author && m.author.name)));
-    const listed = new Set(entry.ch.members || []);
+    const here = new Set(starting ? []
+      : thread(entry.row.thread).messages.map((m) => m.author && m.author.name));
+    const inChannel = channelMember(entry);
     // A stand-in for the vectors (src/expertise.js): an Adobe person's affinity is how many of
     // this thread's longer words their messages anywhere have, the viewer's own aside.
     const wordsOf = (s) => new Set(String(s || '').toLowerCase().match(/[a-z]{5,}/g) || []);
-    const about = wordsOf([entry.row.title, ...entry.messages.map((m) => m.body)].join(' '));
+    const about = wordsOf(starting ? ''
+      : [entry.row.title, ...entry.messages.map((m) => m.body)].join(' '));
     const affinity = new Map();
     for (const t of store.threads.values()) {
       for (const m of t.messages) {
@@ -1022,33 +1245,33 @@ async function api(req, res, url) {
         }
       }
     }
-    const found = rankMentions([...store.people.values(), ...store.members].map((p) => ({
-      id: `${entry.row.source}-${p.key}`,
-      name: p.name,
-      aliases: [p.login, p.email],
-      avatar: null,
-      here: here.has(p.name),
-      member: listed.has(p.key) || posted.has(p.name),
-      staff: p.staff,
-      affinity: p.staff ? affinity.get(p.name) || 0 : 0,
-      kind: 'person',
-    })), url.searchParams.get('q'), 8).map((p) => ({
-      ...p, aliases: undefined, affinity: undefined, ...(p.affinity > 0 ? { expert: true } : {}),
-    }));
-    return json(res, { platform: entry.row.source, people: found });
+    const pool = {
+      accounts: [...store.people.values(), ...store.members].map((p) => ({
+        id: `${entry.row.source}-${p.key}`,
+        name: p.name,
+        aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
+        here: here.has(p.name),
+        member: inChannel(p),
+        staff: p.staff,
+        affinity: p.staff ? affinity.get(p.name) || 0 : 0,
+      })),
+      bots: [],
+    };
+    return json(res, {
+      platform: entry.row.source,
+      people: suggestMentions(pool, url.searchParams.get('q')),
+      ...(url.searchParams.has('pool') ? { pool } : {}),
+    });
   }
   if (url.pathname === '/api/experts') {
-    // Stands in for src/experts.js: the colleagues not in the thread yet, in the fake data's
-    // order, with reasons that show each form the finder has.
+    // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'
+    // suggestions. The thread about the old blog paths has one.
     const entry = store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
     }
     const { messages } = thread(entry.row.thread);
-    const inThread = (name) => messages.some((m) => m.author?.name === name
-      || JSON.stringify(m).includes(`@${name}`));
-    const me = store.people.get(ME)?.name;
-    // The thread about the old blog paths has the form of an agent's suggestion.
+    const inThread = (name) => messages.some((m) => m.author?.name === name);
     const agent = /blog/i.test(messages[0]?.body || '') ? [{
       id: 'lena',
       name: 'Lena Berg',
@@ -1056,8 +1279,7 @@ async function api(req, res, url) {
       suggested: { at: new Date().toISOString() },
       reasons: ['Wrote the redirects for the last blog migration'],
     }] : [];
-    const experts = [...agent, ...EXPERTS.filter((e) => !agent.some((a) => a.id === e.id))]
-      .filter((e) => !inThread(e.name) && e.name !== me)
+    const experts = agent.filter((e) => !inThread(e.name) && e.name !== store.people.get(ME)?.name)
       .map((e) => ({
         ...e, avatar: null, staff: true, kind: 'person', response: null,
       }));
@@ -1089,6 +1311,11 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'draft', thread: key });
       return json(res, { ok: true, discarded: Boolean(current), draft: current || null });
     }
+    if (!current && base) {
+      return json(res, {
+        error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
+      }, 409);
+    }
     if (!String(body || '').trim()) {
       return json(res, { error: 'write something to save (up to 8000 characters)' }, 400);
     }
@@ -1117,8 +1344,60 @@ async function api(req, res, url) {
     // JSON, or multipart with files, as src/attach.js reads it.
     const { body: posted, files } = await readPost(req);
     const {
-      thread: key, text: reply, mentions = [], draft: base,
+      thread: key, channel, text: reply, mentions = [], draft: base,
     } = posted;
+    // A reply in a thread started here that the inbox does not have yet (src/post.js `root`):
+    // the platform takes it, and it arrives after the thread does.
+    if (channel && posted.root !== undefined && !app) {
+      const ch = postable().get(channel);
+      if (!ch || !String(reply || '').trim()) {
+        return json(res, { error: 'not found' }, 404);
+      }
+      await new Promise((r) => {
+        setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
+      });
+      const at = new Date();
+      const { key: startedKey, id } = store.replyIn(ch, String(posted.root), at.getTime());
+      const arrive = () => {
+        if (!store.threads.get(startedKey)) {
+          setTimeout(arrive, 500);
+          return;
+        }
+        store.post(startedKey, 'dana', String(reply).trim(), at.toISOString(), id);
+        broadcast(ch.team, { type: 'thread', thread: startedKey });
+      };
+      setTimeout(arrive, ARRIVE_MS);
+      return json(res, {
+        ok: true, platform: ch.source, id, text: String(reply).trim(),
+      });
+    }
+    // A thread started in a channel (src/post.js `channelPlace`): it arrives like a reply.
+    if (channel && !app) {
+      const ch = postable().get(channel);
+      if (!ch || (!String(reply || '').trim() && !files.length)) {
+        return json(res, { error: 'not found' }, 404);
+      }
+      await new Promise((r) => {
+        setTimeout(r, SEND_MS);
+      });
+      if (ch.rejects) {
+        return json(res, { error: `Slack: ${ch.rejects}` }, 502);
+      }
+      const at = new Date();
+      const started = store.startId(ch, at.getTime());
+      setTimeout(() => {
+        store.start(ch, started, 'dana', String(reply).trim(), at.toISOString());
+        broadcast(ch.team, { type: 'thread', thread: started.key });
+      }, ARRIVE_MS);
+      return json(res, {
+        ok: true,
+        platform: ch.source,
+        id: started.id,
+        text: String(reply).trim(),
+        thread: started.key,
+        ...invitedFor([...store.threads.values()].find((t) => t.ch === ch), mentions),
+      });
+    }
     if (app && !store.threads.get(key)?.ch.appPosting) {
       return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
     }
@@ -1178,7 +1457,7 @@ async function api(req, res, url) {
       broadcast(entry.row.team, { type: 'thread', thread: key });
     }, app ? 1200 : ARRIVE_MS);
     return json(res, {
-      ok: true, platform: entry.row.source, id, text: sent,
+      ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
     });
   }
   if (url.pathname === '/api/edit' && req.method === 'POST') {
@@ -1499,7 +1778,16 @@ const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:c
 /** ui/<name>.html as the Worker serves it, with the banner and live reload. */
 async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
-  const served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
+  let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
+  // UI_SCHEME=light or dark: the pages in that color scheme, whatever the browser prefers
+  // (for screenshots of both).
+  const scheme = process.env.UI_SCHEME;
+  if (scheme === 'light' || scheme === 'dark') {
+    const other = scheme === 'light' ? 'dark' : 'light';
+    served = served.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
+      .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
+      .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
+  }
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
@@ -1543,7 +1831,8 @@ const LINES = [
 
 /**
  * A new message in a random conversation, or in `key` (POST /__dev/simulate?thread=). One in
- * five, and every one with `mention` (`&mention=1`), mentions Dana, who is notified of it.
+ * five, and every one with `mention` (`&mention=1`), mentions Dana, who is notified of it, as
+ * of any message in a thread of theirs.
  */
 function simulate(key, mention = Math.random() < 0.2) {
   const live = [...store.threads.values()].filter((e) => e.row.kind === 'channel');
@@ -1561,15 +1850,58 @@ function simulate(key, mention = Math.random() < 0.2) {
   if (mention) {
     store.mentions.push({ thread: entry.row.thread, person: ME, at });
   }
-  // As src/normalizer.js announces it: whom the message newly mentions, and who wrote it.
+  const byName = new Map([...store.people.values()].map((p) => [p.name, p.id]));
+  const involved = [...new Set([
+    ...entry.messages.map((m) => byName.get(m.author.name)),
+    ...store.mentions.filter((m) => m.thread === entry.row.thread).map((m) => m.person),
+  ])].filter(Boolean);
+  // As src/normalizer.js announces it: whom the message newly mentions, whose thread it is, and
+  // who wrote it.
   broadcast(entry.row.team, {
     type: 'thread',
     thread: entry.row.thread,
-    ...(mention ? {
-      mentions: [ME], by: sender.id, author: sender.name, at,
-    } : {}),
+    mentions: mention ? [ME] : [],
+    involved,
+    by: sender.id,
+    author: sender.name,
+    at,
   });
   console.log(`[sim] ${sender.name} in ${entry.row.channel_name}`);
+}
+
+/**
+ * A follow-up posted as a new root in the channel of `key` (a random conversation without
+ * it), as src/rethread.js sees one: it arrives as a thread of its own, and `after` ms later
+ * (30 s in production) is folded into `key`'s group, which the room announces with `folded`.
+ * POST /__dev/rethread?into=<key>&after=<ms>; the simulation does it now and then.
+ */
+function rethread(key, after = RETHREAD_MS) {
+  const live = [...store.threads.values()]
+    .filter((e) => e.row.kind === 'channel' && e.row.last_at && !e.row.logical_thread);
+  const into = store.threads.get(key) || live[Math.floor(Math.random() * live.length)];
+  if (!into) {
+    return null;
+  }
+  const { ch } = into;
+  const customers = [...store.people.values()].filter((p) => p.org === into.row.org);
+  const sender = customers[Math.floor(Math.random() * customers.length)]
+    || store.people.get(members(into.row.team)[0].id);
+  const at = new Date();
+  const started = store.startId(ch, at.getTime());
+  const line = LINES[Math.floor(Math.random() * LINES.length)];
+  store.start(ch, started, sender.key, line, at.toISOString());
+  broadcast(ch.team, {
+    type: 'thread', thread: started.key, by: sender.id, author: sender.name, at: at.toISOString(),
+  });
+  console.log(`[sim] ${sender.name} started a thread in ${ch.name}, folded in ${after / 1000}s`);
+  setTimeout(() => {
+    const group = store.rethread(started.key, into.row.thread);
+    if (group) {
+      broadcast(ch.team, { type: 'thread', thread: group, folded: [started.key] });
+      console.log(`[sim] folded ${started.key} into ${group}`);
+    }
+  }, after).unref();
+  return started.key;
 }
 
 // ---- server ----------------------------------------------------------------------------
@@ -1621,8 +1953,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { location: '/inbox' }).end();
       return;
     }
-    if (url.pathname === '/inbox/kb' || url.pathname === '/inbox/admin') {
-      const html = await uiPage(url.pathname === '/inbox/kb' ? 'kb.html' : 'admin.html');
+    if (['/inbox/kb', '/inbox/admin', '/inbox/cogs', '/inbox/topics'].includes(url.pathname)) {
+      const html = await uiPage(`${url.pathname.slice('/inbox/'.length)}.html`);
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html);
       return;
@@ -1632,15 +1964,38 @@ const server = createServer(async (req, res) => {
       res.end(await uiPage('inbox.html'));
       return;
     }
-    if (ICONS[url.pathname]) {
-      const { type, base64 } = ICONS[url.pathname];
+    // The Spectrum 2 preview's addresses, as the Worker redirects them.
+    const preview = fromPreview(url.pathname, url.search);
+    if (preview) {
+      res.writeHead(301, { location: preview }).end();
+      return;
+    }
+    if (ICONS[url.pathname] || SOUNDS[url.pathname]) {
+      const { type, base64 } = ICONS[url.pathname] || SOUNDS[url.pathname];
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
+      return;
+    }
+    // The code highlighter, as the Worker serves it.
+    const asked = { method: req.method, headers: new Headers(req.headers) };
+    const lit = highlightScript(asked, url.pathname);
+    if (lit) {
+      res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;
     }
     // The manifest and the service worker, as the Worker serves them.
     const app = pwa({ method: req.method }, url.pathname);
     if (app) {
       res.writeHead(app.status, Object.fromEntries(app.headers)).end(await app.text());
+      return;
+    }
+    if (url.pathname === '/__dev/rethread' && req.method === 'POST') {
+      const after = Number(url.searchParams.get('after') ?? NaN);
+      const started = rethread(url.searchParams.get('into'), after >= 0 ? after : RETHREAD_MS);
+      if (started) {
+        json(res, { thread: started });
+      } else {
+        json(res, { error: 'no thread to fold into' }, 404);
+      }
       return;
     }
     if (url.pathname === '/__dev/simulate' && req.method === 'POST') {
@@ -1699,7 +2054,12 @@ watchUi();
 if (SIMULATE) {
   setInterval(() => {
     if (backendState.mode === 'fake') {
-      simulate();
+      // Now and then a follow-up posted as a new root, which re-threading folds a while later.
+      if (Math.random() < 0.15) {
+        rethread();
+      } else {
+        simulate();
+      }
     }
   }, SIM_EVERY_MS).unref();
 }

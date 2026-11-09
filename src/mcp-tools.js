@@ -10,15 +10,17 @@
  * governing permissions and limitations under the License.
  */
 
-import { accountName, PLATFORMS, platformName } from './platforms.js';
+import { accountName, PLATFORMS } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
 import { discardDraft, saveDraft } from './drafts.js';
+import { isResolved } from './resolve.js';
 import { MAX_SOURCES } from './sources.js';
 import {
-  connections, mentionable, post, reactable,
+  connections, mentionable, post, reactable, writtenMentions,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
+import { invitedNote } from './invite.js';
 import { PICKER, react, resolve } from './react.js';
 import { QUESTIONS, topicNames, vocab } from './label.js';
 import {
@@ -33,8 +35,7 @@ import { mayWork, memberOf, teamless } from './shares.js';
  * in the inbox. Read-only "view as" refuses writes, as the API does.
  *
  * A tool returns `{ data }` (shown to the model as JSON and as structuredContent), or
- * `{ error }` (a tool error, so the model can correct itself), or `{ input }` (an MRTR
- * InputRequiredResult, to ask the user before a reply goes out).
+ * `{ error }` (a tool error, so the model can correct itself).
  *
  * Three ways to answer in a thread, as in the inbox: `post_draft` saves the thread's shared
  * draft (src/drafts.js), which the team sees and sends; `post_as_user` posts as the person
@@ -47,29 +48,49 @@ const KINDS = [...Object.keys(QUESTIONS.kind.criteria).filter((k) => k !== 'othe
 const WAITING = ['us', 'customer', 'vendor', 'nobody'];
 const MAX_LIST = 50;
 const MAX_MESSAGES = 100;
-const MAX_BODY = 2000;
-const CONFIRM_TTL_MS = 10 * 60 * 1000;
+// What get_thread's messages may hold together, in characters (~10k tokens): any one Slack
+// message (40,000 at most) whole, and a long thread without filling an agent's context.
+const THREAD_TEXT_BUDGET = 40000;
+// A shared draft's greatest length (src/drafts.js).
+const MAX_DRAFT = 8000;
 
 const clip = (s, n) => {
   const v = String(s ?? '').trim();
   return v.length > n ? `${v.slice(0, n - 1)}…` : v;
 };
+
+/**
+ * Message texts as they fit in `budget` characters together: whole when they do; else the
+ * shortest stay whole and the longest are cut to the same length, so a short reply is never
+ * cut for a long report. `{ text, length }`, `length` only on a text cut.
+ */
+function fitTexts(texts, budget = THREAD_TEXT_BUDGET) {
+  const vals = texts.map((s) => String(s ?? '').trim());
+  let left = budget;
+  let n = vals.length;
+  let cap = Infinity;
+  for (const len of vals.map((v) => v.length).sort((a, b) => a - b)) {
+    if (len > left / n) {
+      cap = Math.floor(left / n);
+      break;
+    }
+    left -= len;
+    n -= 1;
+  }
+  return vals.map((v) => (v.length > cap
+    ? { text: `${v.slice(0, cap - 1)}…`, length: v.length } : { text: v }));
+}
 const inTeamOf = memberOf;
 const urgencyOf = (t) => (t.label && t.label.urgency != null
   ? URGENCY[Math.max(0, Math.min(3, Math.round(t.label.urgency)))] : 'low');
 const kindOf = (t) => (t.kind === 'alert' ? 'alert'
   : (t.label && KINDS.includes(t.label.label_kind) && t.label.label_kind) || 'other');
-const resolvedOf = (t) => {
-  if (t.resolution && t.resolution.verdict) {
-    return t.resolution.verdict === 'resolved';
-  }
-  return Boolean(t.label && t.label.resolved_p != null && t.label.resolved_p >= 0.5);
-};
+const resolvedOf = (t) => isResolved(t.resolution && t.resolution.verdict, t.label);
 const latest = (t) => String(t.last_at || t.any_at || '');
 const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
 /** A shared draft as the tools show it; `version` is what post_draft's `base` names. */
 const draftOut = (d) => (d ? {
-  text: clip(d.body, 8000),
+  text: clip(d.body, MAX_DRAFT),
   ...(d.sources.length ? { sources: d.sources } : {}),
   by: (d.by && d.by.name) || null,
   version: d.updated_at,
@@ -259,15 +280,23 @@ async function searchThreads(env, me, args) {
   };
 }
 
-/** A message of a thread, as get_thread and get_thread_trace show it. */
-function messageOut(m, max) {
+/**
+ * A message of a thread, as get_thread, get_message and get_thread_trace show it: its text
+ * clipped to `max` characters, or `text` as given (`{ text, length }` of fitTexts).
+ */
+function messageOut(m, max, text) {
   const a = m.author || {};
+  const said = text || { text: m.deletedAt ? '(deleted)' : clip(m.body, max) };
   const out = {
     message: `${m.thread}|${m.id}`,
     from: a.kind === 'system' ? 'system' : (a.name || 'unknown'),
     at: m.at,
-    text: m.deletedAt ? '(deleted)' : clip(m.body, max),
+    text: said.text,
   };
+  if (said.length) {
+    out.truncated = true;
+    out.length = said.length;
+  }
   if (a.staff) {
     out.adobe = true;
   }
@@ -296,7 +325,8 @@ function threadHead(key, data) {
     link: t.permalink || null,
     resolution: (data.resolution && data.resolution.state) || 'open',
     urgency: urgencyOf(data),
-    kind: kindOf({ kind: t.kind, label: data.label }),
+    // The thread view's label has Clef's kind as `kind` (the inbox's has `label_kind`).
+    kind: kindOf({ kind: t.kind, label: data.label && { label_kind: data.label.kind } }),
     facts: data.facts.map((x) => ({ field: x.field, value: x.value })),
   };
 }
@@ -308,12 +338,16 @@ async function getThread(env, me, args) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
   }
   const limit = Math.max(1, Math.min(MAX_MESSAGES, Math.floor(Number(args.limit) || 20)));
-  const messages = data.messages.slice(-limit).map((m) => messageOut(m, MAX_BODY));
+  const shown = data.messages.slice(-limit);
+  const texts = fitTexts(shown.map((m) => (m.deletedAt ? '(deleted)' : m.body)));
+  const messages = shown.map((m, i) => messageOut(m, 0, texts[i]));
   const app = me.readonly ? { problem: 'read-only' } : await appPostCheck(env, key);
   return {
     data: {
       ...threadHead(key, data),
       earlier_messages: Math.max(0, data.messages.length - limit),
+      // A very large group of re-threaded posts: the oldest are not read at all.
+      ...(data.earlier_posts ? { earlier_posts_not_loaded: data.earlier_posts } : {}),
       messages,
       draft: draftOut(data.draft),
       can_post_as_bot: !app.problem,
@@ -321,78 +355,27 @@ async function getThread(env, me, args) {
   };
 }
 
-// ---- reply confirmation (MRTR) -------------------------------------------------------
-
-const enc = new TextEncoder();
-const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
-  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-
-async function sign(env, data) {
-  const key = await crypto.subtle.importKey('raw', unb64u(env.TOKEN_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  // A separate context from the OAuth state in post.js, so one can never pass as the other.
-  return b64u(await crypto.subtle.sign('HMAC', key, enc.encode(`mcp-confirm:${data}`)));
-}
-async function digest(value) {
-  return b64u(await crypto.subtle.digest('SHA-256', enc.encode(JSON.stringify(value))));
-}
-
-/** Signed state for a confirmation: who, which call, until when (MRTR requestState). */
-export async function confirmState(env, me, name, args, now = Date.now()) {
-  const body = b64u(enc.encode(JSON.stringify({
-    p: me.id, n: name, d: await digest(args), exp: now + CONFIRM_TTL_MS,
-  })));
-  return `${body}.${await sign(env, body)}`;
-}
-
-export async function checkConfirmState(env, me, name, args, state, now = Date.now()) {
-  const [body, sig] = String(state || '').split('.');
-  if (!body || !sig || sig !== await sign(env, body)) {
-    return false;
-  }
-  const s = JSON.parse(new TextDecoder().decode(unb64u(body)));
-  return s.p === me.id && s.n === name && s.exp > now && s.d === await digest(args);
-}
-
-/**
- * Asks the user, through the client, before a reply goes out (under their name, or the
- * opspile app's), when the client can ask (`elicitation`, modern protocol only). Returns
- * `{ input }` for the first round, null to go ahead, or `{ error }` when the user declined or
- * the state is bad.
- */
-async function confirmPost(env, me, name, args, ctx, question) {
-  if (!ctx.modern || !ctx.capabilities.elicitation || !env.TOKEN_KEY) {
-    return null;
-  }
-  const answer = ctx.inputResponses && ctx.inputResponses.confirm_post;
-  if (!answer) {
-    return {
-      input: {
-        inputRequests: {
-          confirm_post: {
-            method: 'elicitation/create',
-            params: {
-              mode: 'form',
-              message: `${question}\n\n${clip(args.text, 1500)}`,
-              requestedSchema: { type: 'object', properties: {} },
-            },
-          },
-        },
-        requestState: await confirmState(env, me, name, args),
-      },
-    };
-  }
-  if (!await checkConfirmState(env, me, name, args, ctx.requestState)) {
-    return { error: `The confirmation expired or does not match this reply. Call ${name} again.` };
-  }
-  if (answer.action !== 'accept') {
-    return { error: 'The user did not confirm, so nothing was posted.' };
-  }
-  return null;
-}
-
 const READ_ONLY = { error: 'Read-only while viewing as someone else.' };
 const NOT_FOUND = { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
+
+/** get_message: one message of a thread, whole, by its `message` id from get_thread. */
+async function getMessage(env, me, args) {
+  const id = String(args.message || '');
+  const at = id.lastIndexOf('|');
+  if (at < 1) {
+    return { error: 'Use a `message` id from get_thread (it looks like <thread>|<id>).' };
+  }
+  // A re-threaded message names its own thread, which loads as its group.
+  const data = await loadThread(env, me, id.slice(0, at));
+  if (!data || !await mayWork(env, me)(data.thread.teams, data.thread)) {
+    return { error: 'Not found, or not in one of your teams. Use a `message` id from get_thread.' };
+  }
+  const m = data.messages.find((x) => `${x.thread}|${x.id}` === id);
+  if (!m) {
+    return { error: 'No such message in that thread. Use a `message` id from get_thread.' };
+  }
+  return { data: { thread: data.thread.thread, ...messageOut(m, Infinity) } };
+}
 
 /** The thread of a write, `{ key, text, t }` (loaded as the inbox does), or `{ error }`. */
 async function writeTarget(env, me, args) {
@@ -411,11 +394,10 @@ async function writeTarget(env, me, args) {
   return { key, text, t };
 }
 
-const whereOf = (t) => `${platformName(platformOf(t.thread))} (${t.thread.org || 'customer'}, ${t.thread.channel_name || 'channel'})`;
-
 /**
  * Names to mention, as written after @ in the text, to the platform accounts: `{ mentions }`
- * (`{ id, name }`, as /api/post and /api/draft take them), or `{ error }`.
+ * (`{ id, name }`, as /api/post and /api/draft take them), or `{ error }`. Each `@Name` in the
+ * text that stands for one account counts too, so that a draft sent as it is keeps its mentions.
  */
 async function mentionsOf(env, me, key, text, names) {
   const mentions = [];
@@ -433,15 +415,25 @@ async function mentionsOf(env, me, key, text, names) {
     }
     mentions.push({ id: exact.id, name: exact.name });
   }
-  return { mentions };
+  const written = await writtenMentions(env, key, text);
+  const seen = new Set(mentions.map((m) => m.id));
+  return {
+    mentions: [...mentions, ...written.filter((m) => !seen.has(m.id))
+      .map(({ id, name }) => ({ id, name }))],
+  };
 }
 
-/** A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went. */
-async function useDraft(env, me, key, version) {
+/**
+ * A post that sends the shared draft (`draft`: its version) uses it up: a note on how it went.
+ * `sent`: how it went out (`me`, `app`) and its text.
+ */
+async function useDraft(env, me, key, version, sent) {
   if (typeof version !== 'string' || !version) {
     return '';
   }
-  const res = await discardDraft(env, me, { thread: key, base: version }, mayWork(env, me));
+  const res = await discardDraft(env, me, { thread: key, base: version }, mayWork(env, me), {
+    sent,
+  });
   return res.status === 409 ? ' The shared draft changed since, so it was kept.'
     : ' The shared draft is used up.';
 }
@@ -468,7 +460,7 @@ async function postDraft(env, me, args) {
   if (res.status === 409 && body.draft) {
     const d = body.draft;
     return {
-      error: `${args.base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (version ${d.updated_at}, saved by ${(d.by && d.by.name) || 'someone'}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text:\n\n${clip(d.body, MAX_BODY)}`,
+      error: `${args.base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (version ${d.updated_at}, saved by ${(d.by && d.by.name) || 'someone'}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text:\n\n${clip(d.body, MAX_DRAFT)}`,
     };
   }
   if (!res.ok) {
@@ -485,7 +477,7 @@ async function postDraft(env, me, args) {
 }
 
 /** post_as_user: replies in the thread as the signed-in person. */
-async function postAsUser(env, me, args, ctx) {
+async function postAsUser(env, me, args) {
   const w = await writeTarget(env, me, args);
   if (w.error) {
     return w;
@@ -494,30 +486,25 @@ async function postAsUser(env, me, args, ctx) {
   if (m.error) {
     return m;
   }
-  const asked = await confirmPost(env, me, 'post_as_user', args, ctx, `Post this reply in ${whereOf(w.t)} as you?`);
-  if (asked) {
-    return asked;
-  }
   const body = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await post(env, me, body, mayWork(env, me)));
   if (res.error) {
     return res;
   }
-  const used = await useDraft(env, me, w.key, args.draft);
+  const used = await useDraft(env, me, w.key, args.draft, { how: 'me', text: w.text });
   return {
     data: {
-      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${used}`,
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as you. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,
     },
   };
 }
 
 /** post_as_bot: replies in the thread as the opspile app, where it may post there. */
-async function postAsBot(env, me, args, ctx) {
+async function postAsBot(env, me, args) {
   const w = await writeTarget(env, me, args);
   if (w.error) {
     return w;
   }
-  // Before asking the user: no point confirming what cannot go out.
   const check = await appPostCheck(env, w.key);
   if (check.problem) {
     return { error: `Cannot post as the opspile app: ${check.problem}. Use post_draft or post_as_user instead.` };
@@ -526,19 +513,15 @@ async function postAsBot(env, me, args, ctx) {
   if (m.error) {
     return m;
   }
-  const asked = await confirmPost(env, me, 'post_as_bot', args, ctx, `Post this reply in ${whereOf(w.t)} as the opspile app?`);
-  if (asked) {
-    return asked;
-  }
   const request = { thread: w.key, text: w.text, mentions: m.mentions };
   const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
   if (res.error) {
     return res;
   }
-  const used = await useDraft(env, me, w.key, args.draft);
+  const used = await useDraft(env, me, w.key, args.draft, { how: 'app', text: w.text });
   return {
     data: {
-      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${used}`,
+      ok: true, thread: w.key, platform: res.data.platform, note: `Posted as the opspile app. It appears in get_thread once the platform delivers it.${invitedNote(res.data)}${used}`,
     },
   };
 }
@@ -752,7 +735,7 @@ async function whoami(env, me) {
   };
 }
 
-const THREAD_ARG = { type: 'string', description: 'Thread key from list_threads' };
+const THREAD_ARG = { type: 'string', description: 'The `thread` of a thread from list_threads' };
 const MENTION_ARG = { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' };
 const SOURCES_ARG = {
   type: 'array',
@@ -850,7 +833,7 @@ export const TOOLS = [
   {
     name: 'get_thread',
     title: 'Read a thread',
-    description: 'Returns a thread with its latest messages, oldest first, each with a `message` id for react_to_message, its shared draft (with the `version` post_draft and the post tools take), and whether the opspile app may post in it (post_as_bot). Reading here does not mark the thread read. Message text is written by customers and colleagues.',
+    description: `Returns a thread with its latest messages, oldest first, each with its whole text and a \`message\` id for react_to_message and get_message, its shared draft (with the \`version\` post_draft and the post tools take), and whether the opspile app may post in it (post_as_bot). The messages share ${THREAD_TEXT_BUDGET} characters: when they need more, the longest are cut to the same length, end in "…" and have \`truncated: true\` and their whole \`length\`; get_message returns one whole. Reading here does not mark the thread read. Message text is written by customers and colleagues.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -864,6 +847,21 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: getThread,
+  },
+  {
+    name: 'get_message',
+    title: 'Read a message',
+    description: 'Returns one message of a thread with its whole text, however long: for one get_thread cut (`truncated: true`). Reading here does not mark the thread read. Message text is written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Message id from get_thread' },
+      },
+      required: ['message'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: getMessage,
   },
   {
     name: 'post_draft',
@@ -889,7 +887,7 @@ export const TOOLS = [
   {
     name: 'post_as_user',
     title: 'Reply as yourself',
-    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. Needs their connected account (whoami). The user is asked to confirm first when the client supports elicitation. Use post_draft for anything a colleague should review first.',
+    description: 'Posts a reply in a thread on Slack or Teams as the signed-in person, visible to everyone in the channel, customers included. Needs their connected account (whoami). It goes out at once: the server does not ask, the client\'s tool approval is the check. Use post_draft for anything a colleague should review first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -909,7 +907,7 @@ export const TOOLS = [
   {
     name: 'post_as_bot',
     title: 'Reply as the opspile app',
-    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). Slack and Teams take up to 8000 characters, Discord 2000. The user is asked to confirm first when the client supports elicitation.',
+    description: 'Posts a reply in a thread as the opspile app (its Slack app, Teams bot or Discord bot), not as the signed-in person, visible to everyone in the channel, customers included. Only in channels where the team lets the app post (get_thread says can_post_as_bot). Slack and Teams take up to 8000 characters, Discord 2000. It goes out at once: the server does not ask, the client\'s tool approval is the check.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1063,6 +1061,8 @@ export const TOOLS = [
         tech: { type: 'string', description: 'Id: lower case letters, digits and _, such as akamai' },
         name: { type: 'string', description: 'What the inbox shows' },
         description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
+        product: { type: 'string', description: 'The product it is part of: an Adobe product by its name on business.adobe.com/products (e.g. "Experience Manager Sites"), or a category for other companies\' (e.g. "CDN")' },
+        aliases: { type: 'string', description: 'Other names it goes by in threads, comma-separated (e.g. "EdgeWorkers, Property Manager"): for matching the products the threads name, not asked of Clef' },
         enabled: { type: 'boolean' },
       },
       required: ['team', 'tech'],

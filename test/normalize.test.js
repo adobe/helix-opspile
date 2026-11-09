@@ -16,7 +16,9 @@ import {
   channelPath, FORMAT, merge, parse, render,
 } from '../src/channels.js';
 import { htmlToMarkdown } from '../src/markdown.js';
-import { normalize, slackLinkIn, slackVersion } from '../src/normalize.js';
+import {
+  durationText, normalize, slackLinkIn, slackVersion, teamsEventText, teamsEventUsers,
+} from '../src/normalize.js';
 
 // Made-up ids only.
 const slack = (event, extra = {}) => ({
@@ -271,6 +273,98 @@ describe('normalize (teams)', () => {
 
   it('turns a soft-deleted message into a tombstone', () => {
     assert.equal(normalize(TKEY, msg({ deletedDateTime: '2026-10-21T12:05:00Z' })).op, 'delete');
+  });
+
+  describe('system notices', () => {
+    const user = (id, displayName = null) => ({
+      user: {
+        '@odata.type': '#microsoft.graph.teamworkUserIdentity', id, displayName, userIdentityType: 'aadUser', tenantId: 'tenant-1',
+      },
+    });
+    const notice = (eventDetail, extra = {}) => msg({
+      messageType: 'unknownFutureValue',
+      from: null,
+      body: { contentType: 'html', content: '<systemEventMessage/>' },
+      eventDetail,
+      ...extra,
+    });
+
+    it('says what a meeting notice says, not nothing', () => {
+      const started = normalize(TKEY, notice({
+        '@odata.type': '#microsoft.graph.callStartedEventMessageDetail',
+        callId: 'c-1',
+        callEventType: 'meeting',
+        initiator: user('u-1'),
+      }, { replyToId: null, id: '1792584000000' }));
+      assert.equal(started.op, 'upsert');
+      assert.deepEqual(started.message.authorRef, { kind: 'system', name: 'Microsoft Teams' });
+      assert.equal(started.message.format, 'teams-event');
+      assert.equal(started.message.thread, 'teams:tenant-1:team-1:19:c@thread.tacv2:1792584000000');
+      // Graph leaves the name out here: the normalizer looks it up (src/normalizer.js).
+      assert.equal(started.message.text, 'Meeting started.');
+      assert.equal(teamsEventText(started.message.event, () => 'Ada'), 'Meeting started by Ada.');
+
+      const ended = normalize(TKEY, notice({
+        '@odata.type': '#microsoft.graph.callEndedEventMessageDetail',
+        callDuration: 'PT50S',
+        callEventType: 'meeting',
+        callParticipants: [{ participant: user('u-1', 'Ada') }],
+        initiator: user('u-1'),
+      }));
+      assert.equal(ended.message.rootId, '1792584000000');
+      assert.equal(ended.message.text, 'Meeting ended after 50 s. Only Ada joined.');
+      const many = teamsEventText({
+        ...ended.message.event,
+        callDuration: 'PT1H2M3S',
+        callParticipants: ['Ada', 'Bo', 'Cy'].map((n, i) => ({ participant: user(`u-${i}`, n) })),
+      });
+      assert.equal(many, 'Meeting ended after 1 h 2 min 3 s. Joined: Ada, Bo and Cy.');
+    });
+
+    it('names the people a notice is about', () => {
+      const detail = {
+        '@odata.type': '#microsoft.graph.membersAddedEventMessageDetail',
+        initiator: user('u-1'),
+        members: [{ id: 'u-2', displayName: null, userIdentityType: 'aadUser' }, { id: 'u-3', displayName: 'Cy_x' }],
+      };
+      assert.deepEqual(teamsEventUsers(detail).map((u) => u.id), ['u-1', 'u-2', 'u-3']);
+      assert.equal(teamsEventText(detail), 'Someone added someone and Cy\\_x.');
+      const names = { 'u-1': 'Ada', 'u-2': 'Bo' };
+      assert.equal(teamsEventText(detail, (u) => names[u.id] || u.displayName), 'Ada added Bo and Cy\\_x.');
+      assert.equal(teamsEventText({
+        '@odata.type': '#microsoft.graph.channelRenamedEventMessageDetail',
+        channelDisplayName: 'aem-acme',
+        initiator: { application: { displayName: 'Admin app' } },
+      }), 'Admin app renamed the channel to \u201caem-acme\u201d.');
+      assert.equal(teamsEventText({
+        '@odata.type': '#microsoft.graph.callRecordingEventMessageDetail',
+        callRecordingDisplayName: 'Sync',
+        callRecordingDuration: 'PT10M',
+        callRecordingUrl: 'https://files.example/rec.mp4',
+        callRecordingStatus: 'success',
+      }), 'Recording: [Sync](https://files.example/rec.mp4) (10 min).');
+    });
+
+    it('puts one Graph does not have yet in words', () => {
+      assert.equal(teamsEventText({
+        '@odata.type': '#microsoft.graph.fooBarUpdatedEventMessageDetail', initiator: user('u-1', 'Ada'),
+      }), 'Foo bar updated (Ada).');
+      assert.equal(teamsEventText({}), '');
+    });
+
+    it('leaves a notice without details as Teams sent it', () => {
+      const { message } = normalize(TKEY, notice(undefined));
+      assert.equal(message.format, 'html');
+      assert.equal(message.text, '<systemEventMessage/>');
+    });
+
+    it('reads Graph\'s durations', () => {
+      assert.equal(durationText('PT15S'), '15 s');
+      assert.equal(durationText('PT2M0.4S'), '2 min');
+      assert.equal(durationText('P1DT1H'), '1 d 1 h');
+      assert.equal(durationText('PT0S'), '0 s');
+      assert.equal(durationText('soon'), null);
+    });
   });
 
   it('skips notifications and marks bots', () => {

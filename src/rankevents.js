@@ -48,8 +48,8 @@ function cleanFeatures(f) {
 }
 
 /**
- * Checks a pick: `{ view, clicked, shown: [{ thread, pos, features }], model }`, the clicked
- * thread among those shown. Returns the row to keep, or `{ error }`.
+ * Checks a pick: `{ view, clicked, shown: [{ thread, pos, status?, features }], model }`, the
+ * clicked thread among those shown. Returns the row to keep, or `{ error }`.
  */
 export function cleanPick(body) {
   const {
@@ -68,7 +68,10 @@ export function cleanPick(body) {
       return { error: 'each thread shown needs its key, its place and its features' };
     }
     seen.add(s.thread);
-    list.push({ thread: s.thread, pos: s.pos, features });
+    const status = typeof s.status === 'string' && /^[a-z]{1,20}$/.test(s.status) ? s.status : null;
+    list.push({
+      thread: s.thread, pos: s.pos, ...(status ? { status } : {}), features,
+    });
   }
   if (!seen.has(clicked)) {
     return { error: 'the clicked thread is not among those shown' };

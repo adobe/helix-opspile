@@ -16,7 +16,7 @@ import {
 } from 'node:test';
 import { render } from '../src/channels.js';
 import { headerValue, mcp, PROTOCOL } from '../src/mcp.js';
-import { checkConfirmState, confirmState, TOOLS } from '../src/mcp-tools.js';
+import { TOOLS } from '../src/mcp-tools.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 
@@ -370,7 +370,13 @@ describe('mcp tools', () => {
   });
 
   it('get_thread returns messages with ids, and nothing for other teams', async () => {
-    const t = structured(await callTool(env(), 'get_thread', { thread: SLACK }));
+    const e = env();
+    assert.equal(structured(await callTool(e, 'get_thread', { thread: SLACK })).kind, 'other');
+    e.DB.sqlite.prepare(`INSERT INTO labels (thread, kind, kind_p, labeled_through, model,
+      labeled_at) VALUES (?, 'incident', 0.9, '2026-10-21T10:05:00Z', 'clef', '2026-10-21T10:06:00Z')`)
+      .run(SLACK);
+    const t = structured(await callTool(e, 'get_thread', { thread: SLACK }));
+    assert.equal(t.kind, 'incident');
     assert.equal(t.customer, 'acme');
     assert.deepEqual(t.messages.map((m) => [m.message, m.text]), [
       [`${SLACK}|1.1`, 'Our site is down'], [`${SLACK}|1.2`, 'Still down, @Ada?'],
@@ -380,6 +386,56 @@ describe('mcp tools', () => {
     assert.equal(res.body.result.isError, true);
   });
 
+  /** The test thread, with these texts as its two messages. */
+  const withBodies = (a, b) => {
+    const e = env();
+    const author = { kind: 'person', name: 'Cy', staff: false };
+    const file = (mid, at, body) => render({
+      source: 'slack', thread: SLACK, id: mid, at, author,
+    }, body);
+    e.CHANNELS = bucket({
+      'p/1.1.md': file('1.1', '2026-10-21T10:00:00Z', a),
+      'p/1.2.md': file('1.2', '2026-10-21T10:05:00Z', b),
+    });
+    return e;
+  };
+
+  it('get_thread returns long messages whole, line breaks and all', async () => {
+    const report = `The root cause is a bug in the client.\n\n${'Steps and details. '.repeat(160)}`.trim();
+    assert.ok(report.length > 3000);
+    const t = structured(await callTool(withBodies(report, 'ok'), 'get_thread', { thread: SLACK }));
+    assert.deepEqual(t.messages.map((m) => m.text), [report, 'ok']);
+    assert.ok(t.messages.every((m) => !m.truncated && !('length' in m)));
+  });
+
+  it('get_thread cuts only the longest messages over its budget, and get_message returns one whole', async () => {
+    const long = 'x'.repeat(30000);
+    const e = withBodies(long, long.replace(/x/g, 'y'));
+    const t = structured(await callTool(e, 'get_thread', { thread: SLACK }));
+    const total = t.messages.reduce((n, m) => n + m.text.length, 0);
+    assert.ok(total <= 40000 && total > 39990, `${total}`);
+    for (const m of t.messages) {
+      assert.equal(m.truncated, true);
+      assert.equal(m.length, 30000);
+      assert.ok(m.text.endsWith('\u2026'));
+    }
+    const one = await callTool(e, 'get_message', { message: t.messages[1].message });
+    assert.equal(one.body.result.isError, undefined);
+    assert.deepEqual(structured(one), {
+      thread: SLACK, message: `${SLACK}|1.2`, from: 'Cy', at: '2026-10-21T10:05:00Z', text: long.replace(/x/g, 'y'),
+    });
+  });
+
+  it('get_message explains a bad id, and finds nothing for other teams', async () => {
+    const text = (r) => r.body.result.content[0].text;
+    assert.match(text(await callTool(env(), 'get_message', { message: 'nope' })), /looks like <thread>\|<id>/);
+    assert.match(text(await callTool(env(), 'get_message', { message: `${SLACK}|9.9` })), /No such message/);
+    const other = { ...ME, teams: [{ slug: 'edge', name: 'Edge' }] };
+    const res = await send(env(), req('tools/call', { name: 'get_message', arguments: { message: `${SLACK}|1.1` } }), other);
+    assert.equal(res.body.result.isError, true);
+    assert.match(text(res), /Not found/);
+  });
+
   it('post_as_user posts as the person when the client cannot ask the user', async () => {
     const r = await callTool(await connected(), 'post_as_user', { thread: SLACK, text: 'Looking now' });
     assert.equal(structured(r).ok, true);
@@ -387,35 +443,19 @@ describe('mcp tools', () => {
     assert.equal(calls[0].body.text, 'Looking now');
   });
 
-  it('post_as_user asks the user first (MRTR elicitation), and posts only after they accept', async () => {
+  it('posts at once, whatever the client says it can ask', async () => {
     const e = await connected();
     const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
-    const args = { thread: SLACK, text: 'Looking now' };
-    const first = await callTool(e, 'post_as_user', args, { meta });
-    assert.equal(first.body.result.resultType, 'input_required');
-    assert.equal(first.body.result.inputRequests.confirm_post.method, 'elicitation/create');
-    assert.equal(calls.length, 0);
-    const retry = (answer, state = first.body.result.requestState, a = args) => send(e, req('tools/call', {
-      name: 'post_as_user', arguments: a, inputResponses: { confirm_post: answer }, requestState: state,
-    }, { meta, id: 2 }));
-    const declined = await retry({ action: 'decline' });
-    assert.match(declined.body.result.content[0].text, /did not confirm/);
-    const tampered = await retry({ action: 'accept' }, first.body.result.requestState, { ...args, text: 'Something else' });
-    assert.match(tampered.body.result.content[0].text, /does not match/);
-    assert.equal(calls.length, 0);
-    const accepted = await retry({ action: 'accept', content: {} });
-    assert.equal(structured(accepted).ok, true);
+    const r = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Looking now' }, { meta });
+    assert.equal(structured(r).ok, true);
     assert.equal(calls.length, 1);
   });
 
-  it('confirmation state is bound to the person, the call and a deadline', async () => {
-    const e = env();
-    const args = { thread: SLACK, text: 'x' };
-    const state = await confirmState(e, ME, 'post_as_user', args, 1000);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 2000), true);
-    assert.equal(await checkConfirmState(e, { ...ME, id: 2 }, 'post_as_user', args, state, 2000), false);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, state, 1000 + 11 * 60 * 1000), false);
-    assert.equal(await checkConfirmState(e, ME, 'post_as_user', args, `${state}x`, 2000), false);
+  it('keeps the @Names of a draft sent as it is, without being told them again', async () => {
+    const e = await connected();
+    const ok = await callTool(e, 'post_as_user', { thread: SLACK, text: 'Thanks @Cy, and @Nobody' });
+    assert.equal(structured(ok).ok, true);
+    assert.equal(calls[0].body.text, 'Thanks <@U7>, and @Nobody');
   });
 
   it('post_as_user turns names into mentions, and says when a name is unknown', async () => {
@@ -536,21 +576,8 @@ describe('mcp tools', () => {
     assert.match(none.body.result.content[0].text, /Slack bot is not set up/);
     const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-test' };
     appOn(e);
-    const meta = { ...META, 'io.modelcontextprotocol/clientCapabilities': { elicitation: {} } };
-    const args = { thread: SLACK, text: 'Looking now' };
-    const first = await callTool(e, 'post_as_bot', args, { meta });
-    assert.match(first.body.result.inputRequests.confirm_post.params.message, /as the opspile app/);
-    assert.equal(calls.length, 0);
-    // A confirmation for post_as_user does not pass for post_as_bot.
-    const other = await confirmState(e, ME, 'post_as_user', args);
-    const swapped = await send(e, req('tools/call', {
-      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: other,
-    }, { meta, id: 2 }));
-    assert.match(swapped.body.result.content[0].text, /does not match/);
-    const accepted = await send(e, req('tools/call', {
-      name: 'post_as_bot', arguments: args, inputResponses: { confirm_post: { action: 'accept' } }, requestState: first.body.result.requestState,
-    }, { meta, id: 3 }));
-    assert.equal(structured(accepted).ok, true);
+    const r = await callTool(e, 'post_as_bot', { thread: SLACK, text: 'Looking now' });
+    assert.equal(structured(r).ok, true);
     assert.equal(calls.length, 1);
   });
 

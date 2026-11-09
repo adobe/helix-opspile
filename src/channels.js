@@ -67,9 +67,9 @@ const union = (a = [], b = []) => [...new Set([...a, ...b])].sort();
  * How messages are turned into markdown. Raise it when the normalizer renders the same raw
  * message differently (e.g. image sizes, Teams images attached as files): a replay then
  * rewrites files of the same version, which it otherwise leaves alone. Files from before it
- * have format 1.
+ * have format 1. 4: Teams system notices say what happened (meetings, members), not nothing.
  */
-export const FORMAT = 3;
+export const FORMAT = 4;
 
 /**
  * Merges an incoming operation with the file that is already there.

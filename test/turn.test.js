@@ -80,6 +80,25 @@ describe('the agent\'s latest turn', () => {
     assert.equal(latestTurn(entries, { busy: true }).state, 'working', 'a run is pending');
   });
 
+  it('counts a turn that stopped half way as failed, after a while', async () => {
+    const entries = await transcript(['new message'], [
+      () => fauxAssistantMessage([{ type: 'text', text: 'Checking.' }, fauxToolCall('codemode', { code: 'x' })], { stopReason: 'toolUse' }),
+      () => fauxAssistantMessage('Done.'),
+    ]);
+    const running = entries.slice(0, entries.findIndex((e) => e.kind === 'pi.tool-result'));
+    const later = Date.now() + 16 * 60 * 1000;
+    assert.equal(latestTurn(running).state, 'working');
+    const turn = latestTurn(running, { now: later });
+    assert.equal(turn.state, 'failed');
+    assert.match(turn.text, /did not finish/);
+    assert.ok(turn.endedAt);
+    // A pending run is working, however long it takes.
+    assert.equal(latestTurn(running, { busy: true, now: later }).state, 'working');
+    // No answer at all, and no run pending.
+    const started = entries.slice(0, entries.findIndex((e) => e.kind === 'pi.user') + 1);
+    assert.equal(latestTurn(started, { now: later }).state, 'failed');
+  });
+
   it('falls back to what it changed when it said nothing', async () => {
     const entries = await transcript(['m'], [
       () => fauxAssistantMessage(fauxToolCall('update_draft', { text: 'hi' }), { stopReason: 'toolUse' }),

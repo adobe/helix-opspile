@@ -201,4 +201,16 @@ describe('message and thread vectors', () => {
     assert.deepEqual(await sweepVectors(env, new Date(T0 + 70 * 60000)), { queued: 1 });
     assert.deepEqual(await sweepVectors({ ...env, CONTENT: undefined }), { skipped: 'no CONTENT index' });
   });
+
+  it('sweeps up threads re-filed as alerts that still have vectors', async () => {
+    const env = setup();
+    await post(env, '1.1', 0, 'The cache purge fails with a 403 on the live site');
+    await vectorizeThread(env, KEY);
+    const now = new Date(T0 + 60 * 60000);
+    assert.deepEqual(await sweepVectors(env, now), { queued: 0 });
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'alert'").run();
+    assert.deepEqual(await sweepVectors(env, now), { queued: 1 });
+    await vectorizeThread(env, KEY);
+    assert.deepEqual(await sweepVectors(env, now), { queued: 0 });
+  });
 });

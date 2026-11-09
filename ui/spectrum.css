@@ -1,0 +1,574 @@
+/*
+ * Spectrum 2's look, on every page (README, "Spectrum 2"), linked after the page's own styles
+ * (its layout), which it restyles. This file holds what every page shares: the type, the colors each page names (--bg, --ink, …) as Spectrum 2's semantic
+ * tokens, the controls (Button, ActionButton, TextField, Picker, Menu, Popover,
+ * Tooltip, Badge) and the header (ui/header.css). ui/spectrum-<page>.css holds the page's own.
+ *
+ * Only Spectrum 2 tokens (`var(--spectrum-…)`, @spectrum-css/tokens) set a color, size, space,
+ * radius, shadow or duration here: src/page.js puts those used on the page, light and dark,
+ * medium scale and large (touch screens), and fails on a name that is not a token. The
+ * anatomy of each control follows its Spectrum CSS (S2) component: the tokens it binds, for
+ * each state. https://s2.spectrum.adobe.com, https://opensource.adobe.com/spectrum-css/
+ */
+
+/* ==== Every page's base ========================================================================
+   The page fills the window (the on-screen keyboard, ui/app.js, sets --app-height and --app-top),
+   keeps clear of an iPhone's rounded sides, and lays out its header and main in a column; the
+   controls start from the type and colors around them, which the look below makes Spectrum 2's. */
+* { box-sizing: border-box; }
+html, body { height: var(--app-height, 100%); overflow: hidden; }
+body { margin: 0; background: var(--bg); display: flex; flex-direction: column;
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); translate: 0 var(--app-top, 0px); }
+button, input:where(:not([type="file"])), select { font: inherit; color: inherit; background: var(--card);
+ padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); }
+button, select { cursor: pointer; }
+
+
+/* ==== The header's layout ======================================================================
+   Every page's header (ui/header.js): the logo, the switch between the pages, the page's own
+   tools, the modes it is in, and you, with your menu. Its look follows, with the controls'. */
+header { --ctl: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); display: flex; align-items: center; height: var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50)));
+  padding: 0 var(--spectrum-spacing-200) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none;
+ }
+/* The name gives way, on one line, to whatever else the header holds; the logo always stays. */
+header h1 { min-width: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); margin: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 0; }
+header h1 a { display: flex; align-items: center; color: inherit; text-decoration: none;
+ }
+header h1 img { flex: none; }
+header h1 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .spacer { flex: 1; }
+header a:focus-visible, header button:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
+
+/* The pages, by who you are (ui/header.js); each opens where you left it. */
+nav.pages { display: inline-flex; height: var(--ctl); flex: none;
+ }
+nav.pages[hidden] { display: none; }
+nav.pages a { display: flex; align-items: center;
+  text-decoration: none; white-space: nowrap; }
+nav.pages a:hover { color: var(--ink); background: var(--hover); }
+nav.pages a[aria-current="page"] { cursor: default; }
+nav.pages .chev { display: none; }
+/* Another site (Stats, on klickhaus), in a new tab. */
+header .ext, .pagemenu .ext { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); font-size: var(--spectrum-font-size-50); }
+nav.pages .total { display: none; }
+header .count { display: inline-grid; place-items: center;
+  margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
+  line-height: 1; }
+header .count[hidden] { display: none; }
+/* Phones: the pages are a menu under the one you are on. */
+.pagemenu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100); margin: 0; min-width: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75));
+  padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
+ }
+.pagemenu a { display: flex; align-items: center; height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500));
+  text-decoration: none; font-size: var(--spectrum-font-size-100); }
+.pagemenu a:hover, .pagemenu a:focus-visible { background: var(--hover); outline: none; }
+
+.pagemenu .count {
+  margin-left: auto;
+ }
+.pagemenu .count[hidden] { display: none; }
+
+/* A page's tools (the inbox's label review), after a divider. */
+header .divider { width: var(--spectrum-border-width-100); flex: none; }
+header .divider[hidden] { display: none; }
+header .tool { display: inline-flex; align-items: center; height: var(--ctl); flex: none;
+ white-space: nowrap; }
+header .tool[hidden] { display: none; }
+header .tool:hover { color: var(--ink); background: var(--hover); }
+header .tool svg, header .mode svg { flex: none; }
+
+/* The modes a page is in (reviewing labels, viewing as someone): a pill each, on the right,
+   with the ✕ that leaves it. */
+header .mode { align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); height: var(--ctl);
+  flex: none; white-space: nowrap; }
+header .mode[hidden] { display: none; }
+header .mode .x { display: grid; place-items: center; flex: none;
+  color: var(--mute); }
+header .mode:hover .x { color: var(--ink); background: color-mix(in srgb, var(--ink) 12%, transparent); }
+
+
+header .mode b { overflow: hidden; text-overflow: ellipsis; }
+header .note { white-space: nowrap; }
+
+
+/* You: your name, and under it the team on screen (the inbox) or what you are (the others). */
+#user { display: flex; align-items: center; height: calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50)); flex: none;
+  color: inherit; text-align: left; }
+#user:hover, #user[aria-expanded="true"] { background: var(--hover); border-color: var(--line); }
+#user .av, .menu .id .av { display: grid; place-items: center; flex: none;
+  border-radius: 50%; position: relative; overflow: hidden; }
+#user .av img, .menu .id .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#user .who { display: flex; flex-direction: column; line-height: 1.2; }
+#user .nm { white-space: nowrap; }
+#user .sub { white-space: nowrap; }
+#user svg { width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); }
+
+/* Your menu: who you are, the page's own sections, logging out. */
+.menu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) var(--spectrum-spacing-200) auto auto; margin: 0; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
+  max-width: calc(100vw - var(--spectrum-spacing-400)); max-height: calc(100dvh - var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-100));
+  overscroll-behavior: contain;
+ }
+.menu .id { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); align-items: center; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+
+.menu .id .nm { font-size: var(--spectrum-font-size-100); }
+.menu .id .sub { font-size: var(--spectrum-font-size-75); overflow-wrap: anywhere; }
+.menu section { border-top: var(--spectrum-border-width-100) solid var(--line); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; }
+.menu section[hidden] { display: none; }
+.menu h4 { margin: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-75);
+ }
+.menu .item { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%; border: 0;
+ text-decoration: none; text-align: left; }
+.menu .item:hover, .menu .item:focus-visible { background: var(--hover); outline: none; }
+.menu .item[hidden] { display: none; }
+.menu .item .ck { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
+/* A switch's ✓ shows while it is on, a choice's (Appearance's) while it is the one picked. */
+.menu .item:is([role="switch"], [role="radio"]) .ck { visibility: hidden; }
+.menu .item[aria-checked="true"] .ck { visibility: visible; }
+.menu .item svg { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
+.menu .keys { display: grid; grid-template-columns: 1fr auto; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); color: var(--mute); }
+.menu .keys dd { margin: 0; text-align: right; }
+.menu kbd { font: var(--spectrum-font-size-50) ui-monospace, monospace; border: var(--spectrum-border-width-100) solid var(--line); padding: 0 var(--spectrum-spacing-75);
+ }
+
+/* A touch screen: the same controls, taller, on every page. */
+@media (hover: none) and (pointer: coarse) {
+  header { --ctl: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); }
+
+  #user { height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); }
+}
+
+/* Phones: the logo without its name, the tools by their icon, you by your face, the modes by
+   who or what; the pages are the one you are on, with a menu of the others. */
+@media (max-width: 699px) {
+  header { padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
+  header h1 { margin: 0; }
+  header h1 a, header .tool { font-size: 0; }
+
+  header .divider { display: none; }
+  nav.pages a:not([aria-current]) { display: none; }
+  nav.pages a[aria-current="page"] { cursor: pointer; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+  nav.pages a[aria-current="page"] .count:not(.total) { display: none; }
+  nav.pages .chev { display: block; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); color: var(--mute); }
+  /* Open requests: a dot here, their number in the menu. */
+  nav.pages .total:not([hidden]) { display: block; min-width: 0; width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); padding: 0; margin: 0;
+    font-size: 0; }
+  header .mode .lbl { position: absolute; width: var(--spectrum-border-width-100); height: var(--spectrum-border-width-100); overflow: hidden; clip-path: inset(50%); }
+  header .mode { flex: 0 1 auto; }
+  header .mode b { max-width: 30vw; }
+
+  #user .who { display: none; }
+  .menu { right: var(--spectrum-spacing-100); }
+}
+
+/* ==== Spectrum 2's look of what every page shares ============================================ */
+
+/* Foundations: the type and the color scheme. The pages' styles use their colors by name
+   (--bg, --ink, …); here those names are Spectrum 2's semantic tokens. */
+:root.spectrum {
+  color-scheme: light dark;
+  --s2-font: adobe-clean-spectrum-vf, var(--spectrum-sans-font-family-stack);
+  --s2-code: source-code-pro, var(--spectrum-code-font-family), ui-monospace, monospace;
+  /* Layers: the app's base, the panels on it, what sits on a panel. */
+  --bg: var(--spectrum-background-base-color);
+  --col: var(--spectrum-background-layer-1-color);
+  --card: var(--spectrum-background-layer-2-color);
+  --pane: var(--spectrum-background-base-color);
+  --line: var(--spectrum-gray-200);
+  --hover: var(--spectrum-gray-100);
+  /* A picked row: ListView and TableView's selection, the informative color faintly. */
+  --sel: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity));
+  /* Content: text, subdued text, and the least of it. */
+  --ink: var(--spectrum-neutral-content-color-default);
+  --mute: var(--spectrum-neutral-subdued-content-color-default);
+  --faint: var(--spectrum-gray-600);
+  --accent: var(--spectrum-accent-background-color-default);
+  --link: var(--spectrum-accent-content-color-default);
+  /* Semantic and categorical colors, as Spectrum 2 names them for icons and dots. */
+  --red: var(--spectrum-negative-visual-color);
+  --yellow: var(--spectrum-notice-visual-color);
+  --green: var(--spectrum-positive-visual-color);
+  --purple: var(--spectrum-purple-visual-color);
+  --orange: var(--spectrum-orange-visual-color);
+  --pink: var(--spectrum-pink-visual-color);
+  --cyan: var(--spectrum-cyan-visual-color);
+  --slate: var(--spectrum-silver-visual-color);
+  --lime: var(--spectrum-celery-visual-color);
+  --code: var(--spectrum-gray-75);
+  /* Header and controls. */
+  --head: calc(var(--spectrum-component-height-200) + var(--spectrum-spacing-300));
+  --s2-ctl: var(--spectrum-component-height-100);
+  --s2-radius: var(--spectrum-corner-radius-medium-size-medium);
+  --s2-focus: var(--spectrum-focus-indicator-thickness) solid var(--spectrum-focus-indicator-color);
+  --s2-elevated: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 4)
+    calc(var(--spectrum-drop-shadow-blur) * 4) var(--spectrum-drop-shadow-elevated-color);
+  --s2-ease: var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-in-out);
+  /* Overlays in the content color, so they show on light and dark alike: faint for a selected
+     or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
+     CSS Menu's item hover). */
+  --s2-hover: rgb(var(--spectrum-gray-1000-rgb), var(--spectrum-transparent-black-100-opacity));
+  --s2-down: rgb(var(--spectrum-gray-1000-rgb), var(--spectrum-transparent-black-200-opacity));
+  /* A pill's radius, half a control's height. (--spectrum-corner-radius-full is the unitless
+     0.5, a factor, not a radius: border-radius ignores it.) */
+  --s2-pill: calc(var(--s2-ctl) / 2);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-100);
+  line-height: var(--spectrum-line-height-200);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* The scheme picked in your menu (ui/header.js), over the browser's; the tokens follow it too. */
+:root.spectrum[data-scheme="light"] { color-scheme: light; }
+:root.spectrum[data-scheme="dark"] { color-scheme: dark; }
+:where(.spectrum) body { background: var(--bg); color: var(--ink); }
+:where(.spectrum) code, :where(.spectrum) kbd, :where(.spectrum) pre, :where(.spectrum) .mono { font-family: var(--s2-code); }
+:where(.spectrum) a { color: var(--link); }
+:where(.spectrum) a:where(:hover) { color: var(--spectrum-accent-content-color-hover); }
+:where(.spectrum) :focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+:where(.spectrum) ::selection { background: var(--spectrum-accent-subtle-background-color-default); }
+:where(.spectrum) mark { color: inherit; background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
+/* Headings: Spectrum 2's, in the heading color and sentence case, as written (some of the
+   pages' own styles set them in capitals). */
+:where(.spectrum) h2, :where(.spectrum) h3, :where(.spectrum) h4 {
+  color: var(--spectrum-heading-color);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* ActionButton: every button the page does not mark otherwise. A gray fill, no border, a
+   medium-rounded corner; quieter where the page has none (border: 0; background: none). */
+:where(.spectrum) button, :where(.spectrum) select {
+  font-family: inherit;
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+  transition: background-color var(--s2-ease), color var(--s2-ease), border-color var(--s2-ease);
+}
+:where(.spectrum) button:where(:hover:not(:disabled)) { background-color: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+:where(.spectrum) button:where(:active:not(:disabled)) { background-color: var(--spectrum-gray-300); color: var(--spectrum-neutral-content-color-down); }
+:where(.spectrum) button:where(:disabled) { opacity: 1; color: var(--spectrum-disabled-content-color); background-color: var(--spectrum-disabled-background-color); }
+:where(.spectrum) button:where([aria-pressed="true"]) {
+  color: var(--spectrum-gray-25);
+  background-color: var(--spectrum-neutral-background-color-selected-default);
+}
+:where(.spectrum) button:where([aria-pressed="true"]:hover:not(:disabled)) { color: var(--spectrum-gray-25); background-color: var(--spectrum-neutral-background-color-selected-hover); }
+
+/* Button: the actions a page marks (primary, danger, link). A pill, bold, as tall as a field. */
+.spectrum button.primary, .spectrum button.danger, .spectrum a.btn.primary {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200));
+  font-weight: var(--spectrum-bold-font-weight);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--s2-ctl) / 2);
+}
+.spectrum button.primary, .spectrum a.btn.primary {
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+}
+.spectrum button.primary:hover:not(:disabled), .spectrum a.btn.primary:hover {
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-hover);
+}
+.spectrum button.primary:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum button.danger {
+  color: var(--spectrum-white);
+  background: var(--spectrum-negative-background-color-default);
+}
+.spectrum button.danger:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-hover); }
+.spectrum button.danger:active:not(:disabled) { background: var(--spectrum-negative-background-color-down); }
+.spectrum button.primary:disabled, .spectrum button.danger:disabled {
+  color: var(--spectrum-disabled-content-color);
+  background: var(--spectrum-disabled-background-color);
+}
+/* Link: an action in running text. */
+.spectrum button.link {
+  min-height: 0;
+  padding: 0 var(--spectrum-spacing-50);
+  color: var(--spectrum-accent-content-color-default);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: var(--spectrum-spacing-50);
+}
+.spectrum button.link:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: none; }
+
+/* TextField and Picker: a 2px gray border on the base, darker under the pointer, darkest with
+   the focus; the keyboard's focus also has the ring. */
+:where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])),
+:where(.spectrum) textarea, :where(.spectrum) select {
+  font-family: inherit;
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background-color: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+  transition: border-color var(--s2-ease);
+}
+:where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):hover),
+:where(.spectrum) textarea:where(:hover), :where(.spectrum) select:where(:hover) { border-color: var(--spectrum-gray-400); }
+:where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus),
+:where(.spectrum) textarea:where(:focus), :where(.spectrum) select:where(:focus) { border-color: var(--spectrum-gray-800); outline: none; }
+/* A text field shows its focus by the border alone (the browser's :focus-visible matches it on
+   a click too); a Picker by the ring, as the keyboard reaches it. */
+:where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus-visible),
+:where(.spectrum) textarea:where(:focus-visible) { outline: none; }
+:where(.spectrum) select:where(:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+:where(.spectrum) input::placeholder, :where(.spectrum) textarea::placeholder { color: var(--spectrum-gray-600); opacity: 1; }
+:where(.spectrum) input:where(:disabled), :where(.spectrum) textarea:where(:disabled), :where(.spectrum) select:where(:disabled) {
+  color: var(--spectrum-disabled-content-color);
+  border-color: var(--spectrum-disabled-border-color);
+}
+:where(.spectrum) select { cursor: pointer; }
+:where(.spectrum) select:where(:hover:not(:disabled)) { background-color: var(--spectrum-gray-25); }
+/* Checkbox and Radio in the browser's own drawing, in the accent color. */
+:where(.spectrum) input:where([type="checkbox"], [type="radio"], [type="range"]) { accent-color: var(--spectrum-accent-background-color-default); }
+
+/* SegmentedControl (the pages' `.seg`): a gray track, the picked segment raised on it. */
+.spectrum .seg {
+  gap: 0;
+  padding: 0;
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+}
+.spectrum .seg button {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+}
+.spectrum .seg button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: transparent; }
+.spectrum .seg button[aria-pressed="true"], .spectrum .seg button[aria-pressed="true"]:hover:not(:disabled) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border-color: var(--spectrum-gray-900);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+
+/* Badge and Tag: small labels. Spectrum 2 Tags are gray and rounded; colored ones keep their
+   color as a subtle fill. */
+.spectrum .tag {
+  border-radius: var(--spectrum-corner-radius-small-size-medium);
+  border-color: var(--spectrum-gray-300);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+
+/* The keyboard's keys. */
+:where(.spectrum) kbd {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-50);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-75);
+}
+
+/* Dialog: the base layer, a large radius, elevated over the underlay. */
+:where(.spectrum) dialog {
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum dialog::backdrop {
+  background: var(--spectrum-overlay-color);
+  opacity: var(--spectrum-overlay-opacity);
+}
+
+/* Popover and Menu: every page's floating panels (your menu, the page menu, pickers). */
+.spectrum .menu, .spectrum .pagemenu {
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .menu { font-size: var(--spectrum-font-size-100); }
+.spectrum .menu section { border-top-color: var(--spectrum-gray-200); }
+.spectrum .menu h4 {
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum .menu .item, .spectrum .pagemenu a {
+  min-height: var(--s2-ctl);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+}
+.spectrum .menu .item:hover, .spectrum .menu .item:focus-visible,
+.spectrum .pagemenu a:hover, .spectrum .pagemenu a:focus-visible {
+  color: var(--spectrum-neutral-content-color-hover);
+  background: var(--s2-down);
+}
+.spectrum .menu .item:focus-visible, .spectrum .pagemenu a:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .pagemenu a[aria-current="page"] { background: var(--s2-hover); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .menu .item .ck { color: var(--spectrum-accent-content-color-default); }
+.spectrum .menu .item.allow { color: var(--link); }
+.spectrum .menu .id .nm { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .menu .id .sub, .spectrum .menu .hint { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu kbd { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .menu select { min-height: var(--s2-ctl); }
+
+/* The header (ui/header.css): the app's top bar on the base layer, the product name in Adobe
+   Clean's bold, the pages as Spectrum 2's Tabs-like navigation (quiet ActionButtons, the page
+   on screen selected), you as an Avatar with a quiet ActionButton. */
+.spectrum header {
+  --ctl: var(--s2-ctl);
+  gap: var(--spectrum-spacing-200);
+  padding: 0 var(--spectrum-spacing-300);
+  background: var(--spectrum-background-base-color);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum header h1 {
+  font-size: var(--spectrum-font-size-200);
+  font-weight: var(--spectrum-extra-bold-font-weight);
+  letter-spacing: normal;
+  color: var(--spectrum-heading-color);
+}
+.spectrum header h1 a { gap: var(--spectrum-text-to-visual-300); border-radius: var(--s2-radius); }
+.spectrum header h1 img { width: var(--spectrum-workflow-icon-size-200); }
+.spectrum nav.pages {
+  gap: var(--spectrum-spacing-50);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.spectrum nav.pages a {
+  height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--s2-radius);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-weight: var(--spectrum-medium-font-weight);
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum nav.pages a:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum nav.pages a[aria-current="page"] {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+/* Counts: Spectrum 2's notification Badge, in the accent color. */
+.spectrum header .count, .spectrum .pagemenu .count {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum header .divider { height: var(--spectrum-component-height-75); background: var(--spectrum-gray-200); }
+/* The page's tools: quiet ActionButtons. */
+.spectrum header .tool {
+  gap: var(--spectrum-text-to-visual-100);
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--s2-radius);
+}
+.spectrum header .tool:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum header .tool svg, .spectrum header .mode svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
+/* The modes a page is in: Spectrum 2's Tag, with its clear button. */
+.spectrum header .mode {
+  padding: 0 var(--spectrum-spacing-75) 0 var(--spectrum-component-edge-to-text-75);
+  border-width: var(--spectrum-border-width-100);
+  border-radius: var(--s2-radius);
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum header .mode.review {
+  background: var(--spectrum-accent-subtle-background-color-default);
+  border-color: var(--spectrum-accent-visual-color);
+}
+.spectrum header .mode.as {
+  background: var(--spectrum-notice-subtle-background-color-default);
+  border-color: var(--spectrum-notice-visual-color);
+}
+.spectrum header .mode:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum header .mode.review:hover:not(:disabled) { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum header .mode.as:hover:not(:disabled) { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum header .mode .x {
+  width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-50);
+}
+.spectrum header .mode:hover .x { background: var(--s2-down); }
+.spectrum header .note { color: var(--spectrum-notice-visual-color); font-size: var(--spectrum-font-size-75); }
+.spectrum #user {
+  gap: var(--spectrum-text-to-visual-300);
+  height: var(--spectrum-component-height-200);
+  padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75);
+  background: transparent;
+  border: 0;
+  border-radius: var(--s2-radius);
+}
+.spectrum #user:hover, .spectrum #user[aria-expanded="true"] { background: var(--spectrum-gray-100); }
+.spectrum #user .av, .spectrum .menu .id .av {
+  width: var(--spectrum-component-height-100);
+  height: var(--spectrum-component-height-100);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .menu .id .av { width: var(--spectrum-component-height-200); height: var(--spectrum-component-height-200); font-size: var(--spectrum-font-size-75); }
+.spectrum #user .nm { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #user .sub { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #user svg { color: var(--spectrum-neutral-subdued-content-color-default); }
+@media (hover: none) and (pointer: coarse) {
+  .spectrum header { --ctl: var(--s2-ctl); }
+  .spectrum #user { height: var(--spectrum-component-height-200); }
+}
+@media (max-width: 699px) {
+  .spectrum header { gap: var(--spectrum-spacing-100); padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
+}
+
+/* Avatars' initials, on S2's categorical backgrounds that take white text, in place of the
+   pages' hues (`data-hue`: the index in COLORS of ui/header.js and ui/inbox.js). The pages set
+   the hue inline, which only !important outranks. */
+.spectrum .av[data-hue="0"] { background: var(--spectrum-cinnamon-background-color-default) !important; }
+.spectrum .av[data-hue="1"] { background: var(--spectrum-seafoam-background-color-default) !important; }
+.spectrum .av[data-hue="2"] { background: var(--spectrum-purple-background-color-default) !important; }
+.spectrum .av[data-hue="3"] { background: var(--spectrum-magenta-background-color-default) !important; }
+.spectrum .av[data-hue="4"] { background: var(--spectrum-blue-background-color-default) !important; }
+.spectrum .av[data-hue="5"] { background: var(--spectrum-green-background-color-default) !important; }
+.spectrum .av[data-hue="6"] { background: var(--spectrum-brown-background-color-default) !important; }
+.spectrum .av[data-hue="7"] { background: var(--spectrum-cyan-background-color-default) !important; }
+
+/* "Signed out" (ui/app.js): Spectrum 2's notice Toast. */
+.spectrum .signedout {
+  gap: var(--spectrum-spacing-300);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  color: var(--spectrum-white);
+  background: var(--spectrum-notice-background-color-default);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum .signedout button {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  color: var(--spectrum-white);
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-white);
+  border-radius: calc(var(--s2-ctl) / 2);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .signedout button:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-transparent-white-200); }
+
+/* Motion: none for those who ask the browser for less. */
+@media (prefers-reduced-motion: reduce) {
+  .spectrum *, .spectrum *::before, .spectrum *::after { transition-duration: var(--spectrum-animation-duration-0) !important; }
+}

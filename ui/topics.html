@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" class="spectrum">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Enterprise Support · Topics</title>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="rgb(17, 17, 17)" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="rgb(255, 255, 255)" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Support">
+<!-- Spectrum 2 (README, "Spectrum 2"): its typefaces, the tokens the stylesheets use, what every
+     page shares (the header too), and this page's own: its layout, then its look. -->
+<link rel="stylesheet" href="spectrum-fonts.css">
+<link rel="stylesheet" href="spectrum-tokens.css">
+<link rel="stylesheet" href="spectrum.css">
+<link rel="stylesheet" href="spectrum-topics.css">
+</head>
+<body>
+<header>
+  <h1><a data-page="inbox" href="/inbox"><img src="/icon.svg" alt="Adobe"><span>Enterprise Support</span></a></h1>
+  <nav class="pages" id="pages" hidden aria-label="Pages"></nav>
+  <span class="spacer"></span>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account">
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="userSub"></span></span>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
+</header>
+<script src="header.js"></script>
+<main id="main">
+  <div class="bar" id="bar" hidden>
+    <div class="group">
+      <select id="team" aria-label="Team"></select>
+    </div>
+    <div class="group legend" id="types" role="group" aria-label="Show"></div>
+    <div class="group">
+      <label class="lbl" for="min">Shared threads</label>
+      <select id="min" title="Draw a line between two only when this many threads have both"></select>
+    </div>
+    <div class="group">
+      <input class="search" id="find" list="names" placeholder="Find…" aria-label="Find a person, topic, tag or customer" autocomplete="off">
+      <datalist id="names"></datalist>
+    </div>
+    <span class="spacer"></span>
+    <span class="sub" id="built"></span>
+    <button id="rebuild">Rebuild</button>
+  </div>
+  <div id="body"><div class="empty">Loading…</div></div>
+</main>
+<script src="topicgraph.js"></script>
+<script type="module" src="topics.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

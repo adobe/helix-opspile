@@ -21,7 +21,7 @@ import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durab
 import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
-import { postAsApp } from '../src/agent/posting.js';
+import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
@@ -118,6 +118,57 @@ describe('agent tools', () => {
     assert.deepEqual(await toolsFor(e, { ...slack, key: null }), []);
   });
 
+  it('switch an internal tool per channel, by the admin team, in internal channels only', async () => {
+    const e = env();
+    const slack = target(SLACK, 'slack', 'C1');
+    const internal = () => {
+      e.DB.sqlite.exec(`INSERT OR REPLACE INTO orgs (slug, type, updated_at)
+        VALUES ('acme', 'internal', '2026-10-21T10:00:00Z')`);
+      e.DB.sqlite.exec(`INSERT OR REPLACE INTO channels (source, tenant, channel_id, shared, connected, fetched_at)
+        VALUES ('slack', 'E1', 'C1', 0, '[]', '2026-10-21T10:00:00Z')`);
+    };
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'any_thread', ...body });
+    const row = (rows) => rows.tools.find((t) => t.tool === 'any_thread');
+
+    assert.equal((await put(admin, { channel: 'C1', enabled: true })).status, 400);
+    internal();
+    assert.equal((await put(manager, { channel: 'C1', enabled: true })).status, 403);
+    assert.equal((await put(manager, { channel: 'C1', enabled: false })).status, 403);
+    assert.equal((await put(admin, { team: 'helix', enabled: true })).status, 400);
+    assert.deepEqual(await toolsFor(e, slack), []);
+
+    const res = await put(admin, { channel: 'C1', enabled: true });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await toolsFor(e, slack), ['any_thread']);
+
+    const listed = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');
+    assert.equal(row(listed.body).team, null);
+    assert.equal(row(listed.body).internal, true);
+    assert.equal(row(listed.body).may, false);
+    assert.equal(row((await call(e, admin, 'GET', '/api/kb/tools?repo=kb-team-helix')).body).may, true);
+
+    // However it got on: a channel that is shared since, or a customer's, has it no more.
+    e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C1'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+    e.DB.sqlite.exec('UPDATE channels SET shared = 0, connected = \'["T2"]\' WHERE channel_id = \'C1\'');
+    assert.deepEqual(await toolsFor(e, slack), []);
+    e.DB.sqlite.exec('UPDATE channels SET connected = \'[]\' WHERE channel_id = \'C1\'');
+    assert.deepEqual(await toolsFor(e, slack), ['any_thread']);
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'customer'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+    // A channel opspile knows no details of is not taken for internal.
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'internal'");
+    e.DB.sqlite.exec("DELETE FROM channels WHERE channel_id = 'C1'");
+    assert.deepEqual(await toolsFor(e, slack), []);
+
+    // A team's switch, written by hand, does not count.
+    internal();
+    await put(admin, { channel: 'C1', enabled: null });
+    e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+      VALUES ('any_thread', 'team', 'helix', 1, '2026-10-21T10:00:00Z')`);
+    assert.deepEqual(await toolsFor(e, slack), []);
+  });
+
   it('are listed and switched by the admin team and the team\'s managers only', async () => {
     const e = env({ LOADER: undefined });
     let res = await call(e, outsider, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true });
@@ -130,7 +181,10 @@ describe('agent tools', () => {
     assert.equal(res.status, 400);
     res = await call(e, outsider, 'GET', '/api/kb/tools?repo=kb-team-helix');
     assert.equal(res.status, 404);
+    // helix owns acme: its managers see acme's tools too.
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-org-acme');
+    assert.equal(res.status, 200);
+    res = await call(e, outsider, 'GET', '/api/kb/tools?repo=kb-org-acme');
     assert.equal(res.status, 404);
 
     await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'post_message', channel: 'C1', enabled: true });
@@ -247,6 +301,103 @@ describe('posting as the opspile app', () => {
   });
 });
 
+describe('reacting as the opspile app', () => {
+  const realFetch = globalThis.fetch;
+  let sent;
+  let answer;
+  beforeEach(() => {
+    sent = [];
+    answer = {};
+    globalThis.fetch = async (url, init = {}) => {
+      const u = new URL(url);
+      sent.push({
+        method: init.method || 'GET',
+        path: decodeURIComponent(u.pathname),
+        auth: init.headers && init.headers.authorization,
+        body: init.body ? JSON.parse(init.body) : null,
+      });
+      if (u.pathname === '/api/reactions.add') {
+        return Response.json(answer.slack || { ok: true });
+      }
+      if (u.pathname === '/api/v10/channels/920/messages/921') {
+        // 920 is a message, not a Discord thread.
+        return Response.json({ code: 10003 }, { status: 404 });
+      }
+      if (u.pathname === '/api/v10/channels/910/messages/921') {
+        return Response.json({ id: '921' });
+      }
+      if (u.pathname.startsWith('/api/v10/channels/910/messages/921/reactions/')) {
+        return answer.discord || new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected ${url}`);
+    };
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const message = (e, key, source, tenant, channel, id) => e.DB.sqlite.prepare(`INSERT INTO
+      messages (source, tenant, channel_id, id, thread, at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(source, tenant, channel, id, key, '2026-10-21T10:05:00Z');
+
+  it('takes a Slack name in any spelling or the emoji, and leaves the inbox\'s own to people', () => {
+    assert.deepEqual(appReaction('slack', ':thumbs-up:'), { emoji: 'thumbsup' });
+    assert.deepEqual(appReaction('slack', '🎉'), { emoji: 'tada' });
+    // Maybe one of the workspace's own.
+    assert.deepEqual(appReaction('slack', ':shipit:'), { emoji: 'shipit' });
+    assert.deepEqual(appReaction('discord', 'tada'), { emoji: '🎉' });
+    assert.deepEqual(appReaction('discord', '👍🏽'), { emoji: '👍🏽' });
+    assert.match(appReaction('discord', 'shipit').error, /not an emoji/);
+    assert.match(appReaction('slack', 'Not one!').error, /not an emoji/);
+    for (const e of ['eyes', '👀', 'pray', '🙏', 'ring_buoy', 'white_check_mark', '✅', '✔️']) {
+      assert.match(appReaction('slack', e).error, /left to people/, e);
+      assert.match(appReaction('discord', e).error, /left to people/, e);
+    }
+  });
+
+  it('reacts on Slack with the bot token', async () => {
+    const e = env();
+    message(e, SLACK, 'slack', 'E1', 'C1', '1792584100.000200');
+    const res = await reactAsApp(e, SLACK, '1792584100.000200', '🚀');
+    assert.deepEqual(res, { ok: true, platform: 'slack', emoji: 'rocket' });
+    assert.deepEqual(sent, [{
+      method: 'POST',
+      path: '/api/reactions.add',
+      auth: 'Bearer xoxb-made-up',
+      body: { channel: 'C1', timestamp: '1792584100.000200', name: 'rocket' },
+    }]);
+    answer.slack = { ok: false, error: 'already_reacted' };
+    assert.equal((await reactAsApp(e, SLACK, '1792584100.000200', 'rocket')).ok, true);
+    answer.slack = { ok: false, error: 'missing_scope' };
+    assert.match((await reactAsApp(e, SLACK, '1792584100.000200', 'rocket')).error, /reactions:write/);
+  });
+
+  it('reacts on Discord as the bot, where the message is', async () => {
+    const e = env();
+    message(e, DISCORD, 'discord', '900', '910', '921');
+    const res = await reactAsApp(e, DISCORD, '921', '+1');
+    assert.deepEqual(res, { ok: true, platform: 'discord', emoji: '👍' });
+    assert.deepEqual(sent.map((x) => `${x.method} ${x.path}`), [
+      'GET /api/v10/channels/920/messages/921',
+      'GET /api/v10/channels/910/messages/921',
+      'PUT /api/v10/channels/910/messages/921/reactions/👍/@me',
+    ]);
+    assert.equal(sent[2].auth, 'Bot made-up-discord-token');
+    answer.discord = Response.json({ code: 50013 }, { status: 403 });
+    assert.match((await reactAsApp(e, DISCORD, '921', '+1')).error, /Add Reactions/);
+  });
+
+  it('cannot react on Teams, to another thread\'s message, or with the inbox\'s own', async () => {
+    const e = env(TEAMS_BOT);
+    message(e, TEAMS, 'teams', 'TN1', '19:abc@thread.tacv2', '1792584000000');
+    message(e, DISCORD, 'discord', '900', '910', '921');
+    assert.match((await reactAsApp(e, TEAMS, '1792584000000', '+1')).error, /Teams lets no bot react/);
+    assert.match((await reactAsApp(e, SLACK, '921', '+1')).error, /no such message/);
+    assert.match((await reactAsApp(e, DISCORD, '921', '🙏')).error, /left to people/);
+    assert.equal(sent.length, 0);
+  });
+});
+
 /** A Cloudflare Computer workspace in memory: just-bash over one filesystem that stays. */
 function fakeWorkspace() {
   const fs = new InMemoryFs();
@@ -274,6 +425,10 @@ describe('the agent\'s switchable tools', () => {
 
   it('give it pi\'s bash on its computer and post_message, each with its guidance', async () => {
     const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'U2', 'person', 'Cy Customer', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at)
+      VALUES ('slack', 'E1', 'C1', '1792584000.000100', ?, '2026-10-21T10:00:00Z')`).run(SLACK);
     const posts = [];
     globalThis.fetch = async (url, init) => {
       posts.push(JSON.parse(init.body));
@@ -319,7 +474,8 @@ describe('the agent\'s switchable tools', () => {
       },
       capture(step('bash', { command: 'cut -d, -f2 data.csv | sort -r; ls' })),
       capture(step('bash', { command: 'cat missing.txt' })),
-      capture(step('post_message', { text: 'Purges take up to 5 minutes.' })),
+      capture(step('post_message', { text: '@Cy Customer, purges take up to 5 minutes.' })),
+      capture(step('add_reaction', { message: '1792584000.000100', emoji: ':tada:' })),
       capture(fauxAssistantMessage('Posted the purge time.')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -327,21 +483,27 @@ describe('the agent\'s switchable tools', () => {
     await harness.close(ctx);
 
     assert.match(system, /<posting>\nThe team turned on post_message/);
+    assert.match(system, /You may react to a message with an emoji instead \(add_reaction\)/);
     assert.match(system, /<computer>\nYou have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    const [pwd, sum, missing, post] = results;
+    const [pwd, sum, missing, post, reacted] = results;
     assert.equal(pwd.text.trim(), '/workspace');
     // The file is still there for the next command.
     assert.equal(sum.text.trim(), '2\n1\ndata.csv');
     assert.ok(missing.error);
     assert.match(missing.text, /missing\.txt/);
-    assert.match(post.text, /^posted on Slack \(message 1792584999\.000900\)\./);
+    assert.match(post.text, /^posted on Slack \(message 1792584999\.000900, tags [^)]+\)\./);
+    assert.equal(reacted.text, 'reacted with :tada: on Slack.');
     assert.deepEqual(posts, [{
       channel: 'C1',
       thread_ts: '1792584000.000100',
-      text: 'Purges take up to 5 minutes.',
-      blocks: [{ type: 'markdown', text: 'Purges take up to 5 minutes.' }],
-    }]);
+      text: '<@U2>, purges take up to 5 minutes.',
+      blocks: [{ type: 'markdown', text: '<@U2>, purges take up to 5 minutes.' }],
+    }, { channel: 'C1', timestamp: '1792584000.000100', name: 'tada' }]);
     assert.deepEqual(posted, ['1792584999.000900']);
+    // A post that sent no draft is counted as the agent's own (src/draftevents.js).
+    assert.deepEqual(e.DB.rows('SELECT thread, draft, action, how, by_agent FROM draft_events'), [{
+      thread: SLACK, draft: '', action: 'posted', how: 'agent', by_agent: 1,
+    }]);
     assert.equal(ws.runs[0].options.cwd, '/workspace');
   });
 
@@ -369,5 +531,151 @@ describe('the agent\'s switchable tools', () => {
     assert.deepEqual((ext.tools || []).map((t) => t.name), []);
     const seed = agentToolsExtension({ env: env(), hasThread: false }, ['post_message', 'computer']);
     assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash']);
+    const on = agentToolsExtension({ env: env(), hasThread: true }, ['post_message']);
+    assert.deepEqual((on.tools || []).map((t) => t.name), ['post_message', 'add_reaction']);
+  });
+});
+
+describe('requesting channel members', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** A thread whose first message asks for someone, and an agent with `membership` on. */
+  function setup(extra = {}) {
+    const calls = { teams: [], slack: [], posts: [] };
+    const e = env({
+      TEAMS_ADMIN: {
+        submit: async (input) => {
+          calls.teams.push(input);
+          return {
+            ok: true,
+            created: input.emails.map((x, i) => ({ id: i + 1, email: x })),
+            skipped: [],
+            failed: [],
+            replied: true,
+          };
+        },
+      },
+      SLACK_AUTOMATION: {
+        submit: async (input) => {
+          calls.slack.push(input);
+          return {
+            ok: true, posted: [{ userId: 'UG1', channelId: 'C1' }], notes: [], skipped: null, requester: input.requester,
+          };
+        },
+      },
+      MEMBERSHIP_SLACK_CHANNEL: 'CGEN1',
+      MEMBERSHIP_SLACK_BOT: 'UOPS1',
+      ...extra,
+    });
+    const message = (source, tenant, channel, id, key) => e.DB.sqlite.prepare(`INSERT INTO messages
+        (source, tenant, channel_id, id, thread, at, author, person) VALUES (?, ?, ?, ?, ?, ?, 'Bo', 2)`)
+      .run(source, tenant, channel, id, key, '2026-10-21T10:00:00Z');
+    message('teams', 'TN1', '19:abc@thread.tacv2', '1792584000000', TEAMS);
+    message('slack', 'E1', 'C1', '1792584000.000100', SLACK);
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at) VALUES
+      ('teams', 'TN1', 'aad-bo', 'user', 'Bo', 2, '2026-10-21T10:00:00Z'),
+      ('slack', 'E1', 'UBO1', 'user', 'Bo', 2, '2026-10-21T10:00:00Z')`);
+    e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+      VALUES ('membership', 'team', 'helix', 1, '2026-10-21T10:00:00Z')`);
+    globalThis.fetch = async (url, init = {}) => {
+      calls.posts.push({ url: String(url), body: JSON.parse(init.body) });
+      return Response.json({ ok: true, ts: '1792600000.000200' });
+    };
+    const tool = (t) => agentToolsExtension({
+      env: e, hasThread: true, target: async () => ({ ...t, permalink: 'https://acme.slack.example/archives/C1/p1792584000000100' }),
+    }, ['membership']).tools[0];
+    const run = async (t, args) => {
+      const res = await quiet(() => tool(t).execute(args, {}));
+      return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+    };
+    return {
+      e, calls, run, tool,
+    };
+  }
+
+  it('is on only where the platform\'s admin bot is bound', async () => {
+    const { e } = setup();
+    const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
+    const slack = target(SLACK, 'slack', 'C1');
+    assert.deepEqual(await toolsFor(e, teams), ['membership']);
+    assert.deepEqual(await toolsFor(e, slack), ['membership']);
+    assert.deepEqual(await toolsFor({ ...e, TEAMS_ADMIN: undefined }, teams), []);
+    assert.deepEqual(await toolsFor({ ...e, MEMBERSHIP_SLACK_BOT: undefined }, slack), []);
+    assert.deepEqual(await toolsFor(e, target(DISCORD, 'discord', '910')), []);
+  });
+
+  it('files a Teams request with admin-bot, for the person who asked', async () => {
+    const { calls, run } = setup();
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['New.Person@Client.example'], message: '1792584000000',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.match(r.text, /admin-bot filed new\.person@client\.example for the admins' approval\. admin-bot answered/);
+    assert.deepEqual(calls.teams, [{
+      action: 'add',
+      emails: ['new.person@client.example'],
+      teamId: 'G1',
+      conversationId: '19:abc@thread.tacv2;messageid=1792584000000',
+      requester: { name: 'Bo', email: 'bo@staff.example', aadObjectId: 'aad-bo' },
+      via: 'opspile',
+      message: 'Bo asked in the thread: add new.person@client.example',
+    }]);
+    assert.equal(calls.posts.length, 0);
+  });
+
+  it('posts a Slack request in #general for AEM Ops Automation, and hands it to the relay', async () => {
+    const { calls, run } = setup();
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.match(r.text, /Posted in #general \(message 1792600000\.000200\); AEM Ops Automation asked for 1 confirmation\(s\) there, which the person who asked or an admin has to click/);
+    const [post] = calls.posts;
+    assert.equal(post.url, 'https://slack.com/api/chat.postMessage');
+    assert.equal(post.body.channel, 'CGEN1');
+    assert.equal(post.body.text, '<@UOPS1> please add guest@client.example to <#C1>, for Bo'
+      + ' (<https://acme.slack.example/archives/C1/p1792584000000100|asked here>). Posted by the opspile agent.');
+    assert.deepEqual(calls.slack, [{
+      channel: 'CGEN1', ts: '1792600000.000200', text: post.body.text, requester: 'UBO1', via: 'opspile',
+    }]);
+  });
+
+  it('asks nothing for a message that is not in the thread, a bad address, or a tool switched off', async () => {
+    const { e, calls, run } = setup();
+    const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
+    let r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '999' });
+    assert.match(r.text, /Nothing was requested: give the id of the message/);
+    r = await run(teams, { action: 'add', emails: ['not an address'], message: '1792584000000' });
+    assert.match(r.text, /not an email address: not an address/);
+    r = await run(teams, { action: 'add', emails: [], message: '1792584000000' });
+    assert.match(r.text, /give the email address/);
+    e.DB.sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+    r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '1792584000000' });
+    assert.match(r.text, /not available in this channel/);
+    assert.equal(calls.teams.length + calls.slack.length + calls.posts.length, 0);
+  });
+
+  it('says what the bot refused', async () => {
+    const { run } = setup({ TEAMS_ADMIN: { submit: async () => ({ ok: false, error: 'teamId must be the team\'s group id' }) } });
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'remove', emails: ['a@client.example'], message: '1792584000000',
+    });
+    assert.equal(r.error, true);
+    assert.match(r.text, /admin-bot refused it: teamId must be the team's group id/);
+  });
+
+  it('says a Slack request went out when the relay then failed, so it is not posted twice', async () => {
+    const gone = async () => {
+      throw new Error('binding gone');
+    };
+    const { run } = setup({ SLACK_AUTOMATION: { submit: gone } });
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, true);
+    assert.match(r.text, /posted in #general \(message 1792600000\.000200\), but AEM Ops Automation refused it: binding gone\. Do not post it again/);
   });
 });

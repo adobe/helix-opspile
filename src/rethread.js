@@ -11,8 +11,10 @@
  */
 
 import { parse, render } from './channels.js';
+import { sweepDelay, sweepsNow } from './deadjobs.js';
 import { CLEF } from './label.js';
 import { QUOTE_HEAD, quotesAsText } from './markdown.js';
+import { fold } from './mention-match.js';
 import { notifyRoom } from './notify.js';
 import { sha256 } from './raw.js';
 import { teamsOf } from './shares.js';
@@ -26,6 +28,23 @@ import { teamsOf } from './shares.js';
  * A match sets `logicalThread` on the new thread, pointing at the earliest thread of the
  * group, so repeated alerts and follow-ups fold into one inbox entry. A root that quotes a
  * message (Slack: forwarded, or a link to it) was started on purpose, and stays on its own.
+ * So does a conversation's root that people answer in its own platform thread: one that has
+ * replies when it is decided is not folded, and one that gets them after it was folded is split
+ * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
+ * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
+ * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
+ * later, as a burst (`mentionsOnly`, GREETING_MS).
+ *
+ * People continue a chat with more top-level messages where the chat is top-level messages.
+ * Where its people reply in platform threads, a new top-level message is nearly always a topic
+ * of its own, however close it reads: so Clef must be all but certain to fold a root into a
+ * conversation with thread replies, or into any in a channel whose roots mostly get them
+ * (MIN_CLEF_THREADED, HABIT_THREADED), and a root is no burst of one that has been answered
+ * already. The exception is a reply that landed top-level: one that @-mentions somebody who
+ * spoke in a conversation, within minutes of its latest message (ADDRESSED_MS), is that
+ * conversation's reply, wherever its author aimed it, and needs no more than MIN_CLEF_CONVERSATION
+ * (`logical_via` REPLY).
  */
 
 /** How long after a root arrives it is re-threaded (its agent waits for that). */
@@ -46,6 +65,18 @@ export const MIN_CANDIDATE_CONVERSATION = 0.6;
  */
 export const BURST_MS = 3 * 60 * 1000;
 /**
+ * A root that only greets ("Hello Ada", "Hi team :wave:") says nothing of its own: its author is
+ * typing what it is about, and a question takes longer to write than a follow-up. Their next root
+ * this soon, with nobody else's root between them, continues it, as a burst does: in the channels
+ * where people greet first, it came three to six minutes later, past BURST_MS, and Clef, reading
+ * a greeting as a conversation of its own, was not sure enough (0.77) to fold it.
+ * It is also how soon a root that says nothing but @-mentions (the bot, a colleague,
+ * `mentionsOnly`) continues its author's previous root: a ping for the question they just asked,
+ * whose words, if any, neither Clef nor vector search can place. The one that showed it came three
+ * and a half minutes after its question, past BURST_MS, and got an entry of its own.
+ */
+export const GREETING_MS = 15 * 60 * 1000;
+/**
  * In conversations, the channel's latest conversations active this recently are always
  * candidates, however differently they are worded: answers, thanks, nudges and escalations
  * posted as new messages ("this is a blocker, please help", "done, you have access") share few
@@ -63,6 +94,31 @@ const LABELS = 'ABCDEFGHIJ';
 export const MIN_CLEF = 0.7;
 /** In conversations, where it reads the transcript and is sure of the right answers. */
 export const MIN_CLEF_CONVERSATION = 0.8;
+/**
+ * For a conversation with replies in its platform threads. Folded into one at Clef's usual
+ * certainty, new roots got replies of their own as often as the channel's new topics do: they
+ * were new topics. Folded into a conversation without any, half as often, as follow-ups do.
+ */
+export const MIN_CLEF_THREADED = 0.99;
+/**
+ * A channel whose people reply in platform threads: of its roots in the last 30 days, at least
+ * five, half or more got a person's reply in their own. There, a conversation without replies
+ * yet (its question still waiting for one) is held in threads all the same: a new root is a new
+ * question, however close it reads, and needs MIN_CLEF_THREADED too. Of the conversation roots
+ * Clef had folded in such channels below that, more than half got replies of their own, twice
+ * as often as the other folds.
+ */
+export const HABIT_MS = 30 * 86400 * 1000;
+export const HABIT_MIN_ROOTS = 5;
+export const HABIT_THREADED = 0.5;
+/**
+ * How long after a conversation's latest message a root that @-mentions one of its people is
+ * its reply, posted top-level by mistake (REPLY, `addressedConversation`): somebody answers
+ * what they just read in the channel's box instead of the thread's, which happens at once.
+ * Later, an @-mention of whoever was active last is as often a topic of its own, which is what
+ * Clef and MIN_CLEF_THREADED are for.
+ */
+export const ADDRESSED_MS = 5 * 60 * 1000;
 const MAX_TEXT = 1500;
 const SNIPPET = 600;
 
@@ -198,13 +254,140 @@ const groupOf = (t) => t.logical_thread || t.thread;
  * direction") reads like a follow-up of whatever was said last.
  */
 export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE_HEAD.test(l));
+/**
+ * Whether a root announces a thread (🧵, `:thread:`, often in its first line): its author wants the
+ * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
+ */
+export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
+const SALUTATION = /^(?:hi+|hel+o+|hey|heya|hiya|howdy|greetings|dear|hallo|moin|servus|hola|bonjour|bonsoir|salut|ciao|buongiorno|ol[aá]|good|guten|morning|afternoon|evening|day|morgen|tag)$/;
+const ADDRESSEE = /^(?:all|everyone|everybody|team|folks|guys|people|there|again|y'?all|you|both|zusammen|alle|miteinander|tous|à|a|le|la|l'équipe|équipe|and|und|et)$/;
+/**
+ * Whether a root only greets: a salutation, then at most the people it is addressed to (names,
+ * mentions, "team", "all") and emoji, and nothing else (see GREETING_MS).
+ */
+export function greets(body) {
+  const text = String(body || '')
+    .replace(/:[a-z0-9_+'-]+:/gi, ' ')
+    .replace(/\bhow are (?:you|things)(?: (?:doing|all))?\b|\bhope (?:you are|you're|all is|everyone is) (?:well|good)\b/gi, ' ')
+    .replace(/\p{Extended_Pictographic}|\p{Emoji_Modifier}|\u200d|\ufe0f/gu, ' ')
+    .replace(/[!.,;?…-]+/g, ' ')
+    .trim();
+  if (!text || text.length > 80) {
+    return false;
+  }
+  const words = text.split(/\s+/);
+  let i = 0;
+  while (i < words.length && SALUTATION.test(words[i].toLowerCase())) {
+    i += 1;
+  }
+  const rest = words.slice(i);
+  return i > 0 && rest.length <= 4 && rest.every((w) => w.startsWith('@')
+    || ADDRESSEE.test(w.toLowerCase()) || /^\p{Lu}[\p{Ll}'’]*(?:-\p{Lu}?[\p{Ll}'’]+)*$/u.test(w));
+}
+/** How many words a mention's name has at most (`mentionsOnly`). */
+const MENTION_WORDS = 4;
+/**
+ * Whether a root says nothing but @-mentions: one or more (`@Ada Lovelace`, `@Lovelace, Ada`, the
+ * bot by its name, `@here`), and at most emoji and punctuation besides, or not even a mention
+ * ("?", ":eyes:"). Its author is calling someone to what they posted just before (see
+ * GREETING_MS). A mention is `@` and the name's words, each capitalized (what the platforms write
+ * for one, src/markdown.js), so "@Ada can you look" says something.
+ */
+export function mentionsOnly(body) {
+  const text = String(body || '')
+    .replace(/:[a-z0-9_+'-]+:/gi, ' ')
+    .replace(/\p{Extended_Pictographic}|\p{Emoji_Modifier}|\u200d|\ufe0f/gu, ' ')
+    .replace(/[!.,;:?…()\-–—]+/g, ' ')
+    .trim();
+  if (!text) {
+    return Boolean(String(body || '').trim());
+  }
+  const words = text.split(/\s+/);
+  if (text.length > 120 || !words[0].startsWith('@')) {
+    return false;
+  }
+  let name = 0;
+  return words.every((w) => {
+    if (w.length > 1 && w.startsWith('@')) {
+      name = 1;
+      return true;
+    }
+    name += 1;
+    return name <= MENTION_WORDS && /^\p{Lu}[\p{L}\p{N}'’]*$/u.test(w);
+  });
+}
+/**
+ * Whether `next`, its author's root right after `prev` (nobody else's root between them),
+ * continues it as a burst: within BURST_MS, or GREETING_MS when `prev` only greets or `next` only
+ * mentions (`mentionsOnly`).
+ */
+const continues = (prev, prevBody, next, nextBody) => {
+  const gap = Date.parse(next.root_at) - Date.parse(prev.root_at);
+  return gap <= BURST_MS || (gap <= GREETING_MS && (greets(prevBody) || mentionsOnly(nextBody)));
+};
 /** Platform notices ("… has joined the channel"): no conversation's part, nor a topic. */
 const isSystem = (parsed) => Boolean(parsed.meta.author && parsed.meta.author.kind === 'system');
+/**
+ * `logical_via` of a root that was split out of its group (`dethread`): it is decided, and not
+ * folded again, not even by a forced re-threading or a burst before it.
+ */
+export const SPLIT = 'split';
+/**
+ * `logical_via` of a root that is a reply posted top-level: it @-mentions somebody who spoke in
+ * the conversation Clef folded it into, minutes after its latest message (ADDRESSED_MS,
+ * `addressedConversation`). Like a burst member, it stays in its group when people answer it in
+ * its own platform thread: that thread is where the conversation went on, and whoever answers
+ * the reply answers the group.
+ */
+export const REPLY = 'reply';
+
+/** A message's text as `@name` mentions over single spaces, for `addresses`. */
+const mentionText = (body) => ` ${fold(body).replace(/[^\p{L}\p{N}@]+/gu, ' ').replace(/@\s+/g, '@')} `;
+const nameWords = (name) => fold(name).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+/**
+ * Whether a message @-mentions one of `names` (the people of a conversation): by the whole name
+ * ("@Ada Lovelace", Teams' "@Lovelace, Ada") or by its first word ("@Ada"), which is what the
+ * platforms put in the text for a mention (src/markdown.js), ignoring case, accents and
+ * punctuation.
+ */
+export function addresses(body, names) {
+  const text = mentionText(body);
+  return (names || []).some((name) => {
+    const words = nameWords(name);
+    return words.length > 0 && (text.includes(`@${words.join(' ')} `)
+      || (words[0].length >= 3 && text.includes(`@${words[0]} `)));
+  });
+}
+
+/**
+ * The conversation a new root is a reply to, posted top-level: the latest one whose newest
+ * message is less than ADDRESSED_MS old and one of whose people the root @-mentions. Its author
+ * answered what they had just read in the channel's box instead of the thread's, so the root is
+ * part of that conversation whatever the channel's habit (MIN_CLEF_THREADED), and the replies it
+ * gets in its own platform thread are the group's (REPLY, `dethread`).
+ */
+export function addressedConversation(body, convs, at, self = null) {
+  return (convs || []).find((c) => at - Date.parse(c.last) <= ADDRESSED_MS
+    && addresses(body, (c.names || []).filter((n) => n && n !== self))) || null;
+}
+
+/**
+ * Whether a root has replies of its own: a person posted in its platform thread. People who
+ * answer there, and not in the conversation it was folded into, hold a conversation of its own,
+ * and the inbox's replies go to the platform thread its entry was last active in
+ * (src/post.js `target`), which must be this one then.
+ */
+async function answered(env, thread, before = null) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM messages
+    WHERE thread = ? AND id != ? AND counted = 1 AND deleted = 0 AND (?3 IS NULL OR at < ?3) LIMIT 1`)
+    .bind(thread.thread, thread.root_id, before).first());
+}
 
 /**
  * The conversations a new root in a conversation channel may continue: the channel's latest
  * ones (by their messages before the root) and the groups of the similar earlier roots, each
- * with its first message and its latest ones before the root, oldest first.
+ * with its first message and its latest ones before the root, oldest first, the people who
+ * spoke in it and when it was last active (`addressedConversation`).
  */
 async function conversations(env, thread, similar) {
   const { results: recent } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS grp,
@@ -259,19 +442,66 @@ async function conversations(env, thread, similar) {
       }
     }
     if (messages.length) {
-      out.push({ thread: g, group: g, messages });
+      // Replies in the conversation's platform threads (by people, before the new root).
+      // eslint-disable-next-line no-await-in-loop
+      const replied = await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages m
+          JOIN threads t ON t.thread = m.thread
+        WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.id != t.root_id
+          AND m.at < ? AND m.deleted = 0 AND m.counted = 1`)
+        .bind(g, g, thread.thread, thread.root_at).first();
+      // The people who spoke in it before the new root, for a reply posted top-level.
+      // eslint-disable-next-line no-await-in-loop
+      const { results: who } = await env.DB.prepare(`SELECT DISTINCT m.author FROM messages m
+          JOIN threads t ON t.thread = m.thread
+        WHERE (t.thread = ? OR t.logical_thread = ?) AND t.thread != ? AND m.at < ?
+          AND m.deleted = 0 AND m.counted = 1 AND m.author IS NOT NULL`)
+        .bind(g, g, thread.thread, thread.root_at).all();
+      out.push({
+        thread: g,
+        group: g,
+        messages,
+        replies: (replied && replied.n) || 0,
+        names: (who || []).map((r) => r.author),
+        last: picked[picked.length - 1].at,
+      });
     }
   }
   return out;
 }
 
 /**
+ * Whether the channel of `thread` replies in platform threads (HABIT_THREADED), from its roots by
+ * people before `thread`'s, and their replies before it.
+ */
+async function repliesInThreads(env, thread) {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS roots, COALESCE(SUM(EXISTS (SELECT 1 FROM messages x
+      WHERE x.thread = t.thread AND x.id != t.root_id AND x.counted = 1 AND x.deleted = 0
+        AND x.at < ?4)), 0) AS replied
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
+      AND m.deleted = 0
+    WHERE t.source = ?1 AND t.tenant = ?2 AND t.channel_id = ?3 AND t.kind = 'channel'
+      AND t.root_at < ?4 AND t.root_at >= ?5 AND t.thread != ?6`)
+    .bind(
+      thread.source,
+      thread.tenant,
+      thread.channel_id,
+      thread.root_at,
+      new Date(Date.parse(thread.root_at) - HABIT_MS).toISOString(),
+      thread.thread,
+    ).first();
+  return Boolean(row && row.roots >= HABIT_MIN_ROOTS && row.replied >= row.roots * HABIT_THREADED);
+}
+
+/**
  * Clef, in conversations: which of the conversations does the new root continue, if any? It
  * reads them as the channel's transcript (each message marked with its conversation and how
  * long before it was posted), which tells answers and thanks apart from new topics far better
- * than comparing the new root with each conversation on its own.
+ * than comparing the new root with each conversation on its own. In a channel that replies in
+ * threads (`inThreads`), every conversation counts as held in threads — except `addressed`, the
+ * one the root is a reply to (`addressedConversation`), where Clef's usual certainty is enough.
  */
-export async function askClefConversation(env, text, at, convs) {
+export async function askClefConversation(env, text, at, convs, opts = {}) {
+  const { inThreads = false, addressed = null } = opts;
   const lines = [];
   convs.forEach((c, i) => c.messages.forEach((m) => lines.push({
     at: m.at, line: `[${LABELS[i]}, ${ago(at - Date.parse(m.at))} before] ${m.text}`,
@@ -302,31 +532,62 @@ export async function askClefConversation(env, text, at, convs) {
       best = { candidate: c, p };
     }
   });
-  return best && best.p >= MIN_CLEF_CONVERSATION ? best : { p: best ? best.p : 0 };
+  if (!best) {
+    return { p: 0 };
+  }
+  // A conversation held in platform threads, or any in a channel that replies in threads, needs
+  // Clef all but certain (MIN_CLEF_THREADED) — unless the root is its reply, posted top-level.
+  const replying = Boolean(addressed) && best.candidate === addressed;
+  const threaded = (Boolean(best.candidate.replies) || inThreads) && !replying;
+  if (best.p >= (threaded ? MIN_CLEF_THREADED : MIN_CLEF_CONVERSATION)) {
+    return { ...best, ...(replying ? { addressed: true } : {}) };
+  }
+  return { p: best.p, ...(threaded ? { threaded } : {}) };
 }
+
+// Longer than a job's retries take.
+const SWEEP_AFTER_MS = 60 * 60 * 1000;
+const SWEEP_LIMIT = 100;
 
 /**
  * Re-threads one thread by its root. Idempotent: a thread that was decided once is not
- * decided again (pass `force` to redo it).
+ * decided again (pass `force` to redo it). `rethreaded_at` says it was decided, and is written
+ * last, so a job that fails half way is repeated by its retry, not cut short by this guard.
  */
 export async function rethread(env, key, { force = false } = {}) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread || !thread.root_at) {
     return { result: 'skip', reason: 'no root' };
   }
+  if (thread.logical_via === SPLIT) {
+    return { result: 'unchanged', logical: null, reason: 'split' };
+  }
+  // The inbox replied for its group in its platform thread: that is where the group goes on.
+  if (thread.routed_at && thread.logical_thread) {
+    return { result: 'unchanged', logical: thread.logical_thread, reason: 'routed' };
+  }
   if (thread.rethreaded_at && !force) {
     return { result: 'unchanged', logical: thread.logical_thread };
   }
+  // A skip is final: asking again finds the same. A hash means that an earlier job got further and
+  // died, and the sweep sends a root out for as long as it has one without a decision.
+  const skip = async (reason) => {
+    if (thread.skeleton_hash && !thread.rethreaded_at) {
+      await env.DB.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread = ?')
+        .bind(new Date().toISOString(), key).run();
+    }
+    return { result: 'skip', reason };
+  };
   const root = await rootBody(env, thread);
   if (!root || root.parsed.meta.deletedAt) {
-    return { result: 'skip', reason: 'root missing or deleted' };
+    return skip('root missing or deleted');
   }
   if (thread.kind === 'channel' && isSystem(root.parsed)) {
-    return { result: 'skip', reason: 'system message' };
+    return skip('system message');
   }
   const text = skeleton(root.parsed.body || thread.title);
   if (!text) {
-    return { result: 'skip', reason: 'empty' };
+    return skip('empty');
   }
 
   const at = Math.floor(Date.parse(thread.root_at) / 1000);
@@ -351,12 +612,13 @@ export async function rethread(env, key, { force = false } = {}) {
 
   // A burst: the channel's previous root is by the same person, minutes earlier. People
   // split one request over several messages instead of replying to themselves.
-  // Only people in conversations: a bot posts many different alerts within minutes.
+  // Only people in conversations: a bot posts many different alerts within minutes. Not a root
+  // that is deleted: people delete a message and post it again, and the new one is the thread.
   const rootAuthor = conversation && await env.DB.prepare(`SELECT author_key
     FROM messages WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
   const author = rootAuthor && rootAuthor.author_key;
   const previous = author && await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
-    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.counted = 1 AND m.deleted = 0
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at < ? AND t.root_at >= ? ORDER BY t.root_at DESC LIMIT 1`)
     .bind(
@@ -365,9 +627,14 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) - BURST_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) - GREETING_MS).toISOString(),
     ).first();
-  const burst = previous && previous.author_key === author ? previous : null;
+  // Not once someone answered it in its thread: the next root is no piece of it then, but a
+  // message of its own (the next of several questions, each in its thread). Later than BURST_MS,
+  // only a greeting's, or a root that only mentions (GREETING_MS).
+  const soon = previous && previous.author_key === author
+    && continues(previous, (await rootBody(env, previous))?.parsed.body, thread, root.parsed.body);
+  const burst = soon && !await answered(env, previous, thread.root_at) ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -389,17 +656,39 @@ export async function rethread(env, key, { force = false } = {}) {
   let match = null;
   let asked = null;
   const quoting = quotes(root.parsed.body);
-  if (quoting) {
-    // On its own: see quotes().
+  const announcing = conversation && !quoting && announcesThread(root.parsed.body);
+  const asking = Boolean(conversation && !quoting && !announcing && !burst);
+  // The channel's latest conversations and the similar ones, read as a transcript.
+  const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
+  // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
+  // after its latest message. It is that conversation's, whatever the channel's habit, and the
+  // replies it gets in its own platform thread are the group's (REPLY, dethread()).
+  const addressed = asking && convs.length ? addressedConversation(
+    root.parsed.body,
+    convs,
+    Date.parse(thread.root_at),
+    root.parsed.meta.author && root.parsed.meta.author.name,
+  ) : null;
+  // A burst is one request in pieces, wherever it is answered; anything else that people answer
+  // in its own platform thread is a conversation of its own, unless it is such a reply.
+  const own = asking && await answered(env, thread);
+  const replied = own && !addressed;
+  if (quoting || announcing || replied) {
+    // On its own: see quotes(), announcesThread() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
-    // The channel's latest conversations and the similar ones, read as a transcript.
-    const convs = await conversations(env, thread, earlier.slice(0, 4));
-    asked = convs.length
-      ? await askClefConversation(env, text, Date.parse(thread.root_at), convs) : null;
-    if (asked && asked.candidate) {
-      match = { thread: asked.candidate.thread, via: 'clef', p: asked.p };
+    asked = convs.length ? await askClefConversation(env, text, Date.parse(thread.root_at), convs, {
+      inThreads: await repliesInThreads(env, thread),
+      addressed,
+    }) : null;
+    // A root that has replies of its own is only folded as the reply it is.
+    if (asked && asked.candidate && (!own || asked.addressed)) {
+      match = {
+        thread: asked.candidate.thread,
+        via: asked.addressed ? REPLY : 'clef',
+        p: asked.p,
+      };
     }
   } else if (twin) {
     match = { thread: twin.thread, via: 'skeleton', p: 1 };
@@ -434,9 +723,9 @@ export async function rethread(env, key, { force = false } = {}) {
       .bind(match.thread).first();
     logical = (target && target.logical_thread) || match.thread;
   }
-  await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = ?, logical_p = ?,
-    rethreaded_at = ? WHERE thread = ?`)
-    .bind(logical, match ? match.via : null, match ? match.p : null, new Date().toISOString(), key)
+  await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = ?, logical_p = ?
+    WHERE thread = ?`)
+    .bind(logical, match ? match.via : null, match ? match.p : null, key)
     .run();
   await markRootFile(env, thread, logical);
 
@@ -485,7 +774,7 @@ export async function rethread(env, key, { force = false } = {}) {
   }
   // The next root, if it is by the same person minutes later, continues this one.
   const next = author && await env.DB.prepare(`SELECT t.*, m.author_key
-    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    FROM threads t JOIN messages m ON m.thread = t.thread AND m.id = t.root_id AND m.deleted = 0
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
       AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
     .bind(
@@ -494,12 +783,16 @@ export async function rethread(env, key, { force = false } = {}) {
       thread.channel_id,
       key,
       thread.root_at,
-      new Date(Date.parse(thread.root_at) + BURST_MS).toISOString(),
+      new Date(Date.parse(thread.root_at) + GREETING_MS).toISOString(),
     ).first();
-  const nextFree = next && (!next.logical_thread || joined.includes(next.logical_thread));
-  const nextBurst = nextFree && next.author_key === author;
-  const nextRoot = nextBurst && await rootBody(env, next);
-  if (nextBurst && !(nextRoot && quotes(nextRoot.parsed.body))) {
+  const nextFree = next && next.logical_via !== SPLIT
+    && (!next.logical_thread || joined.includes(next.logical_thread));
+  const nextRoot = nextFree && next.author_key === author && await rootBody(env, next);
+  const nextBody = nextRoot && nextRoot.parsed.body;
+  const nextBurst = nextRoot && continues(thread, root.parsed.body, next, nextBody)
+    && !await answered(env, thread, next.root_at);
+  const nextOwn = nextBurst && (quotes(nextBody) || announcesThread(nextBody));
+  if (nextBurst && !nextOwn) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
         rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
     joined.push(next.thread);
@@ -530,12 +823,129 @@ export async function rethread(env, key, { force = false } = {}) {
   if (thread.kind === 'alert' && env.NORMALIZE) {
     await env.NORMALIZE.send({ label: logical || key });
   }
+  // Decided only now that all of it is done: a retry starts from the top until then, and decides
+  // again what it wrote so far.
+  await env.DB.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread = ?')
+    .bind(new Date().toISOString(), key).run();
   return {
     result: logical ? 'rethreaded' : 'new-topic',
     via: match ? match.via : null,
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
-    // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF).
+    ...(announcing ? { reason: 'starts a thread' } : {}),
+    ...(replied ? { reason: 'has replies of its own' } : {}),
+    // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
+    // that one was held in threads (MIN_CLEF_THREADED).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
+    ...(!match && asked && asked.threaded ? { threaded: true } : {}),
   };
+}
+
+/**
+ * De-threading: a conversation's root that was folded into an earlier conversation, and then
+ * gets replies in its own platform thread, is split back out into an inbox entry of its own
+ * (see answered()). Called for every reply a person posts; only a folded root changes, once:
+ * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
+ * burst go with it. A burst member itself, a reply that landed top-level (REPLY) and alerts stay
+ * in their group: a burst is one request in pieces, somebody answering one of a series of alerts
+ * answers all of them, and a reply's platform thread is where the conversation went on, so those
+ * who answer it there answer the group. So does a root the inbox sent a reply of its group to
+ * (`routed_at`, src/post.js routeReply): the group's conversation goes on in its platform thread,
+ * and those who answer there answer the group.
+ * `rethreaded_at` moves to now, so the export sweep writes the threads again.
+ */
+export async function dethread(env, key) {
+  const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
+  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
+    || thread.logical_via === REPLY
+    || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
+    return { result: 'unchanged' };
+  }
+  const group = thread.logical_thread;
+  const now = new Date().toISOString();
+  // Only from the group it is in now: a job that decided otherwise meanwhile wins.
+  const { meta } = await env.DB.prepare(`UPDATE threads SET logical_thread = NULL, logical_via = ?,
+      logical_p = NULL, rethreaded_at = ? WHERE thread = ? AND logical_thread = ?`)
+    .bind(SPLIT, now, key, group).run();
+  if (!meta || !meta.changes) {
+    return { result: 'unchanged' };
+  }
+  await markRootFile(env, thread, null);
+  // The roots its author posted right after it, each within minutes of the one before, with
+  // nobody else's root between them: the burst re-threading folded into the group with it.
+  const author = await env.DB.prepare(`SELECT author_key FROM messages
+    WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
+  const split = [key];
+  let last = thread;
+  let lastBody = (await rootBody(env, thread))?.parsed.body;
+  while (author && author.author_key) {
+    // eslint-disable-next-line no-await-in-loop
+    const next = await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
+      JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+      WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
+        AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
+      .bind(
+        thread.source,
+        thread.tenant,
+        thread.channel_id,
+        last.thread,
+        last.root_at,
+        new Date(Date.parse(last.root_at) + GREETING_MS).toISOString(),
+      ).first();
+    if (!next || next.author_key !== author.author_key || next.logical_thread !== group
+      || next.logical_via !== 'burst' || next.routed_at) {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const nextBody = (await rootBody(env, next))?.parsed.body;
+    if (!continues(last, lastBody, next, nextBody)) {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare('UPDATE threads SET logical_thread = ?, rethreaded_at = ? WHERE thread = ?')
+      .bind(key, now, next.thread).run();
+    // eslint-disable-next-line no-await-in-loop
+    await markRootFile(env, next, key);
+    split.push(next.thread);
+    last = next;
+    lastBody = nextBody;
+  }
+  // Open inboxes reload the group, which has these no more, and list them on their own.
+  const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
+  await notifyRoom(env, rooms, { type: 'thread', thread: group, split });
+  return { result: 'split', group, split };
+}
+
+/**
+ * Cron: the roots whose job died (their hash is written before the work that can fail, and
+ * `rethreaded_at` after it) go out again, within the window re-threading looks back. A root that
+ * was skipped on purpose (a system notice, an empty one) has no hash, or, when a job had died on
+ * it before, a decision.
+ */
+export async function sweepRethreads(env, now = new Date()) {
+  if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
+    return { skipped: 'no VECTORS index' };
+  }
+  if (!sweepsNow(now)) {
+    return { skipped: 'not this run' };
+  }
+  // Not a root that is deleted or a notice by now, which the job skips, and not one that died
+  // within the day: a root that always fails goes out once a day, not with every cron run.
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+    WHERE t.skeleton_hash IS NOT NULL AND t.rethreaded_at IS NULL AND t.root_at >= ? AND t.root_at < ?
+      AND m.deleted = 0 AND COALESCE(m.author_kind, '') != 'system'
+      AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'rethread:' || t.thread AND d.at > ?)
+    ORDER BY t.root_at LIMIT ?`)
+    .bind(
+      new Date(now.getTime() - WINDOW_DAYS * 86400 * 1000).toISOString(),
+      new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(),
+      new Date(now.getTime() - 86400 * 1000).toISOString(),
+      SWEEP_LIMIT,
+    ).all();
+  for (const [i, { thread }] of (results || []).entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ rethread: thread }, sweepDelay(i));
+  }
+  return { queued: (results || []).length };
 }

@@ -129,3 +129,35 @@ export function rankMentions(accounts, q, max = Infinity) {
     .slice(0, max)
     .map((x) => x.a);
 }
+
+/** Suggestions shown at most, and the Teams bots among them. */
+export const MAX_SUGGESTIONS = 8;
+export const MAX_BOTS = 3;
+
+/**
+ * The composer's suggestions for `q` from a thread's `pool` (src/post.js `mentionable`): the
+ * bots `q` matches (at most `MAX_BOTS`) after the people, `MAX_SUGGESTIONS` in all. The Worker
+ * answers with this, and the page ranks with it too once it has the pool, so what is typed
+ * after it is suggested without asking the Worker again (ui/inbox.js `suggest`).
+ *
+ * @param {{ accounts?: object[], bots?: object[] }} pool as `rankMentions` takes them, and
+ *   `id` and `avatar`
+ * @param {string} q what follows the @
+ */
+export function suggestMentions({ accounts = [], bots = [] } = {}, q = '') {
+  const typed = String(q || '').trim().slice(0, 60);
+  const found = rankMentions(bots, typed, MAX_BOTS).map((r) => ({
+    id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
+  }));
+  const people = rankMentions(accounts, typed, MAX_SUGGESTIONS - found.length).map((r) => ({
+    id: r.id,
+    name: r.name,
+    avatar: r.avatar || null,
+    here: Boolean(r.here),
+    member: Boolean(r.member),
+    staff: Boolean(r.staff),
+    ...(r.affinity > 0 ? { expert: true } : {}),
+    kind: 'person',
+  }));
+  return [...people, ...found];
+}

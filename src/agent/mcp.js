@@ -84,8 +84,8 @@ function catalogTool(t) {
 export const fingerprint = (servers) => servers.map((s) => `${s.id}@${s.updated_at}`).join(',');
 
 /** Connects to a server and lists its tools: `{ tools, instructions }` or `{ error }`. */
-async function ask(env, s, { fetch: fetchFn }) {
-  const full = await serverWithHeaders(env, s.id, { fetch: fetchFn })
+async function ask(env, s, { fetch: fetchFn, channelId }) {
+  const full = await serverWithHeaders(env, s.id, { fetch: fetchFn, channelId })
     .catch((e) => ({ error: e.message }));
   return full && !full.error
     ? probe(full, { fetch: fetchFn })
@@ -121,7 +121,7 @@ export async function buildCatalog(env, target, { fetch: fetchFn } = {}) {
   const listed = await Promise.all(servers.map(async (s) => {
     const res = s.scope === 'global'
       ? await globalTools(env, s, { fetch: fetchFn })
-      : await ask(env, s, { fetch: fetchFn });
+      : await ask(env, s, { fetch: fetchFn, channelId: target.channelId });
     const allowed = allowList(s.allow);
     return {
       id: s.id,
@@ -268,11 +268,15 @@ const MAX_CALL_ARGS = 1000;
 
 /**
  * One agent's MCP servers: the catalog in its storage, and a client per server, connected on
- * first use and dropped when a call fails (the next call connects again).
+ * first use and dropped when a call fails (the next call connects again). `target` gives its
+ * target (src/agent/agent.js) when a call comes before the first refresh, as a script that
+ * resumes after an eviction does: its channel's switches decide which servers it may call.
  */
 export class AgentMcp {
-  constructor(env, storage, { fetch: fetchFn } = {}) {
+  constructor(env, storage, { fetch: fetchFn, target } = {}) {
     this.env = env;
+    this.targetOf = target;
+    this.target = null;
     this.storage = storage;
     this.fetch = fetchFn;
     this.clients = new Map();
@@ -292,6 +296,7 @@ export class AgentMcp {
    * the stored one is older than CATALOG_TTL_MS. Resolves to `{ changed, catalog }`.
    */
   async refresh(target, now = Date.now()) {
+    this.target = target;
     const stored = await this.current();
     const servers = await serversFor(this.env, target);
     const fresh = now - stored.at < CATALOG_TTL_MS;
@@ -305,6 +310,11 @@ export class AgentMcp {
       this.drop(id);
     }
     return { changed: true, catalog };
+  }
+
+  /** The target of the last refresh, else the one `target` gives; `{}` when neither. */
+  async where() {
+    return this.target || (this.targetOf && await this.targetOf().catch(() => null)) || {};
   }
 
   /** Closes the client of server `id`, if it is the one given (or any). */
@@ -326,7 +336,9 @@ export class AgentMcp {
       pending = null;
     }
     if (!pending) {
-      const opened = serverWithHeaders(this.env, server.id, { fetch: this.fetch }).then((full) => {
+      const opened = this.where().then(({ channelId }) => serverWithHeaders(this.env, server.id, {
+        fetch: this.fetch, channelId,
+      })).then((full) => {
         if (!full) {
           throw new Error(`the MCP server ${server.name} was removed or turned off`);
         }
@@ -350,6 +362,11 @@ export class AgentMcp {
 
   /** Keeps a call for the trace; a failure to keep it never fails the call. */
   async record(server, name, args, started, status, error = null) {
+    // The global browser server's time is Browser Run's (COGS, src/cogs/meter.js): a call
+    // holds a browser at most as long as it takes.
+    if (server.id === 'global:browser') {
+      this.env.meter?.add('browser_run', 'browser_ms', '', Date.now() - started);
+    }
     try {
       const json = JSON.stringify(args ?? {});
       const call = {

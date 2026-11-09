@@ -159,23 +159,31 @@ async function moveFolder(bucket, from, to, budget) {
 }
 
 /**
- * The message and thread vectors (CONTENT) and the full-text items (SEARCH) carry the team a
- * thread was filed under, and search asks for a team's: those of re-filed threads are made
- * again, under the new one (an item's hash has the team in it, so it is uploaded again). A
- * thread that is no longer a channel thread (`kind`, now an alert or ignored) loses them: its
- * hashes and item ids stay, so the job knows which to take away.
+ * What a re-filed thread has to do again, written before its row moves: a retry goes by the row,
+ * so whatever follows it must already be on record. The message and thread vectors (CONTENT) and
+ * the full-text items (SEARCH) carry the team a thread was filed under, and search asks for a
+ * team's: those of a re-filed thread are made again, under the new one (an item's hash has the
+ * team in it, so it is uploaded again). A thread that is no longer a channel thread (`kind`, now
+ * an alert or ignored) loses them: its hashes and item ids stay, so the job knows which to take
+ * away. Its row in klickhaus carries the team, org and kind too (src/clickhouse.js), and a thread
+ * re-filed as `ignore` is exported as tombstones. The cron's sweeps go by these columns, so the
+ * jobs below only make it sooner.
  */
-async function revectorize(env, threads, kind) {
+async function clearDerived(env, thread, kind) {
+  if (kind === 'channel' && (env.CONTENT || env.SEARCH)) {
+    await env.DB.prepare('UPDATE messages SET embedded = NULL WHERE thread = ?').bind(thread).run();
+    await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL,
+      indexed_through = NULL WHERE thread = ?`).bind(thread).run();
+  }
+  if (exportEnabled(env)) {
+    await env.DB.prepare('UPDATE threads SET exported_through = NULL WHERE thread = ?')
+      .bind(thread).run();
+  }
+}
+
+async function revectorize(env, threads) {
   if (!threads.length || !(env.CONTENT || env.SEARCH) || !env.NORMALIZE.sendBatch) {
     return;
-  }
-  const keys = JSON.stringify(threads);
-  if (kind === 'channel') {
-    await env.DB.prepare(`UPDATE messages SET embedded = NULL
-      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
-    await env.DB.prepare(`UPDATE threads SET embedded = NULL, vectorized_through = NULL,
-        indexed_through = NULL
-      WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).run();
   }
   for (let i = 0; i < threads.length; i += 100) {
     // eslint-disable-next-line no-await-in-loop
@@ -184,17 +192,10 @@ async function revectorize(env, threads, kind) {
   }
 }
 
-/**
- * Re-filed threads carry another team, org or kind in klickhaus (src/clickhouse.js): their
- * export watermark is cleared, so the cron's sweep exports them again if the jobs queued here
- * fail. A thread re-filed as `ignore` is exported as tombstones.
- */
 async function reexport(env, threads) {
   if (!threads.length || !exportEnabled(env) || !env.NORMALIZE.sendBatch) {
     return;
   }
-  await env.DB.prepare(`UPDATE threads SET exported_through = NULL
-    WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(threads)).run();
   const jobs = [];
   for (let i = 0; i < threads.length; i += SWEEP_JOB) {
     jobs.push({ body: { export: threads.slice(i, i + SWEEP_JOB) } });
@@ -250,12 +251,17 @@ export async function refile(env, job) {
       ({ done } = r);
     }
     if (done) {
+      const was = rowOf.get(thread);
+      const moved = was && (was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind);
+      if (moved) {
+        // eslint-disable-next-line no-await-in-loop
+        await clearDerived(env, thread, cls.kind);
+      }
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare('UPDATE threads SET org = ?, team = ?, kind = ?, path = ? WHERE thread = ?')
         .bind(cls.org, cls.team, cls.kind, to || folder, thread).run();
       threads += 1;
-      const was = rowOf.get(thread);
-      if (was && (was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind)) {
+      if (moved) {
         refiled.push(thread);
         fromTeams.add(was.team);
       }
@@ -263,7 +269,7 @@ export async function refile(env, job) {
       left.push([thread, folder]);
     }
   }
-  await revectorize(env, refiled, cls.kind);
+  await revectorize(env, refiled);
   await reexport(env, refiled);
   // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
   // inbox loaded before the move keeps the old org (or team) otherwise, until something else

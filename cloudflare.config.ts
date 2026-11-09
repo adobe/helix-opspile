@@ -24,9 +24,11 @@ import {
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-// The inbox's markdown renderer and the knowledge-base editor, bundled for the browser
-// (src/ui-markdown.bundle.js and src/ui-editor.bundle.js, not committed): built on every cf
-// deploy and cf dev, so the pages match src/ui-*.js and the pinned micromark and CodeMirror.
+// The inbox's markdown renderer, the knowledge-base editor and the code highlighter, bundled
+// for the browser (src/ui-markdown.bundle.js, src/ui-editor.bundle.js and
+// src/ui-highlight.bundle.js, not committed), and Spectrum 2's tokens for the pages
+// (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages match
+// src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights and tokens.
 execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {
@@ -91,6 +93,24 @@ const AGENT_VARS = [
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
 ] as const;
 
+// Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
+// service bindings to the admins' bots, Workers of the same account, named by
+// TEAMS_ADMIN_WORKER (teams-admin-agent, admin-bot on Teams) and SLACK_AUTOMATION_WORKER (the
+// slack-automation relay, AEM Ops Automation on Slack); each is bound only where it is named.
+// Slack also needs MEMBERSHIP_SLACK_CHANNEL (the channel where requests are posted) and
+// MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
+const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
+
+function membershipBindings() {
+  const bound = (binding: string, worker: string | undefined) => (worker
+    ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
+    : {});
+  return {
+    ...bound('TEAMS_ADMIN', process.env.TEAMS_ADMIN_WORKER),
+    ...bound('SLACK_AUTOMATION', process.env.SLACK_AUTOMATION_WORKER),
+  };
+}
+
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
   // Posting as the user: the Slack app's client secret, and the key that encrypts tokens.
@@ -117,6 +137,9 @@ function resources(mode: string | undefined) {
   return {
     RAW: bindings.r2({ name: `helix-opspile-raw${suffix}` }),
     CHANNELS: bindings.r2({ name: `helix-opspile-channels${suffix}` }),
+    // Copies of the files attached to messages, for agents' computers (src/threadfiles.js).
+    // Its lifecycle rule deletes them after 30 days; `cf deploy` does not set it: see README.
+    FILES: bindings.r2({ name: `helix-opspile-files${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
     // Workers AI: Clef (thread labels) and Clairic (facts).
@@ -134,7 +157,26 @@ function resources(mode: string | undefined) {
     // Pile 3: one knowledge-base repo per org and per team (#12). Artifacts creates the
     // namespace with its first repo.
     ARTIFACTS: bindings.artifacts({ namespace: `helix-opspile${suffix}` }),
+    // COGS (src/cogs/): what the Worker uses, counted where it happens, per customer and team.
+    USAGE: bindings.analyticsEngineDataset({ name: `helix-opspile-usage${suffix}` }),
+    // Cloudflare's analytics of the account, read by the COGS rollup without an API token.
+    ANALYTICS: bindings.analytics(),
   };
+}
+
+/**
+ * The names of the resources the COGS rollup asks Cloudflare's analytics about (names, not
+ * ids): the Worker's script, its Analytics Engine dataset, buckets, indexes and Artifacts namespace.
+ */
+function cogsResources(mode: string | undefined, worker: string) {
+  const suffix = mode === 'prod' ? '' : `-${mode || 'dev'}`;
+  return JSON.stringify({
+    worker,
+    dataset: `helix-opspile-usage${suffix}`,
+    artifacts: `helix-opspile${suffix}`,
+    buckets: ['raw', 'channels', 'files'].map((b) => `helix-opspile-${b}${suffix}`),
+    indexes: ['roots', 'content'].map((i) => `helix-opspile-${i}${suffix}`),
+  });
 }
 
 function consumers(mode: string | undefined) {
@@ -163,7 +205,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
@@ -205,6 +247,8 @@ export default defineConfig(({ mode }) => {
       env: {
         ...vars(deployed),
         ...resources(mode),
+        ...membershipBindings(),
+        COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
         // One Durable Object per inbox entry: its thread agent.

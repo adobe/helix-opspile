@@ -14,6 +14,7 @@ import { parse } from './channels.js';
 import { segment } from './raw.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { channelTag } from './fulltext.js';
+import { likePattern as like } from './like.js';
 
 /**
  * Search over a team's inbox (or the viewer's teams', for the personal view), on every platform
@@ -53,8 +54,6 @@ const SNIPPET = 240;
 const TAGS_PER_QUERY = 50;
 const TEXT_RESULTS = 50;
 const SNIPPETS = 30;
-
-const like = (s) => `%${String(s).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 /** The query as words: at most MAX_TERMS of them, each of two characters or more. */
 export function terms(q) {

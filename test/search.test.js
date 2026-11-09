@@ -188,6 +188,9 @@ describe('search: the inbox', () => {
     // LIKE's own characters are words like any other.
     assert.deepEqual((await searchInbox(env, me, 'helix', '100%')).hits, []);
     assert.deepEqual((await searchInbox(env, me, 'helix', ' ')).hits, []);
+    // A word longer than D1 takes in a LIKE (a long URL) is looked for by its start.
+    r = await searchInbox(env, me, 'helix', `https://www.acme.example/sitemap.xml?${'x'.repeat(40)}`);
+    assert.deepEqual(r.hits, []);
   });
 
   it('finds what threads are about, with the message that matched', async () => {

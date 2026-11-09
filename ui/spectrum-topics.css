@@ -1,0 +1,269 @@
+/*
+ * Topics, the topic map (ui/topics.html), in Spectrum 2's look: after ui/spectrum.css, which
+ * this adds to. Only Spectrum 2 tokens (see ui/spectrum.css).
+ *
+ * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
+ * - the page: layer 1 under the header, the graph and the panel cards on layer 2.
+ * - the filters: a toolbar of one size: a Picker (the team), the kinds shown as toggle
+ *   ActionButtons with their swatch (a legend that filters), a Picker (the shared threads), a
+ *   SearchField with suggestions (find), and the build's date beside an ActionButton (Rebuild).
+ * - the graph: the page's own SVG, a node per person, topic, tag or customer in Spectrum 2's
+ *   categorical palette (s2Categorical16: indigo, seafoam, orange, magenta, celery), the lines
+ *   neutral, a product not in the tech stack a hollow ring of its color;
+ *   what is pointed at or picked keeps its colour and the rest fades. The tooltip a Popover.
+ * - the panel: a heading with the kind above it as a Detail, the theme as body text, lists of
+ *   what it is joined to as ListView rows with a Meter each, the threads as Links, and the topics
+ *   a compact TableView.
+ */
+
+/* ==== The page's layout ========================================================================
+   Where everything is: the toolbar on top, the graph beside its panel under it, as tall as what
+   is left of the window. Its look, in Spectrum 2's components, follows below. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+:root.keyboard { --safe-bottom: 0px; }
+button { white-space: nowrap; }
+button:disabled { opacity: .45; cursor: default; }
+
+/* The header is every page's (ui/spectrum.css). */
+main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-300) + var(--safe-bottom)); }
+#body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.empty { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; }
+.bar .group { display: flex; align-items: center; }
+.bar .spacer { flex: 1; }
+.bar input.search { width: calc(var(--spectrum-spacing-100) * 24); }
+
+.split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
+.graph { position: relative; min-height: 0; overflow: hidden; }
+.graph svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
+.graph svg:active { cursor: grabbing; }
+.graph .node { cursor: pointer; }
+.graph .tools { position: absolute; top: 0; right: 0; }
+.graph > .empty { position: absolute; inset: 0; text-align: center; }
+.tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
+.tip[hidden], .graph > .empty[hidden] { display: none; }
+.panel { min-height: 0; overflow: auto; }
+
+.panel .head { display: flex; align-items: flex-start; }
+.panel .head > div { flex: 1; min-width: 0; }
+.panel .head .dot { flex: none; }
+.panel ul.rel, .panel ol.threads { list-style: none; margin: 0; padding: 0; }
+.panel .pickr { display: grid; grid-template-columns: auto minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 8) auto; align-items: center; width: 100%; text-align: left; }
+.panel .pickr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel .pickr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meter { display: block; overflow: hidden; }
+.meter .fill { display: block; height: 100%; }
+.meter .w1 { width: 10%; } .meter .w2 { width: 20%; } .meter .w3 { width: 30%; } .meter .w4 { width: 40%; }
+.meter .w5 { width: 50%; } .meter .w6 { width: 60%; } .meter .w7 { width: 70%; } .meter .w8 { width: 80%; }
+.meter .w9 { width: 90%; } .meter .w10 { width: 100%; }
+
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th { text-align: left; white-space: nowrap; }
+th.n, td.n { text-align: right; }
+tr.pick { cursor: pointer; }
+.name { display: flex; align-items: center; }
+.dot { display: inline-block; flex: none; }
+
+@media (max-width: 999px) {
+  main { overflow: auto; }
+  .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: calc(var(--spectrum-spacing-100) * 60) auto; }
+  .panel { overflow: visible; }
+}
+@media (max-width: 699px) {
+  main { padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-500) + var(--safe-bottom)); }
+}
+
+/* ==== Its look ================================================================================= */
+
+/* ---- the page ---------------------------------------------------------------------------- */
+
+.spectrum main { background: var(--spectrum-background-layer-1-color); }
+.spectrum .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .hint { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); margin: 0 0 var(--spectrum-spacing-300); }
+.spectrum .hint b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .err, .spectrum .hint.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum #body { transition: opacity var(--s2-ease); }
+.spectrum #body.busy { opacity: .55; }
+
+/* A card: a panel on layer 2, no border, rounded. */
+.spectrum .card {
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+}
+.spectrum .split { gap: var(--spectrum-spacing-300); }
+.spectrum .panel { padding: var(--spectrum-spacing-300); }
+
+/* Headings: Spectrum 2's Heading, as written; a count beside it subdued. */
+.spectrum h2, .spectrum h3 {
+  margin: 0 0 var(--spectrum-spacing-200);
+  color: var(--spectrum-heading-color);
+  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.spectrum h2 { font-size: var(--spectrum-heading-size-xs); }
+.spectrum h3 { margin: var(--spectrum-spacing-300) 0 var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); }
+.spectrum h2 .sub, .spectrum h3 .sub { font-weight: var(--spectrum-regular-font-weight); }
+
+/* ---- the filters: a toolbar of medium-size controls -------------------------------------- */
+
+.spectrum .bar {
+  gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  padding: var(--spectrum-spacing-200) 0;
+}
+.spectrum .bar .group { gap: var(--spectrum-spacing-100); }
+.spectrum .bar label.lbl { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .bar input:not([type="checkbox"]), .spectrum .bar select, .spectrum .bar button {
+  min-height: var(--s2-ctl);
+}
+.spectrum .bar input:not([type="checkbox"]), .spectrum .bar select { padding: 0 var(--spectrum-component-edge-to-text-100); }
+/* The kinds shown: toggle ActionButtons, quiet when off, each with its swatch. */
+.spectrum .legend button { display: inline-flex; align-items: center; gap: var(--spectrum-text-to-visual-100); }
+.spectrum .legend button[aria-pressed="false"] { color: var(--spectrum-neutral-subdued-content-color-default); background: transparent; }
+.spectrum .legend button[aria-pressed="false"] .dot { opacity: .35; }
+
+/* ---- the kinds: Spectrum 2's categorical palette ------------------------------------------ */
+
+.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-1100); }
+.spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
+.spectrum [data-type="tag"] { --s2-type: var(--spectrum-orange-700); }
+.spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
+.spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+/* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
+.spectrum .node[data-gap] circle {
+  fill: var(--spectrum-background-layer-2-color);
+  stroke: var(--s2-type);
+  stroke-width: var(--spectrum-border-width-400);
+}
+.spectrum .dot[data-gap] {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--s2-type);
+}
+.spectrum .dot {
+  width: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  height: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50));
+  background: var(--s2-type);
+  border-radius: var(--spectrum-corner-radius-full);
+}
+
+/* ---- the graph -------------------------------------------------------------------------- */
+
+.spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
+.spectrum .edge { stroke: var(--spectrum-gray-400); stroke-opacity: .45; transition: stroke-opacity var(--s2-ease); }
+.spectrum .node circle {
+  fill: var(--s2-type);
+  stroke: var(--spectrum-background-layer-2-color);
+  stroke-width: var(--spectrum-border-width-200);
+  transition: opacity var(--s2-ease);
+}
+.spectrum .node .lbl {
+  fill: var(--spectrum-neutral-content-color-default);
+  font-size: calc(var(--spectrum-font-size-50) / var(--zoom, 1));
+  text-anchor: middle;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--spectrum-background-layer-2-color);
+  stroke-width: calc(var(--spectrum-border-width-400) / var(--zoom, 1));
+  stroke-linejoin: round;
+}
+.spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
+.spectrum .node:not(.named) .lbl { display: none; }
+.spectrum .node:focus-visible { outline: none; }
+.spectrum .node:focus-visible circle, .spectrum .node.sel circle {
+  stroke: var(--spectrum-neutral-content-color-default);
+  stroke-width: var(--spectrum-border-width-400);
+}
+/* What is pointed at, picked or found, and what it is joined to: the rest fades. */
+.spectrum svg.focus .node:not(.hi) { opacity: .15; }
+.spectrum svg.focus .node.hi .lbl { display: inline; }
+.spectrum svg.focus .edge:not(.hi) { stroke-opacity: .05; }
+.spectrum svg.focus .edge.hi { stroke: var(--spectrum-gray-700); stroke-opacity: .8; }
+
+/* The tooltip: a Popover. */
+.spectrum .tip {
+  gap: var(--spectrum-spacing-50);
+  max-width: calc(var(--spectrum-component-height-100) * 9);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-75);
+  line-height: var(--spectrum-line-height-100);
+}
+
+/* ---- the panel -------------------------------------------------------------------------- */
+
+.spectrum .panel .head { gap: var(--spectrum-spacing-100); }
+.spectrum .panel .head .dot { margin-top: var(--spectrum-spacing-75); }
+.spectrum .panel .head h2 { margin: var(--spectrum-spacing-50) 0 0; }
+.spectrum .panel .head .close { min-height: var(--s2-ctl); background: transparent; }
+.spectrum .panel .theme { margin: var(--spectrum-spacing-200) 0 0; line-height: var(--spectrum-line-height-200); }
+.spectrum .panel .facts { margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel .hint.gap { margin: var(--spectrum-spacing-200) 0 0; color: var(--spectrum-orange-900); }
+.spectrum .panel details.gaps { margin-top: var(--spectrum-spacing-200); }
+.spectrum .panel details.gaps > summary { cursor: pointer; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel .more { margin-top: var(--spectrum-spacing-75); }
+/* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
+.spectrum .panel .pickr {
+  gap: var(--spectrum-spacing-100);
+  min-height: var(--spectrum-component-height-100);
+  padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border-radius: var(--spectrum-corner-radius-100);
+  font-weight: var(--spectrum-regular-font-weight);
+}
+.spectrum .panel button.pickr:hover:not(:disabled) { background: var(--spectrum-gray-100); }
+.spectrum .panel .pickr.feature { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-100); }
+.spectrum .meter { height: var(--spectrum-spacing-75); background: var(--spectrum-gray-200); border-radius: var(--spectrum-corner-radius-full); }
+.spectrum .meter .fill { background: var(--s2-type); border-radius: var(--spectrum-corner-radius-full); }
+/* The threads: Links, with where each is from under it. */
+.spectrum ol.threads li { padding: var(--spectrum-spacing-100) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum ol.threads li:last-child { border-bottom: 0; }
+.spectrum ol.threads a { color: var(--spectrum-accent-content-color-default); text-decoration: none; line-height: var(--spectrum-line-height-100); }
+.spectrum ol.threads a:hover { text-decoration: underline; }
+.spectrum ol.threads .sub { margin-top: var(--spectrum-spacing-50); }
+.spectrum .untagged { color: var(--spectrum-orange-900); }
+
+/* The topics: a compact TableView, a row a topic; few of its threads tagged, said in orange. */
+.spectrum table { --s2-cell: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
+.spectrum th {
+  padding: var(--spectrum-component-top-to-text-75) var(--s2-cell);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+}
+.spectrum td {
+  padding: var(--spectrum-component-top-to-text-75) var(--s2-cell);
+  line-height: var(--spectrum-line-height-100);
+  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  vertical-align: top;
+}
+.spectrum tr:last-child td { border-bottom: 0; }
+.spectrum td.m { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum td.low { color: var(--spectrum-orange-900); font-weight: var(--spectrum-bold-font-weight); }
+/* A sortable column: its header a quiet button, the sorted one with its arrow. */
+.spectrum th button.sort {
+  min-height: 0;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.spectrum th button.sort:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: none; }
+.spectrum th button.sort[data-on] { color: var(--spectrum-neutral-content-color-default); }
+.spectrum th button.sort[data-on]::after { content: " ↓"; }
+.spectrum tr.pick td { transition: background-color var(--s2-ease); }
+.spectrum tr.pick:hover td { background: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity)); }
+.spectrum .name { gap: var(--spectrum-text-to-visual-100); }
+.spectrum .name .dot { margin-top: var(--spectrum-spacing-50); }

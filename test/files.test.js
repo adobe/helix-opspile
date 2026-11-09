@@ -34,6 +34,14 @@ const FILES = {
   F0TXT: { name: 'notes.txt', mimetype: 'text/plain', size: 4 },
 };
 const readable = (m) => m.id !== '1.3';
+/** The first bytes of a PNG this size, as far as its header goes. */
+const pngHeader = (width, height) => {
+  const b = new Uint8Array(33);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  new DataView(b.buffer).setUint32(16, width);
+  new DataView(b.buffer).setUint32(20, height);
+  return b;
+};
 const clean = async () => ({ p: 0.01, flagged: false });
 /** A check that passes everything and notes what it was given. */
 const recorder = (list, what) => async (t) => {
@@ -61,8 +69,10 @@ describe('read_file', () => {
   const realFetch = globalThis.fetch;
   let calls;
   let text;
+  let png;
   beforeEach(() => {
     calls = [];
+    png = new Uint8Array([1, 2, 3, 4]);
     text = 'Persona -> Product Type -> Features';
     globalThis.fetch = async (url, init = {}) => {
       const u = new URL(url);
@@ -79,7 +89,8 @@ describe('read_file', () => {
           return new Response('<html>sign in</html>', { headers: { 'content-type': 'text/html' } });
         }
         const type = u.pathname.endsWith('.png') ? 'image/png' : 'application/octet-stream';
-        return new Response(u.pathname.endsWith('.txt') ? text : new Uint8Array([1, 2, 3, 4]), { headers: { 'content-type': type } });
+        const body = { '.txt': text, '.png': png }[u.pathname.match(/\.\w+$/)[0]];
+        return new Response(body || new Uint8Array([1, 2, 3, 4]), { headers: { 'content-type': type } });
       }
       throw new Error(`unexpected ${url}`);
     };
@@ -124,6 +135,19 @@ describe('read_file', () => {
     assert.equal(screened.length, Math.ceil(MAX_FILE_TEXT / SCREEN_CHUNK));
     const rest = await read(env(), TXT, { offset: first.more });
     assert.deepEqual([rest.text.length, rest.more], [10, undefined]);
+  });
+
+  it('converts an image larger than the model takes, instead of handing it over', async () => {
+    png = pngHeader(1200, 7999);
+    const fits = await read(env(), 'F0PNG');
+    assert.equal(fits.image.mimeType, 'image/png');
+    png = pngHeader(1200, 9000);
+    const tall = await read(env(), 'F0PNG');
+    assert.equal(tall.image, undefined);
+    assert.deepEqual([tall.file.converted, tall.file.pixels], [
+      true, { width: 1200, height: 9000 },
+    ]);
+    assert.deepEqual(converted.at(-1), ['shot.png', 'image/png']);
   });
 
   it('withholds a file the check flags, and reads only the thread\'s readable files', async () => {

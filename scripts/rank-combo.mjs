@@ -60,6 +60,9 @@ export const SIGNS = {
   // Waiting on the customer comes after waiting on us; an open urgent thread before a calm one.
   waitsOnThem: -1,
   openUrgency: 1,
+  // Urgency raises a thread: picks below the critical and hot piles pass urgent threads over.
+  urgency: 1,
+  unseenUrgency: 1,
   firstWaiting: 1,
   firstWaitingLong: 1,
   unseenByAdobe: 1,
@@ -234,6 +237,30 @@ export function replyGames(threads, { minMinutes = 5 } = {}) {
   return games;
 }
 
+/** An inbox entry with today's kind (`kinds`: thread → `{ label_kind, kind_p }`), if known. */
+export function withKind(entry, kinds) {
+  const k = kinds && kinds[entry.thread];
+  if (!k || !entry.label) {
+    return entry;
+  }
+  return { ...entry, label: { ...entry.label, label_kind: k.label_kind, kind_p: k.kind_p } };
+}
+
+/** A pick's features with today's kind of their thread: its kind_* and kindP features again. */
+export function featuresWithKind(thread, features, kinds, Rank) {
+  const k = kinds && kinds[thread];
+  if (!k) {
+    return features;
+  }
+  const f = { ...features };
+  const one = Rank.features({ label: { label_kind: k.label_kind, kind_p: k.kind_p } }, 0);
+  for (const n of Object.keys(one).filter((x) => x.startsWith('kind_'))) {
+    f[n] = f.alert ? 0 : one[n];
+  }
+  f.kindP = k.kind_p ?? 0;
+  return f;
+}
+
 /**
  * Every game as a row `{ a, b, p, w, source, keys }`, `a` and `b` the feature objects, `keys`
  * the threads it is about: held-out folds go by thread, so that no thread a test game is about
@@ -241,7 +268,7 @@ export function replyGames(threads, { minMinutes = 5 } = {}) {
  * otherwise be scored on what they remembered).
  */
 export function rows({
-  Rank, samples: list, events = [], weights = DEFAULT_WEIGHTS,
+  Rank, samples: list, events = [], weights = DEFAULT_WEIGHTS, kinds = null,
 }) {
   const out = [];
   const seenReplies = new Set();
@@ -251,7 +278,7 @@ export function rows({
     const features = new Map();
     const f = (k) => {
       if (!features.has(k)) {
-        features.set(k, Rank.features(byKey.get(k).entry, now));
+        features.set(k, Rank.features(withKind(byKey.get(k).entry, kinds), now));
       }
       return features.get(k);
     };
@@ -274,8 +301,8 @@ export function rows({
       if (!seenReplies.has(g.key)) {
         seenReplies.add(g.key);
         out.push({
-          a: Rank.features(asOf(g.a.entry, g.a.messages, g.a.turn), g.a.turn.at),
-          b: Rank.features(asOf(g.b.entry, g.b.messages, g.b.turn), g.b.turn.at),
+          a: Rank.features(asOf(withKind(g.a.entry, kinds), g.a.messages, g.a.turn), g.a.turn.at),
+          b: Rank.features(asOf(withKind(g.b.entry, kinds), g.b.messages, g.b.turn), g.b.turn.at),
           p: 1,
           w: weights.reply,
           source: 'reply',
@@ -285,9 +312,18 @@ export function rows({
     }
   }
   for (const e of events) {
-    const clicked = e.shown.find((x) => x.thread === e.clicked);
+    const shown = e.shown.map((x) => ({
+      ...x, features: featuresWithKind(x.thread, x.features, kinds, Rank),
+    }));
+    const clicked = shown.find((x) => x.thread === e.clicked);
+    // The model orders threads within a status pile; the piles come first whatever it says. So
+    // a pick wins over the others of its pile, when the pick says which (picks since the piles
+    // were sent); else over all those on screen. (Over all, a pick under the critical and hot
+    // piles would teach that urgency loses, as those were passed over.)
+    const rivals = (x) => x.thread !== e.clicked && (!clicked.status || !x.status
+      || x.status === clicked.status);
     if (clicked) {
-      for (const other of e.shown.filter((x) => x.thread !== e.clicked)) {
+      for (const other of shown.filter(rivals)) {
         out.push({
           a: clicked.features,
           b: other.features,

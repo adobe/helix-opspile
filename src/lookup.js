@@ -307,6 +307,8 @@ async function fetchSlackUser(env, userId) {
     home: u.team_id || null,
     title: p.title || null,
     company: null,
+    // A multi- or single-channel guest: of one person's accounts, the full member is mentioned.
+    guest: Boolean(u.is_restricted || u.is_ultra_restricted),
     // The login and the display name: what people type after @ in Slack.
     aliases: aliasesOf(u.name, p.display_name, p.display_name_normalized),
   };
@@ -333,7 +335,7 @@ async function fetchTeamsUser(env, userId, fallbackName) {
   try {
     const u = await graphJson(
       env,
-      `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName,jobTitle,companyName`,
+      `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName,jobTitle,companyName,userType`,
     );
     const upn = /#EXT#/i.test(u.userPrincipalName || '') ? null : u.userPrincipalName;
     const email = u.mail || upn || null;
@@ -345,6 +347,7 @@ async function fetchTeamsUser(env, userId, fallbackName) {
       avatar: await slackAvatarByEmail(env, email) || await gravatar(email),
       title: u.jobTitle || null,
       company: u.companyName || null,
+      guest: u.userType ? u.userType === 'Guest' : null,
     };
   } catch (e) {
     // Users from other tenants cannot always be read; keep what the message says.
@@ -424,13 +427,13 @@ export async function getIdentity(env, ref, now = Date.now()) {
   const aliases = f.aliases ? JSON.stringify(f.aliases) : null;
   await env.DB.prepare(`INSERT INTO identities
     (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company,
-     staff, aliases)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     staff, aliases, guest)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
       person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
       title = excluded.title, company = excluded.company, staff = excluded.staff,
-      aliases = COALESCE(excluded.aliases, identities.aliases)`)
+      aliases = COALESCE(excluded.aliases, identities.aliases), guest = excluded.guest`)
     .bind(
       ref.source,
       ref.tenant,
@@ -446,6 +449,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       f.company || null,
       f.staff ? 1 : null,
       aliases,
+      typeof f.guest === 'boolean' ? Number(f.guest) : null,
     )
     .run();
   return {

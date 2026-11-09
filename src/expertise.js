@@ -75,8 +75,26 @@ function mean(vectors) {
   return sum.map((x) => x / norm);
 }
 
+/**
+ * What bge (EMBEDDING_MODEL) wants in front of a short query it matches against longer passages:
+ * without it, a sentence about the thread is closest to whatever is generic in every thread.
+ */
+export const QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
+/** The longest description of a thread that is embedded (`queryVector`). */
+export const MAX_ABOUT = 500;
+
+/** The vector of a description of what a thread is about (an agent's words), as a query. */
+export async function queryVector(env, about) {
+  const text = String(about || '').replace(/\s+/g, ' ').trim().slice(0, MAX_ABOUT);
+  if (!text) {
+    return null;
+  }
+  const res = await env.AI.run(EMBEDDING_MODEL, { text: [`${QUERY_PREFIX}${text}`] });
+  return res.data[0];
+}
+
 /** The vector of inbox entry `key`: its threads' vectors, else its title embedded. */
-async function vectorOf(env, rows) {
+export async function vectorOf(env, rows) {
   const ids = await Promise.all(rows.filter((r) => r.embedded)
     .map((r) => threadVectorId(r.thread)));
   const found = ids.length ? await env.CONTENT.getByIds(ids) : [];
@@ -102,9 +120,12 @@ export async function entryRows(env, key) {
   return results || [];
 }
 
-/** The staff messages closest to an entry's threads (`entryRows`), or null with no vector. */
-export async function staffMatches(env, rows) {
-  const vector = await vectorOf(env, rows);
+/**
+ * The staff messages closest to an entry's threads (`entryRows`), or null with no vector;
+ * closest to `vector` instead when there is one (`queryVector`).
+ */
+export async function staffMatches(env, rows, { vector: given = null } = {}) {
+  const vector = given || await vectorOf(env, rows);
   if (!vector) {
     return null;
   }
@@ -112,6 +133,40 @@ export async function staffMatches(env, rows) {
     topK: EXPERT_K, filter: { type: 'message', staff: true }, returnMetadata: 'all',
   });
   return matches;
+}
+
+/** Threads looked at for `similarThreads`. */
+export const SIMILAR_K = 50;
+/** Below this similarity (bge, cosine, thread against thread), a thread is about something else. */
+export const SIMILAR_MIN = 0.6;
+/**
+ * And not much less similar than the closest. bge's thread vectors share a large common part
+ * (src/topicmap.js), so most threads are 0.7 to 0.8 similar to any other: what counts is how much
+ * closer one is than the rest.
+ */
+export const SIMILAR_WINDOW = 0.08;
+
+/**
+ * The channel threads, of any channel, closest to `vector` by their CONTENT thread vector:
+ * `[{ thread, score, gain }]`, the closest first, `gain` what each has over the weakest that still
+ * counts. The entry's own threads (`threads`, keys) are left out.
+ */
+export async function similarThreads(env, vector, { threads = [] } = {}) {
+  if (!vector) {
+    return [];
+  }
+  const { matches } = await env.CONTENT.query(vector, {
+    topK: SIMILAR_K, filter: { type: 'thread' }, returnMetadata: 'all',
+  });
+  const usable = (matches || []).filter((m) => m && m.metadata && m.metadata.thread
+    && !threads.includes(m.metadata.thread));
+  if (!usable.length) {
+    return [];
+  }
+  const floor = Math.max(SIMILAR_MIN, Math.max(...usable.map((m) => m.score)) - SIMILAR_WINDOW);
+  return usable.filter((m) => m.score > floor)
+    .sort((a, b) => b.score - a.score)
+    .map((m) => ({ thread: m.metadata.thread, score: m.score, gain: m.score - floor }));
 }
 
 /**

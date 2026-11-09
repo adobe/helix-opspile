@@ -22,6 +22,10 @@ const MIGRATIONS = new URL('../migrations/', import.meta.url);
 export function d1({ rules = [], people = [], teams = [] } = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
+  // D1's limit, where this Node can set it: a longer LIKE pattern fails there, "too complex".
+  if (db.limits) {
+    db.limits.likePatternLength = 50;
+  }
   for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
     db.exec(readFileSync(new URL(file, MIGRATIONS), 'utf8'));
   }

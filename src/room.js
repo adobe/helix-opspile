@@ -11,6 +11,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import { objectMeter } from './cogs/meter.js';
 import { recipients } from './shares.js';
 import { advanceWatermark } from './threads.js';
 
@@ -31,10 +32,21 @@ export class TeamRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
-    this.env = env;
+    // Counted for COGS as the team's (src/cogs/meter.js), and written when a broadcast or a
+    // flush is done: a timer would keep the room from hibernating.
+    this.cogs = objectMeter(env, { via: 'room', subject: () => ({ team: ctx.id.name || '' }), delay: 0 });
+    this.env = this.cogs.env;
   }
 
   async broadcast(event) {
+    try {
+      await this.send(event);
+    } finally {
+      await this.cogs.meter.flush();
+    }
+  }
+
+  async send(event) {
     const data = JSON.stringify(event);
     const sockets = this.ctx.getWebSockets().map((ws) => {
       const [person, , scope] = this.ctx.getTags(ws);
@@ -68,12 +80,24 @@ export class TeamRoom extends DurableObject {
 
   async alarm() {
     const pending = await this.ctx.storage.list({ prefix: 'read:' });
+    let newer = false;
     for (const [key, r] of pending) {
       // eslint-disable-next-line no-await-in-loop
       await advanceWatermark(this.env.DB, r.person, r.thread, r.at, 'open');
+      // D1 lets other events in: a newer read of the same thread may be waiting by now.
       // eslint-disable-next-line no-await-in-loop
-      await this.ctx.storage.delete(key);
+      const now = await this.ctx.storage.get(key);
+      if (now && now.at !== r.at) {
+        newer = true;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        await this.ctx.storage.delete(key);
+      }
     }
+    if (newer && !(await this.ctx.storage.getAlarm())) {
+      await this.ctx.storage.setAlarm(Date.now() + FLUSH_MS);
+    }
+    await this.cogs.meter.flush();
   }
 
   async fetch(request) {

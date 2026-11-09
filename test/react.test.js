@@ -18,7 +18,7 @@ import { api, inbox } from '../src/api.js';
 import { reactable, seal } from '../src/post.js';
 import { nativeEmoji, react, resolve } from '../src/react.js';
 import {
-  isResolvedEmoji, mergeFacts, resolution, resolutionFacts, signalFacts, signalOf,
+  isResolved, isResolvedEmoji, mergeFacts, resolution, resolutionFacts, signalFacts, signalOf,
 } from '../src/resolve.js';
 import { applyReaction, waitingOn } from '../src/threads.js';
 import { d1 } from './d1.js';
@@ -99,6 +99,17 @@ async function connect(e, platform, scope) {
 }
 
 const rx = (e) => e.DB.rows('SELECT message, emoji, user_key, at FROM reactions ORDER BY at');
+
+describe('whether an entry counts as resolved', () => {
+  it('goes by the staff ✅ first, else by Clef', () => {
+    assert.equal(isResolved('resolved', { resolved_p: 0.1 }), true);
+    assert.equal(isResolved('open', { resolved_p: 0.9 }), false);
+    assert.equal(isResolved(null, { resolved_p: 0.5 }), true);
+    assert.equal(isResolved(undefined, { resolved_p: 0.49 }), false);
+    assert.equal(isResolved(null, { resolved_p: null }), false);
+    assert.equal(isResolved(null, null), false);
+  });
+});
 
 describe('resolution', () => {
   const check = (at, person = 1) => ({ at, person, name: 'Ada' });

@@ -1,0 +1,2079 @@
+/*
+ * The inbox (ui/inbox.html, ui/inbox.js, ui/table.js) in Spectrum 2's look:
+ * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
+ * (see ui/spectrum.css). The layout, the sizes that set it (rows, rail, columns) and the
+ * behavior stay the page's; this file sets what each component looks like in S2's anatomy.
+ */
+
+/* ==== The page's layout ========================================================================
+   Where everything is and how it moves: the grid, the panes, the sizes that set them, and the
+   states the script sets. Its look, in Spectrum 2's components, follows below. */
+html, body { overscroll-behavior: none; }
+/* Installed as an app on an iPhone (viewport-fit=cover), the page reaches under the home
+   indicator and, on the phone's side, under the camera: what sits at those edges moves in by
+   the safe-area insets, which are 0 everywhere else. */
+:root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
+/* With the on-screen keyboard open (see the script at the end), the page follows what is left
+   above it, and the keyboard covers the home indicator. */
+:root.keyboard { --safe-bottom: 0px; }
+#threads { padding-bottom: var(--safe-bottom); }
+
+.menu select { width: calc(100% - var(--spectrum-spacing-300)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.menu .hint { margin: 0 var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+.menu label.hint { display: block; margin-top: var(--spectrum-spacing-75); overflow-wrap: anywhere; }
+/* Bells: the views that notify you, each with the ✕ that turns it off. */
+.menu #bells .bell { display: flex; align-items: center; }
+.menu #bells .bell svg { flex: none; }
+.menu #bells .bell a { flex: 1; min-width: 0; text-decoration: none; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.menu #bells .bell a:hover { text-decoration: underline; }
+.menu #bells .bell button { flex: none; border: 0; background: none; }
+.menu #bells .bell button:hover { background: var(--hover); color: var(--ink); }
+
+main { flex: 1; display: grid; grid-template-columns: var(--filters-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), 34%) 1fr; min-height: 0; }
+:root { --filters-w: calc(var(--spectrum-spacing-100) * 33 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); --rail: calc(var(--spectrum-spacing-900) - var(--spectrum-spacing-200)); }
+main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
+
+/* Filters: one card per facet, as in klickhaus. */
+#filters { padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); background: var(--bg); display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); }
+.card { background: var(--card); }
+.card h3 { display: flex; align-items: center; margin: 0 0 var(--spectrum-spacing-100); }
+.card h3::before { content: ""; border-radius: 50%; }
+.card h3 .clear { margin-left: auto; cursor: pointer; }
+.card h3 .clear:hover { color: var(--ink); }
+.fr { display: grid; grid-template-columns: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 1fr auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-600)); align-items: center;
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-75); cursor: pointer; }
+.fr:hover { background: var(--hover); }
+
+.fr.on::after { content: ""; position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none; }
+.fr.on:hover { background: color-mix(in srgb, var(--accent) 28%, var(--card)); }
+
+
+/* Neighbors picked together are outlined as one, without an edge or corners between them. */
+.fr.on:has(+ .fr.on) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.fr.on:has(+ .fr.on)::after { border-bottom: 0; }
+.fr.on + .fr.on { border-top-left-radius: 0; border-top-right-radius: 0; }
+.fr.on + .fr.on::after { border-top: 0; }
+/*
+ * Excluded values, as klickhaus shows them: struck through and faded, with the \2260 button
+ * that excludes a value (or stops) shown red. It sits over the end of the label, on hover.
+ */
+.fr { position: relative; }
+.fr .lab, .fr .lw { grid-column: 3; grid-row: 1; }
+.fr .not { grid-column: 3; grid-row: 1; justify-self: end; z-index: 1; opacity: 0; pointer-events: none;
+  border: 0; font: inherit; line-height: 1.2;
+  background: inherit; }
+.fr:hover .not, .fr .not:focus-visible { opacity: 1; pointer-events: auto; }
+.fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
+.fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
+.fr.off .lab { text-decoration: line-through; color: var(--mute); }
+.fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+@media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; } }
+.fr .ind { width: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); height: var(--spectrum-spacing-300); background: var(--faint); }
+.fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+.fr .lw { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
+.fr .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Unread mentions of you, counted as Slack and Teams count them. */
+.fr .men { flex: none;
+ text-align: center; }
+.fr .lab.dim { color: var(--faint); }
+
+.fr .n { text-align: right; }
+.fr .bar { min-width: var(--spectrum-spacing-50); }
+.fr .bar.stack { display: flex; overflow: hidden; background: none; }
+.fr .bar.stack i { min-width: var(--spectrum-spacing-50); }
+.c-red { background: var(--red) !important; } .c-yellow { background: var(--yellow) !important; }
+.c-green { background: var(--green) !important; } .c-none { background: var(--faint) !important; }
+.c-critical { background: var(--spectrum-red-1100) !important; } .c-hot { background: var(--red) !important; }
+.c-you { background: var(--accent) !important; } .c-waiting { background: var(--yellow) !important; }
+.c-silent { background: var(--purple) !important; }
+.c-team { background: var(--green) !important; } .c-quiet { background: var(--faint) !important; }
+.fr .ico.em { font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-spacing-300); text-align: center; }
+.fr .ico.av { font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); line-height: 1; }
+.fr .ico.av.round { font-size: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border-radius: 50%; }
+.c-accent { background: var(--accent) !important; }
+/*
+ * Facet colours beyond status. Who: me blue, my teams green, their members light green,
+ * the rest of Adobe slate, customers orange, partners magenta, vendors cyan (the Customer
+ * card groups orgs the same way). Platforms in their brand colours; urgency and kind in
+ * the colours of their emoji.
+ */
+.c-me, .c-blue { background: var(--accent) !important; } .c-member { background: var(--lime) !important; }
+.c-adobe { background: var(--slate) !important; } .c-customer, .c-orange { background: var(--orange) !important; }
+.c-partner, .c-pink { background: var(--pink) !important; } .c-vendor { background: var(--cyan) !important; }
+.c-gold { background: var(--gold) !important; } .c-brown { background: var(--brown) !important; }
+.c-crimson { background: var(--crimson) !important; } .c-msteams { background: var(--teams) !important; }
+
+.c-discord { background: var(--spectrum-indigo-visual-color) !important; }
+/* A group inside a card (the Customer card's org types, the Resolved card's drafts). */
+.fg { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-75) var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400));
+ }
+
+/* Threads: fixed-height rows, two lines, as in Apple Mail. */
+#threads { background: var(--col); border-left: var(--spectrum-border-width-100) solid var(--line); border-right: var(--spectrum-border-width-100) solid var(--line);
+  scrollbar-width: none; }
+/* The open thread's lifted row (#lift) is drawn across the list's right edge: no scrollbar there. */
+#threads::-webkit-scrollbar { display: none; }
+#threads .count { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-bottom: var(--spectrum-border-width-100) solid var(--line);
+  position: sticky; top: 0; z-index: 1; }
+.t { height: var(--row-h, var(--spectrum-spacing-800)); padding: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-200); border-bottom: var(--spectrum-border-width-100) solid var(--line); cursor: pointer;
+  display: grid; grid-template-rows: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-400); row-gap: var(--spectrum-spacing-50);
+  /* Rows out of view skip layout and paint: a filter, a sort or a live update re-lays the
+     dozen rows on screen, not all two hundred. Rows are always 64px high (--row-h). */
+  content-visibility: auto; contain-intrinsic-size: auto var(--row-h, var(--spectrum-spacing-800)); }
+.t:hover { background: var(--hover); }
+
+.t .l1, .t .l2 { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; }
+.t .dot { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
+.t .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.t .when { flex: none; }
+.t .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
+.t .cust { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); max-width: 34%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.t .cust img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
+.faces { display: flex; flex: none; }
+.faces .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); margin-left: calc(-1 * (var(--spectrum-spacing-75) + var(--spectrum-border-width-100))); border: var(--spectrum-border-width-200) solid var(--col); }
+.faces .av:first-child { margin-left: 0; }
+.t .replies { flex: none; }
+
+.moods { display: flex; flex: none; }
+.moods .em { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); border-radius: 50%; display: grid; place-items: center; font-size: var(--spectrum-font-size-75);
+ border: var(--spectrum-border-width-200) solid var(--col); margin-left: calc(-1 * (var(--spectrum-spacing-75) + var(--spectrum-border-width-100))); }
+.moods .em:first-child { margin-left: 0; }
+/* The list's heading: the search box, then the controls (or, while searching, the results' count).
+   A wide list puts all three in one row, the search box in the middle. */
+#threads .count { display: flex; flex-wrap: wrap; align-items: center; container-type: inline-size; }
+#threads .count > .find, #threads .count > .ctl { flex: 1 1 100%; }
+#threads .count .ctl { display: flex; align-items: center; min-height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
+#threads .count .lead { display: flex; align-items: center; min-width: 0; }
+#threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
+/* The two sides share what the search box leaves equally, so it stays centred. */
+@container (min-width: 560px) {
+  #threads .count .ctl { display: contents; }
+  #threads .count .lead { order: 0; flex: 1 1 0; min-width: max-content; }
+  #threads .count > .find { order: 1; flex: 2 1 0; min-width: calc(var(--spectrum-spacing-100) * 30); max-width: calc(var(--spectrum-spacing-100) * 55); }
+  #threads .count .sort { order: 2; flex: 1 1 0; min-width: max-content; justify-content: flex-end; }
+}
+.find { display: flex; align-items: center; cursor: text;
+ }
+.find:focus-within { border-color: var(--accent); color: var(--mute); }
+.find svg { flex: none; }
+.find input { flex: 1; min-width: 0; padding: 0;
+ }
+.find input::placeholder { color: var(--faint); }
+.find:focus-within kbd { display: none; }
+@media (hover: none) { .find kbd { display: none; } }
+#threads .count .found { color: var(--mute); }
+#threads .count .clearq { height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); margin-left: var(--spectrum-spacing-100); padding: 0 calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-400); font-size: var(--spectrum-font-size-50); color: var(--mute); flex: none; }
+#threads .count .found { flex: none; }
+#threads .count .clearq:hover { color: var(--ink); }
+/* A search result: a third line with the message that matched, the query's words marked. */
+.t.hit { height: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); grid-template-rows: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-400) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); contain-intrinsic-size: auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); }
+.t .l3 { min-width: 0; padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); font-size: var(--spectrum-font-size-75); color: var(--mute); overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; }
+.t .l3 b { color: var(--ink); font-weight: 600; }
+.t .l3 .tag { margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.t .l3.dim { color: var(--faint); }
+#threads .rows.stale { opacity: .55; transition: opacity var(--spectrum-animation-duration-200); }
+.linkish { padding: 0; border: 0; background: none; color: var(--link); cursor: pointer; text-decoration: underline; }
+/* The message a search result opened the thread at. */
+.msg .bubble { transition: box-shadow var(--spectrum-animation-duration-1000) ease-out; }
+.msg.found .bubble { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--yellow); }
+/* Each of your teams, then Personal: one switch, the active one highlighted. */
+#threads .count .order { display: flex; min-width: 0;
+ }
+#threads .count .order button { min-width: 0; max-width: 10em;
+ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .count .order button:hover { color: var(--ink); }
+#threads .count .order button[aria-checked="true"] {
+ cursor: default; }
+/* Unread only: an icon, filled with the accent colour while it filters. */
+#threads .count .unread { display: grid; place-items: center; padding: 0;
+ }
+
+#threads .rows > .older { display: block; width: calc(100% - calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400))); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-100); color: var(--mute); }
+/* The end of the personal unread list: the other teams, smallest first, Admin last. */
+#threads .rows > .end { margin: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-100) var(--spectrum-spacing-75); color: var(--mute);
+  font-size: var(--spectrum-font-size-100); line-height: 1.5; text-align: center; }
+#threads .rows > .end .linkish { font: inherit; font-weight: 650; }
+#threads .count .unread:hover { color: var(--ink); }
+#threads .count .unread[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--spectrum-white); }
+/* The bell: notifications for the view on screen (its team and filters), filled while on. */
+#threads .count .bell, #threads .count .newpost { display: grid; place-items: center; padding: 0; margin-left: var(--spectrum-spacing-50);
+ }
+
+#threads .count .bell:hover, #threads .count .newpost:hover { color: var(--ink); }
+#threads .count .newpost[aria-pressed="true"] { color: var(--accent); }
+#threads .count .bell[aria-pressed="true"] { color: var(--accent); }
+#threads .count .bell[aria-pressed="true"] svg .body { fill: currentColor; }
+.t .tags { margin-left: auto; display: flex; gap: var(--spectrum-spacing-75); overflow: hidden; }
+.tag { padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid var(--line); white-space: nowrap; }
+.tag.hot { color: var(--red); border-color: var(--red); }
+.tag.us { color: var(--yellow); border-color: var(--yellow); }
+.t .dot { --ring: var(--faint); }
+.t .dot.c-critical { --ring: var(--spectrum-red-1100); } .t .dot.c-hot { --ring: var(--red); } .t .dot.c-you { --ring: var(--accent); }
+.t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-silent { --ring: var(--purple); }
+.t .dot.c-team { --ring: var(--green); }
+.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--col), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
+.t.sel .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--sel), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
+.t .dot.ring:not([class*="c-"]) { background: transparent; }
+
+/*
+ * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
+ * The filter cards stick out of the page's left edge and hang over the thread list by a
+ * third of their corner radius while one of their filters is on; pointing at one moves
+ * nothing. They need room to do so (and to cast their shadow): the filter column reaches
+ * into the thread list by --fg, and lets the pointer through where it has no card. The open thread's row is lifted out of its column, over the pane, by a copy
+ * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
+ * the list's heading and the open thread's header, and the list shows no scrollbar for it
+ * to cover.
+ */
+:root { --fg: var(--spectrum-spacing-700); }
+main { position: relative; background: var(--col); }
+#filters { position: relative; z-index: 3; background: transparent; pointer-events: none;
+  margin-right: calc(-1 * var(--fg)); padding: var(--spectrum-spacing-200) calc(var(--fg) - var(--r) / 3) var(--spectrum-spacing-200) 0;
+  overflow-x: hidden; scrollbar-width: none; }
+#filters::-webkit-scrollbar { display: none; }
+#filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)));
+ border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
+  --out: 0px; margin-right: calc(-1 * var(--out)); padding-right: calc(var(--spectrum-spacing-200) + var(--out));
+  transition: margin-right var(--spectrum-animation-duration-300) ease-out, padding-right var(--spectrum-animation-duration-300) ease-out; }
+/* A card hangs further out by its right edge and padding alone: its contents stay put. */
+main:not(.rail) #filters .card.active { --out: calc(var(--r) / 3); }
+@media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+/* Room for the filter cards' overhang, so they never cover a status dot. */
+.t { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+#threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
+/*
+ * The filter column folded to a rail (`main.rail`, see syncRail): each row shows its colour,
+ * its icon and its unread mentions, nothing else. Under the pointer (or, on a touch screen,
+ * once tapped: `main.railopen`) the cards slide out to their full width, over the thread
+ * list, and fold back a moment after the pointer leaves, so crossing the gap between two
+ * cards does not fold them. The rows keep their full width while the cards fold: a card
+ * clips them, so nothing reflows as it slides. --rail is the rail's width.
+ */
+main.rail { grid-template-columns: var(--rail) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), 34%) 1fr; }
+main.rail #filters { transition: margin-right var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-700); }
+main.rail #filters .card { width: calc(var(--rail) + var(--r) * 4 / 3); flex: none; overflow: hidden; padding-left: calc(var(--r) + var(--spectrum-spacing-100));
+  transition: transform var(--spectrum-animation-duration-300) ease-out, width var(--spectrum-animation-duration-300) ease-in var(--spectrum-animation-duration-100); }
+main.rail #filters .card > * { width: calc(var(--filters-w) + var(--r) / 3 - calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100))); }
+main.rail #filters .fg { width: auto; white-space: nowrap; }
+main.rail #filters h3 > *, main.rail #filters .fg, main.rail #filters .fr .lab, main.rail #filters .fr .n,
+main.rail #filters .fr .bar, main.rail #filters .fr .not { opacity: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100); }
+main.rail #filters h3 { color: transparent; transition: color var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100); }
+main.rail #filters .fr .lw { gap: 0; }
+main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100), max-width var(--spectrum-animation-duration-300) ease-in var(--spectrum-animation-duration-100), margin var(--spectrum-animation-duration-300) var(--spectrum-animation-duration-100); }
+
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) { margin-right: calc(var(--rail) - var(--filters-w) - var(--fg));
+  transition: none; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .card { width: calc(var(--filters-w) + var(--r) * 4 / 3);
+  transition: transform var(--spectrum-animation-duration-300) ease-out, width var(--spectrum-animation-duration-300) ease-out; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) :is(h3 > *, .fg, .fr .lab, .fr .n, .fr .bar) { opacity: 1;
+  transition: opacity var(--spectrum-animation-duration-200) var(--spectrum-animation-duration-0); }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) h3 { color: inherit; transition: color var(--spectrum-animation-duration-200) var(--spectrum-animation-duration-0); }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .lab { max-width: 100%; margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
+  transition: opacity var(--spectrum-animation-duration-200) var(--spectrum-animation-duration-0), max-width var(--spectrum-animation-duration-300) ease-out, margin var(--spectrum-animation-duration-300); }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr :is(.not, .men) { transition: none; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr:hover .not { opacity: 1; pointer-events: auto; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr.off .not { opacity: 1; pointer-events: auto; }
+/* On a touch screen, as in the full column: every row's exclusion button shows once it is out. */
+@media (hover: none) {
+  :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
+}
+main.rail #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
+@media (prefers-reduced-motion: reduce) {
+  main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
+}
+#lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
+#lift .t { position: absolute;
+  content-visibility: visible;
+ box-shadow: var(--lift-shadow);
+  padding: calc(calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) + var(--lv) - var(--spectrum-border-width-100)) calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) + var(--lr) - var(--spectrum-border-width-100)) 0 calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) + var(--ll) - var(--spectrum-border-width-100)); }
+
+.t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
+@keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
+.msg.enter, .sys.enter { animation: rise var(--spectrum-animation-duration-700) ease-out; }
+@keyframes rise { from { transform: translateY(calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50))); opacity: 0; } to { transform: none; opacity: 1; } }
+.post { display: flex; align-items: center; gap: var(--spectrum-spacing-100); color: var(--mute); font-size: var(--spectrum-font-size-75); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-75); }
+.post::before, .post::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) dashed var(--line); }
+.composer { flex: none; border-top: var(--spectrum-border-width-100) solid var(--line); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); display: flex; align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; max-height: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75)); font: inherit;
+ }
+.composer textarea:focus { border-color: var(--accent); }
+
+.composer button.send:disabled { opacity: .5; cursor: default; }
+.composer { position: relative; }
+.mentions { position: absolute; left: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); bottom: calc(100% - var(--spectrum-spacing-75)); min-width: calc(var(--spectrum-spacing-100) * 32 + var(--spectrum-spacing-75)); max-width: calc(var(--spectrum-spacing-100) * 45); margin: 0;
+  list-style: none; z-index: 5; }
+.mentions li { display: flex; align-items: center; cursor: pointer; }
+
+.mentions .av { width: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); }
+.mentions .hint { margin-left: auto; }
+.mentions .glyph { width: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); font-size: var(--spectrum-font-size-300); line-height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); text-align: center; }
+/* Files that go with the reply: the 📎 button, the tray of chips, the pane as a drop target. */
+.composer .attach { flex: none; border: 0; background: none;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+
+.composer .attach:hover, .composer .attach:focus-visible { background: var(--hover); color: var(--ink); }
+.composer .attach[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.tray { flex-basis: 100%; flex-wrap: wrap; }
+.tray[hidden] { display: none; }
+.tray .chip { position: relative; height: var(--spectrum-spacing-800); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); background: var(--card);
+  display: flex; align-items: center; gap: var(--spectrum-spacing-100); max-width: calc(var(--spectrum-spacing-100) * 30); }
+.tray .chip.img { width: var(--spectrum-spacing-800); overflow: visible; }
+.tray .chip.img img { width: 100%; height: 100%; object-fit: cover; border-radius: var(--spectrum-corner-radius-600); display: block; }
+.tray .chip.file { padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-400)) 0 var(--spectrum-spacing-100); }
+.tray .chip .ico { flex: none; width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); border-radius: var(--spectrum-corner-radius-300); background: var(--sel); color: var(--accent);
+  font-size: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.tray .chip .nm { font-size: var(--spectrum-font-size-75); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tray .chip .sz { font-size: var(--spectrum-font-size-50); color: var(--faint); white-space: nowrap; }
+.tray .chip .x { position: absolute; top: calc(-1 * (var(--spectrum-spacing-100) - var(--spectrum-border-width-100))); right: calc(-1 * (var(--spectrum-spacing-100) - var(--spectrum-border-width-100))); width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); border-radius: var(--spectrum-corner-radius-700); padding: 0;
+  border: var(--spectrum-border-width-100) solid var(--line); background: var(--card); color: var(--ink); font-size: var(--spectrum-font-size-100); line-height: 1; cursor: pointer; }
+.tray .chip .x:hover, .tray .chip .x:focus-visible { background: var(--red); border-color: var(--red); color: var(--spectrum-white); }
+.tray .attach-error { flex-basis: 100%; color: var(--red); font-size: var(--spectrum-font-size-75); }
+#pane { position: relative; }
+#pane .dropzone { position: absolute; inset: var(--spectrum-spacing-100); z-index: 6; display: flex; align-items: center; justify-content: center;
+  border: var(--spectrum-border-width-200) dashed var(--accent); border-radius: var(--spectrum-corner-radius-800); background: color-mix(in srgb, var(--pane) 86%, transparent);
+  backdrop-filter: blur(var(--spectrum-spacing-50)); pointer-events: none; }
+#pane .dropzone > div { display: flex; flex-direction: column; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); text-align: center; max-width: calc(var(--spectrum-spacing-100) * 45); color: var(--mute); font-size: var(--spectrum-font-size-100); }
+#pane .dropzone b { color: var(--ink); font-size: var(--spectrum-font-size-200); }
+#pane .dropzone svg { width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); color: var(--accent); }
+#pane .dropzone.refused { border-color: var(--red); }
+#pane .dropzone.refused svg { color: var(--red); }
+.composer .connect { color: var(--mute); font-size: var(--spectrum-font-size-100); }
+.composer .connect a { color: var(--link); }
+dialog.confirm { max-width: min(calc(var(--spectrum-spacing-100) * 70), 92vw); background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-800); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); box-shadow: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-600) var(--spectrum-transparent-black-500); }
+dialog.confirm::backdrop { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+dialog.confirm p { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+dialog.confirm .bubble { max-height: 40vh; overflow: auto; }
+dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); }
+dialog.confirm .send { border-radius: var(--spectrum-corner-radius-100); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); background: var(--me); color: var(--spectrum-white); border: 0; }
+.toast { position: fixed; bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); z-index: 10; }
+kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
+.back { text-decoration: none; white-space: nowrap; }
+.back:hover { text-decoration: underline; }
+
+.av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); flex: none; display: grid; position: relative;
+  place-items: center; font-size: var(--spectrum-font-size-100); overflow: hidden; }
+.av img { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+
+/* Messages: bubbles, customers left, Adobe right. */
+#pane { display: flex; flex-direction: column; overflow: hidden; background: var(--pane); }
+/* The thread scrolls only up and down: its bubbles wrap, and code blocks and tables scroll on
+   their own. Something wider (a hover's quick reactions) must not add a scrollbar, which with
+   scroll bars always shown takes room, moves the thread and the message out from under the
+   pointer, hides the reactions again, and so on, flickering. */
+#pane .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
+.ph { padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); border-bottom: var(--spectrum-border-width-100) solid var(--line); background: var(--pane); flex: none; }
+.ph h2 { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); display: flex; align-items: baseline; }
+.ph .sub { display: flex; flex-wrap: wrap; align-items: center; }
+.ph .sub img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+.ph .sub.stack { margin-top: var(--spectrum-spacing-75); }
+.ph { position: relative; }
+/* A thread's header. Line 1: the customer's icon with the platform's on it, the title, and the
+   channel at the end where it fits (fitHead hides it when it wraps). */
+.ph .l1 { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--spectrum-spacing-300); }
+.ph .lead { display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; }
+.ph .l1 h2 { display: block; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ph .chan { margin-left: auto; white-space: nowrap; }
+.ph .src { position: relative; flex: none; display: grid; width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); padding: 0; border: 0; background: none; cursor: pointer; }
+.ph span.src { cursor: default; }
+.ph .src .org { width: 100%; height: 100%; object-fit: cover; }
+.ph .src .av { width: 100%; height: 100%; font-size: var(--spectrum-font-size-50); }
+.ph .src .plat { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
+ border: var(--spectrum-border-width-200) solid var(--pane); }
+/* Line 2: the dropdowns (tech stack, links, the agent's suggestions), each a pill; a split one acts on its
+   first item, its ▾ opens the list. */
+.ph .l2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.ph .l2:empty { display: none; }
+.ph .hm { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
+.ph .hm button, .ph .hm a.top { font: inherit; color: inherit; border: 0; background: none; text-decoration: none; }
+.ph .hmb, .ph .hm a.top { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200); }
+.ph .hm .lb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ph .hm .n, .ph .hm .chev { flex: none; }
+.ph .hm .more { flex: none; padding: 0 var(--spectrum-spacing-100); }
+.ph .hmpop { position: absolute; left: 0; top: calc(100% + var(--spectrum-spacing-75)); z-index: 6; width: max-content; min-width: calc(var(--spectrum-spacing-100) * 30); max-width: min(calc(var(--spectrum-spacing-100) * 56), calc(100vw - var(--spectrum-spacing-500)));
+ max-height: calc(var(--spectrum-spacing-100) * 52); overflow: auto; padding: var(--spectrum-spacing-75); }
+.ph .hmpop[hidden] { display: none; }
+.ph .hms + .hms { margin-top: var(--spectrum-spacing-75); padding-top: var(--spectrum-spacing-75); }
+.ph .hmh, .ph .hmnote { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-50); }
+.ph .hmi { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); text-decoration: none; }
+.ph .hmi span { min-width: 0; overflow-wrap: anywhere; }
+.ph .hmi small { flex: none; }
+.ph .hmi.member { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0px; }
+/* A link: its favicon, then its address on one line, cut in the middle (the path before its last
+   segment goes first, the page it names stays), then its note. */
+.ph .hmi.link { align-items: center; justify-content: flex-start; gap: var(--spectrum-spacing-100); }
+.ph .hmi.link small { margin-left: auto; padding-left: var(--spectrum-spacing-100); }
+.ph .hm .fav { flex: none; width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); object-fit: contain; }
+.ph .hm a.top .fav { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.ph .hmi .url { display: flex; min-width: 0; white-space: nowrap; }
+.ph .hmi .url > span { overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+/* The path gives way, the page only where it is longer than the line (a page that shrank at all,
+   even by a fraction of a pixel, would lose its last characters to the ellipsis). */
+.ph .hmi .url .path { flex: 0 1 auto; min-width: var(--spectrum-spacing-300); }
+.ph .hmi .url .page { flex: none; max-width: calc(100% - var(--spectrum-spacing-300)); }
+.ph .hm .lb { max-width: calc(var(--spectrum-spacing-100) * 44); }
+.experts { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
+.experts button { font: inherit; border: 0; background: none; }
+.experts[hidden] { display: none; }
+.experts .top { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.experts .top span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.experts .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); font-size: var(--spectrum-spacing-100); }
+.experts .top:hover, .experts .more:hover { background: var(--hover); color: var(--ink); }
+.experts .more { flex: none; padding: 0 var(--spectrum-spacing-100); }
+.expertlist { position: absolute; left: 0; top: calc(100% + var(--spectrum-spacing-75)); width: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); max-width: calc(100vw - var(--spectrum-spacing-500)); margin: 0; padding: var(--spectrum-spacing-75);
+  list-style: none; background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); z-index: 6; }
+.expertlist button { display: flex; align-items: flex-start; gap: var(--spectrum-spacing-100); width: 100%; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-400); text-align: left; }
+.expertlist button:hover, .expertlist button:focus-visible { background: var(--sel); }
+.expertlist .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-300); }
+.expertlist b { display: block; font-weight: 500; color: var(--ink); }
+.expertlist small { display: block; font-size: var(--spectrum-font-size-50); color: var(--mute); }
+.expertlist li { display: flex; align-items: flex-start; }
+
+.feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); }
+.day { text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-100); }
+
+.divider { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.divider::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) solid var(--line); }
+.msg { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); align-items: flex-end; margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+.msg.cont { margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.msg .face { position: relative; flex: none; width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); }
+/* The thread agent's avatar and name: its team's agent settings, at the thread's channel. */
+.msg.agent a.face, .msg.agent .who a { color: inherit; text-decoration: none; }
+.msg.agent a.face:hover .av, .msg.agent a.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
+.msg.agent .who a:hover b, .msg.agent .who a:focus-visible b { text-decoration: underline; }
+.msg.agent a:focus-visible { outline: none; }
+.msg .face .badge-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
+ border: var(--spectrum-border-width-200) solid var(--pane); }
+/* A run of one author's messages: the name above the first, the avatar beside the last. */
+.msg.followed .face { visibility: hidden; height: 0; }
+.msg.adobe { flex-direction: row-reverse; }
+.msg .col { max-width: min(74%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
+.msg.adobe .col { align-items: flex-end; }
+.msg .who { margin: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+
+.msg.cont .who { display: none; }
+.bubble { background: var(--them);
+ overflow-wrap: anywhere; }
+
+.msg.mine .bubble { background: var(--me); color: var(--me-ink); }
+
+.msg.mine .bubble a { color: var(--me-link); }
+.bubble p { margin: 0; }
+
+.bubble code { font: var(--spectrum-font-size-75) ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--them-code); }
+.msg.mine .bubble code { background: var(--spectrum-transparent-black-400); }
+/* A code block is not an inline chip, and it has no fill: the border marks it. The chip
+   rules above (and the agent's) are more specific than `.bubble pre code` alone. */
+.bubble pre {
+ overflow: auto; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; white-space: pre-wrap; }
+.bubble pre code,
+.msg.mine .bubble pre code,
+.msg.agent .bubble pre code { font: inherit; background: none; }
+.bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 { font-size: 1em; font-weight: 700; margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-50); }
+
+.bubble > :last-child { margin-bottom: 0; }
+.bubble hr { border: 0; border-top: var(--spectrum-border-width-100) solid currentColor; opacity: .3; margin: var(--spectrum-spacing-100) 0; }
+.bubble table { border-collapse: collapse; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; display: block; overflow-x: auto; }
+.bubble th, .bubble td { border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 25%, transparent); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); }
+.bubble li > input[type=checkbox] { margin: 0 var(--spectrum-spacing-75) 0 calc(-1 * var(--spectrum-spacing-50)); vertical-align: calc(-1 * var(--spectrum-border-width-100)); }
+
+/* A quote in a message: a bar beside it, as in Slack and Teams. */
+.bubble blockquote { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+  border-left: var(--spectrum-border-width-200) solid color-mix(in srgb, currentColor 45%, transparent); opacity: .85; }
+.bubble > blockquote:first-child { margin-top: 0; }
+.bubble > blockquote:last-child { margin-bottom: 0; }
+
+/* A quoted message (forwarded, or linked to): a card of it, its author and time on top. */
+.bubble blockquote.quote { margin: var(--spectrum-spacing-100) 0; padding: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)) var(--spectrum-spacing-100); opacity: 1;
+  border-left: var(--spectrum-border-width-200) solid color-mix(in srgb, currentColor 45%, transparent);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  box-shadow: inset 0 0 0 var(--spectrum-border-width-100) color-mix(in srgb, currentColor 10%, transparent); }
+.bubble blockquote.quote > p.quote-by { margin-bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.bubble blockquote.quote > p.quote-by + p { margin-top: 0; }
+.bubble blockquote.quote .quote-by b[role="button"] { cursor: default; }
+.bubble blockquote.quote .quote-by b[role="button"]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+.bubble blockquote.quote .quote-by a { color: inherit; text-decoration: none; opacity: .65; margin-left: var(--spectrum-spacing-75); }
+.bubble blockquote.quote .quote-by a:hover { text-decoration: underline; text-underline-offset: var(--spectrum-spacing-50); opacity: 1; }
+.linkpick { position: fixed; z-index: 21; display: flex; flex-direction: column; min-width: calc(var(--spectrum-spacing-100) * 21); padding: var(--spectrum-spacing-75);
+  background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); }
+.linkpick[hidden] { display: none; }
+.linkpick a { color: var(--ink); text-decoration: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-400); }
+.linkpick a:hover, .linkpick a:focus-visible { background: var(--sel); outline: none; }
+.bubble ul, .bubble ol { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
+.bubble img.att { display: block; max-width: 100%; max-height: calc(var(--spectrum-spacing-100) * 45); border-radius: var(--spectrum-corner-radius-700); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; cursor: zoom-in; }
+/* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */
+.bubble img.att.sized { height: auto; max-height: none; background: color-mix(in srgb, currentColor 8%, transparent); }
+.bubble img.att:not(.sized) { min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)); min-height: calc(var(--spectrum-spacing-100) * 11 + var(--spectrum-spacing-50)); }
+/* A gallery: two or more images in a row, as a grid of thumbnails (cropped; the lightbox
+   shows them whole). Three to a row, and a last row of two where one or two are left over,
+   so no row has a gap. */
+.bubble .gallery { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--spectrum-spacing-100); width: min(100%, calc(var(--spectrum-spacing-100) * 75));
+  margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0; }
+/* Screenshots say what they are at the top left (a title bar, a header): the crop keeps it. Each
+   tile has its own corners and a hairline, so light screenshots stay apart on a light bubble. */
+.bubble .gallery > img.att { grid-column: span 2; width: 100%; height: auto; aspect-ratio: 4 / 3; max-height: none;
+  min-width: 0; min-height: 0; margin: 0; border-radius: var(--spectrum-corner-radius-100); object-fit: cover; object-position: left top;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  box-shadow: 0 0 0 var(--spectrum-border-width-100) color-mix(in srgb, currentColor 14%, transparent); transition: filter var(--spectrum-animation-duration-200); }
+.bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2),
+.bubble .gallery > img.att:nth-child(3n+1):nth-last-child(2) + img,
+.bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4),
+.bubble .gallery > img.att:nth-child(3n+1):nth-last-child(4) ~ img { grid-column: span 3; aspect-ratio: 3 / 2; }
+.bubble .gallery > img.att:hover { filter: brightness(.9); }
+.bubble .gallery > img.att:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: calc(-1 * var(--spectrum-spacing-50)); }
+/* Files attached to a message (fileCard, src/ui-markdown.js): a card each, the badge in its
+   kind's colour, linked to where the file lives. A table's or a text's preview (ui/table.js)
+   opens under its card, on the page's own colours whatever the bubble's. */
+.bubble .files { display: flex; flex-direction: column; align-items: stretch; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-50); }
+.bubble > .files:first-child { margin-top: var(--spectrum-spacing-50); }
+.bubble .file { --kind: var(--spectrum-gray-background-color-default); display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); min-width: min(calc(var(--spectrum-spacing-100) * 35), 100%); max-width: 100%;
+  box-sizing: border-box; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); border-radius: var(--spectrum-corner-radius-700); line-height: 1.3;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  box-shadow: inset 0 0 0 var(--spectrum-border-width-100) color-mix(in srgb, currentColor 13%, transparent); }
+.bubble .file[data-kind="table"] { --kind: var(--spectrum-green-background-color-default); }
+.bubble .file[data-kind="text"] { --kind: var(--spectrum-gray-background-color-default); }
+.bubble .file[data-kind="video"] { --kind: var(--spectrum-purple-background-color-default); }
+.bubble .file[data-kind="audio"] { --kind: var(--spectrum-magenta-background-color-default); }
+.bubble .file[data-kind="image"] { --kind: var(--spectrum-cyan-background-color-default); }
+.bubble .file[data-kind="pdf"] { --kind: var(--spectrum-red-background-color-default); }
+.bubble .file[data-kind="doc"] { --kind: var(--spectrum-blue-background-color-default); }
+.bubble .file[data-kind="sheet"] { --kind: var(--spectrum-seafoam-background-color-default); }
+.bubble .file[data-kind="slides"] { --kind: var(--spectrum-orange-background-color-default); }
+.bubble .file[data-kind="archive"] { --kind: var(--spectrum-brown-background-color-default); }
+/* A sheet of paper with a folded corner. */
+.bubble .file-ico { flex: none; position: relative; width: var(--spectrum-spacing-500); height: calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50)); border-radius: var(--spectrum-corner-radius-75); display: grid; place-items: end center;
+  padding-bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); box-sizing: border-box; background: var(--kind); color: var(--spectrum-white);
+  font: 700 calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100))/1 system-ui, -apple-system, sans-serif; letter-spacing: .03em;
+  clip-path: polygon(0 0, calc(100% - calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100))) 0, 100% calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)), 100% 100%, 0 100%); }
+.bubble .file-ico::before { content: ""; position: absolute; top: 0; right: 0; width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+  background: linear-gradient(225deg, transparent 50%, var(--spectrum-transparent-white-500) 50%); border-bottom-left-radius: var(--spectrum-corner-radius-75); }
+.bubble .file-nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--spectrum-border-width-100); }
+.bubble .file .file-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble .file a.file-name { color: inherit; text-decoration: none; }
+.bubble .file a.file-name:hover { text-decoration: underline; text-underline-offset: var(--spectrum-spacing-50); }
+.bubble .file-sub { font-size: var(--spectrum-font-size-75); opacity: .68; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble .file-act { flex: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)); border-radius: 100vmax; cursor: pointer; color: inherit;
+  background: transparent; border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 30%, transparent); }
+.bubble .file-act:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.bubble .file-act[aria-expanded="true"] { background: color-mix(in srgb, currentColor 14%, transparent); }
+.bubble .file-act:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
+/* A video or audio file plays in its card, above its name; a video at most this wide, in the
+   shape of what it shows once that is known (16:9 until then). */
+.bubble .file.has-player { flex-wrap: wrap; width: min(calc(var(--spectrum-spacing-100) * 65), 100%); row-gap: var(--spectrum-spacing-100); }
+.bubble .file .file-player { flex: 1 0 100%; display: block; min-width: 0; }
+.bubble .file video.file-player { width: 100%; aspect-ratio: 16 / 9; max-height: calc(var(--spectrum-spacing-100) * 52 + var(--spectrum-spacing-75)); background: var(--spectrum-black); border-radius: var(--spectrum-corner-radius-400); }
+.bubble .file audio.file-player { height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); }
+.bubble .file.play-failed .file-player { display: none; }
+.bubble .file a.file-go { flex: none; width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-400)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-400)); display: grid; place-items: center; border-radius: 50%;
+  color: inherit; text-decoration: none; font-size: var(--spectrum-font-size-100); opacity: .7; }
+.bubble .file a.file-go:hover { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+.file-view, .file-dialog { --zebra: color-mix(in srgb, var(--ink) 3.5%, var(--pane)); }
+/* An open preview widens its message as far as messages go, and scrolls inside that: a wide
+   table must not push the bubble off the screen (its own width does not count, `width: 0`). */
+.msg .col:has(.file-view) { width: 100%; }
+.msg .col:has(.file-view) > .bubble { align-self: stretch; }
+.bubble .file-view { margin: calc(-1 * var(--spectrum-spacing-50)) 0 var(--spectrum-spacing-50); background: var(--pane); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-700); overflow: hidden; font-size: var(--spectrum-font-size-75); line-height: 1.45; width: 0; min-width: 100%; box-sizing: border-box; }
+.bubble .file-view.failed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); color: var(--mute); }
+.file-view .fv-wait { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-200); color: var(--mute); }
+.file-view .fv-wait .spin { display: inline-block; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; margin-right: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); vertical-align: calc(-1 * var(--spectrum-border-width-100));
+  border: var(--spectrum-border-width-200) solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
+:is(.file-view, .file-dialog) .fv-bar { display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+  border-bottom: var(--spectrum-border-width-100) solid var(--line); background: var(--col); }
+:is(.file-view, .file-dialog) .fv-count { flex: 1 0 auto; color: var(--mute); white-space: nowrap; }
+:is(.file-view, .file-dialog) .fv-find { flex: 0 1 calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); width: 0; min-width: calc(var(--spectrum-spacing-100) * 8 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); font: inherit; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-300);
+  border: var(--spectrum-border-width-100) solid var(--line); background: var(--card); color: var(--ink); }
+:is(.file-view, .file-dialog) .fv-expand { flex: none; padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); line-height: 1.3; border-radius: var(--spectrum-corner-radius-300); cursor: pointer; }
+:is(.file-view, .file-dialog) .fv-scroll { max-height: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); overflow: auto; overscroll-behavior: contain; }
+:is(.file-view, .file-dialog) .fv-table { display: table; border-collapse: separate; border-spacing: 0; margin: 0;
+  width: max-content; min-width: 100%; font-variant-numeric: tabular-nums; }
+:is(.file-view, .file-dialog) .fv-table :is(th, td) { border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+  white-space: nowrap; max-width: 34ch; overflow: hidden; text-overflow: ellipsis; text-align: left; vertical-align: top; }
+:is(.file-view, .file-dialog) .fv-table th { position: sticky; top: 0; z-index: 1; background: var(--col); font-weight: 600; }
+:is(.file-view, .file-dialog) .fv-table th button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+:is(.file-view, .file-dialog) .fv-table th button:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-spacing-50); border-radius: var(--spectrum-corner-radius-75); }
+:is(.file-view, .file-dialog) .fv-table th button::after { content: "↕"; opacity: 0; font-weight: 400; color: var(--mute); }
+:is(.file-view, .file-dialog) .fv-table th:hover button::after { opacity: .7; }
+:is(.file-view, .file-dialog) .fv-table th[aria-sort="ascending"] button::after { content: "↑"; opacity: 1; color: var(--accent); }
+:is(.file-view, .file-dialog) .fv-table th[aria-sort="descending"] button::after { content: "↓"; opacity: 1; color: var(--accent); }
+:is(.file-view, .file-dialog) .fv-table td { background: var(--pane); }
+:is(.file-view, .file-dialog) .fv-table tbody tr:nth-child(even) td { background: var(--zebra); }
+:is(.file-view, .file-dialog) .fv-table tbody tr:hover td { background: var(--hover); }
+:is(.file-view, .file-dialog) .fv-table .num { text-align: right; }
+:is(.file-view, .file-dialog) .fv-table th.num button { flex-direction: row-reverse; }
+/* The row numbers stay at the left as the table scrolls sideways. */
+:is(.file-view, .file-dialog) .fv-table .fv-n { position: sticky; left: 0; color: var(--faint); text-align: right;
+  padding-right: var(--spectrum-spacing-100); border-right: var(--spectrum-border-width-100) solid var(--line); font-weight: 400; }
+:is(.file-view, .file-dialog) .fv-table th.fv-n { z-index: 2; }
+:is(.file-view, .file-dialog) .fv-table .fv-none { color: var(--mute); text-align: center; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+:is(.file-view, .file-dialog) .fv-text { margin: 0; border: 0; border-radius: 0; max-height: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); overflow: auto;
+  white-space: pre; background: var(--pane); color: var(--ink); font: var(--spectrum-font-size-75)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+/* A HAR: requests that open, the failed ones marked, the URL taking the width it can. */
+:is(.file-view, .file-dialog) .fv-har tbody tr[data-i] { cursor: pointer; }
+:is(.file-view, .file-dialog) .fv-har :is(th, td):last-child { max-width: 70ch; }
+:is(.file-view, .file-dialog) .fv-har tr.fv-failed td:nth-child(3) { color: var(--red); font-weight: 600; }
+:is(.file-view, .file-dialog) .fv-table tr.fv-detail td { white-space: normal; max-width: none; overflow: visible; background: var(--col); padding: 0; }
+:is(.file-view, .file-dialog) .fv-request { position: sticky; left: 0; box-sizing: border-box; width: calc(var(--spectrum-spacing-100) * 90); max-width: 92vw; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-200);
+  overflow-wrap: anywhere; }
+.fv-request p { margin: 0 0 var(--spectrum-spacing-75); color: var(--mute); }
+.fv-request .fv-url { color: var(--ink); font: var(--spectrum-font-size-75)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.fv-request .fv-why { color: var(--red); }
+.fv-request h4 { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); font-weight: 600; }
+.fv-request dl { display: grid; grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 11 + var(--spectrum-spacing-50)), calc(var(--spectrum-spacing-100) * 27 + var(--spectrum-spacing-75))) 1fr; gap: var(--spectrum-border-width-100) var(--spectrum-spacing-200); margin: 0;
+  font: var(--spectrum-font-size-75)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.fv-request dt { color: var(--mute); }
+.fv-request dd { margin: 0; min-width: 0; }
+.fv-request .fv-secret { color: var(--mute); }
+.fv-request button { padding: 0 calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); font-size: var(--spectrum-font-size-75); line-height: 1.6; border-radius: var(--spectrum-corner-radius-300); cursor: pointer; }
+.fv-request .fv-text { max-height: calc(var(--spectrum-spacing-100) * 40); white-space: pre-wrap; border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-300); }
+:is(.file-view, .file-dialog) .fv-more { padding: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); color: var(--mute); border-top: var(--spectrum-border-width-100) solid var(--line); font-size: var(--spectrum-font-size-75); }
+:is(.file-view, .file-dialog) :focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: calc(-1 * var(--spectrum-spacing-50)); }
+dialog.file-dialog { width: min(calc(var(--spectrum-spacing-100) * 160), calc(100vw - var(--spectrum-spacing-500))); height: min(calc(var(--spectrum-spacing-100) * 107 + var(--spectrum-spacing-75)), calc(100dvh - var(--spectrum-spacing-500))); max-width: none; max-height: none;
+  padding: 0; border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-800); background: var(--pane); color: var(--ink); font-size: var(--spectrum-font-size-100);
+  box-shadow: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-900) var(--spectrum-transparent-black-500); overflow: hidden; }
+dialog.file-dialog[open] { display: flex; flex-direction: column; }
+dialog.file-dialog::backdrop { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+.file-dialog .fv-head { display: flex; align-items: center; gap: var(--spectrum-spacing-200); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-300); border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+.file-dialog .fv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--spectrum-font-size-100); }
+.file-dialog .fv-link { color: var(--link); text-decoration: none; white-space: nowrap; }
+.file-dialog .fv-link:hover { text-decoration: underline; }
+.file-dialog .fv-close { padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-300); cursor: pointer; }
+.file-dialog .fv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.file-dialog .fv-find { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
+.file-dialog :is(.fv-scroll, .fv-text) { flex: 1; max-height: none; }
+.file-dialog .fv-table :is(th, td) { max-width: 60ch; }
+@media (prefers-reduced-motion: reduce) { .file-view .fv-wait .spin { animation: none; } }
+/* Lightbox: a message's images full screen, dismissed by a click anywhere, the close button
+   or Escape; arrows, a swipe or the thumbnails page through them. In dvh: 100vh counts the
+   status bar in an app installed on an iPhone. */
+dialog.lightbox { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+  background: transparent; color: var(--spectrum-white); cursor: zoom-out; overflow: hidden; outline: none; }
+dialog.lightbox[open] { display: grid; }
+dialog.lightbox::backdrop { background: var(--spectrum-transparent-black-800); }
+dialog.lightbox .stage { grid-area: 1 / 1; display: grid; place-items: center; min-width: 0; min-height: 0;
+  touch-action: pan-y pinch-zoom; }
+dialog.lightbox .stage > img { grid-area: 1 / 1; width: auto; height: auto; max-width: calc(100vw - var(--spectrum-spacing-500));
+  max-height: calc(100dvh - var(--spectrum-spacing-900)); object-fit: contain; border-radius: var(--spectrum-corner-radius-300); box-shadow: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-700) var(--spectrum-transparent-black-500);
+  background: var(--spectrum-white); will-change: transform, opacity; }
+dialog.lightbox.many .stage > img { max-width: calc(100vw - calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-500))); max-height: calc(100dvh - calc(var(--spectrum-spacing-100) * 21 + var(--spectrum-spacing-50))); margin-bottom: calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50)); }
+dialog.lightbox .stage > img.out { pointer-events: none; }
+dialog.lightbox .bar { position: fixed; top: var(--spectrum-spacing-200); right: var(--spectrum-spacing-200); display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
+dialog.lightbox .bar a, dialog.lightbox .bar button { color: var(--spectrum-white); background: var(--spectrum-transparent-black-500); border: var(--spectrum-border-width-100) solid var(--spectrum-transparent-white-400);
+  border-radius: var(--spectrum-corner-radius-100); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-100); text-decoration: none; cursor: pointer; }
+dialog.lightbox .bar a:hover, dialog.lightbox .bar button:hover { background: var(--spectrum-transparent-white-200); }
+dialog.lightbox .count { position: fixed; top: var(--spectrum-spacing-200); left: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-100);
+  font-variant-numeric: tabular-nums; background: var(--spectrum-transparent-black-500); border-radius: var(--spectrum-corner-radius-100); cursor: default; }
+dialog.lightbox .nav { position: fixed; top: 50%; translate: 0 -50%; width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); height: var(--spectrum-spacing-800); display: grid;
+  place-items: center; color: var(--spectrum-white); background: var(--spectrum-transparent-black-500); border: var(--spectrum-border-width-100) solid var(--spectrum-transparent-white-400);
+  border-radius: var(--spectrum-corner-radius-700); font-size: var(--spectrum-font-size-800); line-height: 1; cursor: pointer; transition: background var(--spectrum-animation-duration-200); }
+dialog.lightbox .nav:hover { background: var(--spectrum-transparent-white-300); }
+dialog.lightbox .nav.prev { left: var(--spectrum-spacing-200); }
+dialog.lightbox .nav.next { right: var(--spectrum-spacing-200); }
+dialog.lightbox .strip { position: fixed; left: 50%; bottom: var(--spectrum-spacing-200); translate: -50% 0; max-width: calc(100vw - var(--spectrum-spacing-400));
+  display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); overflow-x: auto; scrollbar-width: none; background: var(--spectrum-transparent-black-500);
+  border-radius: var(--spectrum-corner-radius-700); cursor: default; }
+dialog.lightbox .strip button { flex: none; width: var(--spectrum-spacing-800); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); padding: 0; border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: var(--spectrum-corner-radius-400); overflow: hidden; background: var(--spectrum-transparent-white-200); cursor: pointer; opacity: .5;
+  transition: opacity var(--spectrum-animation-duration-300), border-color var(--spectrum-animation-duration-300), transform var(--spectrum-animation-duration-300); }
+dialog.lightbox .strip button:hover { opacity: .85; }
+dialog.lightbox .strip button[aria-current="true"] { opacity: 1; border-color: var(--spectrum-white); transform: translateY(calc(-1 * var(--spectrum-spacing-50))); }
+dialog.lightbox .strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+dialog.lightbox :focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-spacing-50); }
+@media (max-width: 600px) {
+  dialog.lightbox.many .stage > img { max-width: calc(100vw - var(--spectrum-spacing-300)); }
+  dialog.lightbox .nav { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500)); height: calc(var(--spectrum-spacing-800) - var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-600); }
+  dialog.lightbox .nav.prev { left: var(--spectrum-spacing-75); }
+  dialog.lightbox .nav.next { right: var(--spectrum-spacing-75); }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.lightbox .strip button, dialog.lightbox .nav, .bubble .gallery > img.att { transition: none; }
+}
+body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
+
+/* A channel a message names (#name), as Slack shows one: bold, underlined on hover. */
+.bubble a.channel { font-weight: 600; text-decoration: none; white-space: nowrap; }
+.bubble a.channel:hover { text-decoration: underline; }
+/* Mentions of Adobe people in red, so they stand out; everyone else's (customers, partners,
+   bots, unknown names) stay in the bubble's own colour. On grey bubbles the red is a shade
+   with 4.5:1 contrast in either theme; no red reads on your blue, so there it is a pill
+   in Adobe red with white text (4.6:1). */
+.bubble .mention.adobe { color: var(--mention-adobe); white-space: nowrap; }
+.msg.mine .bubble .mention.adobe { padding: 0 var(--spectrum-spacing-75); border-radius: var(--spectrum-corner-radius-75); color: var(--spectrum-white); background: var(--spectrum-red-background-color-default); }
+.msg.deleted .bubble { font-style: italic; opacity: .6; }
+.msg .meta { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200) 0; min-height: calc(var(--spectrum-spacing-300) - var(--spectrum-border-width-100)); }
+/* A reply being sent looks as it will once sent, with a thin bar under its tail that fills
+   (--p, set by the page's script) and fades once the platform has it, as in iMessage. */
+.msg .sendbar { width: calc(var(--spectrum-spacing-700) - var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); margin: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) 0; border-radius: var(--spectrum-corner-radius-75); overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.msg .sendbar i { display: block; height: 100%; width: calc(var(--p, .08) * 100%); border-radius: inherit; background: var(--me); }
+@media (prefers-reduced-motion: reduce) {
+  .msg .sendbar { width: auto; height: auto; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200) 0; overflow: visible; background: none; }
+  .msg .sendbar i { display: none; }
+  .msg .sendbar::after { content: "Sending\2026"; font-size: var(--spectrum-font-size-50); color: var(--faint); }
+}
+.msg .unsent { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: flex-end; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100);
+  margin: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; font-size: var(--spectrum-font-size-75); }
+.msg .unsent .why { color: var(--red); }
+.msg .unsent .why::before { content: "!"; display: inline-grid; place-items: center; width: calc(var(--spectrum-spacing-300) - var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-300) - var(--spectrum-border-width-100)); margin-right: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100));
+  border-radius: 50%; background: var(--red); color: var(--spectrum-white); font-weight: 700; font-size: var(--spectrum-font-size-50); vertical-align: var(--spectrum-border-width-100); }
+.msg .unsent button { border: 0; background: none; padding: 0; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
+.msg .unsent button:hover { text-decoration: underline; }
+/* A workspace's own emoji, in a line of text; one Clef picked for a name without an image. */
+img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
+.emoji-near { border-bottom: var(--spectrum-border-width-100) dotted currentColor; cursor: help; }
+.moods .em img.emoji { height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); vertical-align: 0; }
+.mentions .glyph img.emoji { height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); vertical-align: calc(-1 * var(--spectrum-spacing-75)); }
+/* Reactions sit on the bubble's bottom edge, half over it, as in iMessage and Teams; the bubble
+   keeps room under its text for them. */
+.rx { position: relative; z-index: 1; display: flex; flex-wrap: wrap; margin: calc(-1 * var(--spectrum-spacing-200)) var(--spectrum-spacing-200) 0; }
+.msg .bubble:has(+ .rx) { padding-bottom: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-200)); }
+
+.rx button.mine { background: var(--sel); border-color: var(--accent); }
+.msg .col { position: relative; }
+.picker { position: absolute; bottom: 100%; z-index: 4; display: flex; gap: var(--spectrum-spacing-50); padding: var(--spectrum-spacing-75); background: var(--card);
+  border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); }
+.msg.adobe .picker { right: 0; }
+.picker button { border: 0; background: none; font-size: var(--spectrum-font-size-300); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-100); }
+.picker button:hover, .picker button:focus-visible { background: var(--hover); }
+.sendwrap { position: relative; flex: none; }
+/* Keeping the pointer on Send (or pressing it) shows more ways to send: save a draft, resolve. */
+.sendwrap .hold { position: absolute; right: 0; bottom: calc(100% + calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75))); flex-direction: column;
+  align-items: flex-end; z-index: 4; }
+.sendwrap .hold[hidden], .sendwrap .hold button[hidden] { display: none; }
+.sendwrap .hold button { white-space: nowrap;
+ }
+
+.sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
+
+/* The thread's shared draft, on its own line under the reply box: a dashed card. Its first row
+   says who saved it and when, then its tools (icons: view, edit, discard) and, past a hairline,
+   the ways to send it; under them how it starts (all of it, viewed), and its sources. In a
+   narrow card, the sends get a row of their own at the bottom, side by side. */
+.composer { flex-wrap: wrap; }
+.draftbar { flex-basis: 100%; min-width: 0; container: draft / inline-size;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.draftbar[hidden] { display: none; }
+.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tools sends" "text text text" "srcs srcs srcs";
+  align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.draftbar .head { grid-area: head; display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+.draftbar .pen { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.draftbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.draftbar .tools { grid-area: tools; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.draftbar .sends { grid-area: sends; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
+  padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-100) solid var(--line); }
+.draftbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+.draftbar button svg { flex: none; }
+.draftbar .pv { grid-area: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: var(--spectrum-spacing-100); }
+/* Viewed: all of it, rendered as the message it will be (its Markdown), on the card, not a bubble. */
+.draftbar.open .pv { white-space: normal; max-height: 30vh; overflow: auto; }
+.draftbar .pv .md.bubble { max-width: none; padding: 0; border-radius: 0; background: none; color: inherit; }
+/* Closed: how it starts, still rendered, on one line: its blocks run on as text, a space (or a
+   list's number) between them, and what has no place in a line of text is left out. */
+.draftbar .pv .md.line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draftbar .pv .line :is(p, ul, ol, li, pre, blockquote, h1, h2, h3, h4, h5, h6, table, thead, tbody, tr, th, td) {
+  display: inline; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font-size: inherit; }
+/* A code block sets its own white-space (it keeps its newlines in a message): here it is text too. */
+.draftbar .pv .line :is(pre, code) { white-space: inherit; }
+.draftbar .pv .line :is(p, li, pre, blockquote, h1, h2, h3, h4, h5, h6, tr, th, td)::after { content: " "; }
+.draftbar .pv .line ol { counter-reset: draft-li; }
+.draftbar .pv .line ol > li { counter-increment: draft-li; }
+.draftbar .pv .line ol > li::before { content: counter(draft-li) ". "; }
+.draftbar .pv .line ul > li::before { content: "• "; }
+.draftbar .pv .line :is(img.att, .gallery, .files, video, audio, hr, input, .quote-by) { display: none; }
+.draftbar button:disabled { opacity: .5; cursor: default; }
+@container draft (max-width: 560px) {
+  .draftbar .dl { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tools" "text text" "srcs srcs" "sends sends"; }
+  .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
+  .draftbar .sends button { flex: 1; }
+}
+/* The draft's sources: on their own row of its line, only ever in the inbox. */
+.draftbar .srcs { grid-area: srcs; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
+.draftbar .srcs .lb { cursor: help; }
+.draftbar .src { max-width: calc(var(--spectrum-spacing-100) * 30); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+ text-decoration: none; }
+.draftbar .src:hover, .draftbar .src:focus-visible { border-color: var(--accent); }
+/* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
+.composer.checking textarea { flex: 0 0 calc(50% - calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-400))); margin-right: auto; }
+.srcpop { position: fixed; z-index: 7; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 var(--spectrum-spacing-100) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400)) var(--spectrum-transparent-black-400); }
+.srcpop[hidden] { display: none; }
+.srcpop .head { flex: none; display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-75); border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+.srcpop .head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srcpop .host, .srcpop .only { color: var(--faint); font-size: var(--spectrum-font-size-75); }
+.srcpop .head a { margin-left: auto; color: var(--link); }
+.srcpop blockquote { flex: none; max-height: 30%; overflow: auto; margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); max-width: none; font-size: var(--spectrum-font-size-100);
+  border-radius: 0; border-left: var(--spectrum-border-width-200) solid var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card)); color: var(--ink); }
+.srcpop .view { flex: 1; min-height: 0; overflow: auto; margin-top: var(--spectrum-spacing-100); }
+.srcpop .view .bubble { max-width: none; background: none; color: var(--ink); padding: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-200); border-radius: 0; font-size: var(--spectrum-font-size-100); }
+.srcpop .view .none { margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--mute); font-size: var(--spectrum-font-size-100); }
+.srcpop .view .none a { color: var(--link); }
+.srcpop iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--spectrum-white); }
+/* Quick reactions on hovering a message, like Slack: held at the avatar's side of the bubble, so
+   a short one's row grows into the pane, not past its edge. They show once the pointer has rested
+   on the message for a moment, not as it passes over the thread; focus shows them at once. */
+.msg .quick { position: absolute; top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); left: var(--spectrum-spacing-100); z-index: 3; display: flex;
+ visibility: hidden; transition: visibility var(--spectrum-animation-duration-0); }
+.msg.adobe .quick { left: auto; right: var(--spectrum-spacing-100); }
+.msg:hover .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
+.msg .quick:focus-within { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
+.msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
+.msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
+.msg .quick button[aria-pressed="true"] { background: var(--sel); }
+.msg .quick .more { font-size: var(--spectrum-font-size-100); }
+.msg .quick .edit { font-size: var(--spectrum-font-size-100); }
+.msg .quick .edit:not(:last-child) { margin-right: var(--spectrum-spacing-50); }
+/* Editing one of your messages in place: the bubble is the editor. */
+.msg.editing .col { width: min(74%, calc(var(--spectrum-spacing-100) * 95)); }
+.bubble.editing { position: relative; width: 100%; box-sizing: border-box; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.bubble.editing textarea { display: block; width: 100%; box-sizing: border-box; resize: none; min-height: calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50)); max-height: calc(var(--spectrum-spacing-100) * 40);
+  font: inherit; line-height: 1.5; color: var(--ink); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-radius: var(--spectrum-corner-radius-700); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); outline: none; }
+.bubble.editing textarea:focus { border-color: var(--accent); }
+.bubble.editing .mentions { left: 0; }
+.edithint { font-size: var(--spectrum-font-size-75); margin: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) var(--spectrum-spacing-75) 0; opacity: .85; display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); flex-wrap: wrap; }
+.edithint button { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-600); }
+.edithint button[data-edit-save] { background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line); margin-left: auto; }
+/* A new thread: the channel it goes to, or the search for one, in the header. */
+.ph.newthread h2 { justify-content: space-between; }
+.ph.newthread .cancel { font-size: var(--spectrum-font-size-75); font-weight: 400; }
+.ph.newthread .sub b { color: var(--ink); font-weight: 600; }
+.ph.newthread .sub .linkish { font-size: inherit; }
+.chanpick { position: relative; margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.chanpick input { width: 100%; box-sizing: border-box; padding: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)) var(--spectrum-spacing-200); font: inherit; color: var(--ink);
+  background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-100); outline: none; }
+.chanpick input:focus { border-color: var(--accent); }
+.chans { position: absolute; left: 0; right: 0; top: calc(100% + var(--spectrum-spacing-75)); max-height: min(50vh, calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75))); overflow-y: auto; margin: 0; padding: var(--spectrum-spacing-75);
+  list-style: none; background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); z-index: 5; }
+.chans li { display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-400); cursor: pointer; }
+.chans li.on, .chans li[data-i]:hover { background: var(--sel); }
+.chans li.none { color: var(--mute); cursor: default; }
+.chans img { flex: none; width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-radius: var(--spectrum-corner-radius-75); }
+.chans .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chans .hint { margin-left: auto; flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--spectrum-font-size-75); }
+.compose-error { margin: var(--spectrum-spacing-300) 0 0; color: var(--red); text-align: center; }
+.toast button, .toast a { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); color: var(--link); }
+.sys { text-align: center; color: var(--faint); font-size: var(--spectrum-font-size-75); margin: var(--spectrum-spacing-100) 0; }
+/* The thread agent's latest turn, after the last message: on the Adobe side, outlined, as it
+   is not a message anyone posted. Solid and tinted while it works. */
+.msg.agent .bubble { background: transparent;
+  border-radius: var(--spectrum-corner-radius-800); position: relative; }
+/* A thought bubble's trail, dashed or solid like the bubble, from it to the avatar: the larger circle
+   tucked under the bubble's bottom-right corner, the smaller one past the corner, towards the
+   avatar's lower half (the offsets count from the bubble's padding box, inside its border). */
+.msg.agent .col { margin-bottom: calc(var(--spectrum-spacing-500) + var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
+.msg.agent .bubble::before, .msg.agent .bubble::after { content: ''; position: absolute; box-sizing: border-box;
+  border-radius: 50%; border: var(--spectrum-border-width-200) dashed; border-color: inherit; border-style: inherit; background: inherit; }
+.msg.agent .bubble::before { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); right: calc(-1 * (var(--spectrum-border-width-200) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-300) + var(--spectrum-border-width-100) * 1.5)); }
+.msg.agent .bubble::after { width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-200)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-200)); right: calc(-1 * (var(--spectrum-spacing-100) + var(--spectrum-border-width-200) + var(--spectrum-border-width-100))); bottom: calc(-1 * (var(--spectrum-spacing-400) + var(--spectrum-border-width-100))); }
+
+.msg.agent .bubble code { background: var(--them-code); }
+
+.msg.agent.failed .bubble { color: var(--mute); }
+.msg.agent .spin { display: inline-block; border-radius: 50%; margin-right: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100));
+ animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .msg.agent .spin { animation: none; } }
+.seen { text-align: right; color: var(--faint); font-size: var(--spectrum-font-size-50); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.empty { padding: var(--spectrum-spacing-600); text-align: center; }
+
+/* Profile cards: who someone is to us, on hover, focus or tap of a name or avatar. */
+[data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
+.msg .who b[data-p] { cursor: default; }
+.msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+.pcard { position: fixed; z-index: 20; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); background: var(--card);
+  border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 var(--spectrum-spacing-100) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400)) var(--spectrum-transparent-black-400); }
+.pcard[hidden] { display: none; }
+.pcard .top { display: flex; gap: calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)); align-items: center; }
+.pcard .top > div { min-width: 0; }
+.pcard .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); font-size: var(--spectrum-font-size-200); border-radius: var(--spectrum-corner-radius-700); }
+.pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcard .ttl { color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcard .chips { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+.pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
+.pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
+.pcard .rel.customer { background: var(--spectrum-orange-background-color-default); } .pcard .rel.bot { background: var(--faint); }
+.pcard dl { display: grid; grid-template-columns: auto 1fr; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: 0; }
+.pcard dt { color: var(--faint); }
+.pcard dd { margin: 0; min-width: 0; display: flex; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); align-items: center; overflow-wrap: anywhere; }
+.pcard dd img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-radius: var(--spectrum-corner-radius-75); flex: none; }
+.pcard .note { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+
+.rv .apply { display: flex; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
+.rv .apply .send { border-radius: var(--spectrum-corner-radius-100); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); background: var(--me); color: var(--spectrum-white); border: 0; }
+.rv .apply .send:disabled { opacity: .45; }
+/* Above a message's quick reactions and the reaction picker, which scroll under it. */
+.rv { position: sticky; top: 0; z-index: 5; box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-300) var(--spectrum-transparent-black-300); margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) 0; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); background: var(--card); font-size: var(--spectrum-font-size-100); }
+.rv .q { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); align-items: center; flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) 0; }
+.rv .q b { width: calc(var(--spectrum-spacing-100) * 10 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); font-weight: 600; }
+.rv button { padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.rv button.model { border-color: var(--accent); }
+.rv button.picked { background: var(--accent); color: var(--spectrum-white); }
+.rv .hist { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-top: var(--spectrum-spacing-75); }
+
+/*
+ * Read and unread set apart (the thread list's design A): unread rows are white (lighter in
+ * the dark theme), read rows tinted; unread titles are bold, the time blue, a resolved one's
+ * title greyed once read. The second line: the customer (unless the filters pick one),
+ * "Y replies, X mentions", then the latest reply as far as it fits before the reactions, grey
+ * in unread rows too, so the bold title leads.
+ */
+/* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
+.t .ok { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
+ }
+/* A draft's pencil does too, in the status's color (the dot's), as wide as a ringed dot. */
+.t .pen { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
+  color: var(--faint); }
+.t .pen svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.t .pen.s-critical { color: var(--spectrum-red-1100); } .t .pen.s-hot { color: var(--red); } .t .pen.s-you { color: var(--accent); }
+.t .pen.s-waiting { color: var(--yellow); } .t .pen.s-silent { color: var(--purple); }
+.t .pen.s-team { color: var(--green); }
+#threads { background: var(--row-read); }
+.t { --row-bg: var(--row-read); background: var(--row-bg); }
+.t.unread { --row-bg: var(--row-unread); }
+.t:hover { background: color-mix(in srgb, var(--accent) 7%, var(--row-bg)); }
+.t.sel, .t.sel:hover { --row-bg: var(--sel); background: var(--sel); }
+
+
+
+
+.t .replies { flex: none; white-space: nowrap; }
+
+.t .snip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.t .tags { flex: none; }
+.t .faces .av, .t .moods .em { border-color: var(--row-bg); }
+.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--row-bg), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
+
+
+/*
+ * Narrower screens. The thread list's heading has a Filters button there, and an open thread
+ * a back button; both are hidden while there is room for all three columns.
+ *
+ * Under 1100px (a phone on its side, an unfolded iPhone Duo, a tablet upright) the filter
+ * cards move into a drawer over the page's left edge, opened from the list's heading or by a
+ * swipe to the right over the list, and closed by a swipe to the left (or a tap beside it); the
+ * list and the open thread share the width. Under 700px (phones, a folded iPhone Duo) the
+ * list and the open thread take turns: opening a thread slides it in over the list, and its
+ * back button, or the browser's Back, slides it out again. Both stay laid out (visibility,
+ * not display), so the list keeps its scroll position and a thread opens scrolled to where
+ * it should.
+ */
+.toast { max-width: calc(100vw - var(--spectrum-spacing-400)); }
+#threads .count .filt, .ph .close { display: none; }
+#threads .count .filt { align-items: center; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+ }
+
+
+
+.ph .close { place-items: center; width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); padding: 0; border: 0;
+ }
+.ph .close:hover { background: var(--hover); }
+
+/* Pressing and holding Send on a touch screen shows its menu, not a text selection. */
+.composer button.send { -webkit-user-select: none; user-select: none; }
+/* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
+   size (17px), on a touch screen. */
+@media (hover: none) and (pointer: coarse) {
+  .composer textarea, .menu select { font-size: var(--spectrum-font-size-100); }
+}
+/*
+ * Touch targets on a touch screen: the small controls get 120% of their height (and some
+ * more padding), the text stays as it is. The emoji-only ones (quick reactions, the picker,
+ * reaction chips) are zoomed whole. Thread rows are tall enough already, and fixed at 64px.
+ */
+@media (hover: none) and (pointer: coarse) {
+
+
+
+  #threads .count .order span { padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)); }
+  #threads .count .clearq { height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-400) + var(--spectrum-border-width-100)); }
+
+
+  .fr { padding: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)) var(--spectrum-spacing-75); }
+  .card h3 .clear { padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); margin: calc(-1 * var(--spectrum-spacing-75)) calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-75))) calc(-1 * var(--spectrum-spacing-75)) auto; }
+  .ph .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); }
+  .msg .meta { margin-top: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); min-height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
+  .msg .meta .react { padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); }
+  .msg .unsent button { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-75); }
+  .msg .quick, .picker, .rx { zoom: 1.2; }
+
+
+
+}
+@media (max-width: 1099px) {
+  main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 37 + var(--spectrum-spacing-75)), 42%) minmax(0, 1fr); }
+  #filters { position: fixed; z-index: 30; top: var(--head); bottom: 0; width: min(calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)), 88vw);
+    margin: 0; padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) + var(--safe-bottom)) env(safe-area-inset-left); background: var(--bg);
+    pointer-events: auto;
+    transform: translateX(-100%); visibility: hidden; transition: transform var(--spectrum-animation-duration-400) ease-out, visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-400); }
+  main.filtering #filters { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-400) ease-out;
+ }
+  /* The rest of the page, dimmed while the drawer is open: a tap there closes it. */
+  main::after { content: ""; position: fixed; z-index: 29; inset: var(--head) 0 0; background: var(--spectrum-transparent-black-500);
+    opacity: 0; pointer-events: none; transition: opacity var(--spectrum-animation-duration-400); }
+  main.filtering::after { opacity: 1; pointer-events: auto; }
+  /* Following a finger that swipes the drawer in or out (`--pull`: 0 shut, 1 open). */
+  main.dragging #filters { transform: translateX(calc((var(--pull, 0) - 1) * 100%)); visibility: visible;
+    transition: none; box-shadow: 0 0 var(--spectrum-spacing-600) rgb(var(--spectrum-black-rgb), calc(.45 * var(--pull, 0))); }
+  main.dragging::after { opacity: var(--pull, 0); transition: none; }
+  #threads { border-left: 0; }
+  #threads .count .filt { display: inline-flex; }
+  .ph, .feed { padding-left: var(--spectrum-spacing-300); padding-right: var(--spectrum-spacing-300); }
+  .composer { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-300) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); }
+  .rv { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-300) 0; }
+  .mentions { left: var(--spectrum-spacing-300); max-width: calc(100% - var(--spectrum-spacing-500)); }
+}
+@media (max-width: 699px) {
+  /* Clipped, not hidden: nothing may scroll the page sideways to the thread off its edge. */
+  main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
+  #threads, #pane { grid-area: 1 / 1; border: 0; transition: transform var(--spectrum-animation-duration-500) ease-out, visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  #pane { transform: translateX(100%); visibility: hidden; }
+  main.reading #pane { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) ease-out; }
+  main.reading #threads { transform: translateX(-25%); visibility: hidden; }
+  #lift { display: none !important; }
+  .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
+  .t .cust { max-width: 40%; }
+  .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
+  .ph > :not(.close) { grid-column: 2; }
+  .ph .close { display: grid; grid-row: 1 / span 4; margin-top: calc(-1 * var(--spectrum-spacing-75)); }
+  .ph h2 { flex-wrap: wrap; }
+  .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
+  .msg { gap: var(--spectrum-spacing-100); }
+  .msg .face { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); }
+  .msg .face .av { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); font-size: var(--spectrum-font-size-50); }
+  .msg .col { max-width: calc(100% - calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50))); }
+  .msg .who, .msg .meta { margin-left: var(--spectrum-spacing-100); margin-right: var(--spectrum-spacing-100); }
+
+  .composer { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-100) + var(--safe-bottom)); }
+
+
+  .rv { margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+  .mentions { left: var(--spectrum-spacing-200); min-width: 0; width: calc(100% - var(--spectrum-spacing-400)); }
+  .empty { padding: var(--spectrum-spacing-500) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
+}
+@media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
+  #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
+}
+/* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
+main.instant #threads, main.instant #pane, main.instant.reading #pane { transition: none; }
+
+/* ==== Its look ================================================================================= */
+
+/* Foundations: the page's own colors (bubbles, rows, the floating layers), as S2 names them.
+   Unread rows sit on layer 2, read ones on layer 1, as ListView's rows on their list. */
+:root.spectrum {
+  --me: var(--spectrum-accent-background-color-default);
+  --me-ink: var(--spectrum-white);
+  --me-link: var(--spectrum-white);
+  --them: var(--spectrum-gray-100);
+  --them-ink: var(--spectrum-neutral-content-color-default);
+  --them-link: var(--spectrum-accent-content-color-default);
+  --them-code: var(--s2-hover);
+  --mention-adobe: var(--spectrum-red-900);
+  --gold: var(--spectrum-yellow-visual-color);
+  --brown: var(--spectrum-brown-visual-color);
+  --crimson: var(--spectrum-red-visual-color);
+  --teams: var(--spectrum-indigo-visual-color);
+  --row-read: var(--spectrum-background-layer-1-color);
+  --row-unread: var(--spectrum-background-layer-2-color);
+  /* ListView's highlight selection: blue-900 mixed into the base, and outlined in it. */
+  --s2-row-sel: color-mix(in srgb, var(--spectrum-blue-900) 10%, var(--spectrum-gray-25));
+  --s2-row-sel-hover: color-mix(in srgb, var(--spectrum-blue-900) 15%, var(--spectrum-gray-25));
+  --s2-row-hover: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity));
+  --s2-row-down: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-down-opacity));
+  --sel: var(--s2-row-sel);
+  /* Floating layers: the filter cards hang over the list (elevated), the open row is lifted
+     out of it (dragged). */
+  --r: var(--spectrum-corner-radius-large-default);
+  --card-shadow: var(--s2-elevated);
+  --lift-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6)
+    calc(var(--spectrum-drop-shadow-blur) * 6) var(--spectrum-drop-shadow-dragged-color);
+  --s2-popover: var(--spectrum-background-layer-2-color);
+  --s2-pill: calc(var(--s2-ctl) / 2);
+}
+.spectrum .c-critical, .spectrum .t .dot.c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
+.spectrum .c-slack {
+  background: linear-gradient(var(--spectrum-cyan-visual-color) 25%, var(--spectrum-green-visual-color) 0 50%,
+    var(--spectrum-yellow-visual-color) 0 75%, var(--spectrum-magenta-visual-color) 0) !important;
+}
+.spectrum .c-discord { background: var(--spectrum-purple-visual-color) !important; }
+
+/* Avatar: round and bold (its colors are every page's, ui/spectrum.css). */
+.spectrum .av { border-radius: 50%; font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-white); }
+.spectrum [data-p]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+/* The filter rail: one floating card per facet (S2's Card on layer 2, no border, elevated as
+   it hangs over the list), its values a ListView with highlight selection. */
+.spectrum #filters .card {
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  padding-top: var(--spectrum-spacing-200);
+  padding-bottom: var(--spectrum-spacing-100);
+}
+.spectrum .card h3 {
+  gap: var(--spectrum-spacing-100);
+  margin-bottom: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-heading-color);
+}
+/* The card's light: a StatusLight's dot, positive. */
+.spectrum .card h3::before {
+  width: var(--spectrum-status-light-dot-size-medium);
+  height: var(--spectrum-status-light-dot-size-medium);
+  background: var(--spectrum-positive-visual-color);
+}
+.spectrum .card h3 .clear {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .card h3 .clear:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .fg {
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .fr {
+  gap: var(--spectrum-text-to-visual-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  transition: background-color var(--s2-ease);
+}
+.spectrum .fr:hover { background: var(--s2-row-hover); }
+.spectrum .fr:active { background: var(--s2-row-down); }
+.spectrum .fr.on { background: var(--s2-row-sel); }
+.spectrum .fr.on:hover { background: var(--s2-row-sel-hover); }
+.spectrum .fr.on::after { border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900); }
+.spectrum .fr.on .lab { font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fr.on .n { font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fr .lab.new { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .fr .lab.dim { color: var(--spectrum-disabled-content-color); }
+.spectrum .fr .ind { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico.av { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .fr .ico.av.round { border-radius: 50%; }
+/* Counts in the UI font's tabular figures; bars as a Meter's fill, without its track. */
+.spectrum .fr .n {
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--spectrum-line-height-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .fr .bar { height: var(--spectrum-progress-bar-thickness-medium); border-radius: calc(var(--spectrum-progress-bar-thickness-medium) / 2); }
+.spectrum .fr .bar.stack { gap: var(--spectrum-border-width-100); }
+/* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
+.spectrum .fr .men, .spectrum #threads .count .filt b {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-accent-background-color-default);
+  color: var(--spectrum-white);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+}
+/* Exclude (≠): a quiet, extra-small ActionButton over the label's end; red once it excludes. */
+.spectrum .fr .not {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-75);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  transition: opacity var(--s2-ease), color var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum .fr .not:hover { color: var(--spectrum-negative-content-color-default); box-shadow: none; background: var(--s2-down); }
+.spectrum .fr.off .not { color: var(--spectrum-negative-content-color-default); }
+.spectrum .fr.off .lab { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The thread list: a ListView, rows divided by a hairline, read on layer 1 and unread on
+   layer 2, hovered and pressed in the gray overlay, the open one in highlight selection. */
+.spectrum #threads { border-left-color: var(--line); border-right-color: var(--line); }
+.spectrum .t { border-bottom-color: var(--line); transition: background-color var(--s2-ease); }
+.spectrum .t:hover { background: linear-gradient(var(--s2-row-hover), var(--s2-row-hover)), var(--row-bg); }
+.spectrum .t:active { background: linear-gradient(var(--s2-row-down), var(--s2-row-down)), var(--row-bg); }
+.spectrum .t.sel, .spectrum .t.sel:hover { --row-bg: var(--s2-row-sel); background: var(--s2-row-sel); }
+.spectrum .t .title { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .t.unread .title { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t.resolved:not(.unread) .title { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .when, .spectrum .t .l2, .spectrum .t .l3 { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .l3 b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .l3.dim { color: var(--spectrum-disabled-content-color); }
+.spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .ok { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
+/* Faces: an AvatarGroup, each ringed in the row's own layer. */
+.spectrum .moods .em { background: var(--spectrum-gray-100); }
+/* Tags beside a title: S2 Badges, subtle, in their meaning's color. */
+.spectrum .tag { color: var(--spectrum-neutral-subdued-content-color-default); background: var(--spectrum-gray-100); border-color: transparent; }
+.spectrum .tag.hot { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
+.spectrum .tag.us { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
+.spectrum .tag.tech { color: var(--spectrum-neutral-content-color-default); }
+/* The open thread's row, lifted out of the list (#lift): selected, and dragged above it. */
+.spectrum #lift .t {
+  border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--s2-row-sel);
+}
+.spectrum #lift .t .faces .av { border-color: var(--s2-row-sel); }
+.spectrum mark { background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
+
+/* The list's toolbar, sticky on layer 1. */
+.spectrum #threads .count {
+  gap: var(--spectrum-spacing-100);
+  padding-top: var(--spectrum-spacing-100);
+  padding-bottom: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-background-layer-1-color);
+  border-bottom-color: var(--line);
+}
+/* SearchField: S2's pill, a 2px border on the base, the loupe at its start. */
+.spectrum .find {
+  height: var(--s2-ctl);
+  gap: var(--spectrum-text-to-visual-100);
+  padding: 0 var(--spectrum-spacing-100) 0 calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-spacing-50));
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  transition: border-color var(--s2-ease);
+}
+.spectrum .find:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .find:focus-within { border-color: var(--spectrum-gray-800); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .find:has(input:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .find svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .find input, .spectrum .find input:hover, .spectrum .find input:focus {
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.spectrum .find input::placeholder { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .find kbd { padding: 0 var(--spectrum-spacing-75); }
+/* The views (each team, then Personal): S2's SegmentedControl, the picked one raised. */
+.spectrum #threads .count .order {
+  padding: 0;
+  gap: 0;
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum #threads .count .order button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--s2-radius);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum #threads .count .order button:hover { color: var(--spectrum-neutral-content-color-hover); background: transparent; }
+.spectrum #threads .count .order button[aria-checked="true"], .spectrum #threads .count .order button[aria-checked="true"]:hover {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border-color: var(--spectrum-gray-900);
+  box-shadow: none;
+  font-weight: var(--spectrum-bold-font-weight);
+}
+/* Unread only, the bell, a new thread, Filters, Clear: quiet ActionButtons; toggled on, in
+   ActionButton's selected state. */
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq) {
+  height: var(--spectrum-component-height-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: 0;
+  border-radius: var(--s2-radius);
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum #threads .count :is(.unread, .bell, .newpost) { width: var(--spectrum-component-height-75); }
+.spectrum #threads .count :is(.filt, .clearq) { padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt) svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum #threads .count :is(.unread, .bell, .newpost, .filt, .clearq):active { background: var(--spectrum-gray-300); }
+.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"],
+.spectrum #threads .count .filt[aria-expanded="true"] {
+  color: var(--spectrum-gray-25);
+  background: var(--spectrum-neutral-background-color-selected-default);
+  border-color: transparent;
+}
+.spectrum #threads .count :is(.unread, .bell, .newpost)[aria-pressed="true"]:hover,
+.spectrum #threads .count .filt[aria-expanded="true"]:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum #threads .count .found { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The list's end: "Show older" a secondary Button, the closing note subdued. */
+.spectrum #threads .rows > .older {
+  min-height: var(--s2-ctl);
+  border-radius: var(--s2-pill);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+}
+.spectrum #threads .rows > .older:hover { background: var(--spectrum-gray-200); }
+.spectrum #threads .rows > .end { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #threads .rows > .end .linkish { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .linkish { color: var(--spectrum-accent-content-color-default); text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum .linkish:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+/* Empty, loading and error notes in a pane: an IllustratedMessage's body, without the art. */
+.spectrum .empty { font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The open thread's header: its title in S2's Title style, the facts under it subdued. */
+.spectrum .ph { border-bottom-color: var(--line); }
+.spectrum .ph h2 { gap: var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
+.spectrum .ph .sub { gap: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .chan { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .src .org, .spectrum .ph .src .av { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .ph .src .plat { border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-white); border-color: var(--pane); }
+.spectrum .ph .src:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .ph button.src:hover .org, .spectrum .ph a.src:hover .org { filter: brightness(.92); }
+.spectrum .back { font-size: var(--spectrum-font-size-75); color: var(--spectrum-accent-content-color-default); }
+.spectrum .back:hover { color: var(--spectrum-accent-content-color-hover); }
+/* Back to the threads (narrow screens): a quiet ActionButton. */
+.spectrum .ph .close { border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum .ph .close:hover { background: var(--spectrum-gray-200); }
+.spectrum .ph .close svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+/* The header's dropdowns and the agent's suggestions: an ActionGroup of quiet buttons on a gray pill, their
+   lists Menus (S2's Popover, below). */
+.spectrum :is(.ph .l2 .hm, .experts) {
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--s2-pill);
+}
+.spectrum :is(.experts .top, .ph .hmb, .ph .hm a.top) { border-radius: var(--s2-pill); }
+.spectrum :is(.experts, .ph .hm) .more { border-left: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: 0 var(--s2-pill) var(--s2-pill) 0; }
+.spectrum .ph .hm.split a.top { border-radius: var(--s2-pill) 0 0 var(--s2-pill); }
+.spectrum :is(.experts .top, .experts .more, .ph .hmb, .ph .hm a.top, .ph .hm .more):hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .ph .hm.open > :is(.hmb, .more) { background: var(--s2-down); }
+.spectrum .ph .hm :is(.hmb, a.top, .more):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .ph .hm .n, .spectrum .ph .hm .chev { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hmh { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hmnote { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hms + .hms { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .ph .hmi { min-height: var(--s2-ctl); border-radius: var(--spectrum-corner-radius-100); font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .ph a.hmi:hover, .spectrum .ph a.hmi:focus-visible { background: var(--s2-down); color: var(--spectrum-neutral-content-color-hover); outline: none; }
+.spectrum .ph a.hmi:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .ph .hmi small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The feed's landmarks: the day as a subtle neutral Badge, dividers and events subdued. */
+.spectrum .day span {
+  padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .divider, .spectrum .post { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .divider::after { border-top-color: var(--spectrum-gray-300); }
+.spectrum .post::before, .spectrum .post::after { border-top-color: var(--spectrum-gray-300); }
+.spectrum .sys, .spectrum .seen { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .compose-error { color: var(--spectrum-negative-content-color-default); }
+
+/* Messages. S2 has no chat bubble outside its AI toolkit (UserMessage): composed from a layer
+   fill, S2's extra-large radius (the tail's corner small) and the body type. Customers and
+   colleagues on gray, your own on the accent. */
+.spectrum .msg .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .who b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .msg .meta { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .face .badge-ico { border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-white); border-color: var(--pane); }
+.spectrum .msg.agent a.face:hover .av, .spectrum .msg.agent a.face:focus-visible .av { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .bubble {
+  padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  border-bottom-left-radius: var(--spectrum-corner-radius-75);
+  line-height: var(--spectrum-line-height-200);
+}
+.spectrum .msg.adobe .bubble { border-bottom-left-radius: var(--spectrum-corner-radius-extra-large-default); border-bottom-right-radius: var(--spectrum-corner-radius-75); }
+.spectrum .bubble a { text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum .bubble p + p { margin-top: var(--spectrum-spacing-100); }
+.spectrum .bubble h1, .spectrum .bubble h2, .spectrum .bubble h3, .spectrum .bubble h4, .spectrum .bubble h5, .spectrum .bubble h6 { color: inherit; font-weight: var(--spectrum-bold-font-weight); }
+/* Code: Source Code Pro; inline on a faint overlay, a block on one too (S2: a layer and a
+   radius, no outline). */
+.spectrum .bubble code {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum .msg.mine .bubble code { background: var(--spectrum-transparent-black-200); }
+.spectrum .bubble pre {
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  background: var(--them-code);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .msg.mine .bubble pre { background: var(--spectrum-transparent-black-200); }
+/* A block's code is no chip: no padding of its own (which would indent its first line), and
+   no fill on your own bubble. */
+.spectrum .bubble pre code,
+.spectrum .msg.mine .bubble pre code { padding: 0px; border-radius: 0px; background: none; }
+.spectrum .msg.agent .bubble pre { background: var(--s2-hover); }
+/* Highlighted code (src/ui-highlight.js): the token groups, in the 1200 shades, which keep
+   4.5:1 on a code block in either color scheme (test/ui-highlight.test.js). On your own
+   bubble's accent the code stays its white. */
+.spectrum .bubble pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
+.spectrum .bubble pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
+.spectrum .bubble pre.hl .hl-string,
+.spectrum .bubble pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
+.spectrum .bubble pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
+.spectrum .bubble pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
+.spectrum .bubble pre.hl .hl-function,
+.spectrum .bubble pre.hl .hl-link { color: var(--spectrum-blue-1200); }
+.spectrum .bubble pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
+.spectrum .bubble pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
+.spectrum .bubble pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
+.spectrum .bubble pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
+.spectrum .bubble pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble pre.hl .hl-emphasis { font-style: italic; }
+.spectrum .msg.mine .bubble pre.hl [class^="hl-"] { color: inherit; }
+.spectrum .bubble blockquote.quote { border-radius: var(--spectrum-corner-radius-75) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-75); }
+.spectrum .bubble blockquote.quote > p.quote-by { font-size: var(--spectrum-font-size-75); }
+.spectrum .bubble blockquote.quote .quote-by b[role="button"] { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble .mention { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble a.channel { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .msg.mine .bubble .mention.adobe { border-radius: var(--spectrum-corner-radius-75); color: var(--spectrum-white); background: var(--spectrum-red-background-color-default); }
+.spectrum .msg.found .bubble { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-notice-visual-color); }
+.spectrum .msg .bubble { transition: box-shadow var(--spectrum-animation-duration-600) var(--spectrum-animation-ease-out); }
+/* Images: S2's small radius for media nested in the bubble; a gallery's tiles likewise. */
+.spectrum .bubble img.att { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .gallery { gap: var(--spectrum-spacing-100); }
+.spectrum .bubble .gallery > img.att { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .gallery > img.att:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+
+/* The thread agent's turn: an outlined bubble in the accent's visual color (dashed while it
+   is done, solid and faintly filled while it works), its working sign a ProgressCircle. A
+   thought has no tail, so all four corners are round. */
+.spectrum .msg.agent .bubble { border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); border-bottom-right-radius: var(--spectrum-corner-radius-extra-large-default); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .msg.agent .bubble::before, .spectrum .msg.agent .bubble::after { border-width: var(--spectrum-border-width-200); }
+.spectrum .msg.agent .bubble a { color: var(--spectrum-accent-content-color-default); }
+.spectrum .msg.agent.working .bubble {
+  border-style: solid;
+  border-color: var(--spectrum-accent-visual-color);
+  background: var(--spectrum-accent-subtle-background-color-default);
+}
+.spectrum .msg.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum .msg.agent .spin, .spectrum .file-view .fv-wait .spin {
+  width: var(--spectrum-progress-circle-size-small);
+  height: var(--spectrum-progress-circle-size-small);
+  border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);
+  border-top-color: var(--spectrum-accent-content-color-default);
+  vertical-align: text-bottom;
+  animation-duration: var(--spectrum-animation-duration-2000);
+}
+.spectrum .msg.deleted .bubble { opacity: 1; color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Sending: a small ProgressBar under the bubble; a failed send, a negative message with its
+   alert icon and a Link to try again. */
+.spectrum .msg .sendbar { height: var(--spectrum-progress-bar-thickness-small); border-radius: calc(var(--spectrum-progress-bar-thickness-small) / 2); background: var(--spectrum-gray-300); }
+.spectrum .msg .sendbar i { background: var(--spectrum-accent-content-color-default); }
+.spectrum .msg .unsent { font-size: var(--spectrum-font-size-75); }
+.spectrum .msg .unsent .why { color: var(--spectrum-negative-content-color-default); }
+.spectrum .msg .unsent .why::before {
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  background: var(--spectrum-negative-visual-color);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .msg .unsent button { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); background: none; }
+.spectrum .msg .unsent button:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+
+/* Reactions on a message: small ActionButtons on the layer above the bubble, ringed in the
+   page's background so they stand off its edge; yours selected in the accent's subtle fill. */
+.spectrum .rx { gap: var(--spectrum-spacing-75); }
+.spectrum .rx span, .spectrum .rx button {
+  padding: 0 var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+  box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--pane);
+}
+.spectrum .rx button:hover { background: var(--spectrum-gray-100); }
+.spectrum .rx button.mine { background: var(--spectrum-accent-subtle-background-color-default); border-color: var(--spectrum-accent-visual-color); }
+/* The quick reactions and the emoji picker: a Popover holding quiet ActionButtons. */
+.spectrum .msg .quick, .spectrum .picker {
+  gap: var(--spectrum-spacing-50);
+  padding: var(--spectrum-spacing-50);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .msg .quick button, .spectrum .picker button { background: none; border: 0; border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .msg .quick button:hover, .spectrum .msg .quick button:focus-visible,
+.spectrum .picker button:hover, .spectrum .picker button:focus-visible { background: var(--s2-down); }
+.spectrum .msg .quick button[aria-pressed="true"] { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum .msg .quick .more { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .quick .edit { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .msg .quick .edit:not(:last-child) { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); box-shadow: var(--spectrum-border-width-100) 0 0 var(--spectrum-gray-200); }
+
+/* Files on a message: a card each on the bubble's own overlay, the kind's badge in S2's
+   categorical backgrounds (those that take white text), "Preview" a small ActionButton. */
+.spectrum .bubble .files { gap: var(--spectrum-spacing-75); }
+.spectrum .bubble .file { --kind: var(--spectrum-gray-background-color-default); gap: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .bubble .file[data-kind="table"] { --kind: var(--spectrum-green-background-color-default); }
+.spectrum .bubble .file[data-kind="text"] { --kind: var(--spectrum-gray-background-color-default); }
+.spectrum .bubble .file[data-kind="video"] { --kind: var(--spectrum-purple-background-color-default); }
+.spectrum .bubble .file[data-kind="audio"] { --kind: var(--spectrum-magenta-background-color-default); }
+.spectrum .bubble .file[data-kind="image"] { --kind: var(--spectrum-cyan-background-color-default); }
+.spectrum .bubble .file[data-kind="pdf"] { --kind: var(--spectrum-red-background-color-default); }
+.spectrum .bubble .file[data-kind="doc"] { --kind: var(--spectrum-blue-background-color-default); }
+.spectrum .bubble .file[data-kind="sheet"] { --kind: var(--spectrum-seafoam-background-color-default); }
+.spectrum .bubble .file[data-kind="slides"] { --kind: var(--spectrum-cinnamon-background-color-default); }
+.spectrum .bubble .file[data-kind="archive"] { --kind: var(--spectrum-brown-background-color-default); }
+.spectrum .bubble .file-ico { color: var(--spectrum-white); font-family: var(--s2-font); font-weight: var(--spectrum-extra-bold-font-weight); letter-spacing: normal; }
+.spectrum .bubble .file-ico::before { background: linear-gradient(225deg, transparent 50%, var(--spectrum-transparent-white-500) 50%); }
+.spectrum .bubble .file .file-name { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bubble .file-sub { font-size: var(--spectrum-font-size-75); }
+.spectrum .bubble .file-act {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: var(--s2-radius);
+}
+.spectrum .bubble .file-act:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .bubble .file video.file-player { background: var(--spectrum-black); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .bubble .file a.file-go { border-radius: var(--s2-radius); }
+
+/* A file's preview (ui/table.js) and its dialog: S2's TableView. The header on layer 1 in
+   bold, rows divided by a hairline (no stripes), hovered in the gray overlay; the find box a
+   small TextField, the spinner a ProgressCircle. */
+.spectrum .file-view, .spectrum .file-dialog { --zebra: var(--pane); }
+.spectrum .bubble .file-view {
+  font-size: var(--spectrum-font-size-75);
+  border-color: var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .bubble .file-view.failed, .spectrum .file-view .fv-wait { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-bar { gap: var(--spectrum-spacing-100); background: var(--spectrum-background-layer-1-color); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-count { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-find {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-radius);
+}
+.spectrum :is(.file-view, .file-dialog) .fv-find:hover { border-color: var(--spectrum-gray-400); }
+.spectrum :is(.file-view, .file-dialog) .fv-find:focus { border-color: var(--spectrum-gray-800); }
+.spectrum :is(.file-view, .file-dialog) :is(.fv-expand, .fv-close) {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-spacing-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  background: transparent;
+}
+.spectrum :is(.file-view, .file-dialog) :is(.fv-expand, .fv-close):hover { background: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table :is(th, td) { border-bottom-color: var(--spectrum-gray-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th {
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-weight: var(--spectrum-bold-font-weight);
+  border-bottom-color: var(--spectrum-gray-300);
+}
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort] { color: var(--spectrum-neutral-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th button::after { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort="ascending"] button::after,
+.spectrum :is(.file-view, .file-dialog) .fv-table th[aria-sort="descending"] button::after { color: var(--spectrum-neutral-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-table th button:focus-visible { outline: var(--s2-focus); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-table tbody tr:hover td { background: linear-gradient(var(--s2-row-hover), var(--s2-row-hover)), var(--pane); }
+.spectrum :is(.file-view, .file-dialog) .fv-table .fv-n { color: var(--spectrum-neutral-subdued-content-color-default); border-right-color: var(--spectrum-gray-200); }
+.spectrum :is(.file-view, .file-dialog) .fv-table .fv-none, .spectrum :is(.file-view, .file-dialog) .fv-more { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.file-view, .file-dialog) .fv-more { border-top-color: var(--spectrum-gray-200); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-text { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.file-view, .file-dialog) .fv-har tr.fv-failed td:nth-child(3) { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum :is(.file-view, .file-dialog) .fv-table tr.fv-detail td { background: var(--spectrum-background-layer-1-color); }
+.spectrum :is(.file-view, .file-dialog) :focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .fv-request p, .spectrum .fv-request dt, .spectrum .fv-request .fv-secret { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fv-request :is(.fv-url, dl) { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum .fv-request .fv-why { color: var(--spectrum-negative-content-color-default); }
+.spectrum .fv-request h4 { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .fv-request button { font-size: var(--spectrum-font-size-75); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .fv-request .fv-text { border: 0; border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-background-layer-1-color); }
+/* The preview's dialog: S2's Dialog, full-size (a Takeover's proportions), its header plain. */
+.spectrum dialog.file-dialog { border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); font-size: var(--spectrum-font-size-100); }
+.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+.spectrum .file-dialog .fv-head { gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-400); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum .file-dialog .fv-title { font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
+.spectrum .file-dialog .fv-link { color: var(--spectrum-accent-content-color-default); }
+
+/* The lightbox: the overlay at its darkest; its controls are ActionButtons for content over
+   imagery (a translucent black fill, white glyphs), the current thumbnail outlined white. */
+.spectrum dialog.lightbox { color: var(--spectrum-white); background: transparent; box-shadow: none; border-radius: 0; }
+.spectrum dialog.lightbox::backdrop { background: var(--spectrum-transparent-black-900); opacity: 1; }
+.spectrum dialog.lightbox .stage > img { border-radius: var(--spectrum-corner-radius-100); box-shadow: var(--lift-shadow); background: var(--spectrum-white); }
+.spectrum dialog.lightbox :is(.bar a, .bar button, .count, .nav) {
+  color: var(--spectrum-white);
+  background: var(--spectrum-transparent-black-600);
+  border: 0;
+  border-radius: var(--s2-radius);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum dialog.lightbox :is(.bar a, .bar button) { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); display: inline-flex; align-items: center; }
+.spectrum dialog.lightbox :is(.bar a, .bar button, .nav):hover { color: var(--spectrum-white); background: var(--spectrum-transparent-black-800); }
+.spectrum dialog.lightbox .nav { border-radius: var(--spectrum-corner-radius-large-default); transition: background-color var(--s2-ease); }
+.spectrum dialog.lightbox .strip { gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-75); background: var(--spectrum-transparent-black-600); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum dialog.lightbox .strip button { border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-gray-800); border-color: transparent; }
+.spectrum dialog.lightbox .strip button[aria-current="true"] { border-color: var(--spectrum-white); }
+.spectrum dialog.lightbox :focus-visible { outline: var(--spectrum-focus-indicator-thickness) solid var(--spectrum-white); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+/* The composer: the reply box a TextArea (2px border, darker on hover, darkest focused), Send
+   S2's accent Button, the paperclip a quiet ActionButton as tall as the box. */
+.spectrum .composer { gap: var(--spectrum-spacing-100); border-top-color: var(--line); }
+.spectrum .composer textarea {
+  min-height: var(--spectrum-component-height-200);
+  padding: var(--spectrum-component-top-to-text-200) var(--spectrum-component-edge-to-text-200);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .composer textarea:hover { border-color: var(--spectrum-gray-400); }
+.spectrum .composer textarea:focus { border-color: var(--spectrum-gray-800); }
+.spectrum .composer textarea:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .composer button.send {
+  min-height: var(--spectrum-component-height-200);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-200);
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: 0;
+  border-radius: calc(var(--spectrum-component-height-200) / 2);
+  font-size: var(--spectrum-font-size-200);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .composer button.send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+.spectrum .composer button.send:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .composer button.send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+.spectrum .composer .attach {
+  width: var(--spectrum-component-height-200);
+  height: var(--spectrum-component-height-200);
+  color: var(--spectrum-neutral-content-color-default);
+  border-radius: var(--s2-radius);
+}
+.spectrum .composer .attach svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+.spectrum .composer .attach:hover, .spectrum .composer .attach:focus-visible { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .composer .attach[aria-disabled="true"] { opacity: 1; color: var(--spectrum-disabled-content-color); background: none; }
+.spectrum .composer .connect { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Files going with the reply: cards on gray, each with a small CloseButton. */
+.spectrum .tray { gap: var(--spectrum-spacing-100); }
+.spectrum .tray .chip { gap: var(--spectrum-spacing-100); background: var(--spectrum-gray-100); border: 0; border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .tray .chip.img img { border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .tray .chip .ico { border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-accent-subtle-background-color-default); color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .tray .chip .nm { font-size: var(--spectrum-font-size-75); }
+.spectrum .tray .chip .sz { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .tray .chip .x {
+  width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  border: 0;
+  border-radius: 50%;
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .tray .chip .x:hover, .spectrum .tray .chip .x:focus-visible { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-default); }
+.spectrum .tray .attach-error { font-size: var(--spectrum-font-size-75); color: var(--spectrum-negative-content-color-default); }
+/* Dropping files: S2's DropZone (dashed accent edge on the drop-zone tint, the title in bold). */
+.spectrum #pane .dropzone {
+  border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color);
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  background: linear-gradient(rgb(var(--spectrum-drop-zone-background-color-rgb), var(--spectrum-drop-zone-background-color-opacity)),
+    rgb(var(--spectrum-drop-zone-background-color-rgb), var(--spectrum-drop-zone-background-color-opacity))),
+    color-mix(in srgb, var(--pane) 86%, transparent);
+}
+.spectrum #pane .dropzone > div { gap: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #pane .dropzone b { font-size: var(--spectrum-font-size-500); font-weight: var(--spectrum-black-font-weight); color: var(--spectrum-heading-color); }
+.spectrum #pane .dropzone svg { width: var(--spectrum-component-height-200); height: var(--spectrum-component-height-200); color: var(--spectrum-accent-visual-color); }
+.spectrum #pane .dropzone.refused { border-color: var(--spectrum-negative-visual-color); }
+.spectrum #pane .dropzone.refused svg { color: var(--spectrum-negative-visual-color); }
+
+/* Every floating list the inbox opens (mentions, channels, the agent's suggestions, a quote's links, a
+   source, a profile): S2's Popover (layer 2, a hairline, the large radius, elevated), and
+   their options Menu items (the gray overlay under the pointer or the keyboard). */
+.spectrum :is(.mentions, .chans, .expertlist, .linkpick, .srcpop, .pcard, .ph .hmpop) {
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum :is(.mentions, .chans, .expertlist, .linkpick) { padding: var(--spectrum-spacing-75); }
+.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a) {
+  min-height: var(--s2-ctl);
+  gap: var(--spectrum-text-to-visual-100);
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick a:hover, .linkpick a:focus-visible) {
+  color: var(--spectrum-neutral-content-color-hover);
+  background: var(--s2-down);
+}
+.spectrum :is(.expertlist button, .linkpick a):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .chans li.none { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.mentions, .chans) .hint { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .expertlist b { font-weight: var(--spectrum-medium-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .expertlist small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The channel search of a new thread: a TextField over its list. */
+.spectrum .chanpick input { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .ph.newthread .sub b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ph.newthread .cancel { font-size: var(--spectrum-font-size-75); }
+
+/* Profile cards: a Popover with a large Avatar, the relation a bold Badge in its category's
+   S2 color. */
+.spectrum .pcard { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.spectrum .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .pcard .ttl, .spectrum .pcard .note { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard dt { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .rel {
+  padding: 0 var(--spectrum-spacing-100);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+}
+.spectrum .pcard .rel.adobe { background: var(--spectrum-accent-background-color-default); }
+.spectrum .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
+.spectrum .pcard .rel.customer { background: var(--spectrum-cinnamon-background-color-default); }
+.spectrum .pcard .rel.bot { background: var(--spectrum-gray-background-color-default); }
+/* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
+.spectrum .srcpop .head { font-size: var(--spectrum-font-size-75); border-bottom-color: var(--spectrum-gray-200); }
+.spectrum .srcpop .host, .spectrum .srcpop .only { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .srcpop blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
+.spectrum .srcpop .view .none { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The thread's shared draft under the reply box: a dashed card in the accent's subtle fill,
+   "Send as me" the accent Button, "as the bot" an outline one, the rest small ActionButtons. */
+.spectrum .draftbar {
+  gap: var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-accent-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
+}
+.spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .draftbar .by { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .draftbar .pv { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .draftbar .sends { border-left-color: var(--spectrum-gray-300); }
+/* The sends: S2 Buttons, small, an icon before the label; "as me" the accent one, "as the bot"
+   outlined. The tools: quiet ActionButtons, icon only, square; View draft held down while open. */
+.spectrum .draftbar button {
+  gap: var(--spectrum-spacing-75);
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .draftbar button.ico {
+  width: var(--spectrum-component-height-75);
+  padding: 0;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+}
+.spectrum .draftbar button.ico:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .draftbar button.ico:active:not(:disabled) { background: var(--s2-down); }
+.spectrum .draftbar button.ico[aria-expanded="true"] { color: var(--spectrum-accent-content-color-default); background: var(--s2-down); }
+.spectrum .draftbar button.asme { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .draftbar button.asme:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .draftbar button.asbot { color: var(--spectrum-accent-content-color-default); background: transparent; border-color: var(--spectrum-accent-visual-color); }
+.spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
+.spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
+.spectrum .draftbar button.ico:disabled { background: none; }
+/* A finger needs more than the pointer: the line's buttons grow to the next control height. */
+@media (hover: none) and (pointer: coarse) {
+  .spectrum .draftbar button { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
+  .spectrum .draftbar button.ico { width: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-100); }
+}
+.spectrum .draftbar .srcs .lb { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The draft's sources: S2 Tags (gray, a hairline), linked. */
+.spectrum .draftbar .src {
+  padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-accent-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .draftbar .src:hover, .spectrum .draftbar .src:focus-visible { border-color: var(--spectrum-gray-800); }
+/* Held Send's other ways to send: a stack of secondary Buttons, floating (elevated); Resolve
+   outlined in positive, Save draft in the accent. */
+.spectrum .sendwrap .hold { gap: var(--spectrum-spacing-75); }
+.spectrum .sendwrap .hold button {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .sendwrap .hold button:hover { background: var(--spectrum-gray-100); }
+.spectrum .sendwrap .hold .resolve { border-color: var(--spectrum-positive-visual-color); }
+.spectrum .sendwrap .hold .resolve[aria-pressed="true"] { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .sendwrap .hold .savedraft { border-color: var(--spectrum-accent-visual-color); }
+
+/* Editing one of your messages in place: the bubble holds a TextArea, Save and Cancel small
+   ActionButtons beside the hint. */
+.spectrum .bubble.editing textarea {
+  min-height: var(--spectrum-component-height-200);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .bubble.editing textarea:focus { border-color: var(--spectrum-gray-800); }
+.spectrum .edithint { gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); opacity: 1; }
+.spectrum .edithint button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  font-size: var(--spectrum-font-size-75);
+  border-radius: var(--s2-radius);
+}
+.spectrum .edithint button[data-edit-save] { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-25); border: 0; font-weight: var(--spectrum-bold-font-weight); }
+
+/* Reviewing Clef's labels (admin): a floating panel (layer 2, elevated, it sticks over the
+   feed), each question an ActionGroup whose picked answer is selected; Apply the accent. */
+.spectrum .rv {
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  background: var(--s2-popover);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .rv .q { gap: var(--spectrum-spacing-75); }
+.spectrum .rv .q b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .rv button { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
+.spectrum .rv button.model { border-color: var(--spectrum-accent-visual-color); }
+.spectrum .rv button.picked, .spectrum .rv button.picked:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
+.spectrum .rv .hist { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.rv, dialog.confirm) .apply { gap: var(--spectrum-spacing-100); }
+/* The accent Button wherever a panel or dialog sends. */
+.spectrum :is(.rv, dialog.confirm) .apply .send {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-accent-background-color-default);
+  border: 0;
+  border-radius: var(--s2-pill);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum :is(.rv, dialog.confirm) .apply .send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+.spectrum :is(.rv, dialog.confirm) .apply .send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+.spectrum dialog.confirm .apply button:not(.send) {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum dialog.confirm .apply button:not(.send):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+/* Confirming a send: S2's Dialog (layer 2, extra-large radius, elevated over the underlay). */
+.spectrum dialog.confirm {
+  padding: var(--spectrum-spacing-400);
+  background: var(--spectrum-background-layer-2-color);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+.spectrum dialog.confirm p { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum dialog.confirm .apply { margin-top: var(--spectrum-spacing-400); }
+
+/* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
+   action an outline Button for static white. */
+.spectrum .toast {
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-300);
+  min-height: var(--spectrum-toast-height);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-neutral-subdued-background-color-default);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .toast :is(button, a) {
+  margin-left: 0;
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+  text-decoration: none;
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-white);
+  border-radius: var(--s2-pill);
+}
+.spectrum .toast :is(button, a):hover { color: var(--spectrum-white); background: var(--spectrum-transparent-white-200); }
+
+/* The inbox's parts of your menu (Notifications, the bells, Thread Agent): Menu items whose
+   chosen state is the checkmark (regular weight, as S2's Menu), each bell a row with a
+   quiet clear button. */
+.spectrum .menu .item[aria-checked="true"] { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .menu .hint { font-size: var(--spectrum-font-size-75); }
+.spectrum .menu #bells .bell { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75) var(--spectrum-spacing-50) var(--spectrum-component-edge-to-text-100); }
+.spectrum .menu #bells .bell svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu #bells .bell a { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .menu #bells .bell button {
+  width: var(--spectrum-component-height-75);
+  height: var(--spectrum-component-height-75);
+  padding: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+}
+.spectrum .menu #bells .bell button:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-down); }
+.spectrum .menu #tracesHere select { width: calc(100% - var(--spectrum-spacing-300)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+
+/* Narrower screens: the filters a drawer over the underlay (on the base, elevated, no edge),
+   the list and the open thread sliding in turn as the page does. */
+@media (max-width: 1099px) {
+  .spectrum #filters { background: var(--spectrum-background-base-color); border-right: 0; }
+  .spectrum main.filtering #filters { box-shadow: var(--lift-shadow); }
+  .spectrum main.dragging #filters {
+    box-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6) calc(var(--spectrum-drop-shadow-blur) * 6)
+      rgb(var(--spectrum-drop-shadow-color-300-rgb), calc(var(--spectrum-drop-shadow-color-300-opacity) * var(--pull, 0)));
+  }
+  .spectrum main::after { background: rgb(var(--spectrum-black-rgb), var(--spectrum-overlay-opacity)); }
+  /* In the drawer the cards sit on the base like any Card: no overhang, so no shadow. */
+  .spectrum #filters .card { box-shadow: none; background: var(--spectrum-background-layer-1-color); }
+}
+@media (max-width: 699px) {
+  .spectrum .ph h2 { font-size: var(--spectrum-font-size-200); }
+  .spectrum .bubble { padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100); }
+  .spectrum .composer { gap: var(--spectrum-spacing-75); }
+  .spectrum .composer textarea { padding: var(--spectrum-component-top-to-text-200) var(--spectrum-component-edge-to-text-100); }
+  .spectrum .composer button.send { padding: 0 var(--spectrum-component-pill-edge-to-text-100); }
+}
+/* A touch screen: the tokens are S2's large scale already (src/page.js), so the controls
+   above grow with them; iOS zooms into a field under 16px, which the large scale's body
+   size is. */
+@media (hover: none) and (pointer: coarse) {
+  .spectrum .find input, .spectrum .composer textarea { font-size: var(--spectrum-font-size-100); }
+}
+
+/* ==== The simple personal view =================================================================
+   (`main.simple`, see `simple` and GROUPS in ui/inbox.js.) One card, the customers by logo
+   and name, and the list by customer until one is picked: each customer a heading over its
+   threads. Its one mark is red: the badge counts the messages that mention you and that you
+   have not read, beside a customer, and the threads it counts are marked in the same red.
+   Unread is bold; nothing else is red, nothing else has a count. */
+main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
+main.simple .fr .lab { grid-column: 2; }
+main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
+.spectrum main.simple .card.simple h3::before { display: none; }
+/* A logo: the icon over the customer's initial, which shows where there is none. */
+.logo { position: relative; flex: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+.logo > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.logo .av { display: grid; place-items: center; font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); line-height: 1; }
+.spectrum .logo > *, .spectrum .logo .av { border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .logo img { background: var(--spectrum-background-layer-2-color); }
+main.simple .t .l2 { padding-left: 0; }
+main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
+main.simple .t .cust { flex: none; }
+main.simple .t .snip:empty { flex: 1; }
+main.simple .t .men { flex: none; margin-left: auto; }
+main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
+/* The list by customer: a heading each, the threads it shows, "N more", and with nothing new. */
+#threads .rows > .grp { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%;
+  padding: var(--spectrum-spacing-300) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
+#threads .rows > .grp.sticky { position: sticky; top: var(--list-head, 0px); z-index: 1; padding-top: var(--spectrum-spacing-100); }
+#threads .rows > .grp .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .rows > .grp .back { margin-left: auto; flex: none; }
+#threads .rows > .grp-more { display: block; width: 100%; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-200) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100));
+  border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
+#threads .rows > .grp-quiet { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-200); line-height: 1.5; }
+/* The red badge: S2's NotificationBadge, negative, wherever it is; the dot its colour. */
+.spectrum main.simple .men, .spectrum main.simple #threads .count .filt b.men {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-negative-background-color-default);
+  color: var(--spectrum-white);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+  text-align: center;
+}
+.spectrum main.simple .t.mention .you { background: var(--spectrum-negative-background-color-default); }
+.spectrum main.simple .t .cust { color: var(--spectrum-neutral-content-color-default); }
+.spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
+.spectrum #threads .rows > .grp {
+  background: var(--spectrum-background-layer-1-color);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-medium-font-weight);
+}
+.spectrum #threads .rows > .grp.new { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .rows > .grp:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum #threads .rows > :is(.grp-more, .grp-quiet) {
+  background: var(--spectrum-background-layer-1-color);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum #threads .rows > .grp-more, .spectrum #threads .rows > .grp .back { color: var(--spectrum-accent-content-color-default); }
+.spectrum #threads .rows > .grp .back { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
+.spectrum #threads .rows > .grp-more:hover { text-decoration: underline; }
+.spectrum #threads .rows > .grp-quiet { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Mentions, at the top right of the personal view's customers: a quiet ActionButton, in its
+   selected state while it filters. On narrower screens the Customers button shows it is on. */
+.spectrum .card h3 .atme {
+  display: grid; place-items: center; margin-left: auto; padding: 0;
+  width: var(--spectrum-component-height-75); height: var(--spectrum-component-height-75);
+  color: var(--spectrum-neutral-content-color-default); background: transparent; border: 0;
+  border-radius: var(--s2-radius); cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .card h3 .atme svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .card h3 .atme:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
+.spectrum .card h3 .atme[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
+.spectrum .card h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .card h3 .clear + .atme { margin-left: var(--spectrum-spacing-75); }
+.spectrum #threads .count .filt .at { display: inline-grid; margin-left: var(--spectrum-spacing-75); }

@@ -16,7 +16,8 @@ import {
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
-  beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, openOauth, revokeGrant, serverForState,
+  beginSignIn, CALLBACK_PATH, disconnect, finishSignIn, grantState, openOauth, revokeGrant,
+  serverForState,
 } from './agent/mcpoauth.js';
 import {
   appManifest, approveInstallation, createApp, currentApp, forgetGithub, installationsWithApprovals,
@@ -25,7 +26,8 @@ import {
 import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
-import { inTeam, isAdmin, managesTeam } from './review.js';
+import { mayEdit, mayRead } from './kbaccess.js';
+import { isAdmin, managesTeam } from './review.js';
 
 /**
  * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
@@ -39,6 +41,10 @@ import { inTeam, isAdmin, managesTeam } from './review.js';
  *   `DELETE { id }` removes it;
  * - `POST /check { id }` connects and lists its tools, as an agent would. Adding or changing a
  *   server checks it too.
+ * - `PUT /channel { id, channel, enabled }` switches it for one of the knowledge base's
+ *   channels (`enabled: null` hands the channel back to the server's own switch), for whoever
+ *   manages the server and the team that owns the channel. A server lists its switches as
+ *   `channels`.
  *
  * Header values are sealed with TOKEN_KEY and only unsealed to talk to the server.
  *
@@ -78,9 +84,13 @@ const parse = (s, fallback) => {
   }
 };
 
+const shownSwitch = (r) => r && { enabled: Boolean(r.enabled), by: r.changed_by, at: r.changed_at };
+
 /** A row as the page sees it: no header values, no tokens, no client secret. */
 async function shown(env, row) {
   const oauth = row.auth === 'oauth' ? await openOauth(env, row.oauth).catch(() => ({})) : null;
+  const { results: switches } = await env.DB.prepare(`SELECT channel, enabled, changed_by,
+      changed_at FROM mcp_server_switches WHERE server_id = ?`).bind(row.id).all();
   const config = (oauth && oauth.config) || {};
   return {
     id: row.id,
@@ -93,7 +103,7 @@ async function shown(env, row) {
     headerNames: row.header_names ? row.header_names.split(',') : [],
     auth: row.auth || 'headers',
     oauth: oauth && {
-      connected: Boolean(row.oauth_by && !row.oauth_error),
+      connected: grantState(row) === 'connected',
       by: row.oauth_by || null,
       at: row.oauth_at || null,
       expiresAt: row.oauth_expires_at || null,
@@ -106,6 +116,8 @@ async function shown(env, row) {
     },
     allow: row.allow || '',
     enabled: Boolean(row.enabled),
+    // The channels switched on their own: `{ <channel id>: { enabled, by, at } }`.
+    channels: Object.fromEntries((switches || []).map((r) => [r.channel, shownSwitch(r)])),
     tools: parse(row.tools, []),
     checkedAt: row.checked_at,
     checkError: row.check_error,
@@ -115,17 +127,16 @@ async function shown(env, row) {
 }
 
 /** Whether `me` may manage the servers of `scope`/`slug`: whoever edits its knowledge base. */
-const mayManage = (me, scope, slug) => isAdmin(me) || (scope === 'team' && managesTeam(me, slug));
+const mayManage = (env, me, scope, slug) => mayEdit(env, me, { kind: scope, slug });
 
 /**
  * The team or customer of a knowledge base `me` may edit, as `{ scope, slug }`; else null.
- * With `read`, of one `me` may look at: a member of its team sees its servers, read-only.
+ * With `read`, of one `me` may look at (src/kbaccess.js): read-only, at bare URLs.
  */
 export async function ownerOf(env, me, repo, { read = false } = {}) {
   const base = repo && await env.DB.prepare('SELECT kind, slug FROM knowledge_bases WHERE repo = ?')
     .bind(String(repo)).first();
-  const may = base && (mayManage(me, base.kind, base.slug)
-    || (read && base.kind === 'team' && inTeam(me, base.slug)));
+  const may = base && await (read ? mayRead : mayEdit)(env, me, base);
   return may ? { scope: base.kind, slug: base.slug } : null;
 }
 
@@ -276,7 +287,7 @@ async function resetOauth(env, id, sealed) {
       oauth_pending = NULL, oauth_state = NULL WHERE id = ?`).bind(sealed, Number(id)).run();
 }
 
-const connected = (row) => row.auth !== 'oauth' || Boolean(row.oauth_by && !row.oauth_error);
+const connected = (row) => row.auth !== 'oauth' || grantState(row) === 'connected';
 
 async function byId(env, id) {
   return env.DB.prepare('SELECT * FROM mcp_servers WHERE id = ?').bind(Number(id)).first();
@@ -293,7 +304,9 @@ async function check(env, id) {
       WHERE id = ?`).bind(Number(id)).run();
     return {};
   }
-  const server = await serverWithHeaders(env, id).catch((e) => ({ error: e.message }));
+  // On for the server or for any channel: some agent may use it.
+  const server = await serverWithHeaders(env, id, { anywhere: true })
+    .catch((e) => ({ error: e.message }));
   let res;
   if (!server) {
     res = { error: 'turned off: agents do not use it' };
@@ -318,8 +331,6 @@ async function check(env, id) {
 }
 
 // ---- global servers ----------------------------------------------------------------------
-
-const shownSwitch = (r) => r && { enabled: Boolean(r.enabled), by: r.changed_by, at: r.changed_at };
 
 const shownTools = (tools) => (tools || []).map((t) => ({
   name: t.name,
@@ -375,7 +386,7 @@ async function globalsView(env, me, owner, only) {
           installations: app ? await installationsWithApprovals(env, app).catch(() => []) : [],
           configured: Boolean(env.TOKEN_KEY && env.PUBLIC_ORIGIN),
         };
-      } else if (app && mayManage(me, owner.scope, owner.slug)) {
+      } else if (app && await mayManage(env, me, owner.scope, owner.slug)) {
         // Team managers install it on their repositories; the admin team then allows that.
         const { slug, htmlUrl, installUrl } = shownApp(app);
         view.github = { app: { slug, htmlUrl, installUrl } };
@@ -385,9 +396,12 @@ async function globalsView(env, me, owner, only) {
   }));
 }
 
-/** The team a channel is filed under (its latest thread's), and its kind; null if unknown. */
+/**
+ * The team a channel is filed under (its latest thread's), its customer and its kind; null if
+ * unknown.
+ */
 export async function channelOwner(env, channel) {
-  return env.DB.prepare(`SELECT team, kind FROM threads WHERE channel_id = ?
+  return env.DB.prepare(`SELECT team, org, kind FROM threads WHERE channel_id = ?
     ORDER BY COALESCE(last_at, any_at) DESC LIMIT 1`).bind(channel).first();
 }
 
@@ -631,7 +645,7 @@ async function list(env, me, repo) {
   }
   const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
     ORDER BY name`).bind(owner.scope, owner.slug).all();
-  const may = mayManage(me, owner.scope, owner.slug);
+  const may = await mayManage(env, me, owner.scope, owner.slug);
   const servers = await Promise.all((results || []).map((r) => shown(env, r)));
   return json({
     repo,
@@ -685,7 +699,7 @@ async function update(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   const { fields, error } = await fieldsFrom(env, body, current);
@@ -734,14 +748,64 @@ async function remove(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   if (current.auth === 'oauth' && current.oauth_by) {
     await disconnect(env, current, me.email || String(me.id)).catch(() => {});
   }
-  await env.DB.prepare('DELETE FROM mcp_servers WHERE id = ?').bind(current.id).run();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM mcp_server_switches WHERE server_id = ?').bind(current.id),
+    env.DB.prepare('DELETE FROM mcp_servers WHERE id = ?').bind(current.id),
+  ]);
   return json({ ok: true, deleted: current.id });
+}
+
+/**
+ * PUT /api/kb/mcp/channel `{ id, channel, enabled }`: turns a server on or off in one channel
+ * of its knowledge base (`enabled: null`: the channel follows the server's switch again), for
+ * whoever manages the server and the team that owns the channel. A server nobody checked yet is
+ * checked when it goes on.
+ */
+async function switchChannel(env, me, body) {
+  const { enabled } = body;
+  if (enabled !== null && typeof enabled !== 'boolean') {
+    return bad('give enabled: true or false (or null, for the channel to follow the server)');
+  }
+  const current = await byId(env, body.id);
+  if (!current || !await mayManage(env, me, current.scope, current.slug)) {
+    return json({ error: 'no such server' }, 404);
+  }
+  const channel = String(body.channel || '');
+  const owner = channel && await channelOwner(env, channel);
+  // One of this knowledge base's channels (as GET /api/kb/channels lists them), with an agent.
+  if (!owner || owner.kind !== 'channel' || !managesTeam(me, owner.team)
+    || owner[current.scope === 'team' ? 'team' : 'org'] !== current.slug) {
+    return json({ error: 'no such channel' }, 404);
+  }
+  const by = me.name || me.email || String(me.id);
+  const at = new Date().toISOString();
+  if (enabled === null) {
+    await env.DB.prepare('DELETE FROM mcp_server_switches WHERE server_id = ? AND channel = ?')
+      .bind(current.id, channel).run();
+  } else {
+    await env.DB.prepare(`INSERT INTO mcp_server_switches (server_id, channel, enabled,
+        changed_by, changed_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (server_id, channel) DO UPDATE SET enabled = excluded.enabled,
+        changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
+      .bind(current.id, channel, enabled ? 1 : 0, by, at).run();
+  }
+  const checked = enabled && !current.checked_at ? await check(env, current.id) : {};
+  console.log(JSON.stringify({
+    route: 'kb', mcp: 'channel', id: current.id, team: owner.team, enabled, by: me.id,
+  }));
+  return json({
+    ok: true,
+    ...checked,
+    channel,
+    switch: enabled === null ? null : { enabled, by, at },
+    server: await shown(env, await byId(env, current.id)),
+  });
 }
 
 async function recheck(env, me, body) {
@@ -749,7 +813,7 @@ async function recheck(env, me, body) {
   if (!current) {
     return json({ error: 'no such server' }, 404);
   }
-  if (!mayManage(me, current.scope, current.slug)) {
+  if (!await mayManage(env, me, current.scope, current.slug)) {
     return json({ error: 'no such server' }, 404);
   }
   const checked = await check(env, current.id);
@@ -761,7 +825,7 @@ async function recheck(env, me, body) {
 /** A server `me` manages that signs in with OAuth, by id; else an error response. */
 async function oauthServer(env, me, id) {
   const current = await byId(env, id);
-  if (!current || !mayManage(me, current.scope, current.slug)) {
+  if (!current || !await mayManage(env, me, current.scope, current.slug)) {
     return { error: json({ error: 'no such server' }, 404) };
   }
   if (current.auth !== 'oauth') {
@@ -796,7 +860,7 @@ async function oauthStart(env, me, body) {
  */
 async function oauthCallback(env, me, url) {
   const row = await serverForState(env, url.searchParams.get('state'));
-  if (!row || !mayManage(me, row.scope, row.slug)) {
+  if (!row || !await mayManage(env, me, row.scope, row.slug)) {
     return text('This sign-in expired or was not started here. Connect the server again from the'
       + ' knowledge-base editor.\n', 400);
   }
@@ -854,6 +918,7 @@ export async function mcpAdmin(request, env, url, me) {
     case 'PUT /api/kb/mcp': return update(env, me, body);
     case 'DELETE /api/kb/mcp': return remove(env, me, body);
     case 'POST /api/kb/mcp/check': return recheck(env, me, body);
+    case 'PUT /api/kb/mcp/channel': return switchChannel(env, me, body);
     case 'POST /api/kb/mcp/oauth/start': return oauthStart(env, me, body);
     case `GET ${CALLBACK_PATH}`: return oauthCallback(env, me, url);
     case 'POST /api/kb/mcp/oauth/disconnect': return oauthDisconnect(env, me, body);

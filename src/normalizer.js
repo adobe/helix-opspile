@@ -12,13 +12,14 @@
 
 import { agentEnabled } from './agent/enabled.js';
 import { AGENT_DELAY_SECONDS, pokeAgent } from './agent/stub.js';
+import { recordDead } from './deadjobs.js';
 import { requestBackfill, runBackfill } from './backfill.js';
 import { channelPath, writeMessage } from './channels.js';
 import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
-import { rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
+import { dethread, rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
@@ -26,12 +27,16 @@ import { discordApi } from './discord.js';
 import {
   discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
 } from './markdown.js';
-import { normalize, slackLinkIn } from './normalize.js';
+import {
+  normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+} from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
+import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
+import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
 import { classify } from './rules.js';
 import {
@@ -172,7 +177,34 @@ async function discordMarkdown(env, message) {
   });
 }
 
+/**
+ * A Teams system notice in words, with the names of the people it names: Graph sends their ids,
+ * often without names.
+ */
+export async function teamsEventMarkdown(env, message) {
+  const found = new Map();
+  for (const u of teamsEventUsers(message.event).slice(0, MAX_MENTIONS)) {
+    // Someone who posted is known already: a replay asks Graph nothing, and a stale identity
+    // is not looked up again here, where a failed lookup would forget its name.
+    // eslint-disable-next-line no-await-in-loop
+    const cached = await env.DB.prepare(`SELECT COALESCE(p.name, i.name) AS name FROM identities i
+      LEFT JOIN people p ON p.id = i.person
+      WHERE i.source = 'teams' AND i.tenant = ? AND i.user_id = ?`).bind(message.tenant, u.id).first();
+    // eslint-disable-next-line no-await-in-loop
+    const identity = cached && cached.name ? { name: cached.name } : await getIdentity(env, {
+      source: 'teams', tenant: message.tenant, userId: u.id, name: u.displayName, home: u.tenantId,
+    });
+    const known = identity.person_name || identity.name;
+    // A failed lookup names the user by their id.
+    found.set(u.id, known && known !== u.id ? known : u.displayName);
+  }
+  return teamsEventText(message.event, (u) => found.get(u.id) || u.displayName);
+}
+
 async function toMarkdown(env, message) {
+  if (message.format === 'teams-event') {
+    return teamsEventMarkdown(env, message);
+  }
   if (message.format === 'html') {
     return htmlToMarkdown(message.text);
   }
@@ -279,6 +311,29 @@ const fresh = (message, now = Date.now()) => {
 };
 
 /**
+ * The people whose thread this is, as the inbox sees it (`mine` in ui/inbox.js): who posted in
+ * it, was mentioned in it or put 👀 on it, in any thread of its group.
+ */
+async function involvedIn(env, thread) {
+  const { results } = await env.DB.prepare(`WITH g AS (
+      SELECT COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?)
+    SELECT t.thread FROM threads t, g WHERE t.thread = g.k OR t.logical_thread = g.k`)
+    .bind(thread).all();
+  const keys = (results || []).map((r) => r.thread);
+  const list = JSON.stringify(keys);
+  const [{ results: people }, signals] = await Promise.all([
+    env.DB.prepare(`SELECT person FROM messages WHERE thread IN (SELECT value FROM json_each(?))
+        AND person IS NOT NULL AND deleted = 0 AND counted = 1
+      UNION SELECT person FROM mentions WHERE thread IN (SELECT value FROM json_each(?))`)
+      .bind(list, list).all(),
+    signalFacts(env, keys),
+  ]);
+  const seen = [...signals.values()].flat()
+    .filter((s) => s.signal === 'seen' && s.staff && s.person).map((s) => s.person);
+  return [...new Set([...(people || []).map((r) => r.person), ...seen])];
+}
+
+/**
  * Turns one pile-1 object into its pile-2 file. Returns a short result for the log.
  *
  * @param {object} env bindings
@@ -321,6 +376,7 @@ export async function processKey(env, key, cache = {}) {
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
   const cls = classify(cache.rules, channel);
+  env.meter?.attribute({ org: cls.org, team: cls.team });
   if (cls.kind === 'ignore') {
     return { key, result: 'ignored' };
   }
@@ -329,6 +385,10 @@ export async function processKey(env, key, cache = {}) {
 
   const deleted = op.op === 'delete';
   const { author, person } = await resolveAuthor(env, message.authorRef);
+  // Before it is indexed: an edit, an unfurl or a Teams reaction rewrites a message D1 already has.
+  // Only people's messages: a bot's does not make a thread unread either (`counted`).
+  const posted = Boolean(env.ROOMS) && !deleted && author.kind === 'person' && fresh(message)
+    && !await findMessage(env.DB, message);
   if (!deleted) {
     await recordBots(env, message);
   }
@@ -392,6 +452,10 @@ export async function processKey(env, key, cache = {}) {
     at: message.at,
   }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
 
+  // The message's files, copied for the agents (src/threadfiles.js), in a job of their own.
+  if (written && !deleted && env.FILES && attachmentsOf(body)) {
+    await env.NORMALIZE.send({ files: message.thread });
+  }
   // A reply whose root we have never seen: fetch the thread's history once.
   if (message.id !== message.rootId && !deleted) {
     const root = await findMessage(env.DB, { ...message, id: message.rootId });
@@ -404,6 +468,15 @@ export async function processKey(env, key, cache = {}) {
         rootId: message.rootId,
         thread: message.thread,
       });
+    }
+  }
+  // A person's reply in the platform thread of a root that was folded into another conversation:
+  // it is a conversation of its own now (src/rethread.js dethread), before its agent is poked and
+  // the inboxes hear of the message. The group it left is exported again; this one is below.
+  if (message.id !== message.rootId && !deleted && cls.kind === 'channel' && author.kind === 'person') {
+    const split = await dethread(env, message.thread);
+    if (split.group) {
+      await queueExport(env, [split.group, ...split.split]);
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
@@ -435,18 +508,28 @@ export async function processKey(env, key, cache = {}) {
   const rooms = env.ROOMS ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId,
   }) : [];
+  // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay or a
+  // catch-up long after) newly mentions, the people whose thread it is, and who wrote it.
+  const mentions = written && fresh(message) ? mentioned : [];
+  const involved = written && posted ? await involvedIn(env, message.thread) : [];
   await notifyRoom(env, rooms, {
     type: 'thread',
     thread: message.thread,
-    // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay
-    // or a catch-up long after) newly mentions, with who wrote it.
-    ...(written && fresh(message) && mentioned.length ? {
-      mentions: mentioned, by: person, author: author.name, at: message.at,
+    ...(mentions.length || involved.length ? {
+      mentions, involved, by: person, author: author.name, at: message.at,
     } : {}),
   });
   return {
     key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
   };
+}
+
+/** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
+export function jobSubject(body) {
+  const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
+    || (body.backfill && body.backfill.thread)
+    || (body.export && [].concat(body.export).length === 1 && [].concat(body.export)[0]);
+  return typeof thread === 'string' ? { thread } : {};
 }
 
 /** An export job's key for the log: its thread, or the first of the sweep's and how many more. */
@@ -462,10 +545,15 @@ const LAST_ATTEMPT = 6;
  * Queue consumer for NORMALIZE. Each message is acknowledged on its own; a failure is
  * retried by the queue, and after the last retry it goes to the dead-letter queue.
  */
-export async function consume(batch, env) {
+export async function consume(batch, baseEnv, meter = null) {
   const cache = {};
+  const share = 1 / Math.max(1, batch.messages.length);
   for (const msg of batch.messages) {
     const body = msg.body || {};
+    // Counted for the job's thread (src/cogs/meter.js); a raw event names its customer once it
+    // is filed (processKey). One invocation is one Workers request, shared by its messages.
+    const env = meter ? meter.env(jobSubject(body)) : baseEnv;
+    env.meter?.add('workers', 'requests', '', share);
     const key = body.key
       || (body.label && `label:${body.label}`)
       || (body.vectorize && `vectorize:${body.vectorize}`)
@@ -473,6 +561,7 @@ export async function consume(batch, env) {
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
+      || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
       || (body.catchup && `catchup:${body.catchup.channelId}`);
     try {
@@ -496,9 +585,12 @@ export async function consume(batch, env) {
       } else if (body.refile) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await refile(env, body.refile) };
+      } else if (body.files) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await copyThreadFiles(env, body.files) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
-        r = { key, ...await pokeAgent(env, body.agent) };
+        r = { key, ...await pokeAgent(env, body.agent, { retry: msg.attempts < LAST_ATTEMPT }) };
       } else if (body.label) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await labelThread(env, body.label) };
@@ -521,13 +613,18 @@ export async function consume(batch, env) {
     } catch (e) {
       console.error(JSON.stringify({ route: 'normalize', key, error: e.message }));
       // Rate limits (Vectorize, Workers AI) back off longer and spread out.
-      const limited = /Too Many Requests|429|rate limit/i.test(e.message);
+      const limited = /Too Many Requests|429|rate.?limit/i.test(e.message);
       // A root that cannot be re-threaded still gets its agent, before the job is given up.
       if (body.rethread && body.poke && msg.attempts >= LAST_ATTEMPT) {
         // eslint-disable-next-line no-await-in-loop
         await env.NORMALIZE.send({ agent: body.rethread }).catch(() => {});
       }
       msg.retry({ delaySeconds: limited ? 60 + Math.floor(Math.random() * 240) : 30 });
+
+      if (msg.attempts >= LAST_ATTEMPT) {
+        // eslint-disable-next-line no-await-in-loop
+        await recordDead(env, key, body, e.message);
+      }
     }
   }
 }

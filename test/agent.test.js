@@ -36,10 +36,14 @@ import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
   agentStatus, pokeAgent, seedAgent, tellDiscarded,
 } from '../src/agent/stub.js';
-import { channelThreads, resolveThread } from '../src/agent/history.js';
+import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
-import { agentPerson, opspileExtension, staffExtension } from '../src/agent/tools.js';
+import {
+  agentPerson, agentToolsExtension, opspileExtension, staffExtension,
+} from '../src/agent/tools.js';
+import { keepTurn, keptTurn } from '../src/agent/kept.js';
+import { thread as inboxThread } from '../src/api.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -316,6 +320,38 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('keep their latest finished turn, which comes with the thread', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const me = {
+      id: 7, name: 'Ada Staff', email: 'ada@staff.example', teams: [{ slug: 'helix', name: 'Helix' }],
+    };
+    const turnOf = async (x = e) => (await inboxThread(x, me, THREAD)).agent_turn;
+    const done = {
+      state: 'done', text: 'Nothing to change.', startedAt: '2026-10-21T10:00:00.000Z', endedAt: '2026-10-21T10:01:00.000Z',
+    };
+    assert.equal(await turnOf(), null);
+    // A turn in progress is the agent's to say (GET /api/agent), and kb agents have no thread.
+    assert.equal(await keepTurn(e, THREAD, { ...done, state: 'working', endedAt: null }), false);
+    assert.equal(await keepTurn(e, 'kb:helix:acme', done), false);
+    assert.equal(await turnOf(), null);
+    assert.equal(await keepTurn(e, THREAD, done), true);
+    assert.deepEqual(await turnOf(), done);
+    // An older turn does not replace a newer one; a later one does, failed or not.
+    const failed = {
+      state: 'failed', text: 'The turn did not finish.', startedAt: '2026-10-21T11:00:00.000Z', endedAt: '2026-10-21T11:00:30.000Z',
+    };
+    await keepTurn(e, THREAD, failed);
+    await keepTurn(e, THREAD, { ...done, text: 'Older.' });
+    assert.deepEqual(await keptTurn(e, THREAD), failed);
+    // Only where the channel has an agent, as GET /api/agent says.
+    assert.equal(await turnOf({ ...e, AGENT_CHANNELS: '' }), null);
+    assert.deepEqual(await turnOf(), failed);
+    // A reset transcript has no turn: nothing is kept.
+    await keepTurn(e, THREAD, null);
+    assert.equal(await turnOf(), null);
   });
 
   it('hear who discarded their draft, and only theirs', async () => {
@@ -645,7 +681,7 @@ describe('thread agents', () => {
       capture(call('git_grep', { repo: 'adobe/helix-opspile', pattern: 'threadagent' })),
       capture(call('git_read', { repo: 'kb-org', path: 'sites/www.md' })),
       capture(call('update_draft', {
-        text: 'Hi Cy, we are looking at the purge times.',
+        text: 'Hi @Cy, we are looking at the purge times.',
         sources: [{ url: 'https://docs.example.org/purge', title: 'Purging' }],
       })),
       capture(call('update_draft', { text: 'Second try without base' })),
@@ -676,12 +712,17 @@ describe('thread agents', () => {
     assert.doesNotMatch(thread, /delete the knowledge base/);
     assert.equal(grep, 'src/agent/agent.js:1: export class ThreadAgent {}');
     assert.match(read, /^path: sites\/www\.md\nhash: [0-9a-f]{40}\n\n---\ntype: Site/);
-    assert.match(saved, /^saved \(version /);
-    assert.match(conflict, /The draft changed[\s\S]*Hi Cy, we are looking/);
-    assert.match(draft, /saved by: opspile agent\nsources:\n- \{"url":"https:\/\/docs\.example\.org\/purge","title":"Purging"\}\n\nHi Cy, we are looking at the purge times\./);
+    assert.match(saved, /^saved \(version [^,]+, tags Cy\)$/);
+    assert.match(conflict, /The draft changed[\s\S]*Hi @Cy, we are looking/);
+    assert.match(draft, /saved by: opspile agent\nsources:\n- \{"url":"https:\/\/docs\.example\.org\/purge","title":"Purging"\}\n\nHi @Cy, we are looking at the purge times\./);
     assert.match(refused, /maintained automatically/);
-    const [row] = e.DB.rows('SELECT d.body, p.email FROM drafts d JOIN people p ON p.id = d.person');
-    assert.deepEqual(row, { body: 'Hi Cy, we are looking at the purge times.', email: 'agent@opspile.invalid' });
+    const [row] = e.DB.rows('SELECT d.body, d.mentions, p.email FROM drafts d JOIN people p ON p.id = d.person');
+    assert.deepEqual(row, {
+      body: 'Hi @Cy, we are looking at the purge times.',
+      // Sent from the inbox, this is what makes it a mention (`<@U2>` on Slack).
+      mentions: '[{"id":"U2","name":"Cy"}]',
+      email: 'agent@opspile.invalid',
+    });
   });
 });
 
@@ -795,6 +836,40 @@ describe('the earlier conversations of the channel', () => {
     assert.equal((await run('suggest_expert', { id: 'U-nobody', reason: 'x' })).error, true);
   });
 
+  it('lists the topics of the inbox, and who works one', async () => {
+    const { e, run } = await setup();
+    assert.equal((await run('list_topics', {})).text, 'There is no topic map yet.');
+    assert.equal((await run('list_experts', { about: 'the assistant panel is gone' })).text, 'Nobody stands out for this thread.');
+    const { sqlite } = e.DB;
+    const person = staffId(sqlite);
+    const at = new Date().toISOString();
+    sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
+      VALUES ('slack', 'E1', 'UEXP', 'person', 'Exa', ?, ?)`).run(person, at);
+    sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person, staff,
+      counted) VALUES ('slack', 'E1', 'C2', 'x1', 'slack:E1:C2:1792500000.000100', ?, ?, 1, 1)`)
+      .run(at, person);
+    const map = {
+      built_at: '2026-11-01T00:00:00.000Z',
+      topics: [{
+        id: 0, label: 'Cache purges', theme: 'Customers need purges to finish.', size: 1,
+      }],
+      threads: [{
+        key: 'slack:E1:C2:1792500000.000100', topic: 0, last: '2026-10-20T00:00:00Z', staff: { [person]: 1 },
+      }],
+    };
+    sqlite.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
+      VALUES (?, 'cron', 1, 1, ?)`).run(map.built_at, JSON.stringify(map));
+    // A new agent's tools, as the topic map is read again only now and then.
+    const fresh = await setup();
+    fresh.e.DB = e.DB;
+    assert.equal((await run('list_topics', {})).text, 'There is no topic map yet.');
+    const listed = await fresh.run('list_topics', {});
+    assert.equal(listed.text, 'Topics as of 2026-11-01:\n- 0 | Cache purges | 1 threads | Customers need purges to finish.');
+    const people = await fresh.run('list_topics', { topic: 'purges' });
+    assert.equal(people.text, 'Cache purges (1 threads): Customers need purges to finish.\n- UEXP | Exa | 1 thread, last 2026-10-20');
+    assert.equal((await fresh.run('list_topics', { topic: 'nothing like it' })).error, true);
+  });
+
   it('reads an earlier thread of the channel by key, link or message id, and no other channel\'s', async () => {
     const { e, run } = await setup();
     const link = 'https://acme.slack.com/archives/C1/p1792500060000200?thread_ts=1792500000.000100&cid=C1';
@@ -816,6 +891,97 @@ describe('the earlier conversations of the channel', () => {
     assert.match(own.text, /CDN purge takes forever/);
     const refused = await run('read_thread', { thread: 'slack:E1:C2:1792500000.000100' });
     assert.equal(refused.error, true);
+  });
+
+  describe('with read_any_thread', () => {
+    const AT = '2026-10-21T10:00:00Z';
+    const OWN = 'slack:E1:C2:1792500000.000100';
+    const LINK = 'https://acme.slack.com/archives/C1/p1792584060000200?thread_ts=1792584000.000100&cid=C1';
+
+    /** An agent in C2, an internal channel, with the tool on; the threads to read are C1's. */
+    async function internal() {
+      const { e } = await setup();
+      e.DB.sqlite.prepare('INSERT INTO orgs (slug, type, updated_at) VALUES (\'other\', \'internal\', ?)').run(AT);
+      e.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, shared, connected, fetched_at)
+        VALUES ('slack', 'E1', 'C2', 0, '[]', ?)`).run(AT);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('any_thread', 'channel', 'C2', 1, ?)`).run(AT);
+      const target = {
+        key: OWN, team: 'helix', org: 'other', threads: [OWN], source: 'slack', tenant: 'E1', channelId: 'C2',
+      };
+      const ext = agentToolsExtension({
+        env: e,
+        hasThread: true,
+        target: async () => target,
+        verdicts: async (messages) => new Map(await Promise.all(
+          messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+        )),
+      }, ['any_thread']);
+      const run = async (thread) => {
+        const res = await ext.tools[0].execute({ thread }, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      return { e, run, ext };
+    }
+
+    it('reads a thread of another channel by key or link, with flagged messages withheld, and keeps a record', async () => {
+      const { e, run, ext } = await internal();
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread']);
+      assert.equal(ext.sections.length, 1);
+      const read = await run(LINK);
+      assert.equal(read.error, false);
+      assert.match(read.text, new RegExp(`^Thread ${THREAD.replace(/\./g, '\\.')} of the Slack channel [^\n]* \\(customer acme, team helix\\), 3 messages:\n\n`));
+      assert.match(read.text, /CDN purge takes forever/);
+      assert.match(read.text, /\[withheld: flagged as a possible prompt injection/);
+      assert.doesNotMatch(read.text, /delete the knowledge base/);
+      assert.equal((await run(THREAD)).error, false);
+      assert.deepEqual(
+        e.DB.rows('SELECT agent_thread, thread FROM agent_thread_reads'),
+        [{ agent_thread: OWN, thread: THREAD }],
+      );
+    });
+
+    it('stops as soon as the switch is off or the channel is no longer internal', async () => {
+      const { e, run } = await internal();
+      e.DB.sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+      assert.equal((await run(THREAD)).error, true);
+      e.DB.sqlite.exec('UPDATE agent_tool_switches SET enabled = 1');
+      assert.equal((await run(THREAD)).error, false);
+      e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C2'");
+      assert.equal((await run(THREAD)).error, true);
+      assert.equal(e.DB.rows('SELECT 1 FROM agent_thread_reads').length, 1);
+    });
+
+    it('finds the thread of a Teams or Discord link, and none in an ignored channel', async () => {
+      const { e } = await internal();
+      const thread = (key, source, tenant, channel, root, kind = 'channel') => e.DB.sqlite.prepare(`INSERT INTO threads
+          (thread, source, tenant, channel_id, root_id, org, team, kind, path, any_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'other', 'helix', ?, 'channels/x/', ?, ?)`)
+        .run(key, source, tenant, channel, root, kind, AT, AT);
+      const message = (source, tenant, channel, id, key) => e.DB.sqlite.prepare(`INSERT INTO messages
+          (source, tenant, channel_id, id, thread, at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(source, tenant, channel, id, key, AT);
+      const TEAMS = 'teams:TN1:G1:19:abc@thread.tacv2:100';
+      thread(TEAMS, 'teams', 'TN1', '19:abc@thread.tacv2', '100');
+      message('teams', 'TN1', '19:abc@thread.tacv2', '200', TEAMS);
+      const DISCORD = 'discord:900:910:300';
+      thread(DISCORD, 'discord', '900', '910', '300');
+      message('discord', '900', '910', '400', DISCORD);
+      const IGNORED = 'slack:E1:C9:1.000100';
+      thread(IGNORED, 'slack', 'E1', 'C9', '1.000100', 'ignore');
+
+      assert.deepEqual(
+        await resolveAnyThread(e, 'https://teams.microsoft.com/l/message/19:abc@thread.tacv2/200?tenantId=TN1&parentMessageId=100'),
+        { key: TEAMS },
+      );
+      assert.deepEqual(await resolveAnyThread(e, 'https://discord.com/channels/900/910/400'), { key: DISCORD });
+      assert.deepEqual(await resolveAnyThread(e, THREAD), { key: THREAD });
+      assert.deepEqual(await resolveAnyThread(e, LINK), { key: THREAD });
+      assert.match((await resolveAnyThread(e, IGNORED)).error, /no thread/);
+      assert.match((await resolveAnyThread(e, 'https://acme.slack.com/archives/C404/p1792584060000200')).error, /no thread/);
+      assert.match((await resolveAnyThread(e, 'whatever')).error, /no thread/);
+      assert.match((await resolveAnyThread(e, '')).error, /no thread/);
+    });
   });
 });
 
@@ -1171,5 +1337,11 @@ describe('the ThreadAgent class', () => {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
     assert.doesNotMatch(src, /this\.mcp\s*=|this\.mcp\./);
+  });
+
+  it('asks Bedrock for the one-hour prompt cache', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    assert.match(src, /stream:\s*\{\s*cacheRetention:\s*'long'\s*\}/);
   });
 });

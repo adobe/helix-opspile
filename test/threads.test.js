@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, mentionedByName, PREVIEW_MAX, previewOf, readState, titleOf,
-  waitingOn,
+  advanceWatermark, indexMessage, latestMember, mentionedByName, PREVIEW_MAX, previewOf, readState,
+  titleOf, waitingOn,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -91,6 +91,17 @@ describe('indexMessage', () => {
     assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.2', null]);
     await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
     assert.deepEqual([thread(D).title, thread(D).root_at], ['title 1.1', '2026-10-21T10:00:00Z']);
+  });
+
+  it('titles and counts a thread by what people and bots said, not by system notices', async () => {
+    const D = db();
+    const notice = { author: 'Microsoft Teams', authorKind: 'system', counted: false };
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z', { ...notice, title: 'Meeting started by Cy.' }));
+    const row = () => [thread(D).title, thread(D).messages, thread(D).last_at, thread(D).any_at];
+    assert.deepEqual(row(), ['Meeting started by Cy.', 0, null, '2026-10-21T10:00:00Z']);
+    await indexMessage(D, msg('1.2', '2026-10-21T10:01:00Z', { authorKind: 'person', title: 'Can we talk?' }));
+    await indexMessage(D, msg('1.3', '2026-10-21T10:02:00Z', { ...notice, title: 'Meeting ended after 50 s.' }));
+    assert.deepEqual(row(), ['Can we talk?', 1, '2026-10-21T10:01:00Z', '2026-10-21T10:02:00Z']);
   });
 
   it('follows a rule change: org, team and the pile-2 folder move together', async () => {
@@ -247,6 +258,14 @@ describe('titleOf', () => {
     assert.equal(titleOf('Outage', 'body'), 'Outage');
     assert.equal(titleOf(undefined, '\n> **Site down** since 9\nmore'), 'Site down since 9');
     assert.equal(titleOf(undefined, 'x'.repeat(200)).length, 140);
+    assert.equal(
+      titleOf(undefined, 'removed. [Learn more](https://x.example/l)'),
+      'removed. Learn more',
+    );
+    assert.equal(
+      titleOf(undefined, '![shot](https://x.example/a.png)\nsee <https://x.example|it>'),
+      'see it',
+    );
   });
 });
 
@@ -261,5 +280,17 @@ describe('previewOf', () => {
     const long = previewOf('word '.repeat(100));
     assert.equal(long.length, PREVIEW_MAX);
     assert.ok(long.endsWith('…'));
+  });
+});
+
+describe('latestMember', () => {
+  it('takes a member whose messages are all deleted for the oldest, not the latest', () => {
+    const members = [
+      { thread: 'a', any_at: null },
+      { thread: 'b', any_at: '2026-10-20T10:00:36Z' },
+      { thread: 'c', any_at: '2026-10-20T10:00:12Z' },
+    ];
+    assert.equal(latestMember(members).thread, 'b');
+    assert.equal(latestMember([{ thread: 'a', any_at: null }]).thread, 'a');
   });
 });

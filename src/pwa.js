@@ -27,7 +27,8 @@ export const MANIFEST = {
   start_url: '/inbox',
   scope: '/',
   display: 'standalone',
-  background_color: '#0f1114',
+  // Spectrum 2's base background, dark (rgb 17, 17, 17), behind the app while it starts.
+  background_color: '#111111',
   theme_color: ICON_EDGE,
   icons: [
     {
@@ -47,12 +48,18 @@ export const MANIFEST = {
   ],
 };
 
+// Offline, without the pages' stylesheets: Spectrum 2's colors, light and dark, as values
+// (base background, neutral content, gray-100 and gray-300 for the button), in its typeface
+// where the browser has it already.
 const OFFLINE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support · offline</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;background:#0f1114;color:#e8eaed;display:grid;
-place-items:center;min-height:100vh;margin:0}main{text-align:center;padding:24px}
-button{font:inherit;margin-top:12px;padding:6px 16px;border-radius:16px;border:1px solid #2a2f36;
-background:#1a1e23;color:inherit}</style></head><body><main><h1>You are offline</h1>
+<style>:root{color-scheme:light dark}body{font:14px/1.5 adobe-clean-spectrum-vf,adobe-clean,system-ui,sans-serif;
+background:#111111;color:#dbdbdb;display:grid;place-items:center;min-height:100vh;margin:0}
+main{text-align:center;padding:24px}h1{font-size:22px;font-weight:800}
+button{font:inherit;font-weight:700;margin-top:12px;padding:5px 14px;border-radius:16px;border:2px solid #393939;
+background:#2c2c2c;color:inherit}
+@media (prefers-color-scheme:light){body{background:#ffffff;color:#292929}
+button{border-color:#dadada;background:#e9e9e9}}</style></head><body><main><h1>You are offline</h1>
 <p>You need a connection to see the inbox.</p>
 <button onclick="location.reload()">Try again</button></main></body></html>`;
 
@@ -77,7 +84,7 @@ self.addEventListener('notificationclick', (e) => {
   if (url.origin !== self.location.origin) return;
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const inboxes = all.filter((c) => new URL(c.url).pathname === '/inbox');
+    const inboxes = all.filter((c) => new URL(c.url).pathname === url.pathname);
     const win = inboxes.find((c) => c.focused) || inboxes[0];
     if (win) {
       await win.focus();

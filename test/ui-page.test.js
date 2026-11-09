@@ -16,7 +16,7 @@ import { transform } from 'esbuild';
 import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { CHANNEL_REF } from '../src/markdown.js';
-import { PAGES, SCRIPTS } from './ui.js';
+import { SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
 
@@ -34,6 +34,61 @@ function piece(from, to, expose, globals = {}) {
 describe('inbox page', () => {
   it('is a valid module script', async () => {
     await transform(html, { loader: 'js', format: 'esm' });
+  });
+
+  it('shows only the thread agents\' suggestions, not the expert finder\'s own list', () => {
+    const asked = html.match(/(?<=(?:get|fetch)\(\s*[`'"])\/api\/experts[^`'"]*/g);
+    assert.equal(asked.length, 1, asked.join(', '));
+    assert.match(asked[0], /^\/api\/experts\?thread=.*&suggested=1$/);
+  });
+
+  describe('the channel of a new thread', () => {
+    const CHANNELS = [
+      {
+        ref: 'a', source: 'slack', name: 'aem-acme', org: 'acme', orgName: 'ACME', teams: ['t1'], personal: true,
+      },
+      {
+        ref: 'b', source: 'teams', name: 'Acme ops', group: 'Support', org: 'acme', orgName: 'ACME', teams: ['t1'], personal: false,
+      },
+      {
+        ref: 'c', source: 'slack', name: 'aem-globex', org: 'globex', orgName: 'Globex', teams: ['t2'], personal: true,
+      },
+      {
+        ref: 'd', source: 'slack', name: 'internal', org: null, orgName: null, teams: ['t1'], personal: false,
+      },
+    ];
+    const pick = (view) => {
+      const { channelsInView, channelOptions } = piece('function channelsInView', 'const channelIcon', 'channelsInView, channelOptions', {
+        PLATFORM: { slack: 'Slack', teams: 'Teams' },
+        personal: () => !view.team,
+        state: { sel: {}, not: {}, ...view },
+      });
+      return { inView: channelsInView(CHANNELS).map((c) => c.ref), channelsInView, channelOptions };
+    };
+    const set = (...v) => new Set(v);
+
+    it('knows it from the customer and platform of the view on screen', () => {
+      assert.deepEqual(pick({ sel: { customer: set('acme') } }).inView, ['a']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('acme'), platform: set('Teams') } }).inView, ['b']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('(none)') } }).inView, ['d']);
+      assert.deepEqual(pick({ team: 't1', sel: { customer: set('acme') }, not: { platform: set('Slack') } }).inView, ['b']);
+    });
+
+    it('does not know it from filters that pick threads', () => {
+      const sel = { type: set('conversation'), status: set('waiting', 'hot') };
+      assert.deepEqual(pick({ sel }).inView, ['a', 'c']);
+      assert.deepEqual(pick({ team: 't1', sel: { ...sel, customer: set('acme') } }).inView, ['a', 'b']);
+    });
+
+    it('finds every channel by any word, the view\'s first', () => {
+      const { channelOptions, channelsInView } = pick({ team: 't2' });
+      const inView = channelsInView(CHANNELS);
+      const found = (q) => channelOptions(CHANNELS, inView, q).map((c) => c.ref);
+      assert.deepEqual(found(''), ['c', 'a', 'b', 'd']);
+      assert.deepEqual(found('aem'), ['c', 'a']);
+      assert.deepEqual(found('acme support'), ['b']);
+      assert.deepEqual(found('nothing'), []);
+    });
   });
 
   it('formats times and days as toLocale*String did', () => {
@@ -196,6 +251,117 @@ describe('inbox page', () => {
     assert.equal(asks('?team=helix&view=personal'), true);
   });
 
+  it('names the other teams\' unread at the end, smallest first and admin last', () => {
+    const { orderElsewhere, endSentence } = piece(
+      'function orderElsewhere',
+      'function endHtml',
+      'orderElsewhere, endSentence',
+    );
+    const endCopy = (teams) => endSentence(teams);
+    const teams = [
+      {
+        slug: 'platform', name: 'Platform ops', members: 4, unread: 3,
+      },
+      {
+        slug: 'admin', name: 'Admin', members: 1, unread: 2,
+      },
+      {
+        slug: 'edge', name: 'Edge ops', members: 2, unread: 1,
+      },
+      {
+        slug: 'quiet', name: 'Quiet', members: 1, unread: 0,
+      },
+    ];
+    assert.deepEqual(orderElsewhere(teams).map((t) => t.slug), ['edge', 'platform', 'admin']);
+    assert.equal(
+      endCopy(teams),
+      "You've reached the end. But there is 1 more unread thread for your Edge ops team, "
+      + '3 more unread threads for your Platform ops team, and 2 more unread threads for your Admin team.',
+    );
+    assert.equal(
+      endCopy([{
+        slug: 'edge', name: 'Edge ops', members: 2, unread: 4,
+      }]),
+      "You've reached the end. But there are 4 more unread threads for your Edge ops team.",
+    );
+    assert.equal(
+      endCopy([
+        {
+          slug: 'edge', name: 'Edge ops', members: 2, unread: 1,
+        },
+        {
+          slug: 'platform', name: 'Platform ops', members: 4, unread: 2,
+        },
+      ]),
+      "You've reached the end. But there is 1 more unread thread for your Edge ops team "
+      + 'and 2 more unread threads for your Platform ops team.',
+    );
+    assert.equal(endCopy([]), "You've reached the end.");
+    assert.equal(endCopy(null), "You've reached the end.");
+    // The same size sorts by name. Admin stays last however large it is.
+    assert.deepEqual(orderElsewhere([
+      {
+        slug: 'zed', name: 'Zed', members: 3, unread: 1,
+      },
+      {
+        slug: 'admin', name: 'Admin', members: 9, unread: 1,
+      },
+      {
+        slug: 'amy', name: 'Amy', members: 3, unread: 4,
+      },
+    ]).map((t) => t.slug), ['amy', 'zed', 'admin']);
+  });
+
+  it('forgets the empty list when a search paints it, and a team name there drops the type filter', () => {
+    const state = {
+      search: {
+        data: { hits: [{ thread: 'waf' }] }, loading: false, error: null, q: 'WAF',
+      },
+      unread: true,
+      hitNodes: null,
+      order: [],
+      sel: { type: new Set(['conversation']) },
+      not: { type: new Set(['alert']) },
+    };
+    const remembered = '__empty';
+    const list = {
+      children: [],
+      innerHTML: '<div class="empty">Nothing matches these filters.</div>',
+      classList: { toggle() {} },
+    };
+    list[remembered] = list.innerHTML;
+    const head = { innerHTML: '', __html: '' };
+    const { searchRows } = piece('function searchRows', 'function openHit', 'searchRows', {
+      state,
+      searchEntry: () => null,
+      passes: () => false,
+      viewFacets: () => [],
+      filterCount: () => 0,
+      filtButton: () => '',
+      mentionsOn: () => false,
+      esc: (s) => s,
+      viewSwitch: () => '',
+      toNode: () => ({}),
+      row: () => '',
+      preload: { observe() {}, unobserve() {} },
+      cardGone: () => {},
+    });
+    searchRows({
+      querySelector(sel) { return sel === '.rows' ? list : head; },
+    });
+    // Clear would otherwise see the old empty message and leave the search's text up.
+    assert.equal(list[remembered], '');
+    assert.match(list.innerHTML, /hidden by the filters/);
+
+    const { endTeam } = piece('function endTeam', 'function endNote', 'endTeam', { state });
+    endTeam({ closest: (sel) => (sel === '.end' ? {} : null) });
+    assert.equal(state.sel.type, undefined);
+    assert.equal(state.not.type, undefined);
+    state.sel.type = new Set(['conversation']);
+    endTeam({ closest: () => null });
+    assert.equal([...state.sel.type].join(), 'conversation');
+  });
+
   it('shows only the viewer\'s own messages (and those being sent) as theirs', () => {
     const { message } = piece('const continues', '// ---------------------------------------------------------------- the thread agent', 'message', {
       dayLabel: () => 'Today',
@@ -258,8 +424,248 @@ describe('inbox page', () => {
     assert.doesNotMatch(open, /data-pick=|data-edit="1"|>hi</);
   });
 
+  it('catches up after a socket comes back, and not when it first connects', () => {
+    const sockets = [];
+    class FakeSocket {
+      constructor() {
+        this.readyState = 1;
+        sockets.push(this);
+      }
+    }
+    const reloads = [];
+    const state = {
+      sockets: [],
+      live: 1,
+      open: 'b',
+      cache: new Map([['a', 1], ['b', 2]]),
+      offline: 1,
+      experts: new Map([['b', []]]),
+    };
+    const experts = [];
+    const { listen } = piece('/**\n * A socket is back', '// ---------------------------------------------------------------- notifications', 'listen', {
+      WebSocket: FakeSocket,
+      location: { protocol: 'https:', host: 'x' },
+      state,
+      GAP: 'gap',
+      reloadSoon: (k) => reloads.push(k),
+      $: () => ({}),
+      setTimeout: (f) => f(),
+      clearTimeout: () => {},
+      noteEvent: () => {},
+      screenTeams: () => ['helix'],
+      loadExperts: (k) => experts.push(k),
+      fetch: async () => {},
+    });
+    listen('notifications', 1);
+    sockets[0].onclose();
+    sockets[1].onopen();
+    assert.deepEqual(reloads, [], 'a room that is not on screen changes nothing there');
+    sockets.length = 0;
+    state.sockets.length = 0;
+
+    listen('helix', 1);
+    sockets[0].onopen();
+    assert.deepEqual(reloads, []);
+    assert.deepEqual([...state.cache.keys()], ['a', 'b']);
+
+    sockets[0].onclose();
+    assert.equal(sockets.length, 2);
+    sockets[1].onopen();
+    assert.deepEqual(reloads, ['b']);
+    assert.deepEqual([...state.cache.keys()], ['b']);
+    assert.deepEqual(experts, ['b']);
+    assert.equal(state.experts.has('b'), false);
+
+    // With no thread open, a tab in the background still has something to catch up on.
+    state.open = null;
+    sockets[1].onclose();
+    sockets[2].onopen();
+    assert.deepEqual(reloads, ['b', 'gap']);
+  });
+
+  it('shows your reads from another tab or device, and not this tab\'s own again', () => {
+    const at = (h) => `2026-11-05T${String(h).padStart(2, '0')}:00:00Z`;
+    const state = {
+      sockets: [],
+      live: 1,
+      open: null,
+      cache: new Map(),
+      me: { id: 1 },
+      data: {
+        threads: [
+          { thread: 'a', unread: true, last_at: at(9) },
+          { thread: 'b', unread: false, last_at: at(9) },
+          // A folded entry: each member is read up to its own end.
+          {
+            thread: 'g',
+            unread: true,
+            last_at: at(11),
+            members: [{ thread: 'g', last_at: at(8) }, { thread: 'h', last_at: at(11) }],
+          },
+        ],
+      },
+    };
+    const memberLast = (m) => m.last_at || m.any_at;
+    const { readHere } = piece('function readHere(', 'function markRead(', 'readHere', { state, memberLast });
+    const sockets = [];
+    const reloads = [];
+    const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
+      WebSocket: function FakeSocket() { sockets.push(this); },
+      location: { protocol: 'https:', host: 'x' },
+      state,
+      reloadSoon: (k) => reloads.push(k),
+      noteEvent: () => {},
+      screenTeams: () => ['helix'],
+      readHere,
+    });
+    listen('helix', 1);
+    const send = (ev) => sockets[0].onmessage({ data: JSON.stringify({ type: 'read', ...ev }) });
+    send({ person: 1, thread: 'b', at: at(9) });
+    assert.deepEqual(reloads, [], 'read here already (this tab marked it)');
+    send({ person: 1, thread: 'a', at: at(8) });
+    assert.deepEqual(reloads, [], 'not up to its last message');
+    send({ person: 1, thread: 'a', at: at(9) });
+    assert.deepEqual(reloads, ['a'], 'read on another device');
+    send({ person: 1, thread: 'g', at: at(8) });
+    assert.deepEqual(reloads, ['a', 'g'], 'a member of a folded entry, read to its end');
+    send({ person: 1, thread: 'elsewhere', at: at(9) });
+    send({ person: 2, thread: 'b', at: at(9) });
+    assert.deepEqual(reloads, ['a', 'g', 'b'], 'a teammate\'s read, as before');
+  });
+
+  describe('a thread folded into a group (re-threading)', () => {
+    const entry = (thread, members = [thread]) => ({
+      thread, members: members.map((m) => ({ thread: m })),
+    });
+    const page = (threads, next = null) => ({ team: 'helix', threads, page: { next } });
+    /** The inbox's loading, with `answers` as the pages GET /api/inbox gives, in turn. */
+    function inbox(answers) {
+      const state = { team: 'helix', data: null, scores: new Map() };
+      const got = [...answers];
+      const fns = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox, addPage, foldInto, splitFrom', {
+        state,
+        personal: () => false,
+        scopeKey: () => 'helix',
+        scopeOf: (d) => d.team,
+        get: async () => got.shift(),
+        syncSockets: () => {},
+        checkBells: () => {},
+        mergeProfiles: () => {},
+        renderUser: () => {},
+        coParticipants: () => new Map(),
+        inPass: (f) => f(),
+        smartScore: () => 0,
+        render: () => {},
+        backfill: () => {},
+        keepReads: () => {},
+      });
+      return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
+    }
+
+    it('takes the folded thread\'s own entry off the list when the inbox reloads', async () => {
+      const { keys, loadInbox } = inbox([
+        page([entry('stub'), entry('group'), entry('old')], 'cursor'),
+        // The stub is a member of the group now: the first page has only the group.
+        page([entry('group', ['group', 'stub'])], 'cursor'),
+      ]);
+      await loadInbox();
+      assert.deepEqual(keys(), ['stub', 'group', 'old']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['group', 'old'], 'no stub that opens its group');
+    });
+
+    it('takes it off when an older page brings its group', async () => {
+      const { keys, loadInbox, addPage } = inbox([page([entry('a'), entry('stub')], 'cursor')]);
+      await loadInbox();
+      addPage(page([entry('group', ['group', 'stub']), entry('a')]));
+      assert.deepEqual(keys(), ['a', 'group']);
+    });
+
+    /** `listen` on the inbox of `inbox()`: the room's events, as its socket gets them. */
+    function room(state, foldInto, splitFrom = () => {}) {
+      const sockets = [];
+      const reloads = [];
+      const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
+        WebSocket: function FakeSocket() { sockets.push(this); },
+        location: { protocol: 'https:', host: 'x' },
+        state: Object.assign(state, {
+          sockets: [], live: 1, open: null, cache: new Map(), me: { id: 1 },
+        }),
+        reloadSoon: (k) => reloads.push(k),
+        noteEvent: () => {},
+        screenTeams: () => ['helix'],
+        foldInto,
+        splitFrom,
+      });
+      listen('helix', 1);
+      return { send: (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) }), reloads };
+    }
+
+    it('takes it off when the room says so, also when its group is on an older page', async () => {
+      const {
+        state, keys, loadInbox, foldInto,
+      } = inbox([page([entry('stub'), entry('a'), entry('group')], 'cursor')]);
+      await loadInbox();
+      const { send, reloads } = room(state, foldInto);
+      send({ type: 'thread', thread: 'group', folded: ['stub'] });
+      assert.deepEqual(keys(), ['a', 'group']);
+      // Until the reload, the group's entry has it, so opening or reading the group covers it.
+      assert.deepEqual(state.data.threads[1].members.map((m) => m.thread), ['group', 'stub']);
+      assert.deepEqual(reloads, ['group']);
+    });
+
+    it('keeps it until its group is in the inbox, so the conversation stays listed', async () => {
+      const {
+        state, keys, loadInbox, addPage, foldInto,
+      } = inbox([
+        page([entry('stub'), entry('a')], 'cursor'),
+        // The group is on an older page, which the reload does not bring.
+        page([entry('a')], 'cursor'),
+      ]);
+      await loadInbox();
+      room(state, foldInto).send({ type: 'thread', thread: 'group', folded: ['stub'] });
+      assert.deepEqual(keys(), ['stub', 'a']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['a', 'stub']);
+      addPage(page([entry('group')]));
+      assert.deepEqual(keys(), ['a', 'group']);
+    });
+
+    it('lists a thread split back out of its group on its own (de-threading)', async () => {
+      const {
+        state, keys, loadInbox, foldInto, splitFrom,
+      } = inbox([
+        page([entry('group', ['group', 'b']), entry('a')], 'cursor'),
+        page([entry('b'), entry('group'), entry('a')], 'cursor'),
+      ]);
+      await loadInbox();
+      const { send, reloads } = room(state, foldInto, splitFrom);
+      state.cache.set('group', 1).set('b', 2).set('a', 3);
+      send({ type: 'thread', thread: 'group', split: ['b'] });
+      assert.deepEqual(state.data.threads[0].members.map((m) => m.thread), ['group']);
+      assert.deepEqual([...state.cache.keys()], ['a'], 'the group\'s copy has its messages');
+      assert.deepEqual(reloads, ['group']);
+      await loadInbox();
+      assert.deepEqual(keys(), ['b', 'group', 'a']);
+    });
+
+    it('drops a fold still waiting for its group when the thread is split out', async () => {
+      const {
+        state, keys, loadInbox, addPage, foldInto, splitFrom,
+      } = inbox([page([entry('b'), entry('a')], 'cursor')]);
+      await loadInbox();
+      const { send } = room(state, foldInto, splitFrom);
+      send({ type: 'thread', thread: 'group', folded: ['b'] });
+      send({ type: 'thread', thread: 'group', split: ['b'] });
+      addPage(page([entry('group')]));
+      assert.deepEqual(keys(), ['b', 'a', 'group']);
+    });
+  });
+
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
-    const { sendBar, sendState } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendState', {
+    const {
+      sendBar, sendDecides, sendOutcome, sendState,
+    } = piece('// Sending, as in iMessage', 'const REDUCED_MOTION', 'sendBar, sendDecides, sendOutcome, sendState', {
       esc: (x) => String(x ?? ''),
     });
     // Waiting for the replies before it: a sliver.
@@ -285,6 +691,25 @@ describe('inbox page', () => {
     assert.match(sendState({ id: 'x', status: 'sending' }), /role="progressbar"/);
     assert.match(sendState({ id: 'x', status: 'failed', error: 'Slack: is_archived' }), /Not sent: Slack: is_archived[\s\S]*data-retry="x"/);
     assert.equal(sendState({ id: 'x', status: 'delivered' }), '');
+    // Refused means it did not go out; a lost answer means nobody knows.
+    assert.equal(sendOutcome({ status: 502, data: { error: 'Slack: is_archived' } }), 'failed');
+    assert.equal(sendOutcome({ status: 409, data: { error: 'connect first' } }), 'failed');
+    assert.equal(sendOutcome({ status: 0, data: { error: 'could not send' } }), 'unknown');
+    assert.equal(sendOutcome(null), 'unknown');
+    assert.equal(sendOutcome({ status: 500, data: {} }), 'unknown');
+    assert.equal(sendOutcome({ status: 409, data: { unknown: true, error: 'may have' } }), 'unknown');
+    assert.match(sendState({ id: 'x', status: 'unknown', error: 'e' }), /Not sure it was sent.*data-retry="x">Retry/s);
+    assert.match(sendState({
+      id: 'x', status: 'unknown', error: 'e', asked: true,
+    }), /May have been sent.*title="It may go out twice[^>]*>Send again/s);
+    // A key lasts a day: after that, only the person can decide.
+    const at = '2026-10-21T10:00:00Z';
+    assert.equal(sendDecides({ at }, Date.parse('2026-10-21T20:00:00Z')), false);
+    assert.equal(sendDecides({ at }, Date.parse('2026-10-22T10:00:00Z')), true);
+    assert.equal(sendDecides({ at, asked: true }, Date.parse(at)), true);
+    assert.match(sendState({
+      id: 'x', status: 'unknown', error: 'e', at,
+    }, Date.parse('2026-10-22T10:00:00Z')), />Send again</);
   });
 
   it('refuses the attachments the Worker would refuse, before they are sent', () => {
@@ -326,6 +751,46 @@ describe('inbox page', () => {
     assert.equal(withoutAttachments('No files here'), 'No files here');
   });
 
+  it('keeps asking about the agent\'s turn after a request failed, for a while', async () => {
+    const timers = [];
+    const state = { open: 't', agents: new Map() };
+    let down = false;
+    const placed = [];
+    const { loadAgent } = piece('/** Asks the thread\'s agent how its latest turn went', '// ---------------------------------------------------------------- the thread\'s header', 'loadAgent', {
+      state,
+      get: async () => {
+        if (down) {
+          throw new Error('offline');
+        }
+        return { enabled: true, turn: { state: 'working', startedAt: 'x' } };
+      },
+      tracesShown: () => true,
+      threadRow: () => ({}),
+      placeAgent: (k) => placed.push(state.agents.get(k).turn),
+      hidden: () => false,
+      AGENT_POLL_MS: 1,
+      AGENT_WAIT_MS: 1,
+      AGENT_FAILS: 3,
+      setTimeout: (f) => {
+        timers.push(f);
+        return timers.length;
+      },
+      clearTimeout: () => {},
+    });
+    await loadAgent('t');
+    assert.equal(timers.length, 1);
+    down = true;
+    await loadAgent('t');
+    assert.equal(timers.length, 2, 'asks again after a failure');
+    await loadAgent('t');
+    assert.equal(timers.length, 3);
+    // The third failure: the spinner goes, and nothing is left running.
+    await loadAgent('t');
+    assert.equal(timers.length, 3);
+    assert.equal(state.agents.get('t').turn, null);
+    assert.equal(placed.pop(), null);
+  });
+
   it('tells bells apart as the server does, whatever order the filters come in', () => {
     const { bellKey } = piece('// As src/settings.js compares them.', 'const bellOn', 'bellKey');
     const me = { teams: [{ slug: 'helix' }] };
@@ -349,13 +814,45 @@ describe('inbox page', () => {
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
   });
 
+  it('looks at the list again as time passes, while it is on screen', () => {
+    let tick = null;
+    let every = 0;
+    let renders = 0;
+    let away = false;
+    piece('// A thread\'s status depends on the time too', 'document.addEventListener(\'visibilitychange\'', 'state', {
+      setInterval: (f, ms) => {
+        tick = f;
+        every = ms;
+      },
+      hidden: () => away,
+      state: { data: {} },
+      render: () => {
+        renders += 1;
+      },
+      STATUS_TICK_MS: 60000,
+    });
+    assert.equal(every, 60000);
+    tick();
+    assert.equal(renders, 1);
+    away = true;
+    tick();
+    assert.equal(renders, 1);
+  });
+
+  it('outlines neighboring picked values as one, with no edge between them', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\.fr\.on:has\(\+ \.fr\.on\)::after \{ border-bottom: 0; \}/);
+    assert.match(css, /\.fr\.on \+ \.fr\.on::after \{ border-top: 0; \}/);
+    assert.doesNotMatch(css, /\.fr\.on \{[^}]*box-shadow/);
+  });
+
   it('shows every exclusion button of the slid-out rail on a touch screen', () => {
-    const css = PAGES['inbox.html'];
-    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n {2}\}/g)].map((m) => m[1]).join('\n');
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n\}/g)].map((m) => m[1]).join('\n');
     assert.match(touch, /main\.rail\.railopen #filters[^{]*\.fr \.not \{[^}]*pointer-events: auto/);
   });
 
-  it('folds the filter column by the screen\'s width, up to a 13" MacBook\'s, in every view', () => {
+  it('folds the filter column by the screen\'s width, up to a 13" MacBook\'s, but in the simple personal view', () => {
     const railAt = (width, view) => {
       // Only the min-width/max-width queries of RAIL_BAND and WIDE, against `width`.
       const matchMedia = (q) => ({
@@ -370,12 +867,16 @@ describe('inbox page', () => {
       const main = { classList };
       const document = { querySelector: () => main, documentElement: { dataset: {} } };
       const { syncRail } = piece('const RAIL_BAND', 'function wireRail', 'syncRail', {
-        matchMedia, document, personal: () => view === 'personal',
+        matchMedia, document, simple: () => view === 'simple',
       });
       syncRail();
+      assert.equal(classes.has('simple'), view === 'simple');
       return classes.has('rail');
     };
-    for (const view of ['personal', 'team']) {
+    for (const width of [390, 1099, 1440, 1470, 1512, 1920]) {
+      assert.equal(railAt(width, 'simple'), false, `${width}px, the simple personal view`);
+    }
+    for (const view of ['expert', 'team']) {
       assert.equal(railAt(390, view), false, `iPhone, ${view}: the drawer`);
       assert.equal(railAt(1099, view), false, `under 1100px, ${view}: the drawer`);
       assert.equal(railAt(1440, view), true, `13" MacBook Pro, ${view}`);
@@ -383,6 +884,30 @@ describe('inbox page', () => {
       assert.equal(railAt(1512, view), false, `14" MacBook Pro, ${view}`);
       assert.equal(railAt(1920, view), false, `desktop, ${view}`);
     }
+  });
+
+  it('tells what a reply box holds', () => {
+    const { boxState } = piece('/**\n * What a reply box holds', '/** The composer state of a thread', 'boxState');
+    assert.equal(boxState(undefined), 'empty');
+    assert.equal(boxState({ text: '  ', from: '', base: null }), 'empty');
+    assert.equal(boxState({ text: 'mine', from: '', base: null }), 'own');
+    assert.equal(boxState({ text: 'draft', from: 'draft', base: 'v1' }), 'draft');
+    assert.equal(boxState({ text: 'draft, edited', from: 'draft', base: 'v1' }), 'diverged');
+  });
+
+  it('tells where the file in the knowledge-base editor stands', () => {
+    const kb = SCRIPTS['kb.js'];
+    const from = kb.indexOf('/**\n * Where the open file stands');
+    const to = kb.indexOf('/** Saves a pause after the last keystroke');
+    // eslint-disable-next-line no-new-func
+    const at = (f, { dirty = true, saving = null } = {}) => new Function('state', 'edited', `${kb.slice(from, to)}\nreturn fileState;`)({ file: f, saving }, () => dirty)();
+    assert.equal(at({}, { dirty: false }), 'clean');
+    assert.equal(at({ conflict: {} }, { dirty: false }), 'clean');
+    assert.equal(at({}), 'editing');
+    assert.equal(at({}, { saving: Promise.resolve() }), 'saving');
+    assert.equal(at({ conflict: {}, problem: 'x' }), 'conflict');
+    assert.equal(at({ choosePath: true }), 'unnamed');
+    assert.equal(at({ problem: 'refused' }), 'problem');
   });
 
   it('places a thread only bots posted in by its last message, not above every other', () => {
@@ -436,6 +961,148 @@ describe('inbox page', () => {
     assert.equal(channelOf('acme-ops').href, '/inbox?view=personal&filters=1&f.customer=acme');
   });
 
+  describe('the thread\'s header', () => {
+    const header = () => piece('const HEAD_POSTS', 'const pct =', 'headLinks, headTech, headPosts, urlParts');
+    const fact = (field, value) => ({ field, value });
+
+    it('names the links by the page mentioned, else the site\'s production URL', () => {
+      const { headLinks } = header();
+      const site = fact('site', 'acme/www');
+      // Only a site: its production URL.
+      assert.deepEqual(headLinks([site]).map((l) => [l.group, l.href]), [['site', 'https://main--www--acme.aem.live/']]);
+      // A page mentioned comes first, the one Clairic says is affected before the others; a
+      // link to documentation or code is a reference, after the site; the ids come last.
+      const links = headLinks([
+        fact('cve', 'CVE-2026-1234'), fact('ticket', 'OPS-1'), site,
+        fact('url', 'https://github.com/acme/www'), fact('url', 'https://www.aem.live/docs/cdn'),
+        fact('url', 'https://www.acme.example/pricing'),
+        fact('url', 'https://main--www--acme.aem.page/en/'),
+        fact('affected_url', 'main--www--acme.aem.page/en'),
+      ]);
+      assert.deepEqual(links.map((l) => [l.group, l.text, l.note]), [
+        ['mentioned', 'main--www--acme.aem.page/en', 'Affected page'],
+        ['mentioned', 'www.acme.example/pricing', ''],
+        ['site', 'main--www--acme.aem.live', 'Production'],
+        ['reference', 'github.com/acme/www', ''],
+        ['reference', 'www.aem.live/docs/cdn', ''],
+        ['id', 'OPS-1', 'Ticket'],
+        ['id', 'CVE-2026-1234', 'CVE'],
+      ]);
+      assert.equal(links.find((l) => l.text === 'OPS-1').href, null);
+      assert.equal(links.find((l) => l.group === 'id' && l.href).href, 'https://www.cve.org/CVERecord?id=CVE-2026-1234');
+      // What is no URL, and a site that is no `org/site`, are left out.
+      assert.deepEqual(headLinks([fact('affected_url', 'the homepage'), fact('site', 'acme')]), []);
+      assert.equal(links[0].host, 'main--www--acme.aem.page');
+      assert.equal(links.find((l) => l.text === 'OPS-1').host, '');
+    });
+
+    it('lists a link once, however it is written, and not cut off where it is there whole', () => {
+      const { headLinks } = header();
+      const doc = 'https://acme.example/sites/web/Shared%20Documents/Plan.pdf';
+      const links = headLinks([
+        fact('url', doc),
+        fact('url', 'http://ACME.example/sites/web/Shared%20Documents/Plan.pdf/'),
+        fact('url', `${doc}%20`),
+        fact('url', `${doc}.`),
+        fact('url', 'https://acme.example/sites/web/Shared%20Doc…'),
+        fact('url', 'https://acme.example/sites/web/Shared%20Documents/Plan.PDF'),
+        fact('url', 'https://da.example/edit#…'),
+        fact('url', 'https://da.example/edit#…'),
+      ]);
+      assert.deepEqual(links.map((l) => l.href), [
+        doc,
+        'https://acme.example/sites/web/Shared%20Documents/Plan.PDF',
+        'https://da.example/edit#…',
+      ]);
+    });
+
+    it('splits a link\'s address into its path and the page it names, decoded', () => {
+      const { urlParts } = header();
+      assert.deepEqual(urlParts('https://acme.example/sites/web/Shared%20Documents/Plan%20A.pdf'), {
+        lead: 'acme.example/sites/web/Shared Documents', tail: '/Plan A.pdf',
+      });
+      assert.deepEqual(urlParts('https://acme.example/en/?q=a%20b#top'), { lead: 'acme.example', tail: '/en?q=a b#top' });
+      assert.deepEqual(urlParts('https://acme.example/'), { lead: 'acme.example', tail: '' });
+      assert.deepEqual(urlParts('https://da.example/#/org/site'), { lead: 'da.example', tail: '/#/org/site' });
+    });
+
+    it('names the tech stack by what the thread shows, then its topics, then the customer\'s', () => {
+      const { headTech } = header();
+      const vocab = { tech: { eds: 'Edge Delivery', akamai: 'Akamai' }, topics: { cdn: 'CDN and caching' } };
+      const data = {
+        vocab,
+        thread_tech: [{ tech: 'akamai', p: 0.9 }],
+        tech: [{ tech: 'eds', p: 1 }, { tech: 'akamai', p: 0.95 }, { tech: 'fastly', p: 0.8 }],
+        topics: ['cdn'],
+      };
+      const t = headTech(data);
+      assert.equal(t.label, 'Akamai');
+      assert.deepEqual(t.here.map((x) => [x.name, x.p]), [['Akamai', 0.9]]);
+      assert.deepEqual(t.also.map((x) => x.name), ['Edge Delivery', 'fastly']);
+      assert.deepEqual(t.topics.map((x) => x.name), ['CDN and caching']);
+      assert.equal(t.count, 4);
+      // Nothing the thread shows: its first topic, not the customer's likeliest (a da.live link
+      // elsewhere in the channel does not make a Sidekick thread Document Authoring's); with
+      // no topic either, the customer's likeliest.
+      assert.equal(headTech({ ...data, thread_tech: [] }).label, 'CDN and caching');
+      assert.equal(headTech({ ...data, thread_tech: [], topics: [] }).label, 'Edge Delivery');
+      assert.equal(headTech({ vocab, topics: ['cdn'] }).label, 'CDN and caching');
+      assert.equal(headTech({ vocab }).count, 0);
+    });
+
+    it('lists a large group\'s first post and its latest', () => {
+      const { headPosts } = header();
+      const members = Array.from({ length: 30 }, (_, i) => ({ thread: `t${i}` }));
+      const { posts, skipped } = headPosts(members);
+      assert.equal(skipped, 18);
+      assert.deepEqual(posts.map((m) => m.thread), ['t0', ...members.slice(19).map((m) => m.thread)]);
+      assert.deepEqual(headPosts(members.slice(0, 2)), { posts: members.slice(0, 2), skipped: 0 });
+    });
+  });
+
+  it('does not count weekends against normal threads waiting too long', () => {
+    // Local times, so the test holds in any time zone. 6 November 2026 is a Friday.
+    const at = (day, h, m = 0) => new Date(2026, 10, day, h, m).getTime();
+    const H = 3600000;
+    const { waitedFor, computeStatus } = piece('const MIN = 60000;', 'const STATUS_ORDER', 'waitedFor, computeStatus', {
+      viewerId: () => 'me',
+      urgencyOf: (t) => t.urgency,
+      signals: () => ({}),
+      checked: () => false,
+      waitingOn: (t) => t.on,
+      lastOf: (t) => new Date(t.last).toISOString(),
+      teamIds: () => new Set(),
+    });
+    assert.equal(waitedFor(at(6, 16), at(6, 18)), 2 * H);
+    // Friday 16:00 to Monday 9:00: Friday's last eight hours and Monday's first nine.
+    assert.equal(waitedFor(at(6, 16), at(9, 9)), 17 * H);
+    // Asked on Saturday: the clock starts on Monday.
+    assert.equal(waitedFor(at(7, 11), at(9, 2)), 2 * H);
+    assert.equal(waitedFor(at(7, 11), at(8, 23)), 0);
+    // Over two weekends: ten working days.
+    assert.equal(waitedFor(at(6, 0), at(20, 0)), 10 * 24 * H);
+    assert.equal(waitedFor(at(9, 9), at(9, 8)), 0);
+
+    const real = Date.now;
+    try {
+      Date.now = () => at(9, 1);
+      const t = (o) => ({
+        on: 'Us', urgency: 'normal', last: at(7, 10), ...o,
+      });
+      // Asked on Saturday, Monday 1:00: an hour of the three a normal thread may wait.
+      assert.equal(computeStatus(t()), 'quiet');
+      assert.equal(computeStatus(t({ last: at(6, 20) })), 'waiting');
+      // Critical and high run on the wall clock.
+      assert.equal(computeStatus(t({ urgency: 'high' })), 'waiting');
+      // The customer's day of silence does not pass on a weekend either.
+      assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'quiet');
+      Date.now = () => at(9, 11);
+      assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'silent');
+    } finally {
+      Date.now = real;
+    }
+  });
+
   it('ranks a thread just resolved below the open ones of its pile', () => {
     const me = 'me';
     const { classicScore: baseScore } = piece('function closeness', '\nconst tpl', 'classicScore', {
@@ -474,12 +1141,14 @@ describe('inbox page', () => {
         scores: new Map(),
       };
       const passes = (t) => (!state.unread || api.keptUnread(t))
+        && (!state.mentions || t.mentionedMe)
         && (!state.sel.customer?.size || state.sel.customer.has(t.org));
       const names = 'newList, keptUnread, syncList, onList, viewSort, placeRows';
       api = piece('function newList(', '/** The rows in view', names, {
         state,
         passes,
         personal: () => personal,
+        mentionsOn: () => personal && Boolean(state.mentions),
         scopeOf: (d) => d.team,
         activityOf: (t) => String(t.last_at || t.any_at || ''),
         smartScore: (t) => t.score,
@@ -551,6 +1220,19 @@ describe('inbox page', () => {
       state.open = 'globex2';
       state.sel.customer = new Set(['globex', 'initech']);
       assert.deepEqual(shown(), ['globex1', 'globex2']);
+    });
+
+    it('is a new list when Mentions goes on or off in the personal view', () => {
+      const { state, shown, see } = list({ personal: true });
+      state.data.threads = [thread('a', { last_at: '2026-01-01T10:02:00Z' }),
+        thread('b', { last_at: '2026-01-01T10:01:00Z', mentionedMe: true })];
+      assert.deepEqual(shown(), ['a', 'b']);
+      see('a', 'b');
+      // The rows the list has shown would stay; Mentions starts it afresh, with only b.
+      state.mentions = true;
+      assert.deepEqual(shown(), ['b']);
+      state.mentions = false;
+      assert.deepEqual(shown(), ['a', 'b']);
     });
   });
 });

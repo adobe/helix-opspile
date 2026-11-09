@@ -16,9 +16,11 @@
  * sends a channel mention as `<#C…|name>`, often with the name left out (always so from bots
  * and apps); src/markdown.js writes `#name`, else `#C…`, and pile 2 keeps what it wrote then.
  * Resolving them when a thread is read names channels opspile learned about later, too.
+ * Links to a channel (src/channelurl.js) are resolved the same way, on every platform.
  */
 
 import { CHANNEL_REF } from './markdown.js';
+import { channelUrlRefs } from './channelurl.js';
 import { slackLinkIn } from './normalize.js';
 import { memberOf } from './shares.js';
 
@@ -46,14 +48,73 @@ export function channelTokens(texts) {
 }
 
 /** The channel on its platform, for someone who cannot see it in the inbox. */
-function platformUrl(source, tenant, row) {
-  if (source === 'slack') {
+function platformUrl(row) {
+  if (row.source === 'slack') {
     return slackLinkIn(row.domain, `https://slack.com/archives/${row.channel_id}`);
   }
-  if (source === 'discord') {
-    return `https://discord.com/channels/${tenant}/${row.channel_id}`;
+  if (row.source === 'discord') {
+    return `https://discord.com/channels/${row.tenant}/${row.channel_id}`;
+  }
+  if (row.source === 'teams' && row.group_id) {
+    const q = new URLSearchParams({ groupId: row.group_id, tenantId: row.tenant });
+    return `https://teams.microsoft.com/l/channel/${encodeURIComponent(row.channel_id)}/`
+      + `${encodeURIComponent(row.name || '')}?${q}`;
   }
   return null;
+}
+
+/**
+ * `channels` rows with what the viewer needs to find them: a channel's team and customer are
+ * those of its latest thread (the rules file a channel's threads together).
+ */
+const CHANNEL_ROWS = `SELECT c.source, c.tenant, c.channel_id, c.name, c.domain, c.group_id,
+    (SELECT t.team FROM threads t WHERE t.channel_id = c.channel_id AND t.source = c.source
+      ORDER BY t.any_at DESC LIMIT 1) AS team,
+    (SELECT t.org FROM threads t WHERE t.channel_id = c.channel_id AND t.source = c.source
+      ORDER BY t.any_at DESC LIMIT 1) AS org
+  FROM channels c`;
+
+/**
+ * `channels` rows (CHANNEL_ROWS) as the viewer `me` finds them: see channelRefs. The rows
+ * may be of more than one platform.
+ */
+async function placed(env, rows, me) {
+  if (!rows.length) {
+    return [];
+  }
+  const key = (r) => `${r.source}:${r.channel_id}`;
+  const sources = JSON.stringify([...new Set(rows.map((r) => r.source))]);
+  const channelIds = JSON.stringify([...new Set(rows.map((r) => String(r.channel_id)))]);
+  const [{ results: shares }, { results: mine }] = await Promise.all([
+    env.DB.prepare(`SELECT source, channel_id, team FROM channel_teams
+      WHERE source IN (SELECT value FROM json_each(?1))
+        AND channel_id IN (SELECT value FROM json_each(?2)) ORDER BY added_at, team`)
+      .bind(sources, channelIds).all(),
+    // The personal view's channels among them (src/shares.js personalChannels).
+    me && me.id ? env.DB.prepare(`SELECT source, channel_id FROM messages
+        WHERE person = ?1 AND source IN (SELECT value FROM json_each(?2))
+          AND channel_id IN (SELECT value FROM json_each(?3))
+      UNION SELECT c.source, c.channel_id FROM mentions n JOIN threads c ON c.thread = n.thread
+        WHERE n.person = ?1 AND c.source IN (SELECT value FROM json_each(?2))
+          AND c.channel_id IN (SELECT value FROM json_each(?3))`)
+      .bind(me.id, sources, channelIds).all() : { results: [] },
+  ]);
+  const personal = new Set((mine || []).map(key));
+  const mayView = memberOf(me || {});
+  return rows.map((r) => {
+    const id = String(r.channel_id);
+    const teams = [...new Set([r.team, ...(shares || [])
+      .filter((s) => key(s) === key(r)).map((s) => s.team)].filter(Boolean))];
+    return {
+      id,
+      source: r.source,
+      name: r.name || null,
+      org: r.org || null,
+      teams: teams.filter((t) => mayView(t)),
+      personal: personal.has(key(r)),
+      url: platformUrl(r),
+    };
+  });
 }
 
 /**
@@ -77,48 +138,59 @@ export async function channelRefs(env, { source, tenant }, texts, me) {
   if (!env.DB || (!ids.length && !names.length)) {
     return [];
   }
-  // A channel's team and customer are those of its latest thread (the rules file a channel's
-  // threads together).
-  const { results: rows } = await env.DB.prepare(`SELECT c.channel_id, c.name, c.domain,
-      (SELECT t.team FROM threads t WHERE t.channel_id = c.channel_id AND t.source = c.source
-        ORDER BY t.any_at DESC LIMIT 1) AS team,
-      (SELECT t.org FROM threads t WHERE t.channel_id = c.channel_id AND t.source = c.source
-        ORDER BY t.any_at DESC LIMIT 1) AS org
-    FROM channels c WHERE c.source = ?1 AND c.tenant = ?2
+  const { results: rows } = await env.DB.prepare(`${CHANNEL_ROWS}
+    WHERE c.source = ?1 AND c.tenant = ?2
       AND (c.channel_id IN (SELECT value FROM json_each(?3))
         OR lower(c.name) IN (SELECT value FROM json_each(?4)))`)
     .bind(source, String(tenant), JSON.stringify(ids), JSON.stringify(names)).all();
-  if (!(rows || []).length) {
+  return placed(env, rows || [], me);
+}
+
+/** A Slack workspace's host name for a `channels.domain` (src/normalize.js slackLinkIn). */
+const slackHost = (domain) => (domain ? `${domain}.slack.com` : null);
+
+/**
+ * The row of `candidates` (one channel id, perhaps in more than one workspace) that the link
+ * `ref` is to: the workspace the link names, else the one its host is, else the open thread's.
+ */
+function rowFor(ref, candidates, { source, tenant }) {
+  if (ref.tenant) {
+    return candidates.find((r) => String(r.tenant) === ref.tenant) || null;
+  }
+  return candidates.find((r) => ref.host && slackHost(r.domain) === ref.host)
+    || candidates.find((r) => r.source === source && String(r.tenant) === String(tenant))
+    || candidates[0] || null;
+}
+
+/**
+ * The channels that links in the texts of a thread in `{ source, tenant }` are to
+ * (src/channelurl.js), on any platform: a Teams channel's link in a Slack message, a Slack
+ * channel's in a Teams post. As channelRefs: `[{ id, source, name, org, teams, personal,
+ * url }]`, channels opspile does not know left out. A link names its workspace (Teams and
+ * Discord always, Slack by its host, if at all); one that does not is to the channel in the
+ * open thread's workspace, if it has one by that id.
+ *
+ * @param {object} env bindings
+ * @param {{ source: string, tenant: string }} where the thread's platform and workspace
+ * @param {string[]} texts the messages' markdown
+ * @param {object} me the viewer
+ */
+export async function channelLinks(env, where, texts, me) {
+  const refs = channelUrlRefs(texts);
+  if (!env.DB || !refs.length) {
     return [];
   }
-  const channelIds = JSON.stringify(rows.map((r) => String(r.channel_id)));
-  const [{ results: shares }, { results: mine }] = await Promise.all([
-    env.DB.prepare(`SELECT channel_id, team FROM channel_teams
-      WHERE source = ? AND channel_id IN (SELECT value FROM json_each(?)) ORDER BY added_at, team`)
-      .bind(source, channelIds).all(),
-    // The personal view's channels among them (src/shares.js personalChannels).
-    me && me.id ? env.DB.prepare(`SELECT channel_id FROM messages
-        WHERE person = ?1 AND source = ?2 AND channel_id IN (SELECT value FROM json_each(?3))
-      UNION SELECT c.channel_id FROM mentions n JOIN threads c ON c.thread = n.thread
-        WHERE n.person = ?1 AND c.source = ?2 AND c.channel_id IN (SELECT value FROM json_each(?3))`)
-      .bind(me.id, source, channelIds).all() : { results: [] },
-  ]);
-  const personal = new Set((mine || []).map((r) => String(r.channel_id)));
-  const mayView = memberOf(me || {});
-  return rows.map((r) => {
-    const id = String(r.channel_id);
-    const teams = [...new Set([r.team, ...(shares || [])
-      .filter((s) => String(s.channel_id) === id).map((s) => s.team)].filter(Boolean))];
-    return {
-      id,
-      source,
-      name: r.name || null,
-      org: r.org || null,
-      teams: teams.filter((t) => mayView(t)),
-      personal: personal.has(id),
-      url: platformUrl(source, tenant, r),
-    };
-  });
+  const { results } = await env.DB.prepare(`${CHANNEL_ROWS}
+    WHERE c.source IN (SELECT value FROM json_each(?1))
+      AND c.channel_id IN (SELECT value FROM json_each(?2))`)
+    .bind(
+      JSON.stringify([...new Set(refs.map((r) => r.source))]),
+      JSON.stringify([...new Set(refs.map((r) => r.channel))]),
+    ).all();
+  const rows = refs.map((ref) => rowFor(ref, (results || [])
+    .filter((r) => r.source === ref.source && String(r.channel_id) === ref.channel), where))
+    .filter(Boolean);
+  return placed(env, rows, me);
 }
 
 /** `#C…` Slack channel ids in a text, outside code. */

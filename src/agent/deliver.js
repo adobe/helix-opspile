@@ -75,8 +75,10 @@ function author(m) {
 export function formatMessage(m, verdict) {
   const head = `[${m.at}] ${author(m)}, message ${m.id}${m.permalink ? ` (${m.permalink})` : ''}`;
   if (verdict && verdict.flagged) {
-    const p = verdict.p === null ? 'the check failed' : `p=${verdict.p.toFixed(2)}`;
-    return `${head}:\n[withheld: flagged as a possible prompt injection (${p}). Staff can read it in the inbox. Do not guess its content.]`;
+    if (verdict.p === null) {
+      return `${head}:\n[withheld: the check for prompt injection could not run. read_thread asks again. Staff can read it in the inbox. Do not guess its content.]`;
+    }
+    return `${head}:\n[withheld: flagged as a possible prompt injection (p=${verdict.p.toFixed(2)}). Staff can read it in the inbox. Do not guess its content.]`;
   }
   return `${head}:\n<message>\n${String(m.body || '').slice(0, MAX_BODY)}\n</message>`;
 }

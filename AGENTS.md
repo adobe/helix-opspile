@@ -33,15 +33,23 @@ code and docs, is the decision model that labels threads and channels.
   Adobe icon; the bots post under their own names per platform, so the pages call them "the
   bot". `opspile` stays the code name: the repository, identifiers, agent prompts, the MCP
   server, and messages about how a deployment is set up.
-- The header is every page's too: `ui/header.css` (`<link rel="stylesheet" href="header.css">`,
-  inlined the same way) and `ui/header.js`, the global `Header`: the switch between the pages,
-  which keeps where each page was left in the browser tab, and you with your menu. Change it
-  there, not in a page.
+- The header is every page's too: its styles in `ui/spectrum.css` and `ui/header.js`, the global
+  `Header`: the switch between the pages, which keeps where each page was left in the browser
+  tab, and you with your menu. Change it there, not in a page.
+- **The pages are Spectrum 2** (README, "Spectrum 2"), and their styles are all in
+  `ui/spectrum.css` (every page's: the base, the header, the shared look) and
+  `ui/spectrum-<page>.css` (the page's layout, then its look), which the pages link. A page
+  has no `<style>` and the scripts write no static `style=""`: add a class and its rule there,
+  with Spectrum 2 tokens (`var(--spectrum-…)`) only, no raw colors, lengths or durations
+  (`test/ui-spectrum.test.js`); `spectrum-tokens.css` is built from what they use.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
-  `src/ui-markdown.bundle.js` and `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
-  editor's text field; both from `scripts/ui-markdown.mjs`, not committed). `npm run build`
-  builds the bundles, and so do `npm test`, `npm run lint`, `npm run ui:dev`, `cf deploy` and
-  `cf dev`. Run `npm ci` first in a fresh checkout.
+  `src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
+  editor's text field) and `src/ui-highlight.bundle.js` (@pierre/highlights, the code
+  highlighter the Worker serves at `/inbox/highlight.js`; all from `scripts/ui-markdown.mjs`,
+  not committed), and
+  `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
+  way). `npm run build` builds the bundles, and so do `npm test`, `npm run lint`,
+  `npm run ui:dev`, `cf deploy` and `cf dev`. Run `npm ci` first in a fresh checkout.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`.
@@ -49,6 +57,10 @@ code and docs, is the decision model that labels threads and channels.
   (README, "Train the team order"), not by hand. `.rank/` holds production threads: never commit it.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
+
+- **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
+  [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
+  entry before changing one, and add one for anything new with a lifecycle.
 
 ## Debugging
 

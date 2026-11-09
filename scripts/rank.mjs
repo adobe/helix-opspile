@@ -21,6 +21,9 @@
  *     the inbox gets them (GET /api/inbox, the features), with their messages (GET /api/thread,
  *     the content). Uses the session of `npm run ui:session -- <inbox origin>`. The sample
  *     before, and what was judged on it, moves to `.rank/<when it was pulled>/`.
+ *   npm run rank -- labels
+ *     Today's kind of every thread of every sample and pick, which the training uses instead of
+ *     the kind the thread had then (into `.rank/labels.json`).
  *   npm run rank -- duel  [--rounds 12] [--concurrency 8]
  *     An Elo tournament, Swiss pairings: Clef reads two threads (content and what the inbox
  *     shows of them) and says which the team should turn to first, asked both ways round.
@@ -44,6 +47,10 @@
  *   npm run rank -- judge [--port 8796]
  *     Two threads of Clef's games side by side in the browser: you pick, then see what Clef, the
  *     model and the old score said, and how often each agrees with you (scripts/rank-judge.mjs).
+ *   npm run rank -- experts
+ *     What the expert finder showed and what people did with it (src/expertevents.js), since
+ *     the last time, into `.rank/expert-events.jsonl`, for a better finder to learn from.
+ *     `weekly` fetches them too: production keeps them for 90 days.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -76,6 +83,10 @@ const HUMAN = join(DIR, 'human.jsonl');
 const LLM = join(DIR, 'llm.jsonl');
 // Picks in the list (production's rank_events), kept across samples.
 const EVENTS = join(DIR, 'events.jsonl');
+// The expert finder's lists and what was done with them (production's expert_events).
+const EXPERT_EVENTS = join(DIR, 'expert-events.jsonl');
+// Today's kind of every thread trained on (`labels`), kept across samples.
+const LABELS = join(DIR, 'labels.json');
 const RANK_JS = join(ROOT, 'ui', 'rank.js');
 const CLEF = '@cf/cloudflare/clef';
 
@@ -153,19 +164,19 @@ async function archive() {
   console.log(`the last sample and its games → ${to}`);
 }
 
-async function pull(opts) {
-  const get = await session();
+/**
+ * Every inbox entry the session can read: your teams' inboxes, your personal view, and for the
+ * admin team every other team's, read as one of its members (read-only).
+ */
+async function inboxEntries(get, opts = {}) {
   const me = await get('/api/me');
   const teams = [].concat(opts.team || (me.teams || []).map((t) => t.slug || t));
-  const rnd = random(num(opts.seed, 1));
   const entries = new Map();
   const people = {};
-  // Every team's inbox, and the personal view (the channels of other teams you are in).
   const views = teams.map((team) => ({ q: `team=${encodeURIComponent(team)}` }));
   if (!opts['no-personal']) {
     views.push({ q: 'view=personal' });
   }
-  // The admin team sees the other teams' inboxes too, as one of their members (read-only).
   if (me.admin && !opts.team && !opts['own-teams']) {
     const { teams: all = [] } = await get('/api/admin/teams');
     for (const t of all.filter((x) => !teams.includes(x.slug))) {
@@ -191,6 +202,43 @@ async function pull(opts) {
       before = page.page?.next;
     } while (before);
   }
+  return {
+    teams, views, entries, people,
+  };
+}
+
+/**
+ * The kind production gives each thread now, for every thread of every sample and pick, into
+ * `.rank/labels.json`. The training uses it instead of the kind a thread had when it was pulled
+ * or picked: kinds are a thread's subject (they do not move with its later messages), and when
+ * what a kind means changes (people and meeting split off access and other), the judgements
+ * and picks made before stay good, under today's kinds.
+ */
+async function labels(opts) {
+  const { entries } = await inboxEntries(await session(), opts);
+  const kinds = {};
+  for (const [key, { entry }] of entries) {
+    if (entry.label) {
+      kinds[key] = {
+        label_kind: entry.label.label_kind ?? null, kind_p: entry.label.kind_p ?? null,
+      };
+    }
+  }
+  await secretFile(LABELS, JSON.stringify({ fetchedAt: Date.now(), kinds }));
+  const count = {};
+  for (const k of Object.values(kinds)) {
+    count[k.label_kind] = (count[k.label_kind] || 0) + 1;
+  }
+  console.log(`kinds of ${Object.keys(kinds).length} threads (${Object.entries(count)
+    .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ')}) → ${LABELS}`);
+}
+
+async function pull(opts) {
+  const get = await session();
+  const rnd = random(num(opts.seed, 1));
+  const {
+    teams, views, entries, people,
+  } = await inboxEntries(get, opts);
   const all = [...entries.values()];
   const alerts = shuffle(all.filter((x) => x.entry.kind === 'alert'), rnd);
   const talks = shuffle(all.filter((x) => x.entry.kind !== 'alert'), rnd);
@@ -376,23 +424,23 @@ function fitRows(names, list, l2, held = new Set()) {
 
 const dot = (w, names, x) => x.reduce((acc, v, i) => acc + v * w[names[i]], 0);
 
-/** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
-async function events() {
+/** Events of `path` (an admin API) since the last fetch, from production, appended to `file`. */
+async function fetchEvents(path, file, what) {
   const get = await session();
   const have = await (async () => {
-    if (!existsSync(EVENTS)) {
+    if (!existsSync(file)) {
       return [];
     }
-    return (await readFile(EVENTS, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return (await readFile(file, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
   })();
   let since = have.length ? have[have.length - 1].id : 0;
   let added = 0;
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
-    const page = await get(`/api/rank/events?since=${since}`);
+    const page = await get(`${path}?since=${since}`);
     if (page.events.length) {
       // eslint-disable-next-line no-await-in-loop
-      await appendFile(EVENTS, page.events.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+      await appendFile(file, page.events.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
       added += page.events.length;
       since = page.events[page.events.length - 1].id;
     }
@@ -400,8 +448,14 @@ async function events() {
       break;
     }
   }
-  console.log(`${added} new picks, ${have.length + added} in all → ${EVENTS}`);
+  console.log(`${added} new ${what}, ${have.length + added} in all → ${file}`);
 }
+
+/** Picks in the list since the last fetch, from production (admin team), into EVENTS. */
+const events = () => fetchEvents('/api/rank/events', EVENTS, 'picks');
+
+/** The expert finder's lists and what was done with them, into EXPERT_EVENTS. */
+const expertEvents = () => fetchEvents('/api/experts/events', EXPERT_EVENTS, 'expert finder events');
 
 async function readEvents() {
   if (!existsSync(EVENTS)) {
@@ -439,8 +493,14 @@ async function trainingSet(opts) {
     const [k, v] = kv.split('=');
     shares[k] = Number(v);
   }
+  const current = existsSync(LABELS) ? JSON.parse(await readFile(LABELS, 'utf8')) : null;
+  if (current) {
+    console.log(`kinds as of ${new Date(current.fetchedAt).toISOString()} (\`npm run rank -- labels\`)`);
+  } else {
+    console.log('kinds as each thread had them when pulled or picked: run `npm run rank -- labels`');
+  }
   const raw = rows({
-    Rank, samples: all, events: await readEvents(), weights,
+    Rank, samples: all, events: await readEvents(), weights, kinds: current?.kinds,
   }).filter((r) => r.w > 0);
   // A feature seen in too few threads (or picks) is not learned: its weight would be a guess.
   const items = new Set(raw.flatMap((r) => [r.a, r.b]));
@@ -740,7 +800,10 @@ async function weekly(o) {
   run(process.execPath, ['scripts/dev-ui-session.mjs', origin]);
   // Production may not record picks yet (before the deploy of migration 0040).
   await events().catch((e) => console.log(`no picks this week: ${e.message}`));
+  // Before the deploy of migration 0047, there are none.
+  await expertEvents().catch((e) => console.log(`no expert finder events this week: ${e.message}`));
   await pull({ ...o, n: o.n });
+  await labels(o);
   await duel({ ...o, rounds: o.rounds || 12 });
   if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
     await llmStep({ ...o, pairs: o.pairs || 150 });
@@ -758,6 +821,7 @@ async function weekly(o) {
 const opts = options(process.argv.slice(2));
 const step = {
   pull,
+  labels,
   duel,
   train,
   compare,
@@ -765,10 +829,11 @@ const step = {
   llm: llmStep,
   behavior: behaviorStep,
   events,
+  experts: expertEvents,
   weekly,
 }[opts._[0]];
 if (!step) {
-  console.error('usage: npm run rank -- pull|duel|llm|judge|events|train|compare|behavior|weekly [options]'
+  console.error('usage: npm run rank -- pull|labels|duel|llm|judge|events|experts|train|compare|behavior|weekly'
     + ' (see scripts/rank.mjs)');
   process.exitCode = 1;
 } else {

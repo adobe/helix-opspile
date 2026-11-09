@@ -139,11 +139,14 @@ export async function postToTeams(env, t, text, {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { error: `Teams: ${res.status} ${(data.error && data.error.code) || ''}`.trim() };
+      return {
+        error: `Teams: ${res.status} ${(data.error && data.error.code) || ''}`.trim(),
+        unknown: res.status >= 500,
+      };
     }
     return { ok: true, platform: 'teams', id: data.id };
   } catch (e) {
-    return { error: `Teams: ${e.message}` };
+    return { error: `Teams: ${e.message}`, unknown: true };
   }
 }
 

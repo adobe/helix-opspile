@@ -15,10 +15,14 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { parse } from '../src/channels.js';
-import { runBackfill, slackBackfillKey } from '../src/backfill.js';
+import {
+  requestOf, runBackfill, slackBackfillKey, sweepBackfills,
+} from '../src/backfill.js';
 import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
-import { consume, processKey, recordBots } from '../src/normalizer.js';
+import {
+  consume, processKey, recordBots, teamsEventMarkdown,
+} from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
@@ -43,7 +47,11 @@ const USERS = {
     team_id: 'T1',
   },
   U2: {
-    id: 'U2', real_name: 'Cy', profile: { email: 'cy@customer.example', title: 'CTO' }, team_id: 'T9',
+    id: 'U2',
+    real_name: 'Cy',
+    profile: { email: 'cy@customer.example', title: 'CTO' },
+    team_id: 'T9',
+    is_restricted: true,
   },
 };
 
@@ -131,6 +139,26 @@ describe('processKey', () => {
     globalThis.fetch = realFetch;
   });
 
+  it('asks for the copies of a message\'s files, where there is a bucket for them', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
+    const raw = {
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000100',
+        text: 'See attached',
+        files: [{ name: 'a.txt', permalink: 'https://acme.slack.com/files/U2/F1/a.txt' }],
+      }),
+    };
+    const withBucket = env(raw, { FILES: {} });
+    await processKey(withBucket, key);
+    assert.ok(withBucket.queued.some((q) => q.body.files === 'slack:E1:C1:1792584000.000100'));
+    const without = env(raw);
+    await processKey(without, key);
+    assert.ok(!without.queued.some((q) => q.body.files));
+  });
+
   it('writes a Slack message as markdown with a normalized author', async () => {
     const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
     const e = env({
@@ -147,8 +175,8 @@ describe('processKey', () => {
       kind: 'person', name: 'Cy', org: 'customer.example', staff: false,
     });
     assert.deepEqual(meta.raw, [key]);
-    const [who] = e.DB.rows("SELECT title FROM identities WHERE user_id = 'U2'");
-    assert.equal(who.title, 'CTO');
+    const [who] = e.DB.rows("SELECT title, guest FROM identities WHERE user_id = 'U2'");
+    assert.deepEqual([who.title, who.guest], ['CTO', 1]);
   });
 
   it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
@@ -378,6 +406,28 @@ describe('processKey', () => {
     assert.equal(calls.filter((c) => c === '/api/team.info').length, 2);
   });
 
+  it('splits a folded root back out of its group when a person replies in its thread', async () => {
+    const k = (ts) => `slack/E1/C1/2026/10/21/${ts}-a.json`;
+    const e = env({
+      [k('1.1')]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'the dates are off',
+      }),
+      [k('1.5')]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.5', text: 'I cannot roll out',
+      }),
+      [k('1.6')]: event({
+        type: 'message', channel: 'C1', user: 'U1', ts: '1.6', text: 'which site?', thread_ts: '1.5',
+      }),
+    });
+    await processKey(e, k('1.1'));
+    await processKey(e, k('1.5'));
+    e.DB.sqlite.prepare(`UPDATE threads SET logical_thread = 'slack:E1:C1:1.1', logical_via = 'clef',
+      logical_p = 0.96, rethreaded_at = '2026-10-21T12:00:00Z' WHERE thread = 'slack:E1:C1:1.5'`).run();
+    await processKey(e, k('1.6'));
+    assert.deepEqual(e.DB.rows(`SELECT logical_thread, logical_via FROM threads
+      WHERE thread = 'slack:E1:C1:1.5'`), [{ logical_thread: null, logical_via: 'split' }]);
+  });
+
   it('caches channels and people in D1', async () => {
     const k1 = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const k2 = 'slack/E1/C1/2026/10/21/1.2-b.json';
@@ -393,8 +443,10 @@ describe('processKey', () => {
     await processKey(e, k2);
     assert.deepEqual(calls, ['/api/conversations.info', '/api/team.info', '/api/users.info']);
     // The login and the display name, which people type after @ to mention her.
-    const { aliases } = e.DB.sqlite.prepare("SELECT aliases FROM identities WHERE user_id = 'U1'").get();
+    const { aliases, guest } = e.DB.sqlite.prepare("SELECT aliases, guest FROM identities WHERE user_id = 'U1'").get();
     assert.deepEqual(JSON.parse(aliases), ['alove', 'Countess']);
+    // A full member, not a guest (src/accounts.js prefers those).
+    assert.equal(guest, 0);
     const reply = parse(e.CHANNELS.objects.get('channels/acme/helix/slack-C1/1.1/1.2.md').body);
     assert.deepEqual(reply.meta.author, {
       kind: 'person', name: 'Ada Staff', org: 'staff.example', staff: true,
@@ -496,6 +548,13 @@ describe('processKey', () => {
 });
 
 describe('consume', () => {
+  it('takes the job of copying a thread\'s files, with or without a bucket', async () => {
+    const acked = [];
+    const job = { body: { files: 'slack:E1:C1:1.1' }, ack: () => acked.push('job'), retry: () => acked.push('retry') };
+    await quiet(() => consume({ messages: [job] }, env({})));
+    assert.deepEqual(acked, ['job']);
+  });
+
   it('acks processed messages and retries failures', async () => {
     const e = env({});
     e.RAW.get = async (key) => {
@@ -561,6 +620,102 @@ describe('backfill, mentions and labels', () => {
     });
   });
 
+  describe('a request that does not go through', () => {
+    const THREAD = 'slack:E1:C1:1.1';
+    const request = {
+      source: 'slack', tenant: 'E1', channelId: 'C1', rootId: '1.1', thread: THREAD,
+    };
+    const open = (e, at, seen = '2026-10-21T10:00:00.000Z') => {
+      e.DB.sqlite.prepare('INSERT INTO backfills (thread, requested_at) VALUES (?, ?)').run(THREAD, at);
+      e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, any_at, updated_at) VALUES (?, 'slack', 'E1', 'C1', '1.1', 'acme', 'helix', 'p/', ?, ?)`)
+        .run(THREAD, seen, seen);
+    };
+    const row = (e) => ({ ...e.DB.rows('SELECT done_at, error, requested_at FROM backfills')[0] });
+    const slackSays = (error) => {
+      globalThis.fetch = async () => Response.json({ ok: false, error });
+    };
+    const real = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = real;
+    });
+
+    it('retries an error that may pass, and leaves it open', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      await assert.rejects(runBackfill(e, request), /ratelimited/);
+      assert.equal(row(e).done_at, null);
+      assert.match(row(e).error, /ratelimited/);
+    });
+
+    it('backs off when Slack says ratelimited', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      const msg = {
+        body: { backfill: request },
+        attempts: 1,
+        ack() {},
+        retry(options) {
+          this.options = options;
+        },
+      };
+      await quiet(() => consume({ messages: [msg] }, e));
+      assert.ok(msg.options.delaySeconds >= 60, `${msg.options.delaySeconds}`);
+    });
+
+    it('ends on an error that stays', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('not_in_channel');
+      assert.equal((await runBackfill(e, request)).result, 'backfill-failed');
+      assert.ok(row(e).done_at);
+    });
+
+    it('clears the error once it goes through', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z');
+      slackSays('ratelimited');
+      await assert.rejects(runBackfill(e, request));
+      globalThis.fetch = async () => Response.json({ ok: true, messages: [] });
+      assert.equal((await runBackfill(e, request)).result, 'backfilled');
+      assert.equal(row(e).error, null);
+    });
+
+    it('is sent out again by the cron, an hour apart', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z', '2026-10-21T10:00:00.000Z');
+      e.queued.length = 0;
+      const now = new Date('2026-10-21T10:30:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, now), { sent: 0, gaveUp: 0 });
+      const later = new Date('2026-10-21T11:30:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, later), { sent: 1, gaveUp: 0 });
+      assert.deepEqual(e.queued.map((q) => q.body.backfill.thread), [THREAD]);
+      assert.deepEqual(await sweepBackfills(e, later), { sent: 0, gaveUp: 0 });
+    });
+
+    it('is given up once the thread has been quiet for a week', async () => {
+      const e = env({});
+      open(e, '2026-10-21T10:00:00.000Z', '2026-10-21T10:00:00.000Z');
+      e.queued.length = 0;
+      const now = new Date('2026-10-29T10:00:00.000Z');
+      assert.deepEqual(await sweepBackfills(e, now), { sent: 0, gaveUp: 1 });
+      assert.deepEqual([row(e).error, e.queued.length], ['gave up', 0]);
+      assert.ok(row(e).done_at);
+    });
+
+    it('is rebuilt from the thread key, on every platform', () => {
+      assert.deepEqual(requestOf('slack:E1:C1:1.1'), request);
+      assert.deepEqual(requestOf('teams:T:G1:19:abc@thread.tacv2:1729'), {
+        source: 'teams', tenant: 'T', groupId: 'G1', channelId: '19:abc@thread.tacv2', rootId: '1729', thread: 'teams:T:G1:19:abc@thread.tacv2:1729',
+      });
+      assert.deepEqual(requestOf('discord:1:2:3'), {
+        source: 'discord', tenant: '1', channelId: '2', rootId: '3', thread: 'discord:1:2:3',
+      });
+    });
+  });
+
   it('stores the backfilled thread in pile 1 and normalizes it like events', async () => {
     const e = env({ [reply]: replyEvent });
     e.RAW.put = async (key, body, options) => e.RAW.objects.set(key, { body, options });
@@ -610,6 +765,108 @@ describe('backfill, mentions and labels', () => {
     await processKey(e, reply);
     assert.deepEqual(notified.filter((n) => n.type === 'thread').map((n) => n.mentions), [undefined, undefined]);
     assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM mentions')[0].n, 2);
+  });
+
+  it('tells the room whose thread a new message is in, and only for a new message', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          notified.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const announced = () => notified.splice(0).filter((n) => n.type === 'thread').map((n) => n.involved);
+    const at = (s) => (Date.now() / 1000 - s).toFixed(6);
+    const message = (user, ts, extra = {}) => event({
+      type: 'message', channel: 'C1', user, ts, thread_ts: '1.1', text: 'Still broken', ...extra,
+    });
+    const first = `slack/E1/C1/2026/10/21/${at(30)}-a.json`;
+    const second = `slack/E1/C1/2026/10/21/${at(20)}-b.json`;
+    const ts = at(10);
+    const third = `slack/E1/C1/2026/10/21/${ts}-c.json`;
+    const unfurl = `slack/E1/C1/2026/10/21/${at(5)}-d.json`;
+    const e = env({
+      [first]: message('U2', at(30)),
+      [second]: message('U1', at(20)),
+      [third]: message('U2', ts),
+      [unfurl]: event({
+        type: 'message',
+        subtype: 'message_changed',
+        channel: 'C1',
+        ts: at(5),
+        event_ts: at(5),
+        message: {
+          type: 'message', user: 'U2', ts, thread_ts: '1.1', text: 'Still broken',
+        },
+        previous_message: { text: 'Still broken' },
+      }),
+    }, { ROOMS });
+
+    await processKey(e, first);
+    assert.deepEqual(announced(), [undefined], 'nobody known is in the thread yet');
+    await processKey(e, second);
+    assert.deepEqual(announced(), [[7]]);
+    // A reply from someone else: Ada posted in the thread, so they are told.
+    await processKey(e, third);
+    assert.deepEqual(announced(), [[7]]);
+    // An unfurl rewrites that message: nothing new to tell anyone.
+    await processKey(e, unfurl);
+    assert.deepEqual(announced(), [undefined]);
+  });
+
+  it('counts 👀 on a thread, and the threads of its group, as someone\'s thread', async () => {
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: () => ({
+        fetch: async (u, init) => {
+          notified.push(JSON.parse(init.body));
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const announced = () => notified.splice(0).filter((n) => n.type === 'thread').at(-1).involved;
+    const at = (s) => (Date.now() / 1000 - s).toFixed(6);
+    const message = (user, ts, root, n) => [`slack/E1/C1/2026/10/21/${ts}-${n}.json`, event({
+      type: 'message', channel: 'C1', user, ts, thread_ts: root, text: 'Still broken',
+    })];
+    const rootTs = at(40);
+    const [root, rootEvent] = message('U2', rootTs, rootTs, 'a');
+    const eyes = 'slack/E1/C1/2026/10/21/eyes.json';
+    const [watched, watchedEvent] = message('U2', at(30), rootTs, 'b');
+    const otherTs = at(20);
+    const [other, otherEvent] = message('U2', otherTs, otherTs, 'c');
+    const [follow, followEvent] = message('U2', at(10), otherTs, 'd');
+    const e = env({
+      [root]: rootEvent,
+      [eyes]: event({
+        type: 'reaction_added',
+        user: 'U1',
+        reaction: 'eyes',
+        item: { type: 'message', channel: 'C1', ts: rootTs },
+        event_ts: at(35),
+      }),
+      [watched]: watchedEvent,
+      [other]: otherEvent,
+      [follow]: followEvent,
+    }, { ROOMS });
+    await processKey(e, root);
+    await processKey(e, eyes);
+    notified.length = 0;
+    await processKey(e, watched);
+    assert.deepEqual(announced(), [7]);
+    // A thread of its own at first, then folded into the one Ada is watching (as a burst: a
+    // root folded by Clef would be split out again by the reply in its thread).
+    await processKey(e, other);
+    assert.equal(announced(), undefined);
+    const [a, b] = e.DB.rows('SELECT thread FROM threads ORDER BY root_at').map((r) => r.thread);
+    await e.DB.prepare("UPDATE threads SET logical_thread = ?, logical_via = 'burst' WHERE thread = ?")
+      .bind(a, b).run();
+    await processKey(e, follow);
+    assert.deepEqual(announced(), [7]);
   });
 
   it('records mentions by name, and a staff author becomes a person', async () => {
@@ -751,6 +1008,8 @@ describe('backfill, mentions and labels', () => {
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
+    // And the thread's own (labels.tech), for its header.
+    assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);
     assert.deepEqual(r.topics, ['cdn']);
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
@@ -800,5 +1059,27 @@ describe('recordBots', () => {
     await recordBots(e, { ...teamsMessage({ botMentions: [{ id: 'b-1', name: 'x' }] }), source: 'slack' });
     await recordBots(e, teamsMessage({ groupId: undefined, botMentions: [{ id: 'b-1', name: 'x' }] }));
     assert.deepEqual(e.DB.rows('SELECT * FROM bot_teams'), []);
+  });
+});
+
+describe('teamsEventMarkdown', () => {
+  it('names the people of a Teams notice as the inbox knows them', async () => {
+    const e = env({});
+    e.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at)
+      VALUES ('teams', 'T', 'u-1', 'person', 'ada.l', 7, ?), ('teams', 'T', 'u-2', 'person', 'Cy', NULL, ?)`)
+      .bind(NOW_ISO, NOW_ISO).run();
+    const who = (id, displayName = null) => ({ user: { id, displayName, userIdentityType: 'aadUser' } });
+    const text = await teamsEventMarkdown(e, {
+      tenant: 'T',
+      event: {
+        '@odata.type': '#microsoft.graph.callEndedEventMessageDetail',
+        callDuration: 'PT50S',
+        callEventType: 'meeting',
+        callParticipants: [{ participant: who('u-1') }, { participant: who('u-2', 'Cy Graph') }],
+        initiator: who('u-1'),
+      },
+    });
+    // The person's name first, then the identity's; Graph asked nothing.
+    assert.equal(text, 'Meeting ended after 50 s. Joined: Ada Staff and Cy.');
   });
 });

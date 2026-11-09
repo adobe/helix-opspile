@@ -13,6 +13,7 @@
 import { discordEnabled, refreshAttachment } from '../discord.js';
 import { slackApi } from '../lookup.js';
 import { canonicalUrl, isTeamsFileUrl, keptTeamsFile } from '../teamsfiles.js';
+import { imageSize, MAX_IMAGE_SIDE, tooLargeImage } from './images.js';
 
 /**
  * The files people attached to the messages of an agent's thread, for its `read_file` tool.
@@ -20,7 +21,7 @@ import { canonicalUrl, isTeamsFileUrl, keptTeamsFile } from '../teamsfiles.js';
  * credentials (the Slack bot token, scope `files:read`; the Discord bot, which refreshes
  * attachment links), never anyone's own:
  *
- * - images (PNG, JPEG, GIF, WebP up to 3.75 MB) go to the model as images;
+ * - images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side) go to the model as images;
  * - plain text (text/*, JSON) is read as it is;
  * - everything else (PDF, Word and Excel, OpenDocument, Numbers, HTML, XML, CSV, larger images)
  *   goes through Workers AI's Markdown conversion (`env.AI.toMarkdown`); PowerPoint is not one
@@ -93,30 +94,38 @@ export function pickFile(files, wanted) {
   return files.find((f) => f.id === id || (ref && f.id === ref.id)) || null;
 }
 
-/** A Teams file from its copy in pile 1: `{ bytes, type, name }` or `{ error }`. */
-async function keptCopy(env, f, name) {
+const tooLarge = (bytes, max) => `too large (${Math.round(bytes / 1024 / 1024)} MB; up to ${Math.round(max / 1024 / 1024)} MB)`;
+
+/** A Teams file from its copy in pile 1: `{ body, type, name }` or `{ error }`. */
+async function keptCopy(env, f, name, max) {
   const kept = await keptTeamsFile(env, f.thread, f.url);
   if (!kept) {
     return { error: 'opspile has no copy of this Teams file (it could not read it from SharePoint)' };
   }
-  if (kept.size > MAX_FILE_BYTES) {
-    return { error: `too large (${Math.round(kept.size / 1024 / 1024)} MB; up to 10 MB)` };
+  if (kept.size > max) {
+    return { error: tooLarge(kept.size, max) };
   }
   return {
-    bytes: new Uint8Array(await kept.arrayBuffer()),
+    body: kept.body,
+    size: kept.size,
     type: (kept.httpMetadata && kept.httpMetadata.contentType) || 'application/octet-stream',
     name: (kept.customMetadata && kept.customMetadata.name) || name,
   };
 }
 
-/** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
-export async function download(env, f) {
+/**
+ * Opens the file with the app's credentials, without reading it, so that what passes it on
+ * holds none of it in memory: `{ body, size, type, name }` (`body`: a stream; `size`: what
+ * the platform says, where it does) or `{ error }`, also for a file it says is larger than `max`.
+ */
+export async function openFile(env, f, max = MAX_FILE_BYTES) {
   let { url } = f;
   let name = f.name || url.split('/').pop().split('?')[0];
   if (f.source === 'teams') {
-    return keptCopy(env, f, name);
+    return keptCopy(env, f, name, max);
   }
   let type = '';
+  let size;
   const headers = {};
   if (f.source === 'slack') {
     if (!env.SLACK_BOT_TOKEN) {
@@ -131,8 +140,8 @@ export async function download(env, f) {
     if (!file || file.file_access === 'check_file_info' || !(file.url_private_download || file.url_private)) {
       return { error: 'Slack does not let opspile read this file' };
     }
-    if (file.size > MAX_FILE_BYTES) {
-      return { error: `too large (${Math.round(file.size / 1024 / 1024)} MB; up to 10 MB)` };
+    if (file.size > max) {
+      return { error: tooLarge(file.size, max) };
     }
     url = file.url_private_download || file.url_private;
     // The bot token goes to Slack's own file host only: a remote file's URL can be anywhere.
@@ -141,6 +150,7 @@ export async function download(env, f) {
     }
     name = file.name || name;
     type = file.mimetype || '';
+    ({ size } = file);
     headers.authorization = `Bearer ${env.SLACK_BOT_TOKEN}`;
   } else if (f.source === 'discord') {
     if (!discordEnabled(env)) {
@@ -155,14 +165,25 @@ export async function download(env, f) {
     return { error: `could not download it (${res.status})` };
   }
   const length = Number(res.headers.get('content-length') || 0);
-  if (length > MAX_FILE_BYTES) {
-    return { error: `too large (${Math.round(length / 1024 / 1024)} MB; up to 10 MB)` };
+  if (length > max) {
+    return { error: tooLarge(length, max) };
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
+  return {
+    body: res.body, size: size || length || undefined, type: type || got || 'application/octet-stream', name,
+  };
+}
+
+/** Fetches the file's bytes with the app's credentials: `{ bytes, type, name }` or `{ error }`. */
+export async function download(env, f) {
+  const { body, ...got } = await openFile(env, f);
+  if (got.error) {
+    return got;
+  }
+  const bytes = new Uint8Array(await new Response(body).arrayBuffer());
   if (bytes.length > MAX_FILE_BYTES) {
     return { error: 'too large (up to 10 MB)' };
   }
-  return { bytes, type: type || got || 'application/octet-stream', name };
+  return { ...got, bytes };
 }
 
 const base64 = (bytes) => {
@@ -173,11 +194,17 @@ const base64 = (bytes) => {
   return btoa(s);
 };
 
-/** The file's content: `{ text, kind }` (converted or plain), `{ image }`, or `{ error }`. */
+/**
+ * The file's content: `{ text, kind }` (converted or plain), `{ image }`, or `{ error }`. An image
+ * the model would refuse (src/agent/images.js) is converted, with its size as `pixels`.
+ */
 export async function fileContent(env, { bytes, type, name }) {
-  if (IMAGE_TYPES.includes(type) && bytes.length <= MAX_IMAGE_BYTES) {
+  const isImage = IMAGE_TYPES.includes(type);
+  const size = isImage ? imageSize(bytes) : null;
+  if (isImage && bytes.length <= MAX_IMAGE_BYTES && !tooLargeImage(size, MAX_IMAGE_SIDE)) {
     return { image: { type: 'image', data: base64(bytes), mimeType: type } };
   }
+  const pixels = tooLargeImage(size, MAX_IMAGE_SIDE) ? size : undefined;
   if (PLAIN.test(type)) {
     return { text: new TextDecoder().decode(bytes), kind: 'text' };
   }
@@ -190,7 +217,7 @@ export async function fileContent(env, { bytes, type, name }) {
     if (!out || out.format === 'error') {
       return { error: `could not convert it (${(out && out.error) || 'no result'})` };
     }
-    return { text: String(out.data || ''), kind: 'converted' };
+    return { text: String(out.data || ''), kind: 'converted', ...(pixels ? { pixels } : {}) };
   } catch (e) {
     return { error: `could not convert it (${String(e.message || e).slice(0, 200)})` };
   }
@@ -240,7 +267,12 @@ export async function readThreadFile(env, {
     return { file, withheld: bad.p === null ? 'the check failed' : `p=${bad.p.toFixed(2)}` };
   }
   return {
-    file: { ...file, converted: content.kind === 'converted', chars: content.text.length },
+    file: {
+      ...file,
+      converted: content.kind === 'converted',
+      chars: content.text.length,
+      ...(content.pixels ? { pixels: content.pixels } : {}),
+    },
     text,
     ...(from + MAX_FILE_TEXT < content.text.length ? { more: from + MAX_FILE_TEXT } : {}),
   };

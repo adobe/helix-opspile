@@ -15,7 +15,9 @@ import {
   after, before, beforeEach, describe, it,
 } from 'node:test';
 import { AgentMcp } from '../src/agent/mcp.js';
-import { freshToken, keepOAuthAlive, KEEP_ALIVE_MS } from '../src/agent/mcpoauth.js';
+import {
+  clientDocumentResponse, freshToken, grantState, keepOAuthAlive, KEEP_ALIVE_MS,
+} from '../src/agent/mcpoauth.js';
 import { api, personById } from '../src/api.js';
 import { mcp } from '../src/mcp.js';
 import { oauth } from '../src/oauth.js';
@@ -50,6 +52,8 @@ function env() {
 let current;
 let seen = [];
 let consenting = ADA.id;
+// When set, what the authorization server's metadata becomes (it has no registration then).
+let changeMetadata = null;
 const realFetch = globalThis.fetch;
 async function worker(input, init) {
   const request = new Request(input, init);
@@ -65,6 +69,10 @@ async function worker(input, init) {
   }
   const who = async () => personById(current, consenting);
   const res = await oauth(request, current, url, { who });
+  if (changeMetadata && res && url.pathname === '/.well-known/oauth-authorization-server') {
+    const { registration_endpoint: _, ...metadata } = await res.json();
+    return Response.json(changeMetadata(metadata));
+  }
   return res || new Response('not found', { status: 404 });
 }
 before(() => {
@@ -77,6 +85,7 @@ beforeEach(() => {
   current = env();
   seen = [];
   consenting = ADA.id;
+  changeMetadata = null;
 });
 
 async function call(me, method, path, body) {
@@ -201,6 +210,120 @@ describe('MCP servers that sign in with OAuth', () => {
     assert.equal((await agent.call(catalog.servers[0], 'whoami', {})).structuredContent.name, 'Ada');
   });
 
+  /** A fetch that runs `meanwhile` once the token endpoint answered, while the refresh is out. */
+  const during = (meanwhile) => async (input, init) => {
+    const res = await worker(input, init);
+    if (new URL(String(input.url || input)).pathname === '/oauth/token') {
+      await meanwhile();
+    }
+    return res;
+  };
+
+  it('does not bring a grant back that was disconnected while it was refreshed', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    await assert.rejects(freshToken(current, server.id, {
+      fetch: during(() => call(admin, 'POST', '/api/kb/mcp/oauth/disconnect', { id: server.id })),
+    }), /not connected|connect/i);
+    const now = row(server.id);
+    assert.equal(now.oauth_by, null);
+    assert.equal(now.oauth_expires_at, null);
+    assert.equal(now.oauth_lock, null);
+    await assert.rejects(freshToken(current, server.id), /not connected|connect/i);
+    // Nothing outlives the grant: the tokens that refresh got are revoked too.
+    assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_tokens').get().n, 0);
+  });
+
+  it('keeps the sign-in made while an old refresh was out', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const replace = () => {
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = 'someone else', oauth_by = 'Bo' WHERE id = ?")
+        .run(server.id);
+    };
+    await assert.rejects(freshToken(current, server.id, { fetch: during(replace) }));
+    assert.equal(row(server.id).oauth, 'someone else');
+    assert.equal(row(server.id).oauth_by, 'Bo');
+  });
+
+  it('does not drop a grant made while an old refresh was refused', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    current.DB.sqlite.prepare("DELETE FROM oauth_tokens WHERE kind = 'refresh'").run();
+    const replace = () => {
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = 'someone else', oauth_by = 'Bo' WHERE id = ?")
+        .run(server.id);
+    };
+    await assert.rejects(quiet(() => freshToken(current, server.id, { fetch: during(replace) })));
+    assert.equal(row(server.id).oauth, 'someone else');
+    assert.equal(row(server.id).oauth_error, null);
+  });
+
+  it('hands out the new grant when an old refresh is refused after someone connected again', async () => {
+    const { server } = await connected();
+    const fresh = row(server.id);
+    current.DB.sqlite.prepare(`UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z'
+      WHERE id = ?`).run(server.id);
+    const stale = row(server.id).oauth;
+    const made = await freshToken(current, server.id);
+    const good = row(server.id);
+    // The row as it was before that refresh: an old grant, with a token that is gone.
+    current.DB.sqlite.prepare(`UPDATE mcp_servers SET oauth = ?, oauth_expires_at = '2000-01-01T00:00:00Z'
+      WHERE id = ?`).run(stale, server.id);
+    const replace = () => {
+      current.DB.sqlite.prepare('UPDATE mcp_servers SET oauth = ?, oauth_expires_at = ? WHERE id = ?')
+        .run(good.oauth, good.oauth_expires_at, server.id);
+    };
+    const got = await quiet(() => freshToken(current, server.id, { fetch: during(replace) }));
+    assert.equal(got.token, made.token);
+    assert.equal(row(server.id).oauth_error, null);
+    assert.ok(fresh.oauth_by);
+  });
+
+  it('does not revoke what a takeover of its lease stored for the same grant', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const revoked = [];
+    const fetching = during(() => {
+      // Same grant (same oauth_at), written by whoever took over.
+      current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth = oauth || '.' WHERE id = ?").run(server.id);
+    });
+    await assert.rejects(freshToken(current, server.id, {
+      fetch: async (input, init) => {
+        if (new URL(String(input.url || input)).pathname.endsWith('/revoke')) {
+          revoked.push('revoke');
+        }
+        return fetching(input, init);
+      },
+    }));
+    assert.deepEqual(revoked, []);
+  });
+
+  it('gives back only its own lease', async () => {
+    const { server } = await connected();
+    current.DB.sqlite.prepare("UPDATE mcp_servers SET oauth_expires_at = '2000-01-01T00:00:00Z' WHERE id = ?")
+      .run(server.id);
+    const theirs = '2999-01-01T00:00:00.000Z';
+    const steal = () => {
+      current.DB.sqlite.prepare('UPDATE mcp_servers SET oauth_lock = ? WHERE id = ?').run(theirs, server.id);
+    };
+    await freshToken(current, server.id, { fetch: during(steal) });
+    assert.equal(row(server.id).oauth_lock, theirs);
+  });
+
+  it('says in one word where a grant stands', () => {
+    assert.equal(grantState({}), 'none');
+    assert.equal(grantState({ oauth_state: 'h' }), 'signing in');
+    assert.equal(grantState({ oauth_by: 'Ada' }), 'connected');
+    assert.equal(grantState({ oauth_by: 'Ada', oauth_lock: 'x' }), 'connected');
+    assert.equal(grantState({ oauth_by: 'Ada', oauth_error: 'gone' }), 'rejected');
+    assert.equal(grantState({ oauth_error: 'gone', oauth_state: 'h' }), 'rejected');
+  });
+
   it('refreshes when the server refuses the token, and drops a grant the server no longer accepts', async () => {
     const { server } = await connected();
     const agent = new AgentMcp(current, { get: async () => undefined, put: async () => {} });
@@ -259,6 +382,55 @@ describe('MCP servers that sign in with OAuth', () => {
     assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n, clients, 'no registration');
     assert.equal(row(server.id).oauth_error, null);
     assert.ok(row(server.id).oauth_by);
+  });
+
+  it('serves its client ID metadata document', async () => {
+    const at = (method) => clientDocumentResponse(
+      new Request(`${ORIGIN}/oauth/client.json`, { method }),
+      current,
+      new URL(`${ORIGIN}/oauth/client.json`),
+    );
+    const res = at('GET');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/json');
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    assert.deepEqual(await res.json(), {
+      client_id: `${ORIGIN}/oauth/client.json`,
+      client_name: 'opspile agents',
+      client_uri: ORIGIN,
+      redirect_uris: [`${ORIGIN}/api/kb/mcp/oauth/callback`],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      application_type: 'web',
+    });
+    assert.equal(await at('HEAD').text(), '');
+    assert.equal(at('POST').status, 405);
+    const other = new Request(`${ORIGIN}/oauth/other.json`);
+    assert.equal(clientDocumentResponse(other, current, new URL(other.url)), null);
+    current.PUBLIC_ORIGIN = '';
+    assert.equal(at('GET'), null);
+  });
+
+  it('signs in with its client ID metadata document where the server takes one', async () => {
+    changeMetadata = (m) => ({ ...m, client_id_metadata_document_supported: true });
+    const server = await added();
+    const clients = current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n;
+    const started = await call(admin, 'POST', '/api/kb/mcp/oauth/start', { id: server.id });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    const auth = new URL(started.body.authorizationUrl);
+    assert.equal(auth.searchParams.get('client_id'), `${ORIGIN}/oauth/client.json`);
+    assert.equal(auth.searchParams.get('redirect_uri'), `${ORIGIN}/api/kb/mcp/oauth/callback`);
+    assert.equal(auth.searchParams.get('code_challenge_method'), 'S256');
+    assert.equal(current.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get().n, clients, 'no registration');
+  });
+
+  it('asks for a client id when the server takes neither registrations nor documents', async () => {
+    changeMetadata = (m) => m;
+    const server = await added();
+    const started = await call(admin, 'POST', '/api/kb/mcp/oauth/start', { id: server.id });
+    assert.notEqual(started.status, 200);
+    assert.match(JSON.stringify(started.body), /register one there .*give its client id/);
   });
 
   it('forgets the grant when the URL or the client changes, or on disconnect, which revokes it', async () => {

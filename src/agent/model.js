@@ -13,6 +13,7 @@
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { createProvider } from '@earendil-works/pi-ai/models';
 import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models';
+import { fitImages } from './images.js';
 
 /**
  * The agents' model: Claude on Amazon Bedrock, through Cloudflare AI Gateway. Bedrock's
@@ -98,8 +99,50 @@ export function authHeaders(env) {
   };
 }
 
-/** A pi-ai provider with one model, authenticated from the Worker's secrets. */
-export function agentProvider(env) {
+/**
+ * The Anthropic Messages API without the images it would refuse (src/agent/images.js): one
+ * in the history would fail every turn after it.
+ */
+export function fittingApi(api) {
+  const fit = (context) => {
+    let messages;
+    try {
+      messages = fitImages(context.messages);
+    } catch {
+      return context;
+    }
+    return messages === context.messages ? context : { ...context, messages };
+  };
+  return {
+    ...api,
+    stream: (model, context, options) => api.stream(model, fit(context), options),
+    streamSimple: (model, context, options) => api.streamSimple(model, fit(context), options),
+  };
+}
+
+/**
+ * The API asking for the prompt cache retention `retention()` says, when it is called, instead
+ * of the one the request has: the agent's experiment arm (src/experiments.js), which changes
+ * while the agent runs. A request that asks for none (a compaction's) keeps asking for none.
+ */
+export function retainingApi(api, retention) {
+  if (!retention) {
+    return api;
+  }
+  const keep = (options) => (options && options.cacheRetention === 'none' ? options
+    : { ...options, cacheRetention: retention() });
+  return {
+    ...api,
+    stream: (model, context, options) => api.stream(model, context, keep(options)),
+    streamSimple: (model, context, options) => api.streamSimple(model, context, keep(options)),
+  };
+}
+
+/**
+ * A pi-ai provider with one model, authenticated from the Worker's secrets. `cacheRetention`,
+ * a function, picks each request's prompt cache retention (`retainingApi`).
+ */
+export function agentProvider(env, { cacheRetention } = {}) {
   return createProvider({
     id: PROVIDER,
     name: 'Amazon Bedrock via AI Gateway',
@@ -112,7 +155,7 @@ export function agentProvider(env) {
       },
     },
     models: env.AGENT_MODEL ? [agentModel(env)] : [],
-    api: anthropicMessagesApi(),
+    api: retainingApi(fittingApi(anthropicMessagesApi()), cacheRetention),
   });
 }
 

@@ -73,6 +73,11 @@ const MEMBERS = [
   {
     key: 'kira', name: 'Kira Selby', login: 'kselby', email: 'kselby@example.com', staff: true,
   },
+  // In no channel yet: a Slack reply that mentions her adds her to its channel first
+  // (src/invite.js), and the inbox says so.
+  {
+    key: 'noor', name: 'Noor Haddad', login: 'nhaddad', email: 'nhaddad@example.com', staff: true,
+  },
 ];
 
 /** The `partner_domains` table: mail domain -> partner name. */
@@ -98,6 +103,11 @@ const BOT = {
 /** The opspile app, which posts what someone sends as it (POST /api/post/app). */
 const APP = {
   kind: 'bot', name: 'opspile', org: null, staff: false,
+};
+
+/** Teams' system notices: a meeting started or ended, someone was added. */
+const SYSTEM = {
+  kind: 'system', name: 'Microsoft Teams', org: null, staff: false,
 };
 
 /** The thread agent, which saves shared drafts as this person (src/agent/tools.js). */
@@ -199,6 +209,51 @@ function publishCsv() {
   return `${rows.join('\n')}\n`;
 }
 
+/**
+ * A browser's recording of a page failing, as the Network panel saves it (the preview shows it
+ * by its name: Slack calls a .har `application/octet-stream`). The host and token are made up.
+ */
+function recordingHar() {
+  const at = (ms) => new Date(Date.UTC(2026, 9, 30, 16, 20, 0, ms)).toISOString();
+  const headers = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
+  const token = `eyJhbGciOiJSUzI1NiJ9.${Buffer.from('{"sub":"made-up"}').toString('base64url')}.c2lnbmF0dXJl`;
+  const request = (method, url, ms, status, wait, more = {}) => ({
+    startedDateTime: at(ms),
+    time: wait + 14,
+    request: {
+      method,
+      url,
+      headers: headers({ accept: 'application/json', authorization: `Bearer ${token}`, cookie: 'session=made-up' }),
+      queryString: [...new URL(url).searchParams].map(([name, value]) => ({ name, value })),
+    },
+    response: {
+      status,
+      statusText: status === 200 ? 'OK' : '',
+      headers: headers({ 'content-type': 'application/json', 'x-request-id': `req-${ms}`, 'set-cookie': 'session=made-up' }),
+      content: {
+        size: 1840, mimeType: 'application/json', text: JSON.stringify({ items: [], status }),
+      },
+      ...more.response,
+    },
+    timings: {
+      blocked: 2, dns: 0, connect: 0, ssl: 0, send: 1, wait, receive: 11,
+    },
+    serverIPAddress: '192.0.2.10',
+    _resourceType: more.type || 'fetch',
+  });
+  const entries = [
+    request('GET', 'https://assets.example/app/index.html', 0, 200, 40, { type: 'document' }),
+    request('GET', 'https://assets.example/app/main.js', 120, 200, 31, { type: 'script' }),
+    request('POST', 'https://ims.example/ims/check/v6/token?client_id=picker&access_token=made-up', 410, 200, 188),
+    request('GET', 'https://author.example/adobe/repositories/discovery', 640, 200, 8214),
+    request('GET', 'https://author.example/adobe/folders/search?limit=50', 8900, 504, 12003),
+    request('GET', 'https://author.example/adobe/assets/search?limit=50', 21000, 0, 0, {
+      response: { _error: 'net::ERR_CONNECTION_RESET', statusText: '' },
+    }),
+  ];
+  return JSON.stringify({ log: { version: '1.2', creator: { name: 'WebInspector', version: '537.36' }, entries } });
+}
+
 function screenshot(title, color, bars, w = 640, h = 360) {
   const bar = (v, i) => `<rect x="${60 + i * 52}" y="${h - 60 - v * 2}" width="36" height="${v * 2}" rx="4" fill="${color}"/>`;
   return new TextEncoder().encode(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
@@ -228,6 +283,7 @@ const PHRASES = [
   'I opened a ticket and linked the trace: https://example.com/trace/1234 and the dashboard https://example.com/d/abcd',
   'Rolled back the redirect rules; error rate is back to normal :white_check_mark:',
   '> the sitemap is missing half the pages\n\nYes, the index only covers `/blog/**` at the moment.',
+  '> Is the old domain still redirecting after the cutover?\nYes, and it stays that way until the certificate expires.',
   '| region | p50 | p99 |\n|---|---|---|\n| eu | 40ms | 310ms |\n| us | 38ms | 2.4s |',
   'Can we schedule a quick call? ~~Today~~ Tomorrow works better for us.',
   'Looping in the CDN team, they own the origin shield config.',
@@ -347,8 +403,10 @@ function addBigInbox({
  * @param {object} [options]
  * @param {boolean} [options.big] adds prod-sized traffic (see `addBigInbox`): some 250 threads
  *   in the platform team, many of them 50 to 150 messages long, from forty invented customers
+ * @param {boolean} [options.admin] puts Dana in the admin team, the smallest one, with one
+ *   unread thread that is not in her personal view
  */
-export function createStore(now = Date.now(), { big = false } = {}) {
+export function createStore(now = Date.now(), { big = false, admin = false } = {}) {
   const people = new Map(PEOPLE.map((p) => [p.id, p]));
   const byKey = new Map(PEOPLE.map((p) => [p.key, p]));
   const threads = new Map(); // key -> { row, team, rootId, path, messages: [...] }
@@ -391,6 +449,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     }
     if (key === 'app') {
       return APP;
+    }
+    if (key === 'system') {
+      return SYSTEM;
     }
     const p = byKey.get(key);
     return {
@@ -443,9 +504,14 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     const live = messages.filter((m) => !m.deletedAt);
     const root = messages.find((m) => m.id === rootId);
     const titled = (m) => titleOf(m.subject, m.body);
-    const titleSource = root && !root.deletedAt && titled(root)
-      ? root
-      : live.find((m) => titled(m));
+    // What was said titles a thread; a system notice only one without.
+    const said = (m) => m.author.kind !== 'system';
+    const titleSource = [
+      root && !root.deletedAt && said(root) && titled(root) ? root : null,
+      live.find((m) => said(m) && titled(m)),
+      root && !root.deletedAt && titled(root) ? root : null,
+      live.find((m) => titled(m)),
+    ].find(Boolean);
     const counted = live.filter((m) => m.author.kind === 'person')
       .sort((a, b) => a.at.localeCompare(b.at));
     const last = counted[counted.length - 1];
@@ -470,7 +536,9 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       last_staff: last ? Number(last.author.staff) : null,
       last_text: last ? previewOf(last.body) : null,
       any_at: ats.length ? ats[ats.length - 1] : null,
-      messages: live.length,
+      messages: live.filter((m) => m.author.kind !== 'system').length,
+      // Re-threaded into another thread's group (src/rethread.js): that group's first thread.
+      logical_thread: entry.logical || null,
       updated_at: new Date(now).toISOString(),
     };
   }
@@ -517,8 +585,10 @@ export function createStore(now = Date.now(), { big = false } = {}) {
 
   /**
    * Seeds a thread. `messages` are `[who, minutesAgo, body, extra?]` in chronological order;
-   * `who` is a person key, 'bot' or 'app'. `extra`: `{ subject, editedAgo, deleted, predates,
- * appBy }`; `appBy: 'dana'` says the viewer posted an 'app' message as the opspile app.
+   * `who` is a person key, 'bot' or 'app'. `body` may be a function of
+   * `{ ids, ch, rootId, i }`, so a message can name one seeded before it.
+   * `extra`: `{ subject, editedAgo, deleted, predates, appBy }`.
+   * `appBy: 'dana'` says the viewer posted an 'app' message as the opspile app.
    * `predates` drops the root from the store, like a thread that started before ingestion.
    * `reads` maps a person key to `'latest'` or minutes ago, when they opened the thread.
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
@@ -546,12 +616,15 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       if (i === 0 && extra.predates) {
         return;
       }
+      const text = typeof body === 'function' ? body({
+        ids, ch, rootId, i,
+      }) : body;
       const at = new Date(now - ago * MIN).toISOString();
       put(entry, {
         id: ids[i],
         at,
         author: author(who),
-        body,
+        body: text,
         subject: extra.subject,
         editedAt: extra.editedAgo ? new Date(now - extra.editedAgo * MIN).toISOString() : undefined,
         deletedAt: extra.deleted ? at : undefined,
@@ -577,12 +650,15 @@ export function createStore(now = Date.now(), { big = false } = {}) {
         urgency: label.urgency,
         resolved_p: label.resolved_p,
         topics: label.topics || [],
+        // The technologies the thread shows (labels.tech), as JSON; null: labeled before that.
+        tech: label.tech ? JSON.stringify(label.tech) : null,
         labeled_through: entry.row.any_at,
         reviewed: [],
       });
     }
+    // Clairic's affected page; the rest as the rules found them.
     facts.set(key, threadFacts.map(([field, value]) => ({
-      source: 'rule', field, value, confidence: null,
+      source: field === 'affected_url' ? 'clairic' : 'rule', field, value, confidence: null,
     })));
     for (const m of mentioned) {
       const [who, ago] = [].concat(m);
@@ -605,7 +681,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     return key;
   }
 
-  seed({
+  const preview503 = seed({
     ch: CHANNELS.aemAcme,
     messages: [
       ['sam', 340, 'Our preview site is returning 503s since this morning\'s deploy.'],
@@ -614,12 +690,44 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['priya', 300, '@Lena Berg can you check the flush job? cc @Tom Okafor'],
       ['ravi', 20, 'We implement this site for them; happy to share the deploy logs with @Priya Nair.'],
       ['sam', 12, 'Can someone take a look? We are blocked on it. cc @Ravi Kumar'],
+      // A pasted permalink, an inline one, a quote card, and both kinds of code.
+      ['lena', 6, ({ ids, ch, rootId }) => {
+        const link = (id) => {
+          const base = `https://acme.slack.com/archives/${ch.channelId}/p${String(id).replace('.', '')}`;
+          return id === rootId ? base : `${base}?thread_ts=${rootId}&cid=${ch.channelId}`;
+        };
+        return `${link(ids[0])}\n\nSee ${link(ids[3])} too.\n\n${quoteMarkdown({
+          author: 'Priya Nair',
+          url: link(ids[1]),
+          at: '2026-10-21T11:43:20.000Z',
+          text: 'Thanks for flagging. Which paths are affected?',
+        })}\n\nThe header is \`x-request-id\`.\n\n\`\`\`\nGET /en/index.html\n\`\`\``;
+      }],
+      // A Slack quote: its `>` is one line, the reply under it is not quoted.
+      ['priya', 4, '> Can someone take a look? We are blocked on it.\nOn it: the flush job failed at 14:02, I am running it again.'],
     ],
     reads: { priya: 332 },
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 2.4, resolved_p: 0.1, topics: ['cdn', 'publishing'],
+      kind: 'incident',
+      next_actor: 'us',
+      urgency: 2.4,
+      resolved_p: 0.1,
+      topics: ['cdn', 'publishing'],
+      tech: { akamai: 0.93, eds: 1 },
     },
-    facts: [['ticket', 'OPS-1042'], ['site', 'acme-preview']],
+    // The header's links: the page the customer named first, then the site, then the ids. The
+    // pill names the first one's host; the list has long addresses (cut in the middle), one
+    // written twice and one Clairic cut off (each shown once).
+    facts: [
+      ['ticket', 'OPS-1042'], ['site', 'acme/acme-preview'], ['cve', 'CVE-2026-1234'],
+      ['url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
+      ['url', 'https://www.aem.live/docs/cdn-guide'],
+      ['affected_url', 'https://main--acme-preview--acme.aem.page/en/index.html'],
+      ['url', 'https://acme.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/CDN%20cutover%20runbook.pdf'],
+      ['url', 'https://acme.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/Cache%20keys.xlsx'],
+      ['url', 'http://ACME.sharepoint.example/sites/acme-web/Shared%20Documents/Launch%20Plan%202026/Cache%20keys.xlsx/'],
+      ['url', 'https://main--acme-preview--acme.aem.page/en/ind…'],
+    ],
     // Written by the thread agent, long enough to fold: the draft line shows its first line.
     draft: {
       by: 'agent',
@@ -649,6 +757,17 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ],
     },
   });
+  {
+    // Reactions on the bubbles' edge: two of a kind (one yours) show a count, a single one not.
+    const entry = threads.get(preview503);
+    const [, , , , ravi, blocked] = entry.messages;
+    entry.reactionSeeds = [
+      { id: blocked.id, emoji: 'eyes', by: 'dana' },
+      { id: blocked.id, emoji: 'eyes', by: 'lena' },
+      { id: blocked.id, emoji: 'pray', by: 'priya' },
+      { id: ravi.id, emoji: 'raised_hands', by: 'priya' },
+    ];
+  }
 
   seed({
     ch: CHANNELS.aemGlobex,
@@ -662,6 +781,18 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     reads: { lena: 'latest', priya: 'latest' },
     label: {
       kind: 'question', next_actor: 'customer', urgency: 0.6, resolved_p: 0.4, topics: ['seo'],
+    },
+  });
+
+  // A thread about the Sidekick in a channel whose tech stack has Document Authoring: what it
+  // shows is not known yet, so the header names its topic, not the channel's likeliest.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 300, 'Is there an issue with the Sidekick right now? We are running into errors.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1, resolved_p: 0.1, topics: ['auth'],
     },
   });
 
@@ -684,7 +815,7 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['priya', 390, 'Works for us, I updated the invite.'],
     ],
     label: {
-      kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['golive'],
+      kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['project'],
     },
   });
 
@@ -708,12 +839,35 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     messages: [['bot', 6, '[FIRING] Queue depth above 5000 on normalize']],
   });
 
+  // An alert that fires again and again, every post folded into the first: in production a
+  // group of thousands, of which the thread shows the latest posts' messages and says how many
+  // it leaves out (src/api.js's MAX_READ_MEMBERS; the preview's is smaller, scripts/dev-ui.mjs).
+  const storm = seed({
+    ch: CHANNELS.alerts,
+    messages: [['bot', 14 * 60, '[FIRING] Origin errors above 1% on www']],
+  });
+  for (let i = 1; i <= 11; i += 1) {
+    const again = seed({
+      ch: CHANNELS.alerts,
+      messages: [['bot', 14 * 60 - i * 70, `[FIRING] Origin errors above 1% on www (${i + 1})`]],
+    });
+    threads.get(again).logical = storm;
+    Object.assign(threads.get(again), { row: deriveRow(threads.get(again)) });
+  }
+
   // Only a bot posted, yesterday: in the personal view (Dana posted in the channel) it sorts
   // by that post, not above everything else. Slack sent the channel it names as an id only
   // (`<#C…>`): the thread shows the channel's name, linked to its customer in the inbox.
   seed({
     ch: CHANNELS.initech,
     messages: [['bot', 18 * 60, 'New channel created: #C0UMBRELLA, ask in #edge-questions']],
+  });
+
+  // Links to a Teams channel in a Slack message, one bare and one with words of its own: the
+  // bare one shows the channel's name, and both open its threads in the inbox.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [['priya', 17 * 60, 'Purges are tracked in https://teams.microsoft.com/l/channel/CH-CDN/CDN%20tickets?groupId=TEAM-EDGE&tenantId=T-FAKE, the release dates in [the release channel](https://teams.microsoft.com/l/channel/CH-RELEASE/Release%20train?groupId=TEAM-PLATFORM&tenantId=T-FAKE).']],
   });
 
   // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a
@@ -746,7 +900,11 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       },
     });
     const entry = threads.get(key);
-    entry.reactionSeeds = [{ id: entry.rootId, emoji: 'approved', by: 'dana' }];
+    // One on your own (blue) bubble too.
+    entry.reactionSeeds = [
+      { id: entry.rootId, emoji: 'approved', by: 'dana' },
+      { id: entry.messages[1].id, emoji: 'pray', by: 'sam' },
+    ];
   }
 
   // Two messages mention the viewer since she last read it, one before: the customer card
@@ -760,8 +918,13 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['ravi', 15, '@Dana Ops same on the staging host, logs attached.'],
     ],
     reads: { dana: 170 },
+    // Many tags: the header's tech stack dropdown names the first and counts the rest.
     label: {
-      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.2, topics: ['cdn', 'seo'],
+      kind: 'incident',
+      next_actor: 'us',
+      urgency: 1.6,
+      resolved_p: 0.2,
+      topics: ['cdn', 'seo', 'publishing', 'performance', 'project', 'authoring', 'urls', 'auth'],
     },
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
   });
@@ -787,9 +950,14 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['tom', 2000, 'Can you share one URL where this happens?'],
     ],
     reads: { tom: 2000, dana: 'latest' },
-    // A colleague's draft, in a channel where the opspile app does not post.
+    // A colleague's draft, in a channel where the opspile app does not post: a line break and a
+    // numbered list, which the closed line shows rendered, on one line ("… now? 1. Which URL …").
     draft: {
-      by: 'tom', ago: 20, body: 'Thanks for the details. We rolled back the config change; can you confirm it works now?',
+      by: 'tom',
+      ago: 20,
+      body: 'Thanks for the details.\nWe rolled back the config change; can you confirm it works now?\n'
+        + '1. **Which URL** still shows an unpublished page, if any\n'
+        + '2. **When** you last saw it',
     },
     label: {
       kind: 'question', next_actor: 'customer', urgency: 0.9, resolved_p: 0.1, topics: ['publishing'],
@@ -802,6 +970,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['lena', 1500, 'Release 42 cut is scheduled for Thursday.', { subject: 'Release 42 cut' }],
       ['tom', 1490, 'Freeze starts Wednesday 18:00. Anything else to land?'],
       ['lena', 95, 'Only the cache header fix. PR is up.'],
+      // A Slack channel's link in a Teams post: it opens the channel's threads in the inbox.
+      ['tom', 90, 'Globex asked about it too: https://acme.slack.com/archives/C0GLOBEX01'],
     ],
     label: {
       kind: 'request', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,
@@ -824,11 +994,28 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     ],
   });
 
+  // A customer started a meeting in the channel and wrote in its chat, and nobody joined: Teams'
+  // notices say so (src/normalize.js), and are not counted as replies.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['system', 50, 'Meeting started by Mei Lin.'],
+      ['mei', 50, 'Hi,'],
+      ['mei', 49, 'We cannot get any further with the purge. Can we have a quick call?'],
+      ['system', 49, 'Meeting ended after 50 s. Only Mei Lin joined.'],
+      ['mei', 48, 'Please let us know a time.'],
+    ],
+    label: {
+      kind: 'meeting', next_actor: 'us', urgency: 0.7, resolved_p: 0.05,
+    },
+  });
+
   seed({
     ch: CHANNELS.cdn,
     messages: [
       ['mei', 70, 'Purge requests for /assets/* return 202 but the cache keeps serving old files.', { subject: 'Purge not working' }],
       ['mei', 65, `Reproduced on two regions, attaching the headers.\n\nAttachments:\n![headers.png](${upload('headers.png', 'image/svg+xml', screenshot('Response headers, two regions', '#6366f1', [40, 90, 60, 120, 30]))} "640x360")`],
+      ['mei', 64, `The recording of the page failing.\n\nAttachments:\n- [picker failing.har](${upload('picker failing.har', 'application/octet-stream', Buffer.from(recordingHar()))})`],
       // A screenshot attached in Teams (a SharePoint file), copied into pile 1 and shown
       // inline; the other file stays a link.
       ['mei', 64, '![Screenshot 2026-10-21 at 10.02.11 AM.png](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/Screenshot%202026-10-21%20at%2010.02.11%E2%80%AFAM.png "1280x720")\n\nAttachments:\n\n- [headers.har](https://contoso.sharepoint.com/sites/cdn-tickets/Shared%20Documents/General/headers.har)'],
@@ -863,6 +1050,21 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // Code blocks, highlighted (src/ui-highlight.js): Slack's, which name no language (the
+  // highlighter guesses JSON, the log and the command), and one that names it.
+  seed({
+    ch: CHANNELS.aemAcme,
+    messages: [
+      ['sam', 90, 'The site config we push, and what preview logs right after:\n\n```\n{\n  "source": {\n    "type": "markup",\n    "url": "https://content.example.com/acme",\n    "retries": 3,\n    "paused": false\n  },\n  "owner": "acme",\n  "repo": "acme-web"\n}\n```\n\n```\n2026-10-21 10:02:11.204 *ERROR* [preview-7] content.Source Failed to fetch /en/index: 503\n2026-10-21 10:02:12.380 *WARN* [preview-7] content.Source Retrying (1 of 3)\n```', { subject: 'Preview fails after the config push' }],
+      ['dana', 85, 'Thanks. Can you run this and send what it prints?\n\n```\ncurl -sS -H "Authorization: Bearer $TOKEN" https://admin.example.com/status/acme/acme-web/main/en/index | jq .preview\n```'],
+      ['sam', 80, 'Our rewrite does this, in case it matters:\n\n```js\n// Maps legacy paths before the CDN asks the origin.\nexport function rewrite(url) {\n  const path = url.pathname.replace(/^\\/content\\/acme/, \'\');\n  return path.endsWith(\'.html\') ? path.slice(0, -5) : path;\n}\n```'],
+    ],
+    reads: { dana: 85 },
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
+    },
+  });
+
   seed({
     ch: CHANNELS.forum,
     messages: [
@@ -870,9 +1072,13 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       ['lena', 80, 'It can: the site config names the content source. Which org do you have?'],
       ['jonas', 30, 'Ours is `initech`, the site is in `initech-web`.'],
     ],
-    // Discord takes no replies as yourself: the draft can still go out as the opspile app.
+    // Discord takes no replies as yourself: the draft can still go out as the opspile app. Its
+    // code block keeps to the closed line's one line.
     draft: {
-      by: 'lena', ago: 12, body: 'Then map `initech` in the site config of `initech-web`: the content source names its own org.',
+      by: 'lena',
+      ago: 12,
+      body: 'Then map `initech` in the site config of `initech-web`:\n\n```yaml\ncontent:\n'
+        + '  source: initech\n  site: initech-web\n```\n\nThe content source names its own org.',
     },
     label: {
       kind: 'question', next_actor: 'us', urgency: 0.8, resolved_p: 0.2,
@@ -941,6 +1147,20 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     reads: { dana: 3990 },
   });
 
+  // Three unread mentions of the viewer: in the personal view's customer column, opspile comes
+  // first, before ACME (two) and the customers with one, whatever their names.
+  seed({
+    ch: CHANNELS.edgeQ,
+    messages: [
+      ['dana', 300, 'Who owns the rate limits on the edge workers?'],
+      ['lena', 240, '@Dana Ops Tom does, but he is out until Monday.'],
+      ['tom', 120, '@Dana Ops back early: what do you need?'],
+      ['lena', 30, '@Dana Ops Tom raised them, can you check?'],
+    ],
+    reads: { dana: 300 },
+    mentioned: [['dana', 240], ['dana', 120], ['dana', 30]],
+  });
+
   // Read and unread side by side, for the thread list: critical and
   // unseen, read and resolved with a staff ✅, read and waiting on the customer, read and old.
   seed({
@@ -960,7 +1180,8 @@ export function createStore(now = Date.now(), { big = false } = {}) {
         ['mei', 900, 'The docs host shows a certificate warning since this morning.'],
         ['lena', 860, 'The certificate had expired; it is renewed now. Can you check again?'],
         ['mei', 845, 'Works again, thanks!'],
-        ['lena', 840, 'Great, closing this one. :white_check_mark:'],
+        // Short replies on both sides: the quick reactions on hovering one stay in the pane.
+        ['lena', 840, 'Closing. :white_check_mark:'],
       ],
       reads: { dana: 'latest', priya: 'latest' },
       label: {
@@ -994,18 +1215,60 @@ export function createStore(now = Date.now(), { big = false } = {}) {
     },
   });
 
+  // A follow-up posted as a new root, folded into the thread it continues (re-threading): one
+  // inbox entry, "2 posts folded into one thread". The live case, a root folded after it was
+  // in the list, is `POST /__dev/rethread` (scripts/dev-ui.mjs).
+  const asked = seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', 300, 'Our sitemap.xml still lists the retired /promo pages.'],
+      ['tom', 280, 'They come from the query index. I will drop them from it.'],
+    ],
+    reads: { dana: 'latest' },
+    // Labeled before labels had their technologies: the channel's are all the header has.
+    label: {
+      kind: 'request', next_actor: 'us', urgency: 0.5, resolved_p: 0.2, topics: ['seo'],
+    },
+    // No page named: the site's production URL comes first.
+    facts: [['site', 'umbrella/www'], ['url', 'https://github.com/umbrella/www']],
+  });
+  const followUp = seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [['ola', 25, 'Any news on the sitemap? Search Console keeps flagging /promo.']],
+  });
+  threads.get(followUp).logical = asked;
+  Object.assign(threads.get(followUp), { row: deriveRow(threads.get(followUp)) });
+
+  // With `--admin`: one unread thread filed under Admin, in a channel Dana never posted in,
+  // so the end of her personal unread list can name Admin last (it is her smallest team).
+  if (admin) {
+    seed({
+      ch: {
+        source: 'slack', channelId: 'C0ADMIN01', name: 'admin-desk', org: 'opspile', team: 'admin',
+      },
+      messages: [['lena', 12, 'This channel is still with Admin. Who should take it?']],
+      label: {
+        kind: 'request', next_actor: 'us', urgency: 0.6, resolved_p: 0.1,
+      },
+    });
+  }
+
   if (big) {
     addBigInbox({
       people, byKey, seed, threads,
     });
   }
 
+  const teams = admin
+    ? [...TEAMS, { slug: 'admin', name: 'Admin', members: [1] }]
+    : TEAMS;
+
   return {
     now,
     me: {
-      ...people.get(1), teams: TEAMS.map(({ slug, name }) => ({ slug, name })), admin: false,
+      ...people.get(1), teams: teams.map(({ slug, name }) => ({ slug, name })), admin: false,
     },
-    teams: TEAMS,
+    teams,
     klickhaus: KLICKHAUS,
     partners: PARTNERS,
     people,
@@ -1036,6 +1299,36 @@ export function createStore(now = Date.now(), { big = false } = {}) {
       return key;
     },
 
+    /** The id and thread key of a thread about to start in `ch`, as a platform gives them. */
+    startId(ch, at) {
+      const id = newId(ch.source, at);
+      return { id, key: threadKey(ch, id) };
+    },
+
+    /** The key of the thread message `rootId` starts in `ch`, and an id for a reply in it. */
+    replyIn(ch, rootId, at) {
+      return { key: threadKey(ch, rootId), id: newId(ch.source, at) };
+    },
+
+    /** Starts thread `key` with message `id`, as its first message arriving would. */
+    start(ch, { id, key }, who, body, at = new Date().toISOString()) {
+      const entry = {
+        key,
+        ch,
+        rootId: id,
+        path: channelPath({
+          org: ch.org, team: ch.team, source: ch.source, channelId: ch.channelId, rootId: id, id,
+        }).replace(/\/[^/]+\.md$/, '/'),
+        messages: [],
+        row: null,
+      };
+      threads.set(key, entry);
+      put(entry, {
+        id, at, author: author(who), body,
+      });
+      return key;
+    },
+
     /** Replaces a message's text, as an edit arriving from the platform would. */
     edit(key, id, body, at = new Date().toISOString()) {
       const entry = threads.get(key);
@@ -1048,6 +1341,19 @@ export function createStore(now = Date.now(), { big = false } = {}) {
 
     /** A platform message id for a new message, as Slack or Teams would assign it. */
     newId: (key, at = Date.now()) => newId(threads.get(key).ch.source, at),
+
+    /** Re-threads `key` into the group of `into`, as src/rethread.js decides a match. */
+    rethread(key, into) {
+      const entry = threads.get(key);
+      const group = threads.get(into);
+      if (!entry || !group || key === into) {
+        return null;
+      }
+      const first = group.logical || into;
+      entry.logical = first;
+      Object.assign(entry, { row: deriveRow(entry) });
+      return first;
+    },
 
     /** Moves a watermark forward only, like TeamRoom.read. */
     read(person, key, at) {

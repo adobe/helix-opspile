@@ -21,12 +21,19 @@ import { QUOTE_HEAD, quotesAsText } from './markdown.js';
 
 export const TITLE_MAX = 140;
 
+/** Markdown and Slack links as their text, and images dropped, for a title or a preview. */
+const unlink = (s) => s
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+  .replace(/<(https?:\/\/[^>\s]+)>/g, '$1');
+
 /** First meaningful line of a markdown body, for the thread title; not a quote's author line. */
 export function titleOf(subject, body) {
   const line = String(subject || body || '')
     .split('\n')
     .filter((l) => !QUOTE_HEAD.test(l))
-    .map((l) => l.replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
+    .map((l) => unlink(l).replace(/^[#>\-*\s]+/, '').replace(/[*~`]/g, '')
       // `_` only as emphasis at word edges, so `:rotating_light:` keeps its name.
       .replace(/(^|\s)_+|_+(?=\s|$)/g, '$1')
       .trim())
@@ -124,14 +131,19 @@ export async function indexMessage(db, m, now = new Date()) {
     (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, title, path,
      root_at, last_at, last_id, last_author, last_staff, last_text, any_at, messages, updated_at)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+      -- What was said titles a thread; a system notice (a meeting started) only one without.
       COALESCE(
-        (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''),
+        (SELECT title FROM messages WHERE thread = ?1 AND id = ?5 AND deleted = 0 AND title != ''
+          AND COALESCE(author_kind, '') != 'system'),
+        (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
+          AND COALESCE(author_kind, '') != 'system' ORDER BY at LIMIT 1),
         (SELECT title FROM messages WHERE thread = ?1 AND deleted = 0 AND title != ''
           ORDER BY at LIMIT 1)),
       ?11, ?12,
       l.at, l.id, l.author, l.staff, l.preview,
       (SELECT MAX(at) FROM messages WHERE thread = ?1 AND deleted = 0),
-      (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0),
+      (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0
+        AND COALESCE(author_kind, '') != 'system'),
       ?13
     FROM (SELECT NULL) LEFT JOIN (
       SELECT at, id, author, staff, preview FROM messages
@@ -181,6 +193,16 @@ export async function findMessage(db, {
 
 /** Attention levels, most pressing first. */
 export const ATTENTION = ['adobe', 'mentioned-me', 'mentioned-team', 'team', 'me'];
+
+/**
+ * The member of a re-threaded group with the latest activity, whose label speaks for the group. A
+ * member whose messages are all deleted has no `any_at`: it is the oldest, not the latest (as
+ * text, `null` sorts after every date).
+ */
+export function latestMember(members) {
+  return [...members]
+    .sort((a, b) => String(b.any_at || '').localeCompare(String(a.any_at || '')))[0];
+}
 
 /**
  * Who a thread waits on: `us`, `customer`, `vendor` or `nobody`. Clef's `next_actor` (on

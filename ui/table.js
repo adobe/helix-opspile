@@ -13,9 +13,13 @@
 /*
  * The preview of a file attached to a message, as the global `Table`: a CSV or TSV as a
  * table (its first row the header; a click on a column sorts by it, the filter keeps the rows
- * with what was typed), any other text as it is (JSON indented). ui/inbox.js fetches the file
- * (GET /api/file) and puts the preview under the file's card; the ⤢ button shows it full
- * screen. Everything is written as text, never as HTML: the file is someone else's.
+ * with what was typed), a HAR as a table of its requests (a click on one shows it), any other
+ * text as it is (JSON indented). ui/inbox.js fetches the file (GET /api/file) and puts the
+ * preview under the file's card; the ⤢ button shows it full screen. Everything is written as
+ * text, never as HTML: the file is someone else's.
+ *
+ * A HAR holds the signed-in session of whoever recorded it. Its credentials (and the bodies,
+ * where tokens travel too) stay out of the page until someone asks to see one.
  */
 globalThis.Table = (() => {
   // Rows shown at once, under the card and full screen; the filter and the sort take all.
@@ -111,17 +115,26 @@ globalThis.Table = (() => {
     return e;
   };
 
-  /** A table of `rows` (the first the header) with sort and filter, in `box`. */
-  function tableView(box, rows, { size, expand, start = {} }) {
+  /**
+   * A table of `rows` (the first the header) with sort and filter, in `box`. `of`, for rows that
+   * stand for something (a HAR's requests): `noun`, `summary`, `cls` (the name of the view's
+   * table), `rowClass(i)`, `words(i)` (what the filter finds besides the cells), and
+   * `detail(i)`: what a click on the row shows under it.
+   */
+  function tableView(box, rows, {
+    size, expand, start = {}, of = {},
+  }) {
     const [head = [], ...body] = rows;
     const nums = head.map((_, c) => numeric(body, c));
-    const lower = body.map((r) => r.join('\u0000').toLowerCase());
+    const lower = body.map((r, i) => `${r.join('\u0000')}\u0000${of.words ? of.words(i) : ''}`.toLowerCase());
+    const noun = of.noun || 'row';
+    const opened = new Set();
     let sort = start.sort || { c: -1, dir: 0 };
     let query = (start.query || '').trim().toLowerCase();
 
     const count = el('span', { class: 'fv-count' });
     const find = el('input', {
-      class: 'fv-find', type: 'search', value: start.query, placeholder: 'Filter rows', 'aria-label': 'Filter the rows', autocomplete: 'off', spellcheck: 'false',
+      class: 'fv-find', type: 'search', value: start.query, placeholder: of.placeholder || 'Filter rows', 'aria-label': `Filter the ${noun}s`, autocomplete: 'off', spellcheck: 'false',
     });
     const thead = el('thead');
     const tbody = el('tbody');
@@ -138,6 +151,7 @@ globalThis.Table = (() => {
     });
     thead.append(headRow);
 
+    const detailRow = (i) => el('tr', { class: 'fv-detail' }, el('td', { colspan: String(head.length + 1) }, of.detail(i)));
     const draw = () => {
       let order = body.map((_, i) => i);
       if (query) order = order.filter((i) => lower[i].includes(query));
@@ -153,17 +167,23 @@ globalThis.Table = (() => {
         });
       }
       const shown = order.slice(0, LIMIT[size]);
-      tbody.replaceChildren(...shown.map((i) => el(
-        'tr',
-        {},
-        el('td', { class: 'fv-n' }, String(i + 1)),
-        ...body[i].map((v, c) => el('td', { class: nums[c] ? 'num' : '', title: v.length > 40 ? v : null }, v)),
-      )));
-      if (!shown.length) tbody.append(el('tr', {}, el('td', { class: 'fv-none', colspan: String(head.length + 1) }, query ? 'No row has that.' : 'No rows.')));
+      tbody.replaceChildren(...shown.flatMap((i) => {
+        const row = el(
+          'tr',
+          of.detail ? {
+            class: of.rowClass?.(i), 'data-i': String(i), tabindex: '0', role: 'button', 'aria-expanded': String(opened.has(i)),
+          } : {},
+          el('td', { class: 'fv-n' }, String(i + 1)),
+          ...body[i].map((v, c) => el('td', { class: nums[c] ? 'num' : '', title: v.length > 40 ? v : null }, v)),
+        );
+        return opened.has(i) ? [row, detailRow(i)] : [row];
+      }));
+      if (!shown.length) tbody.append(el('tr', {}, el('td', { class: 'fv-none', colspan: String(head.length + 1) }, query ? `No ${noun} has that.` : `No ${noun}s.`)));
+      const shape = of.summary || plural(head.length, 'column');
       count.textContent = query
-        ? `${plural(order.length, 'row')} of ${fmt(body.length)} · ${plural(head.length, 'column')}`
-        : `${plural(body.length, 'row')} · ${plural(head.length, 'column')}`;
-      more.textContent = order.length > shown.length ? `The first ${fmt(shown.length)} of ${plural(order.length, 'row')}${size === 'inline' ? ': ⤢ shows more' : ''}; the filter and the sort take them all.` : '';
+        ? `${plural(order.length, noun)} of ${fmt(body.length)} · ${shape}`
+        : `${plural(body.length, noun)} · ${shape}`;
+      more.textContent = order.length > shown.length ? `The first ${fmt(shown.length)} of ${plural(order.length, noun)}${size === 'inline' ? ': ⤢ shows more' : ''}; the filter and the sort take them all.` : '';
       more.hidden = !more.textContent;
       for (const th of headRow.querySelectorAll('th[data-c]')) {
         const on = Number(th.dataset.c) === sort.c && sort.dir;
@@ -178,6 +198,30 @@ globalThis.Table = (() => {
       sort = sort.c !== c ? { c, dir: 1 } : { c, dir: sort.dir === 1 ? -1 : 0 };
       draw();
     });
+    const toggle = (row) => {
+      const i = Number(row.dataset.i);
+      const on = !opened.has(i);
+      if (on) {
+        opened.add(i);
+        row.after(detailRow(i));
+      } else {
+        opened.delete(i);
+        row.nextElementSibling.remove();
+      }
+      row.setAttribute('aria-expanded', String(on));
+    };
+    if (of.detail) {
+      tbody.addEventListener('click', (e) => {
+        const row = e.target.closest('tr[data-i]');
+        if (row) toggle(row);
+      });
+      tbody.addEventListener('keydown', (e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-i]')) {
+          e.preventDefault();
+          toggle(e.target);
+        }
+      });
+    }
     let timer = 0;
     find.addEventListener('input', () => {
       clearTimeout(timer);
@@ -185,7 +229,7 @@ globalThis.Table = (() => {
     });
     box.append(
       el('div', { class: 'fv-bar' }, count, find, expand),
-      el('div', { class: 'fv-scroll', tabindex: '0' }, el('table', { class: 'fv-table' }, thead, tbody)),
+      el('div', { class: 'fv-scroll', tabindex: '0' }, el('table', { class: `fv-table ${of.cls || ''}` }, thead, tbody)),
       more,
     );
     draw();
@@ -206,6 +250,160 @@ globalThis.Table = (() => {
       cut ? el('div', { class: 'fv-more', text: `The first ${fmtSize(MAX_TEXT[size])}${size === 'inline' ? ': ⤢ shows more' : ''}; open the file for all of it.` }) : null,
     ].filter(Boolean));
     return { focus: () => {} };
+  }
+
+  // --- HAR ---
+
+  const SECRET_NAME = /^(proxy-)?authorization$|^(set-)?cookie$|token|secret|passw|api[-_]?key|session|signature|^sig$|^code$/i;
+  const JWT = /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/;
+  const HIDDEN = '••••••';
+  /** Whether a header or a query parameter is a credential: by its name, or a JWT by its look. */
+  const secret = (name, value) => SECRET_NAME.test(String(name)) || JWT.test(String(value));
+
+  /** A URL without its scheme and with the values of its credentials hidden. */
+  function maskUrl(url) {
+    const [base, ...query] = String(url || '').replace(/^https?:\/\//i, '').split('?');
+    if (!query.length) return base;
+    const pairs = query.join('?').split('&').map((pair) => {
+      const at = pair.indexOf('=');
+      const name = at < 0 ? pair : pair.slice(0, at);
+      return at >= 0 && secret(name, pair.slice(at + 1)) ? `${name}=${HIDDEN}` : pair;
+    });
+    return `${base}?${pairs.join('&')}`;
+  }
+
+  const entryType = (e) => {
+    const type = e._resourceType || String(e.response?.content?.mimeType || '').split(';')[0].split('/').pop();
+    return String(type || '').toLowerCase();
+  };
+  // Chrome's reason for a request that never got an answer, where there is one.
+  const failure = (e) => e.response?._error || e._error || '';
+  const failed = (e) => { const s = Number(e.response?.status) || 0; return s === 0 || s >= 400; };
+
+  // The parsed recording, for the preview and then its full-screen view: parsing it is slow.
+  let lastHar = { text: null, har: null };
+  /**
+   * A HAR's requests, or null when `text` is not one: `{ head, rows, entries, summary }`, a row
+   * for a table: when it started (seconds), status, method, time, size, type, and the URL
+   * last, where a preview's width runs out.
+   */
+  function har(text) {
+    if (lastHar.text === text) return lastHar.har;
+    let entries;
+    try {
+      ({ entries } = JSON.parse(String(text).replace(/^\uFEFF/, '')).log);
+    } catch {
+      entries = null;
+    }
+    let parsed = null;
+    if (Array.isArray(entries)) {
+      const when = (e) => Date.parse(e.startedDateTime) || 0;
+      const first = entries.reduce((n, e) => Math.min(n, when(e)), Infinity);
+      const rows = entries.map((e) => [
+        ((when(e) - first) / 1000).toFixed(2),
+        String(e.response?.status ?? 0),
+        String(e.request?.method || ''),
+        String(Math.round(Number(e.time) || 0)),
+        (Math.max(0, Number(e.response?.content?.size) || 0) / 1024).toFixed(1),
+        entryType(e),
+        maskUrl(e.request?.url),
+      ]);
+      const bad = entries.filter(failed).length;
+      const slowest = entries.reduce((n, e) => Math.max(n, Number(e.time) || 0), 0);
+      parsed = {
+        head: ['Start (s)', 'Status', 'Method', 'Time (ms)', 'Size (KB)', 'Type', 'URL'],
+        rows,
+        entries,
+        summary: `${fmt(bad)} failed · slowest ${(slowest / 1000).toFixed(1)} s`,
+      };
+    }
+    lastHar = { text, har: parsed };
+    return parsed;
+  }
+
+  /** A value of a credential: hidden until asked for, so that a look at a request shows none. */
+  function hidden(value) {
+    const box = el('span', { class: 'fv-secret' }, HIDDEN, ' ');
+    box.append(el('button', {
+      type: 'button',
+      onclick: (e) => { e.stopPropagation(); box.replaceChildren(String(value)); },
+    }, 'Show'));
+    return box;
+  }
+
+  /** Name and value pairs, the credentials among them hidden. */
+  const pairs = (title, list) => (list?.length ? el(
+    'section',
+    {},
+    el('h4', { text: title }),
+    el('dl', {}, ...list.flatMap(({ name, value }) => [
+      el('dt', { text: name }),
+      el('dd', {}, secret(name, value) ? hidden(value) : String(value ?? '')),
+    ])),
+  ) : null);
+
+  const MAX_BODY = 200000;
+  /** The body of a request or response as text, or null when it is not. */
+  function bodyText({ text, encoding, mimeType }) {
+    if (!text) return null;
+    let out = String(text);
+    if (encoding === 'base64') {
+      if (!/^text\/|json|xml|javascript/i.test(mimeType || '')) return null;
+      try {
+        out = new TextDecoder().decode(Uint8Array.from(atob(out), (c) => c.charCodeAt(0)));
+      } catch {
+        return null;
+      }
+    }
+    if (/json/i.test(mimeType || '') && out.length < 2000000) {
+      try { out = JSON.stringify(JSON.parse(out), null, 2); } catch { /* as it is */ }
+    }
+    return out.length > MAX_BODY ? `${out.slice(0, MAX_BODY)}\n…` : out;
+  }
+
+  /** A body, behind a button: tokens travel in them, and a HAR has many. */
+  function bodySection(title, part) {
+    if (!part?.text) return null;
+    const section = el('section', {}, el('h4', { text: `${title} · ${part.mimeType || 'no type'} · ${fmtSize(part.text.length)}` }));
+    const text = bodyText(part);
+    section.append(text === null
+      ? el('p', { text: 'Not text.' })
+      : el('button', {
+        type: 'button',
+        class: 'fv-show',
+        onclick: (e) => {
+          e.stopPropagation();
+          e.target.replaceWith(el('pre', { class: 'fv-text', tabindex: '0' }, text));
+        },
+      }, 'Show'));
+    return section;
+  }
+
+  /** One request: what it asked, what it was told, and where its time went. */
+  function harDetail(e) {
+    const stages = Object.entries(e.timings || {})
+      .filter(([k, v]) => !k.startsWith('_') && k !== 'comment' && Number(v) > 0)
+      .map(([k, v]) => `${k} ${fmt(Math.round(v))} ms`);
+    const reason = failure(e);
+    return el(
+      'div',
+      { class: 'fv-request' },
+      el(
+        'p',
+        { class: 'fv-url' },
+        `${e.request?.method || ''} ${maskUrl(e.request?.url)}`,
+      ),
+      el('p', {
+        text: [e.startedDateTime, e.response?.status ? `${e.response.status} ${e.response.statusText || ''}`.trim() : '', e.serverIPAddress].filter(Boolean).join(' · '),
+      }),
+      reason ? el('p', { class: 'fv-why', text: reason }) : null,
+      stages.length ? el('p', { text: stages.join(' · ') }) : null,
+      pairs('Query', e.request?.queryString),
+      pairs('Request headers', e.request?.headers),
+      bodySection('Request body', e.request?.postData),
+      pairs('Response headers', e.response?.headers),
+      bodySection('Response body', e.response?.content),
+    );
   }
 
   const fmtSize = (n) => {
@@ -229,6 +427,25 @@ globalThis.Table = (() => {
       }, '⤢')
       : null;
     const rows = kind === 'table' ? parse(text, { name }) : [];
+    const recording = /\.har$/i.test(name) ? har(text) : null;
+    if (recording) {
+      const { head, rows: requests, entries } = recording;
+      view = tableView(box, [head, ...requests], {
+        size,
+        expand,
+        start,
+        of: {
+          noun: 'request',
+          cls: 'fv-har',
+          placeholder: 'Filter: URL, status, failed',
+          summary: recording.summary,
+          rowClass: (i) => (failed(entries[i]) ? 'fv-failed' : null),
+          words: (i) => (failed(entries[i]) ? `failed ${failure(entries[i])}` : ''),
+          detail: (i) => harDetail(entries[i]),
+        },
+      });
+      return view;
+    }
     view = rows.length ? tableView(box, rows, { size, expand, start })
       : textView(box, text, { size, expand, name });
     return view;
@@ -267,6 +484,6 @@ globalThis.Table = (() => {
   }
 
   return {
-    parse, sniff, numeric, mount, open,
+    parse, sniff, numeric, mount, open, har, maskUrl, secret, bodyText,
   };
 })();

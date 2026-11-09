@@ -19,6 +19,9 @@ import { isStaffDomain } from './lookup.js';
  * so a customer's "thanks, works now" does not keep it open) or until staff resolve it again.
  */
 
+// Clef's `resolved_p` from which a thread counts as resolved.
+const RESOLVED_P = 0.5;
+
 /** The reaction each platform uses for "resolved" (the one opspile adds). */
 export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅' };
 
@@ -145,6 +148,17 @@ export function resolution(facts, label, me) {
   return {
     state: 'resolved', verdict: 'resolved', at, by, mine,
   };
+}
+
+/**
+ * Whether an inbox entry counts as resolved: its `verdict` (of `resolution`), else Clef. Everyone
+ * outside the inbox page goes by this; the page has its own copy (`resolvedOf`, ui/inbox.js).
+ */
+export function isResolved(verdict, label) {
+  if (verdict) {
+    return verdict === 'resolved';
+  }
+  return Boolean(label && label.resolved_p != null && label.resolved_p >= RESOLVED_P);
 }
 
 /** The facts of several threads as one (a re-threaded group). */

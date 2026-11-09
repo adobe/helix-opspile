@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
-import { api, inbox } from '../src/api.js';
+import { api, inbox, MAX_READ_MEMBERS } from '../src/api.js';
 import { render } from '../src/channels.js';
-import { AGENT_EMAIL } from '../src/drafts.js';
+import { AGENT_EMAIL, discardDraft, saveDraft } from '../src/drafts.js';
+import { changeOf } from '../src/draftevents.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -110,6 +111,20 @@ describe('shared drafts', () => {
     assert.equal(changed.created_at, saved.created_at);
     assert.ok(changed.updated_at > saved.updated_at);
     assert.equal(e.DB.rows('SELECT * FROM drafts').length, 1);
+  });
+
+  it('does not bring back a draft that was discarded meanwhile', async () => {
+    const e = env();
+    const first = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'one', base: null })).json()).draft;
+    await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: first.updated_at });
+    // A save from the draft that is gone: nothing is saved, and the answer says so.
+    const res = await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'two', base: first.updated_at });
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.deepEqual([body.conflict, body.draft], [true, null]);
+    assert.equal(e.DB.rows('SELECT * FROM drafts').length, 0);
+    // Saving it as a new draft is a decision of its own, as is Undo of a discard.
+    assert.equal((await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'two', base: null })).status, 200);
   });
 
   it('does not overwrite a draft somebody changed meanwhile', async () => {
@@ -296,6 +311,81 @@ describe('shared drafts', () => {
     assert.deepEqual(alone.members.map((m) => m.thread), [FOLLOW]);
   });
 
+  it('gives the header each folded post\'s link and the technologies the thread shows', async () => {
+    const e = env();
+    e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(ROOT, FOLLOW);
+    e.DB.sqlite.prepare('UPDATE messages SET permalink = \'https://s.example/p\' || id').run();
+    e.DB.sqlite.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread,
+      updated_at) VALUES ('slack', 'E1', 'C1', 'eds', 1, ?, '2026-10-21T10:00:00Z'),
+      ('slack', 'E1', 'C1', 'akamai', 0.9, 'slack:E1:C1:9.1', '2026-10-21T10:00:00Z')`).run(ROOT);
+    const open = async () => (await call(e, BO, 'GET', `/api/thread?thread=${ROOT}`)).json();
+    let data = await open();
+    assert.deepEqual(data.members.map((m) => [m.thread, m.permalink]), [
+      [ROOT, 'https://s.example/p1.1'], [FOLLOW, 'https://s.example/p2.1'],
+    ]);
+    assert.deepEqual(data.tech.map((t) => t.tech), ['eds', 'akamai']);
+    // Labeled before labels had their technologies: those a member set for the channel.
+    assert.deepEqual(data.thread_tech, [{ tech: 'eds', p: 1 }]);
+    // Once a member is labeled again, what the labels say.
+    e.DB.sqlite.prepare(`INSERT INTO labels (thread, labeled_through, model, labeled_at, tech)
+      VALUES (?, '', 'clef', '', '{"akamai":0.85}'), (?, '', 'clef', '', '{}')`).run(FOLLOW, ROOT);
+    data = await open();
+    assert.deepEqual(data.thread_tech, [{ tech: 'akamai', p: 0.85 }]);
+    // A thread on its own needs no list of posts.
+    e.DB.sqlite.prepare('UPDATE threads SET logical_thread = NULL').run();
+    data = await open();
+    assert.equal(data.members[0].permalink, undefined);
+  });
+
+  it('reads the latest posts of a very large group, with its first and the asked one', async () => {
+    const e = env();
+    // An alert channel folds thousands of posts into one entry; every post is a folder, and an
+    // invocation may make 10,000 calls: reading them all answered 500.
+    const n = MAX_READ_MEMBERS + 3;
+    const insert = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+      root_id, org, team, path, root_at, last_at, any_at, messages, updated_at, logical_thread)
+      VALUES (?, 'slack', 'E1', 'C1', ?, 'acme', 'helix', ?, ?, ?, ?, 1, ?, ?)`);
+    const keyOf = (i) => `slack:E1:C1:${10 + i}.1`;
+    await e.CHANNELS.put('p/1.1/1.1.md', render({
+      source: 'slack', thread: ROOT, id: '1.1', at: '2026-10-21T10:00:00Z',
+    }, 'the first alert'));
+    for (let i = 0; i < n; i += 1) {
+      const root = `${10 + i}.1`;
+      const at = new Date(Date.parse('2026-10-22T00:00:00Z') + i * 60000).toISOString();
+      insert.run(keyOf(i), root, `p/${root}/`, at, at, at, at, ROOT);
+      // eslint-disable-next-line no-await-in-loop
+      await e.CHANNELS.put(`p/${root}/${root}.md`, render({
+        source: 'slack', thread: keyOf(i), id: root, at,
+      }, `alert ${i}`));
+    }
+    const listed = [];
+    const { list } = e.CHANNELS;
+    e.CHANNELS.list = (opts) => {
+      listed.push(opts.prefix);
+      return list(opts);
+    };
+    const res = await call(e, BO, 'GET', `/api/thread?thread=${keyOf(0)}`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    // Every member is named; the messages of MAX_READ_MEMBERS of them are read.
+    assert.equal(data.members.length, n + 1);
+    assert.equal(listed.length, MAX_READ_MEMBERS);
+    assert.equal(data.earlier_posts, n + 1 - MAX_READ_MEMBERS);
+    // Which ones, so the page says where posts are missing: the oldest but the first and asked.
+    const out = data.members.flatMap((m, i) => (m.left_out ? [i] : []));
+    assert.equal(out.length, data.earlier_posts);
+    assert.deepEqual([out[0], out.at(-1)], [2, data.earlier_posts + 1]);
+    const bodies = data.messages.map((m) => m.body);
+    // The group's first post, the asked one (the oldest alert) and the latest.
+    assert.equal(bodies[0], 'the first alert');
+    assert.equal(bodies[1], 'alert 0');
+    assert.equal(bodies.at(-1), `alert ${n - 1}`);
+    assert.ok(!bodies.includes('alert 1'));
+    // A small group reads every post.
+    assert.equal((await (await call(e, BO, 'GET', `/api/thread?thread=${FOLLOW}`)).json())
+      .earlier_posts, 0);
+  });
+
   it('marks threads with a draft in the inbox and the thread', async () => {
     const e = env();
     await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: `long ${'x'.repeat(200)}`, base: null });
@@ -368,6 +458,78 @@ describe('shared drafts', () => {
       });
       assert.equal(await draftOf(e, ADA), null);
     });
+
+    describe('what became of the agent\'s drafts', () => {
+      const AGENT = 91;
+      /** An env where the agent saved `text` as the draft, and Bo may post as himself. */
+      const withDraft = async (text = 'Purges take up to 5 minutes.') => {
+        const e = { ...env(), SLACK_BOT_TOKEN: 'xoxb-made-up' };
+        await connect(e, 2);
+        e.DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (?, ?, 'opspile agent', 0)")
+          .run(AGENT, AGENT_EMAIL);
+        const draft = { thread: ROOT, text, base: null };
+        const res = await saveDraft(e, { id: AGENT }, draft, () => true);
+        return { e, d: (await res.json()).draft };
+      };
+      const events = (e) => e.DB.rows(`SELECT action, how, by_agent, origin_agent, changed,
+        hash IS NOT NULL AS hashed, org, team, draft FROM draft_events ORDER BY id`);
+
+      it('records a draft the agent saved and a person sent as it was', async () => {
+        const { e, d } = await withDraft();
+        await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: d.body, draft: d.updated_at });
+        assert.deepEqual(events(e), [{
+          action: 'saved', how: null, by_agent: 1, origin_agent: 1, changed: null, hashed: 0, org: 'acme', team: 'helix', draft: d.created_at,
+        }, {
+          action: 'sent', how: 'me', by_agent: 0, origin_agent: 1, changed: 0, hashed: 0, org: 'acme', team: 'helix', draft: d.created_at,
+        }]);
+      });
+
+      it('says how much was changed, in the reply box or saved over first', async () => {
+        let { e, d } = await withDraft();
+        await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'Purges take up to 10 minutes.', draft: d.updated_at });
+        // One word of six.
+        assert.equal(events(e).at(-1).changed, 0.167);
+        ({ e, d } = await withDraft());
+        const edited = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'Purges take a minute.', base: d.updated_at })).json()).draft;
+        e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled,
+          changed_by, changed_at) VALUES ('post_message', 'channel', 'C1', 1, 'Ada', '2026-10-21T10:00:00Z')`).run();
+        // Ada's version, sent as it is, is compared with what the agent proposed.
+        await call(e, BO, 'POST', '/api/post/app', { thread: ROOT, text: edited.body, draft: edited.updated_at });
+        const sent = events(e).at(-1);
+        assert.deepEqual([sent.action, sent.how, sent.origin_agent], ['sent', 'app', 1]);
+        assert.ok(sent.changed > 0.5);
+      });
+
+      it('tells a person\'s discard from the agent\'s, and an Undo from a new draft', async () => {
+        const { e, d } = await withDraft();
+        await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: d.updated_at });
+        assert.deepEqual(events(e).at(-1), {
+          action: 'discarded', how: null, by_agent: 0, origin_agent: 1, changed: null, hashed: 1, org: 'acme', team: 'helix', draft: d.created_at,
+        });
+        // Undo saves the same text again: the discard is gone, and the draft is still the agent's.
+        const back = (await (await call(e, BO, 'PUT', '/api/draft', { thread: ROOT, text: d.body, base: null })).json()).draft;
+        assert.equal(back.created_at, d.created_at);
+        assert.equal(back.origin, AGENT);
+        assert.deepEqual(events(e).map((v) => v.action), ['saved', 'saved']);
+        // The agent withdraws it.
+        await discardDraft(e, { id: AGENT }, { thread: ROOT, base: back.updated_at }, () => true);
+        assert.deepEqual([events(e).at(-1).action, events(e).at(-1).by_agent], ['discarded', 1]);
+        // Another person's new draft is theirs, even with the same text, after the Undo's time.
+        const later = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: d.body, base: null })).json()).draft;
+        assert.notEqual(later.created_at, d.created_at);
+        assert.equal(events(e).at(-1).origin_agent, 0);
+      });
+    });
+  });
+});
+
+describe('a sent draft\'s changes', () => {
+  it('count the words changed, over the longer text', () => {
+    assert.equal(changeOf('Purges take 5 minutes.', ' Purges  take\n5 minutes. '), 0);
+    assert.equal(changeOf('Purges take 5 minutes.', 'Purges take 10 minutes.'), 0.25);
+    assert.equal(changeOf('one two', 'one two three four'), 0.5);
+    assert.equal(changeOf('', 'anything'), 1);
+    assert.equal(changeOf('a b c', 'x y z'), 1);
   });
 });
 

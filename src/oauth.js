@@ -454,3 +454,11 @@ export async function oauth(request, env, url, { now = Date.now(), who } = {}) {
   }
   return null;
 }
+
+/** Cron: codes and tokens that ran out. They can never be redeemed, and only pile up. */
+export async function pruneOauth(env, now = new Date()) {
+  const at = now.toISOString();
+  const codes = await env.DB.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').bind(at).run();
+  const tokens = await env.DB.prepare('DELETE FROM oauth_tokens WHERE expires_at < ?').bind(at).run();
+  return { codes: codes.meta.changes, tokens: tokens.meta.changes };
+}

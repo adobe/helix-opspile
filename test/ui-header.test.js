@@ -17,8 +17,11 @@ import { SCRIPTS } from './ui.js';
 
 const ORIGIN = 'https://pile.example';
 
-/** ui/header.js on a page at `path`, with a browser tab's sessionStorage and history. */
-function tab(path, storage = new Map()) {
+/**
+ * ui/header.js on a page at `path`, with a browser tab's sessionStorage and history, and the
+ * browser's localStorage (`local`).
+ */
+function tab(path, storage = new Map(), local = new Map()) {
   const location = new URL(path, ORIGIN);
   const element = () => ({
     dataset: {},
@@ -26,6 +29,7 @@ function tab(path, storage = new Map()) {
     addEventListener() {},
     querySelector: () => null,
     querySelectorAll: () => [],
+    closest: () => null,
   });
   const go = (url) => {
     const u = new URL(url, location.href);
@@ -33,6 +37,11 @@ function tab(path, storage = new Map()) {
   };
   const listeners = {};
   const elements = new Map();
+  const root = { dataset: {} };
+  const metas = [
+    { dataset: {}, media: '(prefers-color-scheme: dark)' },
+    { dataset: {}, media: '(prefers-color-scheme: light)' },
+  ];
   const byId = (id) => {
     if (!elements.has(id)) {
       elements.set(id, element());
@@ -48,21 +57,56 @@ function tab(path, storage = new Map()) {
       getItem: (k) => (storage.has(k) ? storage.get(k) : null),
       setItem: (k, v) => storage.set(k, String(v)),
     },
+    localStorage: {
+      getItem: (k) => (local.has(k) ? local.get(k) : null),
+      setItem: (k, v) => local.set(k, String(v)),
+      removeItem: (k) => local.delete(k),
+    },
     matchMedia: () => ({ matches: false }),
     addEventListener: (type, fn) => { listeners[type] = fn; },
     document: {
+      documentElement: root,
       getElementById: byId,
       querySelector: element,
-      querySelectorAll: () => [],
+      querySelectorAll: (sel) => (sel.startsWith('meta') ? metas : []),
     },
   };
   vm.runInNewContext(SCRIPTS['header.js'], context);
   return {
-    Header: context.window.Header, history: context.history, storage, location, byId,
+    Header: context.window.Header,
+    history: context.history,
+    storage,
+    location,
+    byId,
+    root,
+    metas,
+    listeners,
+    local,
   };
 }
 
 describe('the header', () => {
+  it('draws the page in the color scheme picked in this browser, the system\'s by default', () => {
+    const system = tab('/inbox');
+    assert.equal(system.Header.scheme(), 'system');
+    assert.equal(system.root.dataset.scheme, undefined);
+    assert.deepEqual(system.metas.map((m) => m.media), ['(prefers-color-scheme: dark)', '(prefers-color-scheme: light)']);
+
+    const dark = tab('/inbox', new Map(), new Map([['opspile.scheme', 'dark']]));
+    assert.equal(dark.Header.scheme(), 'dark');
+    assert.equal(dark.root.dataset.scheme, 'dark');
+    assert.deepEqual(dark.metas.map((m) => m.media), ['all', 'not all']);
+
+    // Another tab goes back to the system's.
+    dark.local.delete('opspile.scheme');
+    dark.listeners.storage({ key: 'opspile.scheme' });
+    assert.equal(dark.root.dataset.scheme, undefined);
+    assert.deepEqual(dark.metas.map((m) => m.media), ['(prefers-color-scheme: dark)', '(prefers-color-scheme: light)']);
+
+    const odd = tab('/inbox', new Map(), new Map([['opspile.scheme', 'sepia']]));
+    assert.equal(odd.Header.scheme(), 'system');
+  });
+
   it('knows which page an address is, on this origin only', () => {
     const { Header } = tab('/inbox');
     assert.equal(Header.pageOf('/inbox?team=t'), 'inbox');
@@ -70,6 +114,8 @@ describe('the header', () => {
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
     assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'requests');
+    assert.equal(Header.pageOf('/inbox/cogs?range=7d'), 'cogs');
+    assert.equal(Header.pageOf('/inbox/topics?team=helix'), 'topics');
     assert.equal(Header.pageOf('/inbox/admin?tab=nope'), 'teams');
     assert.equal(Header.pageOf('https://elsewhere.example/inbox'), null);
     assert.equal(Header.pageOf('/api/me'), null);
@@ -130,8 +176,8 @@ describe('the header', () => {
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
     assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'stats']);
-    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'stats']);
-    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests']);
+    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs', 'stats']);
+    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs']);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

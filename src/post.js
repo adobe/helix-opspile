@@ -13,14 +13,22 @@
 import {
   FILES_SCOPE, checkFiles, hasScope, personRule, slackUpload, teamsAttachments,
 } from './attach.js';
+import {
+  CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
+} from './accounts.js';
 import { json } from './http.js';
+import { invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
-import { rankMentions } from './mention-match.js';
+import { suggestMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
-import { teamsOf } from './shares.js';
+import { mentionCandidates } from './profiles.js';
+import {
+  inPersonalView, personalChannels, sharesByChannel, teamsOf,
+} from './shares.js';
 import { refreshMembers } from './suggest.js';
 import { resolveShortcodes } from './shortcodes.js';
+import { messageHtml } from './ui-markdown.js';
 
 /**
  * Replying from the inbox, as the person who writes, never as a bot. Each person connects
@@ -390,7 +398,8 @@ export async function finishAuth(env, me, platform, url) {
 
 /**
  * The person's token for a platform, refreshed if it has expired: `{ token, userId, scope }`,
- * or null when they have not connected (or a Slack token expired).
+ * or null when they have not connected (or a Slack token expired, or the platform no longer
+ * accepts a refresh token, which ends the connection). A failure that may pass throws.
  */
 export async function personalToken(env, person, platform) {
   const row = await env.DB.prepare('SELECT * FROM user_tokens WHERE person = ? AND platform = ?')
@@ -419,8 +428,17 @@ export async function personalToken(env, person, platform) {
       data = await msToken(env, refresh, scope);
       break;
     } catch (e) {
+      // One scope may just be without consent: it takes every one of them refusing.
       if (i === tries.length - 1) {
-        throw e;
+        if (!/invalid_grant/.test(e.message)) {
+          throw e;
+        }
+        // The sign-in is over: revoked, or too old. Not connected any more, so that the page
+        // offers to connect again, unless someone did meanwhile.
+        // eslint-disable-next-line no-await-in-loop
+        await env.DB.prepare(`DELETE FROM user_tokens WHERE person = ? AND platform = ?
+          AND updated_at = ?`).bind(person, platform, row.updated_at).run();
+        return null;
       }
     }
   }
@@ -440,7 +458,6 @@ const htmlEscape = (s) => s.replace(/[&<>"]/g, (c) => ({
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const MAX_MENTIONS = 20;
-const MAX_SUGGESTIONS = 8;
 
 /**
  * The reply split into text and mentions: every `@Name` of a mentioned account becomes a
@@ -518,14 +535,15 @@ export function teamsBotMessage(body, mentions = []) {
 }
 
 /**
- * Teams message `body` and `mentions`: each mention an `<at id>` with its entry, a person
- * as `user`, a bot as `application` (which the bot receives like a mention typed in Teams).
+ * Teams message `body` (Markdown, as HTML: the Graph API takes no Markdown) and `mentions`:
+ * each mention an `<at id>` with its entry, a person as `user`, a bot as `application` (which
+ * the bot receives like a mention typed in Teams).
  */
 export function teamsMessage(body, mentions = []) {
   const entries = [];
-  const content = splitMentions(body, mentions).map((p) => {
+  const marked = splitMentions(body, mentions).map((p) => {
     if (typeof p === 'string') {
-      return htmlEscape(p).replace(/\n/g, '<br>');
+      return p.replace(/\uE003/g, '');
     }
     const id = entries.length;
     entries.push({
@@ -535,8 +553,11 @@ export function teamsMessage(body, mentions = []) {
         ? { application: { id: p.id, displayName: p.name, applicationIdentityType: 'bot' } }
         : { user: { id: p.id, displayName: p.name, userIdentityType: 'aadUser' } },
     });
-    return `<at id="${id}">${htmlEscape(p.name)}</at>`;
+    return `\uE003${id}\uE003`;
   }).join('');
+  const content = messageHtml(marked).replace(/\uE003(\d+)\uE003/g, (_, id) => (
+    `<at id="${id}">${htmlEscape(entries[id].mentionText)}</at>`
+  ));
   return { body: { contentType: 'html', content }, ...(entries.length ? { mentions: entries } : {}) };
 }
 
@@ -549,7 +570,6 @@ const BOTS = `FROM identities i JOIN bot_teams b ON b.source = i.source AND b.te
     AND b.bot_id = i.user_id
   WHERE i.source = 'teams' AND i.tenant = ? AND b.group_id = ? AND i.kind = 'bot'
     AND ${BOT_NAME} IS NOT NULL`;
-const MAX_BOTS = 3;
 
 /** The latest platform thread of an inbox entry: replies go there. */
 export async function target(env, key) {
@@ -560,17 +580,103 @@ export async function target(env, key) {
 }
 
 /**
+ * Before a reply to inbox entry `key` goes to `t`, its latest platform thread: when that is a
+ * folded root's and not the entry's own, the inbox chose it, so the group's conversation goes on
+ * there, and the root stays in its group from now on (`routed_at`, src/rethread.js). Written
+ * before the post, so the reply cannot arrive first, and not undone when the post fails: a root
+ * kept in its group is no harm, and a post whose fate is unknown may have gone out.
+ */
+export async function routeReply(env, key, t) {
+  if (!key || !t || !t.thread || t.thread === key) {
+    return;
+  }
+  await env.DB.prepare(`UPDATE threads SET routed_at = ?
+    WHERE thread = ? AND logical_thread = ? AND routed_at IS NULL`)
+    .bind(new Date().toISOString(), t.thread, key).run();
+}
+
+/**
+ * A channel as `POST /api/post` and `GET /api/mentionable` name it, and `GET /api/channels`
+ * lists it, `source:tenant:channelId`, for a thread that does not exist yet: where it would go,
+ * with no `root_id`, so what is posted starts a thread. Only channels of conversations: nothing
+ * is started in an alert channel or an ignored one. A Teams channel id has colons of its own.
+ */
+export async function channelPlace(env, ref) {
+  const [source, tenant, ...id] = String(ref || '').split(':');
+  if (!id.length) {
+    return null;
+  }
+  return env.DB.prepare(`SELECT t.source, t.tenant, t.channel_id, t.team, c.group_id FROM threads t
+    LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
+    WHERE t.channel_id = ? AND t.source = ? AND t.tenant = ? AND t.kind = 'channel'
+    ORDER BY t.any_at DESC LIMIT 1`).bind(id.join(':'), source, tenant).first();
+}
+
+// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id.
+const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/ };
+
+/**
+ * The inbox entry a message `id` starts in channel `t`, as src/normalize.js will key it (the
+ * entry shows up once the message has come back through the platform's events).
+ */
+const threadOf = (t, id) => [t.source, t.tenant, ...(t.source === 'teams' ? [t.group_id] : []),
+  t.channel_id, id].join(':');
+
+/**
+ * GET /api/channels: where the viewer may start a thread, latest activity first, as they may
+ * work a thread (`mayWork`): the channels of their teams, those shared with their teams, and
+ * those of their personal view (`personal`). Not Discord, where the inbox cannot post as them.
+ * `teams` are the inboxes a channel is in, so the page can tell which ones a view shows.
+ */
+export async function postableChannels(env, me) {
+  const [{ results }, { results: mine }, shares] = await Promise.all([
+    env.DB.prepare(`SELECT t.source, t.tenant, t.channel_id, t.org, t.team, t.channel_name, c.name,
+        c.group_name, o.name AS org_name, MAX(COALESCE(t.last_at, t.any_at)) AS latest
+      FROM threads t
+      LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant
+        AND c.channel_id = t.channel_id
+      LEFT JOIN orgs o ON o.slug = t.org
+      WHERE t.kind = 'channel' AND t.source != 'discord'
+        AND (t.team IN (SELECT value FROM json_each(?1))
+          OR (t.source, t.channel_id) IN (SELECT source, channel_id FROM channel_teams
+            WHERE team IN (SELECT value FROM json_each(?1)))
+          OR (${inPersonalView('t', '?2')}))
+      GROUP BY t.source, t.tenant, t.channel_id
+      ORDER BY latest DESC`).bind(JSON.stringify((me.teams || []).map((t) => t.slug)), me.id).all(),
+    env.DB.prepare(personalChannels('?1')).bind(me.id).all(),
+    sharesByChannel(env),
+  ]);
+  const personal = new Set((mine || []).map((r) => `${r.source}:${r.channel_id}`));
+  return json({
+    channels: (results || []).map((r) => ({
+      ref: `${r.source}:${r.tenant}:${r.channel_id}`,
+      source: r.source,
+      name: r.name || r.channel_name || r.channel_id,
+      group: r.group_name || null,
+      org: r.org,
+      orgName: r.org_name || r.org,
+      teams: [...new Set([r.team, ...(shares.get(`${r.source}:${r.channel_id}`) || [])])]
+        .filter(Boolean),
+      personal: personal.has(`${r.source}:${r.channel_id}`),
+    })),
+  });
+}
+
+/**
  * The accounts a reply mentions, as opspile knows them: only platform accounts already in
  * D1, in the thread's workspace or tenant, can be mentioned, and on Teams the bots seen in
  * the thread's Teams team. The name is D1's, so the text of a mention is the same `@Name`
  * the message shows when it comes back.
  */
 export async function knownMentions(env, t, ids) {
-  const wanted = [...new Set((Array.isArray(ids) ? ids : [])
+  const asked = [...new Set((Array.isArray(ids) ? ids : [])
     .map((m) => String((m && m.id) || m || '')).filter(Boolean))].slice(0, MAX_MENTIONS);
-  if (!wanted.length) {
+  if (!asked.length) {
     return [];
   }
+  // One account a person: a mention of another of theirs mentions the one for the thread.
+  const reached = await keptAccounts(env, t, { ids: asked });
+  const wanted = [...new Set(asked.map((id) => kept(reached, id)))];
   const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
     AND i.user_id IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
@@ -591,16 +697,6 @@ const MAX_MEMBER_LOOKUPS = 60;
 const MEMBER_LOOKUPS_AT_ONCE = 4;
 // Accounts of one workspace or tenant considered for a suggestion; far more than there are.
 const MAX_ACCOUNTS = 5000;
-
-/** The channels whose members count as the thread's: on Teams, every channel of its team. */
-async function channelsOf(env, t) {
-  if (t.source !== 'teams' || !t.group_id) {
-    return [t.channel_id];
-  }
-  const { results } = await env.DB.prepare(`SELECT channel_id FROM channels
-    WHERE source = 'teams' AND tenant = ? AND group_id = ?`).bind(t.tenant, t.group_id).all();
-  return [...new Set([t.channel_id, ...(results || []).map((r) => r.channel_id)])];
-}
 
 /**
  * Lists the members of the thread's channel when that is a week old or was never done, and
@@ -650,18 +746,33 @@ const parseAliases = (s) => {
   }
 };
 
+/** Of the accounts `ids`, those in the thread's channel (as `CHANNEL_PEOPLE` has it). */
+async function inChannelOf(env, t, ids) {
+  const { results } = await env.DB.prepare(`SELECT j.value AS id FROM json_each(?5) j
+    WHERE j.value IN (${CHANNEL_PEOPLE})`)
+    .bind(...placeArgs(t), JSON.stringify([...new Set(ids)])).all();
+  return new Set((results || []).map((r) => r.id));
+}
+
 /**
  * Accounts by the names an earlier version of a message mentioned them by (`@Name` in its
  * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
  * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
+ *
+ * A person's account is the one for the thread (src/accounts.js), and a name that stands for
+ * several accounts of one person is that one mention. A name of several people (or bots) is
+ * still one mention when only one of them is in the thread's channel (`CHANNEL_PEOPLE`; a
+ * person with any account in it, as their account for the thread then is). Different people of
+ * one name, none or several of them in the channel, stay text: nobody is guessed. The mention
+ * keeps the name it was written with.
  */
 export async function mentionsByName(env, t, names) {
   const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
   if (!wanted.length) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name ${ACCOUNTS}
-    AND ${NAME} IN (SELECT value FROM json_each(?))`)
+  const { results } = await env.DB.prepare(`SELECT i.user_id AS id, ${NAME} AS name,
+    i.person ${ACCOUNTS} AND ${NAME} IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, JSON.stringify(wanted)).all();
   const { results: bots } = t.source === 'teams' && t.group_id
     ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name ${BOTS}
@@ -672,16 +783,72 @@ export async function mentionsByName(env, t, names) {
     ...(results || []).map((r) => ({ ...r, kind: 'person' })),
     ...(bots || []).map((r) => ({ ...r, kind: 'bot' })),
   ];
-  const count = new Map();
+  const byName = new Map();
   for (const a of found) {
-    count.set(a.name, new Set([...(count.get(a.name) || []), a.id]));
+    const ids = byName.get(a.name) || new Map();
+    if (!ids.has(a.id)) {
+      ids.set(a.id, a);
+    }
+    byName.set(a.name, ids);
   }
-  const seen = new Set();
-  return found.filter((a) => count.get(a.name).size === 1 && !seen.has(a.name) && seen.add(a.name));
+  const reached = await keptAccounts(env, t, {
+    ids: found.filter((a) => a.kind === 'person').map((a) => a.id),
+  });
+  // Who a name stands for: each person once, by their account for the thread.
+  const whom = (ids) => [...new Map([...ids.values()].map((a) => {
+    const id = a.kind === 'person' ? kept(reached, a.id) : a.id;
+    return [`${a.kind}:${id}`, { ...a, id }];
+  })).values()];
+  const tied = [...byName.values()].map(whom).filter((list) => list.length > 1).flat()
+    .map((a) => a.id);
+  const here = tied.length ? await inChannelOf(env, t, tied) : new Set();
+  const pick = (ids) => {
+    const accounts = whom(ids);
+    if (accounts.length === 1) {
+      return accounts[0];
+    }
+    const present = accounts.filter((a) => here.has(a.id));
+    return present.length === 1 ? present[0] : null;
+  };
+  return [...byName.values()].map(pick).filter(Boolean)
+    .map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
 }
 
 /**
- * GET /api/mentionable?thread=…&q=…: people to mention in a reply, from the accounts in D1
+ * The accounts the `@Name`s of a text written for entry `key` stand for: agents write names and
+ * pick nobody from a list, so this is what makes their `@Name`s mentions (see `mentionsByName`).
+ */
+export async function writtenMentions(env, key, text) {
+  const names = mentionCandidates([text]);
+  const t = names.length && await target(env, key);
+  return t ? mentionsByName(env, t, names) : [];
+}
+
+/** Other names of an account, for the matching, without what its name already says. */
+function otherNames(r) {
+  const names = [r.account_name, ...parseAliases(r.aliases), String(r.email || '').split('@')[0]];
+  return [...new Set(names.filter((n) => n && n !== r.name))];
+}
+
+/**
+ * The pool a thread's suggestions come from, compact (the page keeps it, see `mentionable`):
+ * accounts as `rankMentions` takes them, with only what is set.
+ */
+const poolAccount = (r) => ({
+  id: r.id,
+  name: r.name,
+  ...(r.aliases.length ? { aliases: r.aliases } : {}),
+  ...(r.avatar ? { avatar: r.avatar } : {}),
+  ...(r.staff ? { staff: true } : {}),
+  ...(r.here ? { here: true } : {}),
+  ...(r.member ? { member: true } : {}),
+  ...(r.affinity > 0 ? { affinity: r.affinity } : {}),
+});
+
+/**
+ * GET /api/mentionable?thread=…&q=… (or `channel=…`, as `channelPlace` reads it, for a thread
+ * being started: no one is in it yet, and nobody knows what it is about): people to mention in
+ * a reply, from the accounts in D1
  * for the thread's platform and workspace. People outside Adobe who posted in the thread come
  * first, then, with `me` given, the Adobe people who know what the thread is about (`expert`:
  * their messages anywhere are close to it, src/expertise.js), then anyone else who posted in
@@ -691,73 +858,100 @@ export async function mentionsByName(env, t, names) {
  * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
  * as well.
  *
+ * With `pool`, the answer has everything these suggestions are picked from as well (`pool`:
+ * `{ accounts, bots }`, src/mention-match.js `suggestMentions`), so the page suggests from it
+ * for whatever is typed next instead of asking for every letter.
+ *
+ * The thread's place is read first; whether the viewer may work it, and all that the
+ * suggestions need, are then read at once (D1 is a round trip away from the Worker).
+ *
  * `waitUntil`, where given, lists the channel's members in the background (`learnMembers`)
  * when the suggestions open (an empty `q`: the @ was just typed), so they show up from then on.
  * `me`, the viewer, is never anyone's expert: their own messages do not count.
  */
-export async function mentionable(env, key, q, inTeam, { waitUntil, me } = {}) {
-  const t = key && await target(env, key);
-  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+export async function mentionable(env, key, q, inTeam, {
+  waitUntil, me, channel, pool = false,
+} = {}) {
+  const t = key ? await target(env, key) : await channelPlace(env, channel);
+  if (!t) {
     return json({ error: 'not found' }, 404);
   }
-  const typed = String(q || '').trim().slice(0, 60);
-  if (waitUntil && !typed) {
+  const allowed = teamsOf(env, t).then((teams) => inTeam(teams, t));
+  const found = Promise.all([
+    t.source === 'teams' && t.group_id
+      ? env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
+          i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
+      : { results: [] },
+    env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name,
+        i.aliases, COALESCE(i.email, p.email) AS email, i.avatar,
+        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
+      ${ACCOUNTS} LIMIT ${MAX_ACCOUNTS}`).bind(t.source, t.tenant).all(),
+    key ? env.DB.prepare(`SELECT DISTINCT author_key FROM messages
+      WHERE thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)`)
+      .bind(key, key).all() : { results: [] },
+    env.DB.prepare(CHANNEL_PEOPLE).bind(...placeArgs(t)).all(),
+    me && key ? threadExperts(env, key, { me: me.id }) : null,
+    keptAccounts(env, t),
+  ]);
+  // Awaited below once the viewer may see it; not an unhandled rejection before that.
+  found.catch(() => {});
+  if (!await allowed) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (waitUntil && !String(q || '').trim()) {
     waitUntil(learnMembers(env, t).catch((e) => console.warn(JSON.stringify({
       route: 'mentionable', members: t.source, error: e.message,
     }))));
   }
-  const { results: botRows } = t.source === 'teams' && t.group_id
-    ? await env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
-        i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
-    : { results: [] };
-  const bots = rankMentions((botRows || []).map((r) => ({ ...r, aliases: [r.posts_as] })), typed)
-    .slice(0, MAX_BOTS).map((r) => ({
-      id: r.id, name: r.name, avatar: r.avatar || null, here: false, staff: false, kind: 'bot',
-    }));
-  const channels = JSON.stringify(await channelsOf(env, t));
   const [
-    { results: accounts }, { results: posters }, { results: members }, experts,
-  ] = await Promise.all([
-    env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name, i.aliases,
-        COALESCE(i.email, p.email) AS email, i.avatar,
-        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
-      ${ACCOUNTS} LIMIT ${MAX_ACCOUNTS}`).bind(t.source, t.tenant).all(),
-    env.DB.prepare(`SELECT DISTINCT author_key FROM messages
-      WHERE thread IN (SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?)`)
-      .bind(key, key).all(),
-    env.DB.prepare(`SELECT user_id FROM channel_members
-        WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))
-      UNION SELECT DISTINCT SUBSTR(author_key, LENGTH(source || ':' || tenant || ':') + 1) FROM messages
-        WHERE source = ? AND tenant = ? AND channel_id IN (SELECT value FROM json_each(?))
-          AND author_key IS NOT NULL`)
-      .bind(t.source, t.tenant, channels, t.source, t.tenant, channels).all(),
-    me ? threadExperts(env, key, { me: me.id }) : null,
-  ]);
+    { results: botRows }, { results: accounts }, { results: posters }, { results: members },
+    experts, reached,
+  ] = await found;
   const prefix = `${t.source}:${t.tenant}:`;
-  const affinity = (r) => (!experts || !r.staff || (me && r.person === me.id) ? 0 : Math.max(
-    experts.authors.get(`${prefix}${r.id}`) || 0,
-    (r.person !== null && experts.people.get(r.person)) || 0,
-  ));
   const here = new Set((posters || []).map((r) => String(r.author_key || ''))
     .filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)));
   const inChannel = new Set((members || []).map((r) => r.user_id));
-  const people = rankMentions((accounts || []).map((r) => ({
-    ...r,
-    aliases: [r.account_name, ...parseAliases(r.aliases), r.email],
-    here: here.has(r.id),
-    member: inChannel.has(r.id),
-    affinity: affinity(r),
-  })), typed, MAX_SUGGESTIONS - bots.length).map((r) => ({
-    id: r.id,
-    name: r.name,
-    avatar: r.avatar || null,
-    here: r.here,
-    member: r.member,
-    staff: Boolean(r.staff),
-    ...(r.affinity > 0 ? { expert: true } : {}),
-    kind: 'person',
-  }));
-  return json({ platform: t.source, people: [...people, ...bots] });
+  // One suggestion a person: their account for the thread (src/accounts.js), with what all of
+  // theirs have (in the thread or channel, their names, what they know), so neither shows twice
+  // and a mention never goes to an account they do not look at.
+  const byKept = new Map();
+  for (const r of accounts || []) {
+    const id = kept(reached, r.id);
+    byKept.set(id, [...(byKept.get(id) || []), r]);
+  }
+  const affinity = (r, list) => {
+    if (!experts || !list.some((a) => a.staff) || (me && r.person === me.id)) {
+      return 0;
+    }
+    const authors = list.reduce((sum, a) => sum + (experts.authors.get(`${prefix}${a.id}`) || 0), 0);
+    // A known person's messages are added up already, over all of their accounts.
+    return Math.max(authors, (r.person !== null && experts.people.get(r.person)) || 0);
+  };
+  const all = {
+    accounts: [...byKept].map(([id, list]) => {
+      const r = list.find((a) => a.id === id) || list[0];
+      return poolAccount({
+        ...r,
+        aliases: [...new Set(list.flatMap(otherNames).concat(list.map((a) => a.name)))]
+          .filter((n) => n !== r.name),
+        staff: list.some((a) => a.staff),
+        here: list.some((a) => here.has(a.id)),
+        member: list.some((a) => inChannel.has(a.id)),
+        affinity: affinity(r, list),
+      });
+    }),
+    bots: (botRows || []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      ...(r.posts_as && r.posts_as !== r.name ? { aliases: [r.posts_as] } : {}),
+      ...(r.avatar ? { avatar: r.avatar } : {}),
+    })),
+  };
+  return json({
+    platform: t.source,
+    people: suggestMentions(all, q),
+    ...(pool ? { pool: all } : {}),
+  });
 }
 
 /** Slack errors that a new connection (with file access: `files`) would fix. */
@@ -767,27 +961,41 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  * POST /api/post `{ thread, text, mentions? }`, and `files` (src/attach.js): replies in the
  * thread as the signed-in person. `mentions` are account ids from /api/mentionable; each
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
- * notified. Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the
- * answer is the reply as sent. Files go with the text, in the same message. The reply then
+ * notified. On Slack, the Adobe people among them who are not in the channel are added to it
+ * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
+ * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
+ * the reply as sent. Files go with the text, in the same message. The reply then
  * arrives like any other message, through the platform's events.
+ *
+ * With `channel` (as `channelPlace` reads it) instead of `thread`, the message starts a thread
+ * there, and the answer's `thread` is its inbox entry, where the platform names the message.
+ * With `channel` and `root`, the id the platform gave such a message, it is a reply in that
+ * thread, which the inbox may not have yet: it comes back through the platform's events.
  */
 export async function post(env, me, request, inTeam, files = []) {
-  const { thread: key, text, mentions: ids } = request || {};
+  const {
+    thread: key, channel, text, mentions: ids, root,
+  } = request || {};
   const body = String(text || '').trim();
   if ((!body && !files.length) || body.length > MAX_TEXT) {
     return json({ error: 'write something (up to 8000 characters)' }, 400);
   }
-  const t = key && await target(env, key);
-  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+  const place = key ? await target(env, key) : await channelPlace(env, channel);
+  if (!place || !await inTeam(await teamsOf(env, place), place)) {
     return json({ error: 'not found' }, 404);
   }
+  if (!key && root !== undefined && !ROOT_ID[place.source]?.test(String(root))) {
+    return json({ error: 'not a thread of this channel' }, 400);
+  }
+  // A reply in a thread started in the channel, before the inbox has it.
+  const t = key || root === undefined ? place : { ...place, root_id: String(root) };
   if (!isStaffDomain(env, me.email)) {
     return json({ error: 'only staff can reply' }, 403);
   }
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
   }
-  const { token, scope } = await personalToken(env, me.id, t.source) || {};
+  const { token, scope, userId } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
     return json({ error: `connect your ${name} account first`, connect: t.source }, 409);
@@ -803,9 +1011,18 @@ export async function post(env, me, request, inTeam, files = []) {
     }, again ? 409 : 400);
   }
   const mentions = await knownMentions(env, t, ids);
+  const started = (id) => (t === place && !key ? { thread: threadOf(t, id) } : {});
   // Emoji names as the platform knows them (`:facepalm:` is Slack's `:face_palm:`).
   const { text: sent } = await resolveShortcodes(env, body, { source: t.source, tenant: t.tenant });
+  if (t.source === 'teams' && !t.group_id) {
+    return json({ error: 'the Teams team of this channel is not known yet' }, 409);
+  }
+  // A group's reply in a folded root's platform thread keeps that root in the group.
+  await routeReply(env, key, t);
   if (t.source === 'slack') {
+    // Colleagues mentioned who are not in the channel are added first, so the mention reaches
+    // them (src/invite.js).
+    const invited = invitedFields(await inviteMentioned(env, t, mentions, { except: userId }));
     if (files.length) {
       const up = await slackUpload(token, {
         channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
@@ -824,7 +1041,7 @@ export async function post(env, me, request, inTeam, files = []) {
       }
       // Slack names the files, not the message, which arrives through the events.
       return json({
-        ok: true, platform: 'slack', id: null, files: up.files, text: sent,
+        ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
       });
     }
     const res = await fetch('https://slack.com/api/chat.postMessage', {
@@ -840,11 +1057,8 @@ export async function post(env, me, request, inTeam, files = []) {
       return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
     }
     return json({
-      ok: true, platform: 'slack', id: data.ts, text: sent,
+      ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
     });
-  }
-  if (!t.group_id) {
-    return json({ error: 'the Teams team of this channel is not known yet' }, 409);
   }
   const message = teamsMessage(sent, mentions);
   if (files.length) {
@@ -863,7 +1077,7 @@ export async function post(env, me, request, inTeam, files = []) {
     }
   }
   const path = `/teams/${encodeURIComponent(t.group_id)}/channels/${encodeURIComponent(t.channel_id)}`
-    + `/messages/${encodeURIComponent(t.root_id)}/replies`;
+    + `/messages${t === place && !key ? '' : `/${encodeURIComponent(t.root_id)}/replies`}`;
   const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -874,10 +1088,12 @@ export async function post(env, me, request, inTeam, files = []) {
     return json({
       error: `Teams: ${(data.error && data.error.code) || res.status}`,
       connect: res.status === 401 ? 'teams' : undefined,
+      // Graph failing on its side: nobody can say whether it took the post.
+      unknown: res.status >= 500 || undefined,
     }, res.status === 413 ? 413 : 502);
   }
   return json({
-    ok: true, platform: 'teams', id: data.id, text: sent,
+    ok: true, platform: 'teams', id: data.id, text: sent, ...started(data.id),
   });
 }
 

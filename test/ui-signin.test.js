@@ -16,7 +16,7 @@ import vm from 'node:vm';
 import { SCRIPTS } from './ui.js';
 
 /** ui/app.js run against a page at https://pile.example, its fetches answered by `answer`. */
-function page(answer) {
+function page(answer, { opened = null, timers = null } = {}) {
   const calls = [];
   const body = [];
   const listeners = {};
@@ -37,7 +37,7 @@ function page(answer) {
     },
     addEventListener: (type, fn) => { listeners[type] = fn; },
     dispatchEvent: (e) => listeners[e.type]?.(e),
-    open: () => null,
+    open: () => opened?.(),
   };
   const context = {
     window,
@@ -51,8 +51,8 @@ function page(answer) {
     Request: function Request() {},
     Event: function Event(type) { this.type = type; },
     URL,
-    setInterval,
-    clearInterval,
+    setInterval: timers?.set || setInterval,
+    clearInterval: timers?.clear || clearInterval,
   };
   vm.runInNewContext(SCRIPTS['app.js'], context);
   return {
@@ -96,5 +96,40 @@ describe('signed out', () => {
     await p.listeners.focus();
     assert.equal(p.body.length, 0);
     assert.equal(told, 1);
+  });
+
+  it('stops watching its window when another tab signed in meanwhile', async () => {
+    let session = false;
+    let tick = null;
+    let stopped = false;
+    const win = {
+      closed: false,
+      close() {
+        this.closed = true;
+      },
+    };
+    const p = page(async () => (session ? { type: 'basic', ok: true, status: 200 }
+      : { type: 'opaqueredirect', ok: false, status: 0 }), {
+      opened: () => win,
+      timers: {
+        set: (f) => {
+          tick = f;
+          return 1;
+        },
+        clear: () => {
+          stopped = true;
+        },
+      },
+    });
+    await assert.rejects(p.fetch('/api/inbox'));
+    p.body[0].querySelector('button').onclick();
+    // The window closes, this tab gets the focus, and it is signed in: the page forgets the window.
+    win.closed = true;
+    session = true;
+    await p.listeners.focus();
+    assert.equal(p.body.length, 0);
+    // The watch runs on, and has to end without that window.
+    await tick();
+    assert.equal(stopped, true);
   });
 });

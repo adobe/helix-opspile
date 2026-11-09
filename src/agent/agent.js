@@ -11,7 +11,10 @@
  */
 
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createRegistry, Harness } from '@earendil-works/pi-durable';
+import {
+  createRegistry, defineExtension, GenerationTask, Harness, hook,
+} from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { Agent } from 'agents';
 import { PiHarness, ROOT_SESSION } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
@@ -19,18 +22,21 @@ import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
+import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
-import {
-  agentEnabled, deliveryText, entryMessages, markOf, screen, untrusted,
-} from './deliver.js';
+import { armTag, cacheRetention } from '../experiments.js';
 import { toolsFor } from './agenttools.js';
-import { mentionedOutside } from './members.js';
+import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
-import { COMPUTER_CWD, computerEnv } from './computer.js';
+import { COMPUTER_CWD, computerEnv, ensureCwd } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { seed, seedPin } from './seed.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
+import {
+  keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
+} from '../threadfiles.js';
+import { keepTurn } from './kept.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
@@ -53,13 +59,14 @@ import { latestTurn } from './turn.js';
  * thread, so a script that computes holds up only its own agent, and only up to the
  * interrupt budget.
  *
- * Tools the team turns on (src/agent/agenttools.js): `post_message`, and `computer`, pi's bash
- * tool on Cloudflare Computer, whose Workspace lives in this object's SQLite (src/agent/
- * computer.js). Its shell, in a Dynamic Worker, reaches the files back through
- * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that).
+ * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
+ * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
+ * SQLite (src/agent/computer.js). Its shell, in a Dynamic Worker, reaches the files back through
+ * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
+ * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
+ * secrets where the shell names them.
  */
 
-export const IDLE_SECONDS = 24 * 60 * 60;
 const TARGET_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
@@ -68,24 +75,69 @@ const SCRIPT_INTERRUPT_BUDGET = 50_000;
 // The platform ids of the agent's latest posts: they come back as messages, which it is not told.
 const MAX_POSTED = 50;
 
-const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
-  + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
-  + ' team owes the customer an answer or a follow-up, make sure the draft has it; otherwise'
-  + ' change nothing.';
+// The model's tokens, from pi's ledger, a little after each model round (the round's commit
+// lands after its hooks), and at most this often for the object's storage.
+const METER_DELAY_MS = 2000;
+// The finished turn is kept for the inbox (src/agent/kept.js) a little after the answer, once its
+// run has ended; asked again a few times while the transcript still says it works.
+const KEEP_DELAY_MS = 2000;
+const KEEP_TRIES = 3;
+const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Meters the agent's model use after each round of tools and each answer, and keeps the turn
+ * an answer, or a failed request, ends for the inbox.
+ */
+const cogsExtension = (agent) => defineExtension({
+  name: 'opspile-cogs',
+  hooks: [hook(GenerationTask, {
+    afterTools: () => { agent.meterSoon(); },
+    afterResponse: (message) => {
+      if (message && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
+        agent.keepTurnSoon();
+      }
+    },
+    onYield: () => {
+      agent.meterSoon();
+      agent.keepTurnSoon();
+      return undefined;
+    },
+  })],
+});
 
 export class ThreadAgent extends Agent {
-  constructor(ctx, env) {
+  constructor(ctx, rawEnv) {
+    // Its work is counted for COGS as its thread's (src/cogs/meter.js): the bindings, and the
+    // model's tokens (`meterModel`).
+    const self = {};
+    const cogs = objectMeter(rawEnv, {
+      via: 'agent',
+      subject: () => {
+        try {
+          return agentSubject(self.agent && self.agent.name);
+        } catch {
+          return {};
+        }
+      },
+    });
+    const { env } = cogs;
     super(ctx, env);
+    self.agent = this;
+    this.cogs = cogs;
     this.registry = createRegistry();
     // Not `this.mcp`: the Agents SDK's own MCP client manager lives there, and the SDK calls it
     // (listPrompts, listTools) when the agent starts.
-    this.servers = new AgentMcp(env, ctx.storage);
+    this.servers = new AgentMcp(env, ctx.storage, { target: () => this.target() });
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
-        models.setProvider(agentProvider(env));
+        // The prompt cache's retention, per request: the thread's arm while the experiment runs
+        // (src/experiments.js), else the `long` asked for below.
+        models.setProvider(agentProvider(env, { cacheRetention: () => cacheRetention(this.name) }));
         const agent = {
           env,
+          // The object's name, which the computer's gateway knows it by (src/agent/secrets.js).
+          name: this.name,
           hasThread: !this.name.startsWith('kb:'),
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),
@@ -100,6 +152,7 @@ export class ThreadAgent extends Agent {
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
+        this.registry.install(cogsExtension(this));
         this.mcpInstalled = true;
         return Harness.open(storage, {
           models,
@@ -110,6 +163,12 @@ export class ThreadAgent extends Agent {
           settings: {
             retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000 },
             afterFailedRun: 'continue',
+            // One-hour prompt cache. Turns on one thread are often minutes apart, past
+            // pi's five-minute default, so that cache was rewritten on almost every
+            // request. Bedrock bills a 1h write higher and a later hit as a read.
+            // Compaction requests ask for none. The provider puts an experiment's arm in
+            // its place while one runs.
+            stream: { cacheRetention: 'long' },
           },
         }, context);
       },
@@ -187,7 +246,7 @@ export class ThreadAgent extends Agent {
       const ws = this.workspace();
       await ws.ready();
       if (!this.computerReady) {
-        await ws.fs.mkdir(COMPUTER_CWD, { recursive: true });
+        await ensureCwd(ws.fs);
         this.computerReady = true;
       }
       return ws;
@@ -196,8 +255,21 @@ export class ThreadAgent extends Agent {
   }
 
   /**
+   * Where the shell reaches the network: through the Worker's SecretGateway, which puts the
+   * team's and the customer's secrets into the requests that name them (src/agent/secrets.js)
+   * and lets the others through as they are. It knows this agent by name; the revision is
+   * fixed, as the name is.
+   */
+  egress() {
+    const gateway = this.ctx.exports && this.ctx.exports.SecretGateway;
+    return gateway
+      ? { mode: 'http-gateway', gateway: gateway({ props: { agent: this.name } }), revision: 'secrets-1' }
+      : { mode: 'direct' };
+  }
+
+  /**
    * The Workspace of the computer: files in this object's SQLite, a shell in a Dynamic Worker
-   * that reaches the internet (curl) without a filter.
+   * that reaches the internet (curl) without a filter, with its secrets (`egress`).
    */
   workspace() {
     this.ws ??= new Workspace({
@@ -209,11 +281,72 @@ export class ThreadAgent extends Agent {
           workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
           ctx: this.ctx,
           commands: [jqModules, curlModules],
-          egress: { mode: 'direct' },
+          egress: this.egress(),
         }),
       ],
+      ...(this.env.FILES ? {
+        mounts: {
+          [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
+        },
+      } : {}),
     });
     return this.ws;
+  }
+
+  /**
+   * Puts the files of the thread's messages it may read into its computer: copied if they are
+   * not yet, and only where it has a computer. A thread goes on without them if this fails.
+   */
+  async syncUploads(entry) {
+    if (!this.env.FILES || !(this.tools && this.tools.includes('computer'))) {
+      return;
+    }
+    try {
+      const messages = entry ? entry.messages : [];
+      const verdicts = await this.verdicts(messages);
+      const readable = (m) => !(verdicts.get(m.id) && verdicts.get(m.id).flagged);
+      const copies = await keepThreadFiles(this.env, messages, { readable });
+      await this.setUploads(mountList(copies));
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', uploads: 'failed', error: e.message }));
+    }
+  }
+
+  /**
+   * Stores what the mount holds. A Workspace fills its mount once, so a change takes a new one,
+   * and the copy in this object's SQLite goes when the first of its files expires.
+   */
+  async setUploads(list) {
+    const before = await this.ctx.storage.get('uploads');
+    if (JSON.stringify(before || {}) === JSON.stringify(list)) {
+      return;
+    }
+    const previous = await this.ctx.storage.get('uploads-expiry');
+    if (previous) {
+      await this.cancelSchedule(previous).catch(() => false);
+      await this.ctx.storage.delete('uploads-expiry');
+    }
+    if (Number.isFinite(list.expires)) {
+      const s = await this.schedule(new Date(list.expires), 'expireUploads');
+      await this.ctx.storage.put('uploads-expiry', s.id);
+    }
+    // Last: a failure above finds the list as it was and tries again, instead of finding nothing
+    // to do with no schedule left to empty the mount.
+    await this.ctx.storage.put('uploads', list);
+    this.ws = null;
+  }
+
+  /** Schedule callback: the oldest file of the thread is 30 days old. */
+  async expireUploads() {
+    const list = await this.ctx.storage.get('uploads');
+    if (!list) {
+      return;
+    }
+    await this.ctx.storage.delete('uploads-expiry');
+    const copies = (list.all || []).filter((c) => c.expires > Date.now());
+    await this.setUploads(mountList(copies));
+    // The computer may be asleep: the expired files leave its SQLite now, not at its next use.
+    await this.workspace().ready();
   }
 
   /** For the shell in the Dynamic Worker (through WorkspaceServiceProxy): the files. */
@@ -271,104 +404,21 @@ export class ThreadAgent extends Agent {
     return value;
   }
 
-  /** Clef verdicts for the untrusted ones among `messages`, by message id, checked once each. */
+  /** Clef verdicts for the untrusted ones among `messages` (src/agent/delivery.js). */
   async verdicts(messages) {
-    const out = new Map();
-    const checks = messages.filter(untrusted);
-    for (let i = 0; i < checks.length; i += 100) {
-      const batch = checks.slice(i, i + 100);
-      // eslint-disable-next-line no-await-in-loop
-      const stored = await this.ctx.storage.get(batch.map((m) => `verdict:${m.id}`));
-      for (const m of batch) {
-        let v = stored.get(`verdict:${m.id}`);
-        if (!v) {
-          // eslint-disable-next-line no-await-in-loop
-          v = await screen(this.env, m);
-          // eslint-disable-next-line no-await-in-loop
-          await this.ctx.storage.put(`verdict:${m.id}`, v);
-          console.log(JSON.stringify({
-            route: 'agent', check: 'injection', message: m.id, p: v.p, flagged: v.flagged,
-          }));
-        }
-        out.set(m.id, v);
-      }
-    }
-    return out;
+    return verdictsOf(this, messages);
   }
 
-  /** Tells the agent about the messages it has not seen. Called for every new message. */
-  async deliver() {
-    const problem = modelProblem(this.env);
-    if (problem) {
-      return { result: 'skip', reason: problem };
-    }
-    const t = await this.target();
-    if (!t.key || t.kind !== 'channel' || !await agentEnabled(this.env, t.channelId, t.team)) {
-      return { result: 'skip', reason: 'no agent for this thread' };
-    }
-    const entry = await entryMessages(this.env, t.key);
-    const mark = await this.ctx.storage.get('mark');
-    const unseen = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
-    // Its own posts (post_message) come back as messages; it is not told about them.
-    const own = new Set((await this.ctx.storage.get('posted')) || []);
-    const fresh = unseen.filter((m) => !own.has(String(m.id)));
-    if (!unseen.length) {
-      return { result: 'unchanged' };
-    }
-    const last = markOf(unseen[unseen.length - 1]);
-    if (!fresh.length) {
-      await this.ctx.storage.put('mark', last);
-      return { result: 'unchanged', own: unseen.length };
-    }
-    const verdicts = await this.verdicts(fresh);
-    const outside = await mentionedOutside(
-      this.env,
-      entry,
-      fresh.filter((m) => !(verdicts.get(m.id) && verdicts.get(m.id).flagged)),
-    ).catch((e) => {
-      console.log(JSON.stringify({ route: 'agent', members: 'failed', error: e.message }));
-      return null;
-    });
-    const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
-    await this.syncTools();
-    await this.syncMcp();
-    const receipt = await this.harness.submit(input, {
-      operationId: `messages:${last}`,
-      whenBusy: 'steer',
-    });
-    await this.ctx.storage.put('mark', last);
-    await this.armIdle(last);
-    const flagged = [...verdicts.values()].filter((v) => v.flagged).length;
-    return {
-      result: 'delivered', messages: fresh.length, flagged, accepted: receipt.accepted,
-    };
-  }
-
-  /** Wakes the agent a day after the latest message, unless another one comes first. */
-  async armIdle(mark) {
-    const previous = await this.ctx.storage.get('idle');
-    if (previous) {
-      await this.cancelSchedule(previous).catch(() => false);
-    }
-    const s = await this.schedule(IDLE_SECONDS, 'idle', { mark });
-    await this.ctx.storage.put('idle', s.id);
+  /** Tells the agent about the messages it has not seen (src/agent/delivery.js). */
+  async deliver(options) {
+    this.meterModel();
+    return deliver(this, options);
   }
 
   /** Schedule callback: a day without messages. */
   async idle(payload) {
-    const mark = await this.ctx.storage.get('mark');
-    if (!payload || payload.mark !== mark || modelProblem(this.env)) {
-      return;
-    }
-    // Turned off since: no wrap-up either.
-    const t = await this.target();
-    if (!t.key || !await agentEnabled(this.env, t.channelId, t.team)) {
-      return;
-    }
-    await this.ctx.storage.delete('idle');
-    await this.syncTools();
-    await this.syncMcp();
-    await this.harness.submit(IDLE_PROMPT, { operationId: `idle:${mark}`, whenBusy: 'followUp' });
+    this.meterModel();
+    return idle(this, payload);
   }
 
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
@@ -396,13 +446,118 @@ export class ThreadAgent extends Agent {
     return { status: await this.status(), ...traceSteps(entries, { ...options, calls }) };
   }
 
-  /** What the agent is doing, for the inbox and for checks. */
-  async status() {
-    const catalog = await this.servers.current();
+  /** `meterModel`, shortly: the ledger has the round once its commit lands. */
+  meterSoon() {
+    if (this.meterTimer) {
+      return;
+    }
+    this.meterTimer = setTimeout(() => {
+      this.meterTimer = null;
+      this.meterModel().catch(() => {});
+    }, METER_DELAY_MS);
+  }
+
+  /**
+   * What the model used since the last time, from pi's ledger of the session (`usage`), as
+   * Bedrock tokens for COGS; and, once a day, what the object keeps in its SQLite. One at a
+   * time, so a round is counted once.
+   */
+  meterModel() {
+    this.metering = (this.metering || Promise.resolve()).then(() => this.meterModelNow())
+      .catch(() => {});
+    return this.metering;
+  }
+
+  async meterModelNow() {
+    const { scope } = this.cogs;
+    if (!scope || !this.cogs.meter.enabled) {
+      return;
+    }
+    const pi = await this.harness.pi();
+    const ledger = await pi.usage(BACKGROUND_CONTEXT);
+    const { now, adds } = modelUsage(
+      await this.ctx.storage.get('cogs:usage'),
+      ledger,
+      this.env.AGENT_MODEL,
+      armTag(this.name),
+    );
+    for (const [metric, model, q] of adds) {
+      scope.add('bedrock', metric, model, q);
+    }
+    await this.ctx.storage.put('cogs:usage', now);
+    const sizedAt = (await this.ctx.storage.get('cogs:sized')) || 0;
+    if (Date.now() - sizedAt > SIZE_EVERY_MS && this.ctx.storage.sql) {
+      const t = await this.target();
+      await this.env.DB.prepare(`INSERT INTO cogs_objects (name, org, team, bytes, at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET org = excluded.org,
+        team = excluded.team, bytes = excluded.bytes, at = excluded.at`)
+        .bind(
+          this.name,
+          t.org || '',
+          t.team || '',
+          Number(this.ctx.storage.sql.databaseSize) || 0,
+          new Date().toISOString(),
+        ).run();
+      await this.ctx.storage.put('cogs:sized', Date.now());
+    }
+  }
+
+  /** The thread's latest turn (src/agent/turn.js), and what is pending. */
+  async latestTurn() {
     const pending = await this.harness.pending();
     // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
     const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
-    const turn = latestTurn(await this.harness.messages().catch(() => []), { busy });
+    return { pending, turn: latestTurn(await this.harness.messages().catch(() => []), { busy }) };
+  }
+
+  /**
+   * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
+   * storage, so a woken object does not write it again. A turn in progress keeps nothing.
+   */
+  async keepTurn(turn) {
+    if (this.name.startsWith('kb:') || (turn && turn.state === 'working')) {
+      return;
+    }
+    const sig = JSON.stringify(turn || null);
+    this.keptSig ??= (await this.ctx.storage.get('kept-turn')) || null;
+    if (this.keptSig === sig) {
+      return;
+    }
+    await keepTurn(this.env, this.name, turn);
+    await this.ctx.storage.put('kept-turn', sig);
+    this.keptSig = sig;
+  }
+
+  /** `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. */
+  keepTurnSoon(tries = KEEP_TRIES) {
+    if (this.keepTimer) {
+      return;
+    }
+    this.keepTimer = setTimeout(async () => {
+      this.keepTimer = null;
+      try {
+        const { turn } = await this.latestTurn();
+        if (turn && turn.state === 'working') {
+          if (tries > 1) {
+            this.keepTurnSoon(tries - 1);
+          }
+          return;
+        }
+        await this.keepTurn(turn);
+      } catch (e) {
+        console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
+      }
+    }, KEEP_DELAY_MS);
+  }
+
+  /** What the agent is doing, for the inbox and for checks. */
+  async status() {
+    this.meterModel();
+    const catalog = await this.servers.current();
+    const { pending, turn } = await this.latestTurn();
+    // A finished turn the inbox does not have yet (one that ended before this was deployed, or
+    // one that stopped half way and counts as failed now): kept behind the answer.
+    this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
       model: this.env.AGENT_MODEL || null,

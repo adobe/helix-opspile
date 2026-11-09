@@ -26,8 +26,22 @@ import {
 
 const MAX_PAGES = 20;
 
+// Errors that stay: asking again changes nothing. Anything else may pass, so it is tried again.
+const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked)\b|^graph 40[134]\b|^discord 40[134]\b/;
+
+// A request nobody finished, a job that died or was never sent, goes out again this long after.
+const SWEEP_AFTER_MS = 60 * 60 * 1000;
+// Given up once the thread has been quiet this long.
+const GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;
+const SWEEP_LIMIT = 20;
+
 /**
  * Asks for a thread's history once. Returns true if this call created the request.
+ *
+ *   requested → done, with the messages or with an error that stays
+ *
+ * A request stays requested through errors that may pass: the queue retries it, and
+ * `sweepBackfills` picks up what the queue gave up on, or never got.
  */
 export async function requestBackfill(env, request) {
   const res = await env.DB.prepare(`INSERT OR IGNORE INTO backfills (thread, requested_at)
@@ -156,18 +170,70 @@ async function backfillDiscord(env, { tenant: guild, channelId, rootId }) {
 const BACKFILL = { slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord };
 
 /**
- * Runs one backfill request from the queue. Platform errors are recorded on the request
- * rather than retried forever (for example, the bot is not in the channel).
+ * Runs one backfill request from the queue. An error that stays is recorded on the request (for
+ * example, the bot is not in the channel). Any other is recorded and thrown, for a retry: the
+ * request stays open until it is through.
  */
 export async function runBackfill(env, request) {
   let count = 0;
-  let error = null;
   try {
     count = await (BACKFILL[request.source] || backfillTeams)(env, request);
   } catch (e) {
-    error = e.message;
+    if (!FINAL.test(e.message)) {
+      await env.DB.prepare('UPDATE backfills SET error = ? WHERE thread = ?')
+        .bind(e.message, request.thread).run();
+      throw e;
+    }
+    await env.DB.prepare('UPDATE backfills SET done_at = ?, messages = 0, error = ? WHERE thread = ?')
+      .bind(new Date().toISOString(), e.message, request.thread).run();
+    return { result: 'backfill-failed', messages: 0, error: e.message };
   }
-  await env.DB.prepare('UPDATE backfills SET done_at = ?, messages = ?, error = ? WHERE thread = ?')
-    .bind(new Date().toISOString(), count, error, request.thread).run();
-  return { result: error ? 'backfill-failed' : 'backfilled', messages: count, error };
+  await env.DB.prepare('UPDATE backfills SET done_at = ?, messages = ?, error = NULL WHERE thread = ?')
+    .bind(new Date().toISOString(), count, request.thread).run();
+  return { result: 'backfilled', messages: count, error: null };
+}
+
+/** What a backfill job needs, from a thread key (Teams channel ids have colons of their own). */
+export function requestOf(thread) {
+  const parts = String(thread).split(':');
+  const [source, tenant] = parts;
+  const rootId = parts[parts.length - 1];
+  if (source === 'teams') {
+    return {
+      source, tenant, groupId: parts[2], channelId: parts.slice(3, -1).join(':'), rootId, thread,
+    };
+  }
+  return {
+    source, tenant, channelId: parts.slice(2, -1).join(':'), rootId, thread,
+  };
+}
+
+/**
+ * Cron: sends the requests left open out again, an hour apart, and gives up on those of threads
+ * that have been quiet for a week.
+ */
+export async function sweepBackfills(env, now = new Date(), { limit = SWEEP_LIMIT } = {}) {
+  const { results } = await env.DB.prepare(`SELECT b.thread, t.any_at FROM backfills b
+    LEFT JOIN threads t ON t.thread = b.thread
+    WHERE b.done_at IS NULL AND b.requested_at < ? ORDER BY b.requested_at LIMIT ?`)
+    .bind(new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(), limit).all();
+  const quietSince = new Date(now.getTime() - GIVE_UP_MS).toISOString();
+  const done = { sent: 0, gaveUp: 0 };
+  for (const { thread, any_at: at } of results || []) {
+    if (!at || at < quietSince) {
+      // eslint-disable-next-line no-await-in-loop
+      await env.DB.prepare(`UPDATE backfills SET done_at = ?, messages = 0,
+          error = COALESCE(error, 'gave up') WHERE thread = ?`)
+        .bind(now.toISOString(), thread).run();
+      done.gaveUp += 1;
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      await env.DB.prepare('UPDATE backfills SET requested_at = ? WHERE thread = ?')
+        .bind(now.toISOString(), thread).run();
+      // eslint-disable-next-line no-await-in-loop
+      await env.NORMALIZE.send({ backfill: requestOf(thread) });
+      done.sent += 1;
+    }
+  }
+  return done;
 }

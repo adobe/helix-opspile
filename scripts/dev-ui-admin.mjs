@@ -18,6 +18,8 @@ import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
+import { seedCogs } from './dev-ui-cogs.mjs';
+import { seedTopicMap } from './dev-ui-topics.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -261,6 +263,19 @@ const SEED_MCP = [
   },
 ];
 
+// The computer's secrets (src/agent/secrets.js): platform ops' own two, and one of ACME's.
+const SEED_SECRETS = [
+  {
+    repo: 'kb-team-platform', name: 'TICKETS_API_KEY', value: 'made-up-preview-key', hosts: 'tickets.internal.example', description: 'The ticket tracker\'s REST API, as a bearer token',
+  },
+  {
+    repo: 'kb-team-platform', name: 'CDN_TOKEN', value: 'made-up-preview-token', hosts: 'api.cdn.example, *.cdn.example', description: 'Purge and cache status',
+  },
+  {
+    repo: 'kb-org-acme', name: 'ACME_STATUS_KEY', value: 'made-up-preview-status', hosts: 'status.acme.example',
+  },
+];
+
 /**
  * Channels the admin team holds (the fallback rule files them there), for the suggestions on
  * a team's page: who of the fake teams posts, reacts or is a member in them, and what Clef
@@ -347,6 +362,16 @@ const ADMIN_CHANNELS = [
     clef: { none: 0.84, platform: 0.1, edge: 0.06 },
     kind: ['ignore', 0.9],
   },
+  // A customer with many channels: its tools' per-channel lists are long.
+  ...Array.from({ length: 40 }, (_, n) => ({
+    id: `C0INISITE${n}`,
+    source: 'slack',
+    name: `initech-site-${String(n + 1).padStart(2, '0')}`,
+    org: 'initech',
+    titles: ['Weekly check-in'],
+    clef: { platform: 0.8, edge: 0.15, none: 0.05 },
+    kind: ['channel', 0.9],
+  })),
 ];
 
 function seedAdminChannels(DB) {
@@ -402,14 +427,20 @@ function seedAdminChannels(DB) {
 }
 
 export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
+  const teamRows = store.teams.some((t) => t.slug === 'admin')
+    ? store.teams.map(({ slug, name }) => ({ slug, name }))
+    : [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))];
   const DB = d1({
-    teams: [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))],
+    teams: teamRows,
     people: [...store.people.values()].map((p) => ({
       id: p.id,
       email: p.email,
       name: p.name,
       staff: p.staff ? 1 : 0,
-      teams: [...store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.slug), ...(p.id === 1 ? ['admin'] : [])],
+      teams: [...new Set([
+        ...store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.slug),
+        ...(p.id === 1 ? ['admin'] : []),
+      ])],
     })),
     rules: [
       {
@@ -460,6 +491,10 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
   }
   seedAdminChannels(DB);
+  // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
+  seedCogs(DB);
+  // The Topics page's map (dev-ui-topics.mjs).
+  seedTopicMap(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {
@@ -477,7 +512,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('initech', 'Initech', 'vendor', NULL, '2026-10-20T09:00:00Z'),
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
-    ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+    ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
+    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z')`);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined.
   const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
@@ -550,7 +586,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   // per-channel lists put the channels switched on their own first.
   DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
     ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
-    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z');
+    ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z'),
+    ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
@@ -584,7 +621,10 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   if (manager) {
     DB.sqlite.exec("UPDATE team_members SET role = 'manager' WHERE team = 'edge' AND person = 1");
   }
-  let me = { ...store.me, admin: true, teams: [...store.me.teams, { slug: 'admin', name: 'Admin' }] };
+  const withAdmin = store.me.teams.some((t) => t.slug === 'admin')
+    ? store.me.teams
+    : [...store.me.teams, { slug: 'admin', name: 'Admin' }];
+  let me = { ...store.me, admin: true, teams: withAdmin };
   if (manager || member) {
     me = {
       ...store.me,
@@ -602,17 +642,29 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   const admins = { ...store.me, admin: true, teams: [{ slug: 'admin', name: 'Admin' }] };
   const mcpUrl = new URL('http://localhost/api/kb/mcp');
   const checkUrl = new URL('http://localhost/api/kb/mcp/global/check');
+  const secretsUrl = new URL('http://localhost/api/kb/tools/secrets');
   const seeded = SEED_MCP.reduce((done, body) => done.then(() => kbAdmin(
     toRequest({ method: 'POST' }, mcpUrl, body),
     env,
     mcpUrl,
     admins,
-  )), githubApp).then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
-    toRequest({ method: 'POST' }, checkUrl, { server }),
+  )), githubApp).then(() => {
+    // The ticket tracker is off in one of platform's channels, on its own.
+    DB.sqlite.exec(`INSERT INTO mcp_server_switches (server_id, channel, enabled, changed_by, changed_at)
+      SELECT id, 'C0INITECH1', 0, 'Dana', '2026-10-26T09:00:00Z' FROM mcp_servers
+      WHERE scope = 'team' AND slug = 'platform' AND name = 'tickets'`);
+  }).then(() => SEED_SECRETS.reduce((done, body) => done.then(() => kbAdmin(
+    toRequest({ method: 'POST' }, secretsUrl, body),
     env,
-    checkUrl,
+    secretsUrl,
     admins,
-  ))));
+  )), Promise.resolve()))
+    .then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+      toRequest({ method: 'POST' }, checkUrl, { server }),
+      env,
+      checkUrl,
+      admins,
+    ))));
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;
