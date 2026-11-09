@@ -720,7 +720,7 @@ a click, as that person. A read-only "view as" refuses writes.
 | `filter_threads` | Set filters (and values to exclude), sort and team |
 | `list_threads` | The threads shown, most relevant first |
 | `search_threads` | Search on screen, as the search box does; the results, best match first, with the message that matched |
-| `open_thread` | Open a thread (marks it read) and return its latest messages |
+| `open_thread` | Open a thread (marks it read) and return its latest messages, whole; past 40,000 characters together, the longest are cut to the same length and marked `truncated` |
 | `draft_reply` | Put a reply in the reply box for the person to send (in this browser only) |
 | `post_draft` | Save a reply as the thread's shared draft, for the team (`base`: the draft it replaces; `sources`: what it rests on, which only the team sees) |
 | `post_as_user` | Post a reply as the person |
