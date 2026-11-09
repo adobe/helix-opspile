@@ -112,7 +112,7 @@ const mentioned = [];
 for (let day = end - Number(args.days) * DAY; day < end - SETTLE; day += DAY) {
   const known = answers.filter((a) => a.at + a.minutes * 60000 < day);
   if (known.length) {
-    const fit = fitResponses(known);
+    const fit = fitResponses(rows.filter((r) => r.at < day));
     const everyone = logOf(median(known.map((a) => a.minutes)));
     const inDay = (a) => a.at >= day && a.at < day + DAY && a.at < end - SETTLE;
     for (const a of answers.filter(inDay)) {

@@ -22,7 +22,7 @@ import { notifyRoom } from './notify.js';
 import {
   ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
-import { fitResponses, joins, predict } from './response-model.js';
+import { fitResponses, predict } from './response-model.js';
 import { findTopic, topicIndex, topicsOfThreads } from './topicindex.js';
 
 /**
@@ -227,7 +227,7 @@ async function responseModel(env, now) {
     FROM messages x JOIN threads t ON t.thread = x.thread
     WHERE x.at >= ? AND x.counted = 1 AND x.deleted = 0`).bind(iso(now - WINDOW_DAYS * day)).all();
   const rows = (results || []).map((r) => ({ ...r, at: Date.parse(r.at) }));
-  model = { at: now, fit: fitResponses(joins(rows)) };
+  model = { at: now, fit: fitResponses(rows) };
   return model.fit;
 }
 

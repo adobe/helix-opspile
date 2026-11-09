@@ -1185,11 +1185,15 @@ the signals of all of them.
 A response time comes from a small hierarchical model (`src/response-model.js`) of the last 180
 days. It measures from a customer's message to the first post of someone new to the thread (a
 re-threaded group as one); whoever is already active there is left out, and so is a first post
-no customer came before. The log of that time is an average, plus what the hour and the day of
-the customer's message add, for everyone, for the channel and for the person, each in UTC, so a
-person's own hours stand for their timezone. Each level counts for as much as its data can
-carry, and is left out when its groups do not differ beyond chance. The model is fit per
-isolate, once an hour, and asked about the current hour and day. It only knows who did answer,
+no customer came before. That time runs on the person's own clock: each hour counts for as
+much as they usually post in it (UTC hour of day, weekdays and weekends apart, pooled with
+everyone's while they have few posts), so their hours stand for their timezone and a question
+asked as they log off has not waited all night. The log of it is a typical value, plus what the
+channel and then the person add, each counting for as much as its data can carry, and left out
+when its groups do not differ beyond chance. The model is fit per isolate, once an hour; asked
+about now, it runs the person's clock forward and says the minutes on the wall. (Hour and day
+effects on wall-clock time, tried first, did no better than one number for everyone.) It only
+knows who did answer,
 so a time is only said with at least three such answers, and most mentions of the person
 answered in the thread. `npm run response:backtest` says whether the model beats one number for
 everyone. "Not in this

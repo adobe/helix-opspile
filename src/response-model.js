@@ -12,32 +12,36 @@
 
 /**
  * How long Adobe people take to answer customers (docs/ARCHITECTURE.md, "Expert finder"): the
- * time from a customer's message to the first post of someone new to the thread. The logarithm
- * of that time is an average, plus what the hour and the day of the customer's message add, for
- * everyone, for the channel and for the person. Each level is fit to what the one before it
- * left over, and counts for as much as its own data can carry, so a person with few answers
- * gets their channel's number, and a new channel everyone's.
+ * time from a customer's message to the first post of someone new to the thread.
  *
- * Hours are UTC on purpose: a person's own hours show where they are, with nothing to infer.
+ * That time is counted on the person's own clock: each hour counts for as much as they usually
+ * post in it (UTC hour of day, weekdays and weekends apart), so a question asked as they log
+ * off has not waited all night by the morning. Their hours come from all their posts, pooled
+ * with everyone's while there are few, which stands for their timezone with nothing to infer.
+ * The logarithm of that time is a typical value, plus what the channel and then the person add,
+ * each counting for as much as its own data can carry: a person with few answers gets their
+ * channel's number, and a new channel everyone's. A prediction runs the person's clock forward
+ * from the moment asked about, back to minutes on the wall.
  */
 
-const hour = (c) => new Date(c.at).getUTCHours();
-const day = (c) => new Date(c.at).getUTCDay();
+const HOUR = 60 * 60 * 1000;
+/** Posts a person's own hours count as much as everyone's at. */
+const OWN_HOURS = 20;
+/** How fast the clock runs in an hour someone never posts in, against their busiest. */
+const FLOOR = 0.05;
+/** How far a prediction runs at most, in hours. */
+const MAX_HOURS = 60 * 24;
 
-/** What each level tells apart, general to particular. */
-const LEVELS = [
-  hour,
-  day,
-  (c) => c.channel,
-  (c) => `${c.channel}|${hour(c)}`,
-  (c) => `${c.channel}|${day(c)}`,
-  (c) => c.person,
-  (c) => `${c.person}|${hour(c)}`,
-  (c) => `${c.person}|${day(c)}`,
-];
+const LEVELS = [(a) => a.channel, (a) => a.person];
 
 const sum = (values) => values.reduce((a, b) => a + b, 0);
 const mean = (values) => sum(values) / values.length;
+const median = (values) => {
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+const weekend = (at) => [0, 6].includes(new Date(at).getUTCDay());
 
 /**
  * The answers in `rows` (`{ entry, channel, at, staff, person }`, `at` in ms): for each person
@@ -68,6 +72,82 @@ export function joins(rows) {
   return out;
 }
 
+/** Posts per UTC hour, `[weekday[24], weekend[24]]`, as a share of all, per day of each kind. */
+function rates(counts) {
+  const total = sum(counts[0]) + sum(counts[1]);
+  return counts.map((hours, end) => hours.map((n) => n / total / (end ? 2 : 5)))
+    .map((hours) => hours.map((v, h) => (hours[(h + 23) % 24] + 2 * v + hours[(h + 1) % 24]) / 4));
+}
+
+/** Rates as clock speeds: 1 in the busiest hour, never under FLOOR. */
+function speeds(rate) {
+  const top = Math.max(...rate.flat());
+  return rate.map((hours) => hours.map((v) => Math.max(FLOOR, Math.min(1, v / top))));
+}
+
+/**
+ * Everyone's hours from their posts in `rows`: `of(person)` is their clock's speed
+ * `[weekday[24], weekend[24]]` by UTC hour, everyone's for someone who never posted.
+ */
+export function hoursOf(rows) {
+  const blank = () => [Array(24).fill(0), Array(24).fill(0)];
+  const all = blank();
+  const people = new Map();
+  for (const r of rows) {
+    if (r.staff && r.person !== null) {
+      const h = new Date(r.at).getUTCHours();
+      const w = weekend(r.at) ? 1 : 0;
+      all[w][h] += 1;
+      if (!people.has(r.person)) {
+        people.set(r.person, blank());
+      }
+      people.get(r.person)[w][h] += 1;
+    }
+  }
+  if (!sum(all[0]) && !sum(all[1])) {
+    const flat = blank().map((hours) => hours.fill(1));
+    return { of: () => flat };
+  }
+  const everyone = rates(all);
+  const clocks = new Map([...people].map(([person, counts]) => {
+    const n = sum(counts[0]) + sum(counts[1]);
+    return [person, speeds(rates(counts).map((hours, w) => hours
+      .map((v, h) => (n * v + OWN_HOURS * everyone[w][h]) / (n + OWN_HOURS))))];
+  }));
+  const usual = speeds(everyone);
+  return { of: (person) => clocks.get(person) || usual };
+}
+
+const speedAt = (clock, at) => clock[weekend(at) ? 1 : 0][new Date(at).getUTCHours()];
+
+/** The minutes on `clock` from `from` to `to` (ms). */
+export function clockMinutes(clock, from, to) {
+  let minutes = 0;
+  for (let at = from; at < to;) {
+    const next = Math.min(to, (Math.floor(at / HOUR) + 1) * HOUR);
+    minutes += ((next - at) / 60000) * speedAt(clock, at);
+    at = next;
+  }
+  return minutes;
+}
+
+/** The minutes on the wall from `from` (ms) until `clock` has run `minutes`. */
+export function wallMinutes(clock, from, minutes) {
+  let left = minutes;
+  let at = from;
+  for (let i = 0; i < MAX_HOURS; i += 1) {
+    const next = (Math.floor(at / HOUR) + 1) * HOUR;
+    const speed = speedAt(clock, at);
+    const there = ((next - at) / 60000) * speed;
+    if (there >= left) {
+      return (at - from) / 60000 + left / speed;
+    }
+    left -= there;
+    at = next;
+  }
+  return (at - from) / 60000;
+}
+
 /**
  * How many answers a group needs before it counts as much as the level above it: the spread
  * inside groups over the spread between them. Infinite when groups do not differ beyond chance,
@@ -89,13 +169,21 @@ function weightOf(groups) {
   return between > 0 ? inside / between : Infinity;
 }
 
-/** The model of `answers` (see `joins`), or null without any. */
-export function fitResponses(answers) {
+/**
+ * The model of the answers in `rows` (see `joins`), on the hours of the posts in them, or null
+ * without any answer.
+ */
+export function fitResponses(rows) {
+  const answers = joins(rows);
   if (!answers.length) {
     return null;
   }
-  const left = answers.map((a) => Math.log(Math.max(a.minutes, 1)));
-  const base = mean(left);
+  const hours = hoursOf(rows);
+  const left = answers.map((a) => {
+    const minutes = clockMinutes(hours.of(a.person), a.at, a.at + a.minutes * 60000);
+    return Math.log(Math.max(1, minutes));
+  });
+  const base = median(left);
   left.forEach((_, i) => {
     left[i] -= base;
   });
@@ -116,11 +204,14 @@ export function fitResponses(answers) {
   for (const a of answers) {
     people.set(a.person, (people.get(a.person) || 0) + 1);
   }
-  return { base, levels, people };
+  return {
+    base, levels, people, hours,
+  };
 }
 
 /** The typical minutes for `person` to answer in `channel` a customer's message at `at`. */
 export function predict(model, { person, channel, at }) {
-  const c = { person, channel, at };
-  return Math.exp(model.base + sum(LEVELS.map((key, i) => model.levels[i].get(key(c)) || 0)));
+  const a = { person, channel };
+  const own = Math.exp(model.base + sum(LEVELS.map((key, i) => model.levels[i].get(key(a)) || 0)));
+  return wallMinutes(model.hours.of(person), at, own);
 }
