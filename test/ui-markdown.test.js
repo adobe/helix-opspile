@@ -18,7 +18,7 @@ import { inboxPage } from '../src/page.js';
 import BUNDLE from '../src/ui-markdown.bundle.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import {
-  channelUrlKey, fileKind, mentionPattern, render, splitAttachments,
+  channelUrlKey, fileKind, mentionPattern, messageHtml, render, splitAttachments,
 } from '../src/ui-markdown.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
@@ -141,6 +141,13 @@ describe('ui markdown', () => {
     assert.equal(render('```\na\nb\n```\nafter', opts), '<pre><code>a\nb\n</code></pre>\n\n<p>after</p>');
     assert.equal(md('> one\n> two'), '<blockquote><p>one<br />two</p></blockquote>');
     assert.equal(md('- a\n- b\n\n1. c'), '<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol>');
+  });
+
+  it('ends a quote where its `>` lines do, as Slack does, but not in code', () => {
+    assert.equal(md('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
+    assert.equal(md('> one\n> two\nthree\nfour'), '<blockquote><p>one<br />two</p></blockquote><p>three<br />four</p>');
+    assert.equal(md('```\n> a\nb\n```'), '<pre><code>&gt; a\nb\n</code></pre>'.replace(/\n/g, ''));
+    assert.equal(messageHtml('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
   });
 
   it('shows raw HTML and indented text as text', () => {

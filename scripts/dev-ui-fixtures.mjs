@@ -283,6 +283,7 @@ const PHRASES = [
   'I opened a ticket and linked the trace: https://example.com/trace/1234 and the dashboard https://example.com/d/abcd',
   'Rolled back the redirect rules; error rate is back to normal :white_check_mark:',
   '> the sitemap is missing half the pages\n\nYes, the index only covers `/blog/**` at the moment.',
+  '> Is the old domain still redirecting after the cutover?\nYes, and it stays that way until the certificate expires.',
   '| region | p50 | p99 |\n|---|---|---|\n| eu | 40ms | 310ms |\n| us | 38ms | 2.4s |',
   'Can we schedule a quick call? ~~Today~~ Tomorrow works better for us.',
   'Looping in the CDN team, they own the origin shield config.',
@@ -702,6 +703,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           text: 'Thanks for flagging. Which paths are affected?',
         })}\n\nThe header is \`x-request-id\`.\n\n\`\`\`\nGET /en/index.html\n\`\`\``;
       }],
+      // A Slack quote: its `>` is one line, the reply under it is not quoted.
+      ['priya', 4, '> Can someone take a look? We are blocked on it.\nOn it: the flush job failed at 14:02, I am running it again.'],
     ],
     reads: { priya: 332 },
     label: {

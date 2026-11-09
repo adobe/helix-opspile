@@ -482,6 +482,12 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .bubble th, .bubble td { border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 25%, transparent); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); }
 .bubble li > input[type=checkbox] { margin: 0 var(--spectrum-spacing-75) 0 calc(-1 * var(--spectrum-spacing-50)); vertical-align: calc(-1 * var(--spectrum-border-width-100)); }
 
+/* A quote in a message: a bar beside it, as in Slack and Teams. */
+.bubble blockquote { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
+  border-left: var(--spectrum-border-width-200) solid color-mix(in srgb, currentColor 45%, transparent); opacity: .85; }
+.bubble > blockquote:first-child { margin-top: 0; }
+.bubble > blockquote:last-child { margin-bottom: 0; }
+
 /* A quoted message (forwarded, or linked to): a card of it, its author and time on top. */
 .bubble blockquote.quote { margin: var(--spectrum-spacing-100) 0; padding: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)) var(--spectrum-spacing-100); opacity: 1;
   border-left: var(--spectrum-border-width-200) solid color-mix(in srgb, currentColor 45%, transparent);
