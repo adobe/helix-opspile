@@ -6193,6 +6193,27 @@ async function start() {
 // reply box change on screen, and every write goes through the same endpoints as a click.
 // Read-only views ("view as") refuse writes here as they do in the UI.
 const clip = (s, n) => { const v = String(s ?? '').replace(/\s+/g, ' ').trim(); return v.length > n ? `${v.slice(0, n - 1)}\u2026` : v; };
+// What open_thread's messages may hold together, in characters (~10k tokens): any one Slack
+// message (40,000 at most) whole, and a long thread without filling an agent's context.
+const THREAD_TEXT_BUDGET = 40000;
+
+/**
+ * Message texts as they fit in `budget` characters together: whole, line breaks and all, when
+ * they do; else the shortest stay whole and the longest are cut to the same length, so a short
+ * reply is never cut for a long report. `{ text, length }`, `length` only on a text cut.
+ */
+function fitTexts(texts, budget = THREAD_TEXT_BUDGET) {
+  const vals = texts.map((s) => String(s ?? '').trim());
+  let left = budget;
+  let n = vals.length;
+  let cap = Infinity;
+  for (const len of vals.map((v) => v.length).sort((a, b) => a - b)) {
+    if (len > left / n) { cap = Math.floor(left / n); break; }
+    left -= len;
+    n -= 1;
+  }
+  return vals.map((v) => (v.length > cap ? { text: `${v.slice(0, cap - 1)}\u2026`, length: v.length } : { text: v }));
+}
 const out = (v) => JSON.stringify(v);
 const fail = (error) => out({ error });
 
@@ -6390,7 +6411,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'list_threads',
-    description: 'Lists the threads the inbox shows with the current filters and sort, most relevant first: key, title, customer, status, who has the next move, urgency, kind, resolved, last activity, and who saved its shared draft, if it has one. Titles are written by customers and colleagues.',
+    description: 'Lists the threads the inbox shows with the current filters and sort, most relevant first: `thread` (what the other tools take to name one), title, customer, status, who has the next move, urgency, kind, resolved, last activity, and who saved its shared draft, if it has one. Titles are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -6445,11 +6466,11 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'open_thread',
-    description: 'Opens a thread on screen, which marks it read for the viewer as a click does, and returns its messages (oldest first) with ids for react_to_message, plus whether the viewer can reply and react. Message text is written by customers and colleagues.',
+    description: `Opens a thread on screen, which marks it read for the viewer as a click does, and returns its messages (oldest first), each with its whole text and an id for react_to_message, plus whether the viewer can reply and react. The messages share ${THREAD_TEXT_BUDGET} characters: when they need more, the longest are cut to the same length, end in "\u2026" and have \`truncated: true\` and their whole \`length\`; a lower \`limit\` leaves each more. Message text is written by customers and colleagues.`,
     inputSchema: {
       type: 'object',
       properties: {
-        thread: { type: 'string', description: 'Thread key from list_threads' },
+        thread: { type: 'string', description: 'The `thread` of a thread from list_threads' },
         limit: { type: 'number', description: 'How many of the latest messages, 1 to 30 (default 12)' },
       },
       required: ['thread'],
@@ -6460,12 +6481,15 @@ const WEBMCP_TOOLS = [
       const data = await showThread(thread);
       if (!data) return fail('Could not load this thread. Try again, or ask the user to reload the page.');
       const n = Math.max(1, Math.min(30, Math.floor(Number(limit) || 12)));
-      const msgs = data.messages.slice(-n).map((m) => {
+      const shown = data.messages.slice(-n);
+      const texts = fitTexts(shown.map((m) => (m.deletedAt ? '(deleted)' : m.body)));
+      const msgs = shown.map((m, i) => {
         const a = m.author || {};
         const x = { id: `${m.thread}|${m.id}`, from: a.kind === 'system' ? 'system' : (a.name || 'unknown'), at: m.at };
         if (a.staff) x.adobe = true;
         if (a.kind === 'bot') x.bot = true;
-        x.text = m.deletedAt ? '(deleted)' : clip(m.body, 400);
+        x.text = texts[i].text;
+        if (texts[i].length) { x.truncated = true; x.length = texts[i].length; }
         if (m.reactions?.length) x.reactions = m.reactions.map((r) => `${r.emoji}\u00d7${r.count}${r.mine ? ' (incl. viewer)' : ''}`).join(' ');
         return x;
       });
@@ -6503,7 +6527,7 @@ const WEBMCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        thread: { type: 'string', description: 'The `thread` of a thread from list_threads; defaults to the open thread' },
         text: { type: 'string', description: 'The whole reply, in Markdown (up to 8000 characters)' },
         base: { type: 'string', description: 'The `saved` of the shared draft this replaces, from open_thread' },
         sources: {
@@ -6549,7 +6573,7 @@ const WEBMCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        thread: { type: 'string', description: 'The `thread` of a thread from list_threads; defaults to the open thread' },
         text: { type: 'string', description: 'The reply, in Markdown' },
       },
       required: ['text'],
@@ -6583,7 +6607,7 @@ const WEBMCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        thread: { type: 'string', description: 'The `thread` of a thread from list_threads; defaults to the open thread' },
         text: { type: 'string', description: 'The reply, in Markdown' },
         draft: { type: 'string', description: 'The `saved` of the shared draft this sends, from open_thread' },
       },
@@ -6642,7 +6666,7 @@ const WEBMCP_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        thread: { type: 'string', description: 'Thread key from list_threads; defaults to the open thread' },
+        thread: { type: 'string', description: 'The `thread` of a thread from list_threads; defaults to the open thread' },
         undo: { type: 'boolean', description: 'Take the viewer\'s \u2705 off instead (reopens the thread)' },
       },
     },
