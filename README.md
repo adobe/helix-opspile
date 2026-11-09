@@ -248,8 +248,8 @@ and Access"), so they are behind it like the rest.
 ### MCP server
 
 `/mcp` lets an agent outside the browser (Claude, an IDE, a CLI) work the inbox as the person
-signed in, with sixteen tools: `whoami`, `list_threads`, `search_threads` (what `/api/search`
-finds, in all of the person's teams), `get_thread`, `post_draft`, `post_as_user`,
+signed in, with seventeen tools: `whoami`, `list_threads`, `search_threads` (what `/api/search`
+finds, in all of the person's teams), `get_thread`, `get_message`, `post_draft`, `post_as_user`,
 `post_as_bot`, `react_to_message`, `resolve_thread`, `seed_agent`, and the extraction rules and
 tech stack of a team (`list_extraction_rules`, `test_extraction_rule`, `save_extraction_rule`,
 `delete_extraction_rule`, `save_tech`, `delete_tech`; the changes for the admin team and the
@@ -260,6 +260,8 @@ rests on, which only the team sees; `post_as_user` posts as
 the person (`POST /api/post`); `post_as_bot` posts as the opspile app (`POST /api/post/app`),
 where the channel lets the app post. Both post tools take the shared draft's version as
 `draft`, which uses it up; `get_thread` shows the draft and `can_post_as_bot`.
+`get_thread` returns its messages whole; past 40,000 characters together, the longest are cut
+to the same length and marked `truncated`, and `get_message` returns one of them whole.
 
 The admin team gets more tools, which nobody else sees in `tools/list` (for them it is
 `cacheScope: private`) or can call (an unknown tool):

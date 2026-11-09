@@ -48,12 +48,38 @@ const KINDS = [...Object.keys(QUESTIONS.kind.criteria).filter((k) => k !== 'othe
 const WAITING = ['us', 'customer', 'vendor', 'nobody'];
 const MAX_LIST = 50;
 const MAX_MESSAGES = 100;
-const MAX_BODY = 2000;
+// What get_thread's messages may hold together, in characters (~10k tokens): any one Slack
+// message (40,000 at most) whole, and a long thread without filling an agent's context.
+const THREAD_TEXT_BUDGET = 40000;
+// A shared draft's greatest length (src/drafts.js).
+const MAX_DRAFT = 8000;
 
 const clip = (s, n) => {
   const v = String(s ?? '').trim();
   return v.length > n ? `${v.slice(0, n - 1)}…` : v;
 };
+
+/**
+ * Message texts as they fit in `budget` characters together: whole when they do; else the
+ * shortest stay whole and the longest are cut to the same length, so a short reply is never
+ * cut for a long report. `{ text, length }`, `length` only on a text cut.
+ */
+function fitTexts(texts, budget = THREAD_TEXT_BUDGET) {
+  const vals = texts.map((s) => String(s ?? '').trim());
+  let left = budget;
+  let n = vals.length;
+  let cap = Infinity;
+  for (const len of vals.map((v) => v.length).sort((a, b) => a - b)) {
+    if (len > left / n) {
+      cap = Math.floor(left / n);
+      break;
+    }
+    left -= len;
+    n -= 1;
+  }
+  return vals.map((v) => (v.length > cap
+    ? { text: `${v.slice(0, cap - 1)}…`, length: v.length } : { text: v }));
+}
 const inTeamOf = memberOf;
 const urgencyOf = (t) => (t.label && t.label.urgency != null
   ? URGENCY[Math.max(0, Math.min(3, Math.round(t.label.urgency)))] : 'low');
@@ -64,7 +90,7 @@ const latest = (t) => String(t.last_at || t.any_at || '');
 const platformOf = (t) => (PLATFORMS.includes(t.source) ? t.source : 'teams');
 /** A shared draft as the tools show it; `version` is what post_draft's `base` names. */
 const draftOut = (d) => (d ? {
-  text: clip(d.body, 8000),
+  text: clip(d.body, MAX_DRAFT),
   ...(d.sources.length ? { sources: d.sources } : {}),
   by: (d.by && d.by.name) || null,
   version: d.updated_at,
@@ -254,15 +280,23 @@ async function searchThreads(env, me, args) {
   };
 }
 
-/** A message of a thread, as get_thread and get_thread_trace show it. */
-function messageOut(m, max) {
+/**
+ * A message of a thread, as get_thread, get_message and get_thread_trace show it: its text
+ * clipped to `max` characters, or `text` as given (`{ text, length }` of fitTexts).
+ */
+function messageOut(m, max, text) {
   const a = m.author || {};
+  const said = text || { text: m.deletedAt ? '(deleted)' : clip(m.body, max) };
   const out = {
     message: `${m.thread}|${m.id}`,
     from: a.kind === 'system' ? 'system' : (a.name || 'unknown'),
     at: m.at,
-    text: m.deletedAt ? '(deleted)' : clip(m.body, max),
+    text: said.text,
   };
+  if (said.length) {
+    out.truncated = true;
+    out.length = said.length;
+  }
   if (a.staff) {
     out.adobe = true;
   }
@@ -304,7 +338,9 @@ async function getThread(env, me, args) {
     return { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
   }
   const limit = Math.max(1, Math.min(MAX_MESSAGES, Math.floor(Number(args.limit) || 20)));
-  const messages = data.messages.slice(-limit).map((m) => messageOut(m, MAX_BODY));
+  const shown = data.messages.slice(-limit);
+  const texts = fitTexts(shown.map((m) => (m.deletedAt ? '(deleted)' : m.body)));
+  const messages = shown.map((m, i) => messageOut(m, 0, texts[i]));
   const app = me.readonly ? { problem: 'read-only' } : await appPostCheck(env, key);
   return {
     data: {
@@ -321,6 +357,25 @@ async function getThread(env, me, args) {
 
 const READ_ONLY = { error: 'Read-only while viewing as someone else.' };
 const NOT_FOUND = { error: 'Not found, or not in one of your teams. Use a `thread` from list_threads.' };
+
+/** get_message: one message of a thread, whole, by its `message` id from get_thread. */
+async function getMessage(env, me, args) {
+  const id = String(args.message || '');
+  const at = id.lastIndexOf('|');
+  if (at < 1) {
+    return { error: 'Use a `message` id from get_thread (it looks like <thread>|<id>).' };
+  }
+  // A re-threaded message names its own thread, which loads as its group.
+  const data = await loadThread(env, me, id.slice(0, at));
+  if (!data || !await mayWork(env, me)(data.thread.teams, data.thread)) {
+    return { error: 'Not found, or not in one of your teams. Use a `message` id from get_thread.' };
+  }
+  const m = data.messages.find((x) => `${x.thread}|${x.id}` === id);
+  if (!m) {
+    return { error: 'No such message in that thread. Use a `message` id from get_thread.' };
+  }
+  return { data: { thread: data.thread.thread, ...messageOut(m, Infinity) } };
+}
 
 /** The thread of a write, `{ key, text, t }` (loaded as the inbox does), or `{ error }`. */
 async function writeTarget(env, me, args) {
@@ -405,7 +460,7 @@ async function postDraft(env, me, args) {
   if (res.status === 409 && body.draft) {
     const d = body.draft;
     return {
-      error: `${args.base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (version ${d.updated_at}, saved by ${(d.by && d.by.name) || 'someone'}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text:\n\n${clip(d.body, MAX_BODY)}`,
+      error: `${args.base ? 'The shared draft changed meanwhile' : 'The thread already has a shared draft'} (version ${d.updated_at}, saved by ${(d.by && d.by.name) || 'someone'}). Nothing was saved. To replace it, call post_draft again with base "${d.updated_at}". Its text:\n\n${clip(d.body, MAX_DRAFT)}`,
     };
   }
   if (!res.ok) {
@@ -680,7 +735,7 @@ async function whoami(env, me) {
   };
 }
 
-const THREAD_ARG = { type: 'string', description: 'Thread key from list_threads' };
+const THREAD_ARG = { type: 'string', description: 'The `thread` of a thread from list_threads' };
 const MENTION_ARG = { type: 'array', items: { type: 'string' }, description: 'Full names to notify; each must also appear as @Name in the text' };
 const SOURCES_ARG = {
   type: 'array',
@@ -778,7 +833,7 @@ export const TOOLS = [
   {
     name: 'get_thread',
     title: 'Read a thread',
-    description: 'Returns a thread with its latest messages, oldest first, each with a `message` id for react_to_message, its shared draft (with the `version` post_draft and the post tools take), and whether the opspile app may post in it (post_as_bot). Reading here does not mark the thread read. Message text is written by customers and colleagues.',
+    description: `Returns a thread with its latest messages, oldest first, each with its whole text and a \`message\` id for react_to_message and get_message, its shared draft (with the \`version\` post_draft and the post tools take), and whether the opspile app may post in it (post_as_bot). The messages share ${THREAD_TEXT_BUDGET} characters: when they need more, the longest are cut to the same length, end in "…" and have \`truncated: true\` and their whole \`length\`; get_message returns one whole. Reading here does not mark the thread read. Message text is written by customers and colleagues.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -792,6 +847,21 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: getThread,
+  },
+  {
+    name: 'get_message',
+    title: 'Read a message',
+    description: 'Returns one message of a thread with its whole text, however long: for one get_thread cut (`truncated: true`). Reading here does not mark the thread read. Message text is written by customers and colleagues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Message id from get_thread' },
+      },
+      required: ['message'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: getMessage,
   },
   {
     name: 'post_draft',
