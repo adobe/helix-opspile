@@ -256,6 +256,47 @@ describe('shared drafts', () => {
       assert.deepEqual(await (await look(e, BO)).json(), { view: 'frame', url: PAGE });
       assert.deepEqual(fetched, [PAGE]);
     });
+
+    it('that are messages are the messages opspile has, and never fetched', async (t) => {
+      const e = env();
+      const fetched = [];
+      t.mock.method(globalThis, 'fetch', async (url) => {
+        fetched.push(url);
+        return new Response('<h1>x</h1>', { headers: { 'content-type': 'text/html' } });
+      });
+      // A message in another of the team's channels (Slack's ids: the links name them).
+      const CHANNEL = 'C0AAAAAAAA1';
+      const THREAD = `slack:E1:${CHANNEL}:1700000000.000001`;
+      const message = `https://acme.slack.com/archives/${CHANNEL}/p1700000000000002?thread_ts=1700000000.000001`;
+      const gone = `https://acme.slack.com/archives/${CHANNEL}/p1700000000000009`;
+      e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+        team, path, any_at, updated_at) VALUES (?, 'slack', 'E1', ?, '1700000000.000001', 'acme',
+        'helix', 'p/', '2026-10-21T10:00:00Z', '2026-10-21T10:00:00Z')`).run(THREAD, CHANNEL);
+      e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key, preview) VALUES ('slack', 'E1', ?, '1700000000.000002', ?,
+        '2026-10-21T10:00:00Z', 'Cy', 'slack:E1:U9', 'It is down.')`).run(CHANNEL, THREAD);
+      await save(e, ADA, {
+        text: 'one', base: null, sources: [{ url: message, title: 'Cy' }, { url: gone, title: 'Gone' }],
+      });
+      assert.deepEqual(await (await look(e, BO, message)).json(), {
+        view: 'message',
+        url: message,
+        message: {
+          source: 'slack',
+          channel: CHANNEL,
+          id: '1700000000.000002',
+          thread: THREAD,
+          at: '2026-10-21T10:00:00Z',
+          author: 'Cy',
+          authorKey: 'slack:E1:U9',
+          preview: 'It is down.',
+        },
+      });
+      const none = await (await look(e, BO, gone)).json();
+      assert.equal(none.view, 'none');
+      assert.match(none.reason, /Slack message/);
+      assert.deepEqual(fetched, []);
+    });
   });
 
   it('is only for the team that owns the channel', async () => {
