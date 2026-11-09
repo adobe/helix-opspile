@@ -84,6 +84,30 @@ describe('Server-Timing', () => {
     assert.match(timing.header(), /^d1;dur=[\d.]+;desc="2 calls in 2 rounds", r2;dur=[\d.]+;desc="3 calls in 3 rounds", total;dur=[\d.]+$/);
   });
 
+  it('times Artifacts calls, and those on its repos, without asking an RPC stub for more', async () => {
+    // As a Workers RPC stub: every property is a function, `bind` and `apply` included.
+    const asked = [];
+    const stub = (answers) => new Proxy(() => {}, {
+      get(_, prop) {
+        if (prop === 'then') {
+          return undefined;
+        }
+        asked.push(prop);
+        return answers[prop] || (() => {
+          throw new Error(`remote ${String(prop)}`);
+        });
+      },
+    });
+    const repo = stub({ readBlob: async (h) => `blob ${h}`, [Symbol.dispose]: () => 'gone' });
+    const timing = new Timing();
+    const env = timing.wrap({ ARTIFACTS: stub({ get: async () => repo }) });
+    const got = await env.ARTIFACTS.get('kb-x');
+    assert.equal(await got.readBlob('a'), 'blob a');
+    assert.equal(got[Symbol.dispose](), 'gone');
+    assert.deepEqual(asked, ['get', 'readBlob', Symbol.dispose]);
+    assert.match(timing.header(), /^artifacts;dur=[\d.]+;desc="2 calls in 2 rounds", total;dur=/);
+  });
+
   it('is on every API answer, with durations and counts only', async () => {
     const DB = d1({
       teams: [{ slug: 'helix', name: 'Helix' }],

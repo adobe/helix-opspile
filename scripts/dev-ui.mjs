@@ -930,6 +930,10 @@ async function kbApi(req, res, url) {
   if (url.pathname === '/api/kb/log') {
     return json(res, { repo, commits: await kb.log(repo) });
   }
+  if (url.pathname === '/api/kb/blobs') {
+    const hashes = String(url.searchParams.get('hashes') || '').split(',').filter(Boolean);
+    return json(res, { repo, blobs: await kb.blobs(repo, hashes) });
+  }
   if (url.pathname === '/api/kb/file' && req.method === 'GET') {
     const r = await kb.read(repo, url.searchParams.get('path'));
     return json(res, r, r.error ? 404 : 200);
