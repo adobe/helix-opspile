@@ -52,6 +52,7 @@ const COLORS = {
   artifacts: '#c9a2ff',
   browser_run: '#e5534b',
   analytics_engine: '#b9c7d8',
+  zero_trust: '#0da8b6',
 };
 const color = (id) => COLORS[id] || '#8b929b';
 /**
@@ -281,7 +282,7 @@ function kpis(d) {
     <div class="kpi" title="What the work of the period cost at list prices: requests, rows, tokens, operations.${esc(why || none)}"><div class="k">Flow, ${days}</div><div class="v">${usd(t.flow)}</div><div class="s">${usd(t.flowMonthly)} a month at the rate${since || ' of the period'}</div></div>
     <div class="kpi" title="The flow divided by the messages.${esc(why || none)}"><div class="k">Per message</div><div class="v">${usd(t.perMessage)}</div><div class="s">${num(t.messages)} messages${cut ? `, rate${since}` : ''}</div></div>
     <div class="kpi" title="The flow divided by the threads started.${esc(why || none)}"><div class="k">Per thread</div><div class="v">${usd(t.perThread)}</div><div class="s">${num(t.threads)} new threads${cut ? `, rate${since}` : ''}</div></div>
-    <div class="kpi" title="What keeping it costs a month: storage, vectors, the plan"><div class="k">Stock, a month</div><div class="v">${usd(t.stock)}</div><div class="s">storage and the plan</div></div>
+    <div class="kpi" title="What keeping it costs a month: storage, vectors, the plan, the sign-in's seats"><div class="k">Stock, a month</div><div class="v">${usd(t.stock)}</div><div class="s">storage, the plan, seats</div></div>
     <div class="kpi" title="Flow at this rate plus stock"><div class="k">A month, all in</div><div class="v">${usd(allIn)}</div><div class="s">flow at this rate + stock</div></div>
   </div>`;
 }

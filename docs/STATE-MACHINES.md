@@ -250,7 +250,9 @@ repository taken off `agent_repos` keeps its mirror.
 services whose queries answered: a failed query keeps what it counted before, and is not "nothing
 used". A day counts as rolled up for the backfill once a source has any row for it, so each source
 writes a marker row (`volume/days`, `analytics_engine/queries`) even on a quiet day. Storage is
-measured once a day, the first run of the day (`workers/subscription` is the marker).
+measured once a day, the first run of the day (`workers/subscription` is the marker); the Access
+seats separately, by the first run of the day that read them (any `zero_trust` row is the marker),
+so a failed read is tried again on the next run.
 
 **COGS hours.** missing → rolled up → rolled up again while its day is today or yesterday → deleted
 after eight days (`cogs_hours`, `src/cogs/rollup.js`). The flow of `meter` and `account` by the
