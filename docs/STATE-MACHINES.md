@@ -76,7 +76,8 @@ A label written before migration 0059 has no `tech` (null, not `{}`): the thread
 rule for everyone but the page, which has its own copy.
 
 **Status pile.** critical, hot, you, waiting, silent, team, quiet. Not stored: `statusOf` in
-`ui/inbox.js`, from the thread, the viewer and the clock. Since nothing announces that time has
+`ui/inbox.js`, from the thread, the viewer and the clock (for normal and low urgency, a clock
+that stops on weekends: `waitedFor`). Since nothing announces that time has
 passed, the page looks again every minute while it is on screen.
 
 **Channel filing.** filed → moving → re-filed (`src/refile.js`). "Moving" is not stored: a job's
