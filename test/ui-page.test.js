@@ -1060,6 +1060,49 @@ describe('inbox page', () => {
     });
   });
 
+  it('does not count weekends against normal threads waiting too long', () => {
+    // Local times, so the test holds in any time zone. 6 November 2026 is a Friday.
+    const at = (day, h, m = 0) => new Date(2026, 10, day, h, m).getTime();
+    const H = 3600000;
+    const { waitedFor, computeStatus } = piece('const MIN = 60000;', 'const STATUS_ORDER', 'waitedFor, computeStatus', {
+      viewerId: () => 'me',
+      urgencyOf: (t) => t.urgency,
+      signals: () => ({}),
+      checked: () => false,
+      waitingOn: (t) => t.on,
+      lastOf: (t) => new Date(t.last).toISOString(),
+      teamIds: () => new Set(),
+    });
+    assert.equal(waitedFor(at(6, 16), at(6, 18)), 2 * H);
+    // Friday 16:00 to Monday 9:00: Friday's last eight hours and Monday's first nine.
+    assert.equal(waitedFor(at(6, 16), at(9, 9)), 17 * H);
+    // Asked on Saturday: the clock starts on Monday.
+    assert.equal(waitedFor(at(7, 11), at(9, 2)), 2 * H);
+    assert.equal(waitedFor(at(7, 11), at(8, 23)), 0);
+    // Over two weekends: ten working days.
+    assert.equal(waitedFor(at(6, 0), at(20, 0)), 10 * 24 * H);
+    assert.equal(waitedFor(at(9, 9), at(9, 8)), 0);
+
+    const real = Date.now;
+    try {
+      Date.now = () => at(9, 1);
+      const t = (o) => ({
+        on: 'Us', urgency: 'normal', last: at(7, 10), ...o,
+      });
+      // Asked on Saturday, Monday 1:00: an hour of the three a normal thread may wait.
+      assert.equal(computeStatus(t()), 'quiet');
+      assert.equal(computeStatus(t({ last: at(6, 20) })), 'waiting');
+      // Critical and high run on the wall clock.
+      assert.equal(computeStatus(t({ urgency: 'high' })), 'waiting');
+      // The customer's day of silence does not pass on a weekend either.
+      assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'quiet');
+      Date.now = () => at(9, 11);
+      assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'silent');
+    } finally {
+      Date.now = real;
+    }
+  });
+
   it('ranks a thread just resolved below the open ones of its pile', () => {
     const me = 'me';
     const { classicScore: baseScore } = piece('function closeness', '\nconst tpl', 'classicScore', {

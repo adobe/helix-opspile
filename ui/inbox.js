@@ -642,6 +642,29 @@ const waitingOn = (t) => {
 const MIN = 60000;
 const WAIT_US = { critical: 15 * MIN, high: 60 * MIN, normal: 180 * MIN, low: 180 * MIN };
 const WAIT_THEM = { critical: 30 * MIN, high: 60 * MIN, normal: 1440 * MIN, low: 1440 * MIN };
+// The urgencies whose clock stops on weekends (see waitedFor); critical and high run on.
+const WEEKDAYS_ONLY = new Set(['normal', 'low']);
+
+/**
+ * How long from `from` to `to` (both ms) a thread has waited, without Saturdays and Sundays in
+ * the viewer's time zone: a normal question asked on Friday afternoon has not waited all
+ * weekend on Monday morning. Each weekend from the one `from` is in is taken off as far as it
+ * overlaps; local midnights (`setDate`), so a change to or from summer time counts right.
+ */
+function waitedFor(from, to) {
+  if (!(to > from)) return 0;
+  let age = to - from;
+  const sat = new Date(from);
+  sat.setHours(0, 0, 0, 0);
+  sat.setDate(sat.getDate() - ((sat.getDay() + 1) % 7));
+  while (sat.getTime() < to) {
+    const mon = new Date(sat);
+    mon.setDate(mon.getDate() + 2);
+    age -= Math.max(0, Math.min(to, mon.getTime()) - Math.max(from, sat.getTime()));
+    sat.setDate(sat.getDate() + 7);
+  }
+  return age;
+}
 
 /**
  * The status pile a thread is in, most pressing first:
@@ -649,7 +672,8 @@ const WAIT_THEM = { critical: 30 * MIN, high: 60 * MIN, normal: 1440 * MIN, low:
  * - hot: high urgency and nobody at Adobe has seen it (red)
  * - you: you are in it (posted or mentioned), and the last word is not Adobe's, or it
  *   mentions you (blue)
- * - waiting: waits on us longer than its urgency allows (yellow); never when Adobe posted last
+ * - waiting: waits on us longer than its urgency allows (yellow); never when Adobe posted last;
+ *   weekends do not count for normal and low urgency (waitedFor)
  * - silent: waits on the customer or vendor longer than its urgency allows (purple)
  * - team: your team is in it, you were not mentioned, all is well (green)
  * - quiet: everything else (grey)
@@ -690,10 +714,14 @@ function computeStatus(t) {
     || sig.mine;
   // Resolved with ✅ by staff: nobody is waiting, whoever spoke last.
   if (!alert && mine && !checked(t) && (t.last_staff === 0 || t.mentionedMe)) return 'you';
-  const age = Date.now() - (Date.parse(lastOf(t)) || Date.now());
+  const now = Date.now();
+  const since = Date.parse(lastOf(t)) || now;
+  // Past the limit on the wall clock, and on the working-day clock where weekends stop it.
+  const late = (limit) => now - since > limit
+    && (!WEEKDAYS_ONLY.has(u) || waitedFor(since, now) > limit);
   const on = waitingOn(t);
-  if (!alert && !checked(t) && on === 'Us' && age > WAIT_US[u]) return 'waiting';
-  if (!alert && !checked(t) && on === 'Customer' && age > WAIT_THEM[u]) return 'silent';
+  if (!alert && !checked(t) && on === 'Us' && late(WAIT_US[u])) return 'waiting';
+  if (!alert && !checked(t) && on === 'Customer' && late(WAIT_THEM[u])) return 'silent';
   const team = teamIds();
   if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
   return 'quiet';
@@ -706,8 +734,8 @@ const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
   you: 'You posted, were mentioned or put 👀 on it, and the customer spoke last or you were mentioned (not once resolved with ✅); or a colleague asked for help with 🛟',
-  waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal), and Adobe did not post last',
-  silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal): follow up or close',
+  waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal, weekends not counted for normal), and Adobe did not post last',
+  silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up or close',
   team: 'Your team is in it (or a colleague put 👀 on it), you were not mentioned, all is well',
   quiet: 'Everything else',
 };
