@@ -109,4 +109,20 @@ describe('message links', () => {
     assert.equal(await look(teamsLink('1700000000123', { tenant: 'T2' })), null);
     assert.equal(await look('https://docs.example.org/purge'), null);
   });
+
+  it('passes over a workspace where the viewer may not see it, to one where they may', async () => {
+    const { DB, slack } = fresh();
+    // The same channel and message ids in a second workspace, of a team the viewer is not in.
+    const other = 'slack:E2:C0AAAAAAAA1:1700000000.000001';
+    DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        path, any_at, updated_at) VALUES (?, 'slack', 'E2', 'C0AAAAAAAA1', '1700000000.000001',
+        'acme', 'other', 'p', '2026-10-02', '2026-10-02')`).run(other);
+    DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, preview)
+      VALUES ('slack', 'E2', 'C0AAAAAAAA1', '1700000000.000001', ?, '2026-10-21T11:43:20.000Z',
+        'secret')`).run(other);
+    const found = await linkedMessage({ DB }, slackLink('C0AAAAAAAA1', '1700000000.000001'), {
+      near: { source: 'slack', tenant: 'E2' }, canSee: ops,
+    });
+    assert.deepEqual([found.thread, found.preview], [slack, 'Preview is down.']);
+  });
 });

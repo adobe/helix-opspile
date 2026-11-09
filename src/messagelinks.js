@@ -69,7 +69,8 @@ const lookupSql = `SELECT m.channel_id, m.id, m.thread, m.at, m.author, m.author
  * `{ source, channel, id, thread, at, author, authorKey, preview }` (as src/slacklinks.js
  * gives), or null. A link to no message of opspile's, or to one they may not see, is null.
  * `near` is the thread the link is in (`{ source, tenant }`): a Slack link does not say its
- * workspace, so the thread's is tried first, then every one opspile has the channel in.
+ * workspace, so the thread's is tried first, then every one opspile has the channel in: the
+ * first where the viewer may see it.
  *
  * @param {object} env bindings
  * @param {string} address the link
@@ -81,8 +82,13 @@ export async function linkedMessage(env, address, { near = null, canSee } = {}) 
     return null;
   }
   const first = ref.tenant || (near && near.source === ref.source ? near.tenant : null);
-  const find = (tenant) => env.DB.prepare(lookupSql)
-    .bind(ref.source, String(tenant), ref.channel, ref.id).first();
+  // The message in workspace `tenant`, if there is one there the viewer may see.
+  const find = async (tenant) => {
+    const row = await env.DB.prepare(lookupSql)
+      .bind(ref.source, String(tenant), ref.channel, ref.id).first();
+    const place = row && { source: ref.source, channel_id: row.channel_id, team: row.team };
+    return row && await canSee(await teamsOf(env, place), place) ? row : null;
+  };
   let row = first && await find(first);
   if (!row && !ref.tenant) {
     const { results } = await env.DB.prepare(`SELECT DISTINCT tenant FROM threads
@@ -98,10 +104,6 @@ export async function linkedMessage(env, address, { near = null, canSee } = {}) 
     }
   }
   if (!row) {
-    return null;
-  }
-  const place = { source: ref.source, channel_id: row.channel_id, team: row.team };
-  if (!await canSee(await teamsOf(env, place), place)) {
     return null;
   }
   return {
