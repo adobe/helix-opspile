@@ -3458,12 +3458,17 @@ function vaultLoad() {
   vault.loaded ??= (async () => {
     const stored = vaultStored();
     const key = Object.keys(stored).length ? await vaultKey() : null;
-    await Promise.all(Object.entries(key ? stored : {}).map(async ([name, sealed]) => {
+    const opened = await Promise.all(Object.entries(key ? stored : {}).map(async ([name, sealed]) => {
       try {
-        const opened = await crypto.subtle.decrypt(vaultSeal(name, unb64(sealed.iv)), key, unb64(sealed.value));
-        vault.values.set(name, new TextDecoder().decode(opened));
-      } catch { /* sealed with a key that is gone */ }
+        const bytes = await crypto.subtle.decrypt(vaultSeal(name, unb64(sealed.iv)), key, unb64(sealed.value));
+        return [name, new TextDecoder().decode(bytes)];
+      } catch {
+        // Sealed with a key that is gone.
+        return null;
+      }
     }));
+    // In the order they are stored, whichever was decrypted first.
+    for (const [name, value] of opened.filter(Boolean)) vault.values.set(name, value);
   })().catch(() => {});
   return vault.loaded;
 }

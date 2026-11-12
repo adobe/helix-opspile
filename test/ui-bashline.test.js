@@ -204,13 +204,13 @@ describe('values remembered on this device', () => {
       },
     };
   }
-  function page(indexedDB = fakeIndexedDb(), items = new Map()) {
+  function page(indexedDB = fakeIndexedDb(), items = new Map(), crypto = globalThis.crypto) {
     const localStorage = {
       getItem: (k) => items.get(k) ?? null,
       setItem: (k, v) => items.set(k, String(v)),
     };
     const fns = piece('const VAULT =', '// What is typed into a request', 'vault, vaultLoad, vaultKeep, vaultForget', {
-      indexedDB, localStorage, crypto: globalThis.crypto,
+      indexedDB, localStorage, crypto,
     });
     return { ...fns, items, indexedDB };
   }
@@ -241,6 +241,28 @@ describe('values remembered on this device', () => {
     next.vaultForget('API_TOKEN');
     assert.deepEqual([...next.vault.values.keys()], ['API_USER']);
     assert.deepEqual(Object.keys(JSON.parse(next.items.get('opspile.bash.env'))), ['API_USER']);
+  });
+
+  it('are read in the order they are stored, whichever is decrypted first', async () => {
+    const first = page();
+    await first.vaultKeep({ API_TOKEN: 'made-up-token-123', API_USER: 'dana' });
+    // A busy machine: the first value's decryption finishes last.
+    let waits = 2;
+    const slow = {
+      getRandomValues: (a) => crypto.getRandomValues(a),
+      subtle: {
+        decrypt: async (...args) => {
+          waits -= 1;
+          await new Promise((resolve) => {
+            setTimeout(resolve, waits * 20);
+          });
+          return crypto.subtle.decrypt(...args);
+        },
+      },
+    };
+    const next = page(first.indexedDB, first.items, slow);
+    await next.vaultLoad();
+    assert.deepEqual([...next.vault.values.keys()], ['API_TOKEN', 'API_USER']);
   });
 
   it('forget a value whose key is gone, and one put in another variable\'s place', async () => {
