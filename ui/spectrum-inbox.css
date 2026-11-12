@@ -800,9 +800,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 /* The commands the agent asks a person to run: cards between the reply box and the draft's
    line. A card that waits: what it is and until when; the agent's reason; the command; a field
    for each variable; what running it means, with Deny and Run. One that was decided: how it
-   stands, and the command on one line. */
+   stands, and the command on one line. The cards scroll up and down when they are taller than
+   their share of the pane, never sideways: what is too wide wraps or is cut. */
 .bashbar { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: var(--spectrum-spacing-100);
-  max-height: 45vh; overflow: auto; container: bash / inline-size; }
+  max-height: 45vh; overflow: hidden auto; container: bash / inline-size; }
 .bashbar[hidden] { display: none; }
 .bashbar .br { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
@@ -816,7 +817,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
 .bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
 .bashbar .br:not(.pending) .cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--spectrum-spacing-100) * 30), 1fr));
+.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), 1fr));
   align-items: end; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .var { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
 .bashbar .var .nm { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; }
@@ -833,8 +834,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 @media (prefers-reduced-motion: reduce) { .bashbar .spin { animation: none; } }
 @container bash (max-width: 560px) {
   .bashbar .foot { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-100); }
-  .bashbar .br:not(.pending) { flex-direction: column; gap: var(--spectrum-spacing-75); }
+  /* Stretched to the card's width, not as wide as the command: that is what cuts it. */
+  .bashbar .br:not(.pending) { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-75); }
   .bashbar .br:not(.pending) .head { max-width: none; }
+  .bashbar .br:not(.pending) .cmd { flex: none; }
   .bashbar .acts button { flex: 1; }
 }
 /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */

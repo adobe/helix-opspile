@@ -140,6 +140,22 @@ describe('a command request\'s card', () => {
     assert.match(css, /\.bashbar \{ flex-basis: 100%;/);
     assert.match(css, /\.bashbar\[hidden\] \{ display: none; \}/);
   });
+
+  it('never scrolls sideways: on a phone a decided card is as wide as the bar, and cuts its command', () => {
+    // A long command on one line made the bar scroll sideways on an iPhone: stacked, the card's
+    // lines were as wide as their text (align-items: baseline), not as the card.
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\.bashbar \{[^}]*overflow: hidden auto;/);
+    assert.match(css, /\.bashbar \.br:not\(\.pending\) \.cmd \{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
+    const narrow = css.slice(css.indexOf('@container bash (max-width: 560px)'));
+    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \{ flex-direction: column; align-items: stretch;/);
+    // Its height is its line's, not what is left over (none, in a column).
+    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \.cmd \{ flex: none; \}/);
+    // A field is never wider than a narrow card.
+    assert.match(css, /\.bashbar \.vars \{[^}]*minmax\(min\(100%, calc\(var\(--spectrum-spacing-100\) \* 30\)\), 1fr\)/);
+    // A waiting card's command wraps, also inside a word.
+    assert.match(css, /\.bashbar \.cmd \{[^}]*white-space: pre-wrap; overflow-wrap: anywhere;/);
+  });
 });
 
 describe('values remembered on this device', () => {
