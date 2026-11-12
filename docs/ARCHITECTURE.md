@@ -1381,7 +1381,9 @@ agent in an arm uses is counted for COGS with the arm in the detail (below).
 a root folded into a group pokes the group's agent, not one of its own); it reads the
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, its own posts included, a schedule
-wakes it once more to wrap up: file what was learned, or put a follow-up in the draft.
+wakes it once more to wrap up: file what was learned, or put a follow-up in the draft. It is also
+told, as an input of their own, that a person discarded its draft, and how a command it asked a
+person to run ended (see "Agent tools").
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1439,6 +1441,7 @@ written by people outside its control.
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
+| `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
@@ -1678,6 +1681,51 @@ and nothing is sent. The gateway reads the secrets from D1 on each such request,
 team and customer as they are now, so a deleted secret or a moved thread counts at once. What it
 does not stop: a host on the list that publishes what it receives (the agent could post the key
 into a ticket of the API it is for), and a value the host sends back encoded otherwise.
+
+**Commands a person runs.** With the computer comes `request_bash` (`src/agent/bashrequest.js`;
+the record is `bash_requests`, migration 0062, `src/bashrequests.js`): the agent asks a person on
+the team to run a command in its shell, for what needs a credential it does not have, or a
+person's go-ahead. It gives the command, its reason, a `timeout` (how long the command may run:
+60 seconds unless it says, 180 at most, the shell's own limit), a `deadline` (until when the
+request stays open: a duration from now such as `4h`, or a time; a day unless it says, a week at
+most) and `env`, the variables a person is to fill in, by name, each with what it is for. The
+tool answers at once, and the agent goes on: nothing waits on the request, and at most 5 of a
+thread wait or run at a time. A thread's agent only: a knowledge-base agent has no thread to show
+the request under.
+
+The inbox shows each request as a card between the reply box and the draft's line
+(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): the command, the reason, a
+password field per variable, **Run** and **Deny**, for whoever may work the thread. A person can
+have the page **remember** what they fill in, by variable name, on that device: encrypted
+(AES-GCM) in localStorage, with a key made in the browser that cannot be exported and is kept in
+IndexedDB; the next request with a variable of that name has it filled in, and **Forget** removes
+it. `POST /api/bash/run` and `/api/bash/deny` go to the agent's own object (`runBash`,
+`denyBash`), which decides: the request has to be pending still (the first click wins, the
+second is told who was first), the computer still on, every variable filled in. The run is the
+agent's computer's, as its own `bash`: the same Workspace, working directory and team secrets
+(as placeholders), with the person's values as variables of that one run. `run` answers 202 once
+the command has started; the page hears how it ended through the team's room, as it hears of
+every change of a request (`{ type: 'bash' }`), and keeps the card for an hour, saying how it
+ended and who decided.
+
+How a request ended comes back to the agent **as an input of its own**, as a discarded draft
+does (`harness.submit`, with the request's id as the operation, so once): what the command
+printed and its exit code; that it was stopped at its timeout, with what it printed until then;
+that the computer failed; that a person denied it, and who; or that nobody decided before the
+deadline, which a schedule of the agent's object closes. A watchdog schedule, armed before each
+run, settles a run whose object restarted under it as failed (docs/STATE-MACHINES.md).
+
+**The values are kept nowhere**: not in D1, not in the object's storage, not in the transcript,
+not in a log. They go from the page to the Worker, to the agent's object and into the shell's
+environment, for one run. What the agent is told of the output has each value of 8 characters or
+more replaced by its variable's name (`[API_TOKEN]`), as it is and as it would be escaped in a
+URL, JSON or XML (`hider`); the shell's own record of the run, which Cloudflare Computer keeps
+for an hour, is deleted, and output it saved to a file is rewritten the same way (removed, over
+4 MB). Unlike the team's secrets, these are real values in the shell, not placeholders the
+gateway fills in, so that a person's own token works with any host and any tool. What that does
+not stop: the command itself can write a value to a file, which the agent can read afterwards,
+send it to any host, or print it encoded. The person who runs the command is the check, as with
+a command a colleague asks them to run: the card shows it whole, and says so.
 
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and

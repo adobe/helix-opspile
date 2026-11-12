@@ -196,7 +196,7 @@ describe('agent tools', () => {
     assert.deepEqual(post.team, { enabled: false });
     assert.equal(post.channels.C1.enabled, true);
     assert.equal(post.problem, null);
-    assert.deepEqual(computer.names, ['bash']);
+    assert.deepEqual(computer.names, ['bash', 'request_bash']);
     assert.match(computer.problem, /Worker Loader/);
     // A customer's knowledge base shows the channel switches, not a team's.
     res = await call(e, admin, 'GET', '/api/kb/tools?repo=kb-org-acme');

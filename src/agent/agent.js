@@ -26,6 +26,9 @@ import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
 import { armTag, cacheRetention } from '../experiments.js';
 import { toolsFor } from './agenttools.js';
+import {
+  bashDeadline, bashWatchdog, denyBash, runBash,
+} from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
 import { COMPUTER_CWD, computerEnv, ensureCwd } from './computer.js';
@@ -50,8 +53,9 @@ import { latestTurn } from './turn.js';
  *
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
  * without any (`idle`, a schedule), about knowledge staff share (`seed`, in a session of its own
- * when staff chose the knowledge base: src/agent/seed.js), and about a draft of its that a person
- * discarded (`discarded`).
+ * when staff chose the knowledge base: src/agent/seed.js), about a draft of its that a person
+ * discarded (`discarded`), and about how a command it asked a person to run ended (`runBash`,
+ * `denyBash` and their schedules: src/agent/bashrequest.js).
  *
  * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
  * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
@@ -61,7 +65,8 @@ import { latestTurn } from './turn.js';
  *
  * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
  * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
- * SQLite (src/agent/computer.js). Its shell, in a Dynamic Worker, reaches the files back through
+ * SQLite (src/agent/computer.js), with `request_bash`, a command a person runs there for it.
+ * Its shell, in a Dynamic Worker, reaches the files back through
  * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
  * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
  * secrets where the shell names them.
@@ -125,6 +130,8 @@ export class ThreadAgent extends Agent {
     self.agent = this;
     this.cogs = cogs;
     this.registry = createRegistry();
+    // The commands a person started here that are still running (src/agent/bashrequest.js).
+    this.bashRuns = new Map();
     // Not `this.mcp`: the Agents SDK's own MCP client manager lives there, and the SDK calls it
     // (listPrompts, listTools) when the agent starts.
     this.servers = new AgentMcp(env, ctx.storage, { target: () => this.target() });
@@ -143,6 +150,8 @@ export class ThreadAgent extends Agent {
           verdicts: (messages) => this.verdicts(messages),
           posted: (id) => this.posted(id),
           pinned: (session) => seedPin(this, session),
+          // For request_bash: the deadline of what it asks for.
+          schedule: (when, callback, payload) => this.schedule(when, callback, payload),
         };
         this.agentContext = agent;
         // In this order, which is the system prompt's: opspile, the tools the team turned on,
@@ -242,16 +251,19 @@ export class ThreadAgent extends Agent {
 
   /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
   computer() {
-    this.computerEnv ??= computerEnv(async () => {
-      const ws = this.workspace();
-      await ws.ready();
-      if (!this.computerReady) {
-        await ensureCwd(ws.fs);
-        this.computerReady = true;
-      }
-      return ws;
-    });
+    this.computerEnv ??= computerEnv(() => this.readyWorkspace());
     return this.computerEnv;
+  }
+
+  /** The Workspace of the computer, ready to run a command in its working directory. */
+  async readyWorkspace() {
+    const ws = this.workspace();
+    await ws.ready();
+    if (!this.computerReady) {
+      await ensureCwd(ws.fs);
+      this.computerReady = true;
+    }
+    return ws;
   }
 
   /**
@@ -434,6 +446,26 @@ export class ThreadAgent extends Agent {
   /** Schedule callback: tells the agent who discarded its draft, unless it came back. */
   async discardNote(payload) {
     return discardNote(this, payload);
+  }
+
+  /** A person runs a command the agent asked for (src/agent/bashrequest.js). */
+  async runBash(request) {
+    return runBash(this, request);
+  }
+
+  /** A person denies a command the agent asked for. */
+  async denyBash(request) {
+    return denyBash(this, request);
+  }
+
+  /** Schedule callback: the deadline of a command the agent asked for. */
+  async bashDeadline(payload) {
+    return bashDeadline(this, payload);
+  }
+
+  /** Schedule callback: a command a person started should have ended by now. */
+  async bashWatchdog(payload) {
+    return bashWatchdog(this, payload);
   }
 
   /**

@@ -11,6 +11,7 @@
  */
 
 import { AGENT_EMAIL, entryOf } from '../drafts.js';
+import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { agentEnabled } from './enabled.js';
@@ -159,6 +160,37 @@ export async function tellDiscarded(env, me, key, result) {
   return agent.discarded({
     by: me.name || me.email || 'staff', body: draft.body, version: draft.updated_at,
   });
+}
+
+/**
+ * POST /api/bash/run `{ thread, id, env }` and POST /api/bash/deny `{ thread, id }`: a person
+ * runs, with the values they filled in for its variables (`env`: `{ NAME: value }`), or denies
+ * a command the thread's agent asked for (src/agent/bashrequest.js). Only who may work the
+ * thread. The agent that asked decides the rest, in its own object: whether the request can
+ * still be run, and the run itself, on its computer; `run` answers 202 once the command has
+ * started, and the inbox hears how it ended through the team's room. The values go to the
+ * agent's object and from there to the shell, and are neither kept nor logged.
+ */
+export async function decideBash(env, me, body, inTeam, { run }) {
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const entry = await entryOf(env, body && body.thread);
+  if (!entry || !await inTeam(entry.teams, entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const request = await requestOf(env, body.id);
+  // Of this entry: one of its member threads asked (a thread folded into a group since).
+  if (!request || !entry.keys.includes(request.thread)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const by = { id: me.id, name: me.name || me.email || 'staff' };
+  const agent = await agentStub(env, request.thread);
+  const res = run
+    ? await agent.runBash({ id: request.id, values: body.env || {}, by })
+    : await agent.denyBash({ id: request.id, by });
+  const { status, ...rest } = res;
+  return json(rest, status || (run ? 202 : 200));
 }
 
 /** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */

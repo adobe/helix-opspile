@@ -2543,13 +2543,19 @@ function wireExperts(key) {
  * box grows upwards as it shows the draft, so the line stays under the pointer.
  */
 const DRAFT_LINE = '<div class="draftbar" id="draftbar" hidden></div>';
+/**
+ * The commands the thread's agent asks a person to run (filled by renderBashBar): between the
+ * reply box and the draft's line, which stays at the pane's bottom edge.
+ */
+const BASH_LINE = '<div class="bashbar" id="bashbar" hidden></div>';
+const LINES = `${BASH_LINE}${DRAFT_LINE}`;
 
 // Only a touch screen, no pointer that hovers (phones): no Shift+Enter on the on-screen
 // keyboard, so Enter starts a new line there and Send sends, as in the Slack and Teams apps.
 const TOUCH_ONLY = matchMedia('(any-hover: none)');
 
 function composer(thread, resolve = '') {
-  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span>${DRAFT_LINE}</div>`;
+  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span>${LINES}</div>`;
   const p = thread.source;
   const name = accountOf(p);
   if (p === 'discord') {
@@ -2557,16 +2563,16 @@ function composer(thread, resolve = '') {
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
     const link = state.me.connectable?.discord && !state.me.connected?.discord
       ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so the inbox knows which posts are yours.' : '';
-    return `<div class="composer"><span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${DRAFT_LINE}</div>`;
+    return `<div class="composer"><span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${LINES}</div>`;
   }
   if (!state.me.connected?.[p]) {
-    return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${DRAFT_LINE}</div>`;
+    return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${LINES}</div>`;
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="Reply in thread"></textarea>
-    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${DRAFT_LINE}</div>`;
+    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -2848,6 +2854,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     wireAttach(key, thread);
   }
   renderDraftBar(key);
+  renderBashBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
 }
 
@@ -3405,6 +3412,238 @@ async function discardDraft(key) {
       saveDraft(key, d.body, null, { fromBox: refill, sources: d.sources });
     },
   });
+}
+
+// ---------------------------------------------------------------- command requests
+// The thread's agent can ask a person to run a command on its computer (its request_bash,
+// src/agent/bashrequest.js): what needs a credential it does not have, or a person's go-ahead.
+// Each request is a card between the reply box and the draft's line: the command, the agent's
+// reason, a field for every variable it asked for, and Run and Deny. What is filled in goes to
+// the Worker with Run, for that one run; the agent is told what the command printed, never a
+// value. The card stays for an hour after the request ended, saying how.
+
+// What a person fills in can be remembered on this device, by variable name: encrypted
+// (AES-GCM) in localStorage, with a key made here that cannot be exported, kept in IndexedDB.
+// The storage alone gives no value away; a value that no longer decrypts is forgotten.
+const VAULT = 'opspile.bash.env';
+const VAULT_DB = 'opspile-vault';
+const vault = { values: new Map(), loaded: null };
+const idbDone = (req) => new Promise((resolve, reject) => {
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error);
+});
+async function vaultKey(create = false) {
+  const open = indexedDB.open(VAULT_DB, 1);
+  open.onupgradeneeded = () => open.result.createObjectStore('keys');
+  const db = await idbDone(open);
+  const stored = () => idbDone(db.transaction('keys').objectStore('keys').get('env'));
+  try {
+    const found = await stored();
+    if (found || !create) return found || null;
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    // Another tab may have made one meanwhile: the first one stored is everyone's.
+    await idbDone(db.transaction('keys', 'readwrite').objectStore('keys').add(key, 'env')).catch(() => {});
+    return await stored();
+  } finally {
+    db.close();
+  }
+}
+const vaultStored = () => { try { return JSON.parse(localStorage.getItem(VAULT) || '{}'); } catch { return {}; } };
+const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)));
+const unb64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+// A value is sealed with its variable's name, so one cannot be put in another's place.
+const vaultSeal = (name, iv) => ({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(name) });
+/** The remembered values, decrypted once a page: `vault.values`, by variable name. */
+function vaultLoad() {
+  vault.loaded ??= (async () => {
+    const stored = vaultStored();
+    const key = Object.keys(stored).length ? await vaultKey() : null;
+    await Promise.all(Object.entries(key ? stored : {}).map(async ([name, sealed]) => {
+      try {
+        const opened = await crypto.subtle.decrypt(vaultSeal(name, unb64(sealed.iv)), key, unb64(sealed.value));
+        vault.values.set(name, new TextDecoder().decode(opened));
+      } catch { /* sealed with a key that is gone */ }
+    }));
+  })().catch(() => {});
+  return vault.loaded;
+}
+/** Remembers `values` (`{ NAME: value }`) on this device, each under its variable's name. */
+async function vaultKeep(values) {
+  const key = await vaultKey(true);
+  const sealed = await Promise.all(Object.entries(values).map(async ([name, value]) => {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const bytes = await crypto.subtle.encrypt(vaultSeal(name, iv), key, new TextEncoder().encode(value));
+    return [name, { iv: b64(iv), value: b64(bytes) }];
+  }));
+  // Read again: another tab may have remembered something meanwhile.
+  localStorage.setItem(VAULT, JSON.stringify({ ...vaultStored(), ...Object.fromEntries(sealed) }));
+  for (const [name, value] of Object.entries(values)) vault.values.set(name, value);
+}
+function vaultForget(name) {
+  const stored = vaultStored();
+  delete stored[name];
+  vault.values.delete(name);
+  try { localStorage.setItem(VAULT, JSON.stringify(stored)); } catch { /* storage is off */ }
+}
+
+// What is typed into a request's fields and not sent yet, by request id (`{ NAME: value }`, and
+// `remember`): in this tab only, so a card drawn again keeps it. The requests being sent.
+const bashTyped = new Map();
+const bashBusy = new Set();
+
+const BASH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M4.6 6.3l2 1.7-2 1.7M8.4 9.9h3"/></svg>';
+/** How long from now until `iso`: "under a minute", "25m", "23h", "3d". */
+function timeLeft(iso, now = Date.now()) {
+  const s = (Date.parse(iso) - now) / 1000;
+  if (s < 60) return 'under a minute';
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 48 * 3600) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+/** How a request that is no longer waiting stands, in a few words; `hint` says the rest. */
+function bashState(r) {
+  const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
+  const told = 'The agent was told what the command printed.';
+  if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
+  if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code} · by ${who} · ${ago(r.finished_at)}`, hint: told };
+  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout · by ${who} · ${ago(r.finished_at)}`, hint: told };
+  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'} · by ${who} · ${ago(r.finished_at)}`, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who} · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
+}
+/**
+ * A request's card. Waiting, and `decide` (the viewer may run it): a form with a field for each
+ * variable (`kept`: the names a remembered value fills), Run and Deny, disabled while `busy`.
+ * Otherwise how it stands, with the command on one line.
+ */
+function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
+  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><span class="by">${line}</span></div>`;
+  const command = `<pre class="cmd"><code>${esc(r.command)}</code></pre>`;
+  if (r.status !== 'pending') {
+    const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
+    const { text, hint } = bashState(r);
+    return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span title="${esc(hint)}">${esc(text)}</span>`)}${command}</div>`;
+  }
+  const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
+  const why = `<p class="why">${esc(r.reason)}</p>`;
+  if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${why}${command}</div>`;
+  const off = busy ? ' disabled' : '';
+  const vars = r.env.map((v) => {
+    const has = kept.includes(v.name);
+    const forget = has ? `<button type="button" class="forget" data-bash="forget" data-name="${esc(v.name)}" title="Forget the value of ${esc(v.name)} remembered on this device"${off}>Forget</button>` : '';
+    return `<label class="var"><span class="nm"><code>$${esc(v.name)}</code>${has ? '<span class="kept">remembered</span>' : ''}${forget}</span>${v.description ? `<span class="ds">${esc(v.description)}</span>` : ''}
+      <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="Value"${off}></label>`;
+  });
+  const remember = vars.length ? `<label class="keep" title="Encrypted in this browser's storage, with a key that cannot be taken out of it. Filled in the next time a command asks for a variable of the same name."><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
+  const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets what it prints, never what you fill in.' : 'The agent gets what it prints.'}`;
+  const hint = vars.length ? 'What you fill in goes to this one run and is kept nowhere. Where the output has a value of 8 characters or more, the agent reads the variable\'s name instead. The command itself can still store a value or send it somewhere: read it before you run it.' : 'The agent is told what the command printed, or that it failed or timed out.';
+  return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${why}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
+      <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
+}
+
+/** The requests of the open thread, as cards; what was typed, or is remembered, is in the fields. */
+function renderBashBar(key) {
+  const el = $('bashbar');
+  const hit = state.cache.get(key);
+  // Not cached: the thread is being fetched again (its room said a request changed), and the
+  // cards stay as they are until it is here.
+  if (!el || !hit || state.open !== key) return;
+  const list = hit.data?.bash_requests || [];
+  const decide = !state.data?.me?.readonly;
+  const html = list.map((r) => bashCard(r, {
+    decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)),
+  })).join('');
+  if (el.__html !== html) {
+    el.__html = html;
+    el.innerHTML = html;
+    el.hidden = !list.length;
+    for (const form of el.querySelectorAll('form.br')) {
+      const typed = bashTyped.get(form.dataset.id) || {};
+      const fields = [...form.querySelectorAll('.var input')];
+      for (const input of fields) input.value = typed[input.name] ?? vault.values.get(input.name) ?? '';
+      // Ticked as it was left, or because a remembered value is in it.
+      const remember = form.elements.remember;
+      if (remember) remember.checked = typed.remember ?? fields.some((i) => vault.values.has(i.name));
+    }
+  }
+  el.__key = key;
+  if (!el.__wired) wireBashBar(el);
+  // The remembered values are read once, the first time a card has a field for one.
+  if (decide && !vault.loaded && list.some((r) => r.status === 'pending' && r.env.length)) {
+    vaultLoad().then(() => { if (vault.values.size) renderBashBar(el.__key); });
+  }
+}
+
+function wireBashBar(el) {
+  el.__wired = true;
+  const idOf = (node) => node.closest('[data-id]')?.dataset.id;
+  el.addEventListener('input', (e) => {
+    const id = idOf(e.target);
+    if (!id || !e.target.name) return;
+    const typed = bashTyped.get(id) || {};
+    typed[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    bashTyped.set(id, typed);
+  });
+  el.addEventListener('submit', (e) => {
+    e.preventDefault();
+    runBash(el.__key, idOf(e.target), e.target);
+  });
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-bash]');
+    if (!b || b.disabled) return;
+    if (b.dataset.bash === 'deny') denyBash(el.__key, idOf(b));
+    if (b.dataset.bash === 'forget') {
+      vaultForget(b.dataset.name);
+      // The field is emptied with it, unless something else was typed there.
+      for (const typed of bashTyped.values()) delete typed[b.dataset.name];
+      el.__html = undefined;
+      renderBashBar(el.__key);
+    }
+  });
+}
+
+/** The request as the Worker answered it, in the cached thread. */
+function setCachedBash(key, r) {
+  const hit = state.cache.get(key);
+  if (hit && r) hit.data = { ...hit.data, bash_requests: (hit.data.bash_requests || []).map((x) => (x.id === r.id ? r : x)) };
+  renderBashBar(key);
+}
+
+/** Run: sends what is in the fields of `form` with the request; the agent's computer runs it. */
+async function runBash(key, id, form) {
+  const r = state.cache.get(key)?.data?.bash_requests?.find((x) => x.id === id);
+  if (!r || bashBusy.has(id)) return;
+  const values = Object.fromEntries(r.env.map((v) => [v.name, form.elements[v.name].value]));
+  const remember = Boolean(form.elements.remember?.checked);
+  bashBusy.add(id);
+  renderBashBar(key);
+  const res = await request('POST', '/api/bash/run', { thread: key, id, env: values }).catch(() => null);
+  bashBusy.delete(id);
+  // No answer, or the Worker failed: that does not say the command did not start.
+  if (!res || res.status >= 500) {
+    renderBashBar(key);
+    toast('The inbox did not answer, so the command may be running all the same. The card says how it stands.');
+    reloadSoon(key);
+    return;
+  }
+  if (res.ok) {
+    bashTyped.delete(id);
+    if (remember && r.env.length) await vaultKeep(values).catch(() => toast('Could not remember the values on this device.'));
+  }
+  setCachedBash(key, res.data.request);
+  toast(res.ok ? 'Running on the agent\'s computer. The agent is told what it prints.' : `Nothing ran: ${res.data.error || `the inbox answered ${res.status}`}.`);
+}
+
+/** Deny: the command does not run, and the agent is told who decided. */
+async function denyBash(key, id) {
+  if (bashBusy.has(id)) return;
+  bashBusy.add(id);
+  renderBashBar(key);
+  const res = await request('POST', '/api/bash/deny', { thread: key, id }).catch((e) => ({ ok: false, data: { error: e.message } }));
+  bashBusy.delete(id);
+  if (res.ok) bashTyped.delete(id);
+  setCachedBash(key, res.data.request);
+  toast(res.ok ? 'Denied. The agent is told.' : `${res.data.error || `The inbox answered ${res.status}`}.`);
 }
 
 // Sending, as in iMessage: a reply shows at once, as it will look once sent, with a thin bar
@@ -5265,6 +5504,8 @@ function listen(team, live, { again = false } = {}) {
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // The agent asked for a command, or one was run, denied or ended.
+    if (ev.type === 'bash') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
