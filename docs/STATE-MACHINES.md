@@ -164,7 +164,9 @@ has written it, so it cannot be run in between. A run is claimed in the agent's 
 its watchdog is armed: the values a person filled in live only in that object's memory, so a run
 whose object restarted is one nobody is running, which the watchdog (the timeout and 30 seconds
 later) settles as failed. It never runs again by itself: a command may not be safe to repeat. A
-nonzero exit is `done`, not failed: the command ran. `told_at` is written last, after the agent was
+nonzero exit is `done`, not failed: the command ran. Exit code 124 is `timeout` only when the run
+took its whole timeout: the shell says it stopped a run no other way, and a command can exit with
+124 by itself. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
 deadline, without what the command printed, which is kept nowhere.
 

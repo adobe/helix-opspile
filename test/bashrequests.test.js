@@ -17,7 +17,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
@@ -425,14 +425,31 @@ describe('a command request', () => {
     // No values: nothing of the shell's record to delete.
     assert.deepEqual(failing.ws.disposed, []);
 
-    const slow = fakeAgent(e, {
-      ws: fakeWorkspace({ result: async () => ({ exitCode: 124, stdout: 'half\n', stderr: '' }) }),
-    });
-    ({ request } = await ask(slow, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
-    await quiet(() => runBash(slow, { id: request.id, values: {}, by: ada }));
-    await quiet(() => settled(slow));
-    assert.equal((await requestOf(e, request.id)).status, 'timeout');
-    assert.match(told(slow)[0], /^Ada \(Adobe staff\) ran the command .* It was stopped after 5 s, its timeout, before it finished\..*<stdout>\nhalf\n<\/stdout>/s);
+    // The shell stops a run at its timeout with exit code 124, and says so no other way.
+    mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    try {
+      const stopped = async () => {
+        mock.timers.tick(5000);
+        return { exitCode: 124, stdout: 'half\n', stderr: '' };
+      };
+      const slow = fakeAgent(e, { ws: fakeWorkspace({ result: stopped }) });
+      ({ request } = await ask(slow, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
+      await quiet(() => runBash(slow, { id: request.id, values: {}, by: ada }));
+      await quiet(() => settled(slow));
+      assert.equal((await requestOf(e, request.id)).status, 'timeout');
+      assert.match(told(slow)[0], /^Ada \(Adobe staff\) ran the command .* It was stopped after 5 s, its timeout, before it finished\..*<stdout>\nhalf\n<\/stdout>/s);
+    } finally {
+      mock.timers.reset();
+    }
+
+    // A command that exits with 124 by itself, before its time is up, ran to its end.
+    const own = fakeAgent(e);
+    ({ request } = await ask(own, { command: 'echo all; exit 124', timeout: 5, env: [] }, new Date()));
+    await quiet(() => runBash(own, { id: request.id, values: {}, by: ada }));
+    await quiet(() => settled(own));
+    const ran = await requestOf(e, request.id);
+    assert.deepEqual([ran.status, ran.exit_code], ['done', 124]);
+    assert.match(told(own)[0], /It exited with code 124 after .*<stdout>\nall\n<\/stdout>/s);
 
     const broken = fakeAgent(e, {
       ws: fakeWorkspace({
