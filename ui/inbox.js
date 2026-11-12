@@ -523,10 +523,14 @@ function openSlackChoice(a) {
   el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
 }
 /**
- * A channel's name as people know it: on Teams with its team first (`acme › Main`), since a
- * Teams team's channels are mostly called Main or General; elsewhere its name.
+ * A channel's name as people know it: on Teams with its team first (`acme › Releases`), and a
+ * team's default channel (Main, General before Teams renamed it) as the team alone, since every
+ * team has one; elsewhere its name.
  */
-const channelTitle = (source, name, group) => (source === 'teams' && group ? `${group} › ${name}` : name);
+const channelTitle = (source, name, group) => {
+  if (source !== 'teams' || !group) return name;
+  return /^(main|general)$/i.test(String(name || '').trim()) ? group : `${group} › ${name}`;
+};
 /** A title with the channel ids in it (`#C…`) as the channels' names. */
 const channelNames = (s) => String(s || '').replace(Markdown.CHANNEL_REF, (m, before, token) => {
   const c = channelRefs.get(token);
