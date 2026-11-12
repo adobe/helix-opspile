@@ -499,36 +499,21 @@ function omit(thread) {
 
 // The product every thread is about, as a word in a title (not inside a host name).
 const PRODUCT = String.raw`Adobe\s+Edge\s+Delivery(?:\s+Services)?|Edge\s+Delivery(?:\s+Services)?|EDS`;
-const LOOSE = /^(?:in|on|for|with|and|of|at|-|–|—|:)$/i;
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Removes what the model was told to leave out but still wrote: the customer and the
- * product as words of their own, and the connecting words they leave dangling at either
- * end. Returns null when nothing is left.
+ * What the model was told to leave out of a title but still wrote: the customer and the
+ * product, as words of their own, in the order the title names them.
  */
-export function tidyTitle(title, thread) {
+export function namedIn(title, thread) {
   const names = [PRODUCT];
   if (thread?.org && !thread.org.startsWith('_')) {
     names.push(thread.org.split(/[-_\s]+/).map(escape).join(String.raw`[-_\s]*`));
   }
-  const words = String(title || '')
-    .replace(new RegExp(String.raw`(?<![\w.@/-])(?:${names.join('|')})(?:'s)?(?![\w@/-]|\.\w)`, 'gi'), ' ')
-    .split(/\s+/).filter(Boolean);
-  while (words.length && LOOSE.test(words[0])) {
-    words.shift();
-  }
-  while (words.length && LOOSE.test(words[words.length - 1])) {
-    words.pop();
-  }
-  const out = words.join(' ');
-  return out ? out[0].toUpperCase() + out.slice(1) : null;
+  const re = new RegExp(String.raw`(?<![\w.@/-])(?:${names.join('|')})(?:'s)?(?![\w@/-]|\.\w)`, 'gi');
+  return [...new Set(String(title || '').match(re) || [])];
 }
 
-/**
- * A short title by a language model: the specific failure, or the topic, without what the
- * inbox already shows next to it.
- */
 /**
  * What the model writes when it found nothing to name ("None", "No title available", "Invalid
  * title, please provide …"): no title, so the inbox shows the thread's first words instead.
@@ -536,6 +521,16 @@ export function tidyTitle(title, thread) {
 const NO_TITLE = /^(?:none|null|n\/a|untitled|no title\b.*|no (?:specific )?(?:topic|information|issue|discussion)\b.*|invalid title\b.*|(?:general )?inquiry)$/i;
 export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim());
 
+const firstLine = (res) => String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
+  .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
+
+/**
+ * A short title by a language model: the specific failure, or the topic, without what the
+ * inbox already shows next to it. A title that still names the customer or the product is
+ * asked for once more, with the names it should leave out; it is never cut up, because what
+ * is left of a sentence without its subject ("Headless options in without App Builder")
+ * reads worse than the name.
+ */
 export async function writeTitle(env, state, alert, thread) {
   const instructions = [
     alert
@@ -544,13 +539,26 @@ export async function writeTitle(env, state, alert, thread) {
     omit(thread),
     'Reply with the title only, no quotes.',
   ].join(' ');
-  const res = await env.AI.run(TITLER, {
-    messages: [{ role: 'system', content: instructions }, { role: 'user', content: state.slice(0, 6000) }],
-    max_tokens: 40,
-  });
-  const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
-    .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
-  const title = tidyTitle(text, thread) || text;
+  const messages = [
+    { role: 'system', content: instructions },
+    { role: 'user', content: state.slice(0, 6000) },
+  ];
+  let title = firstLine(await env.AI.run(TITLER, { messages, max_tokens: 40 }));
+  const named = isTitle(title) ? namedIn(title, thread) : [];
+  if (named.length) {
+    const again = firstLine(await env.AI.run(TITLER, {
+      messages: [...messages, { role: 'assistant', content: title }, {
+        role: 'user',
+        content: `The inbox shows ${named.map((n) => `"${n}"`).join(' and ')} next to the title already.`
+          + ' Write the title again without naming it, as a whole phrase that says the same.'
+          + ' Reply with the title only, no quotes.',
+      }],
+      max_tokens: 40,
+    }).catch(() => null));
+    if (isTitle(again)) {
+      title = again;
+    }
+  }
   return isTitle(title) ? title.slice(0, MAX_TITLE) : null;
 }
 

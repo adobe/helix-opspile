@@ -794,9 +794,12 @@ and an unchanged thread is never labeled twice):
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the
-  platform, the kind of thread and Edge Delivery itself; a customer or product name the model
-  still writes is removed afterwards. When the model finds nothing to name ("None", "No title
-  available"), the thread has no title, and the inbox shows its first words.
+  platform, the kind of thread and Edge Delivery itself. When the model still names the
+  customer or the product, it is asked once more, told which names to leave out, and its
+  second answer is kept whole (the names are never cut out of a title, which leaves broken
+  phrases such as "Headless options in without App Builder"). When the model finds nothing
+  to name ("None", "No title available"), the thread has no title, and the inbox shows its
+  first words.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   askClef, clairicFacts, FIELDS, MAX_GAPS, MAX_QUESTIONS, productFacts, TOPIC_MIN, TOPICS,
-  isTitle, QUESTIONS, stateOf, tidyTitle, topicList, topicsOf, writeTitle,
+  isTitle, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
 // Made-up thread and people only.
@@ -58,16 +58,54 @@ describe('thread titles', () => {
     assert.match(system, /Edge Delivery Services/);
   });
 
-  it('removes the customer and the product when the model still names them', () => {
+  it('asks again, once, when the model still names the customer or the product', async () => {
     const acme = { org: 'acme-corp' };
-    assert.equal(tidyTitle('Acme Corp EDS Caching and Publishing', acme), 'Caching and Publishing');
-    assert.equal(tidyTitle("acme-corp's EDS: cache purge", acme), 'Cache purge');
-    assert.equal(tidyTitle('Updating images in Edge Delivery', acme), 'Updating images');
-    assert.equal(tidyTitle('Configuring Git with Adobe Edge Delivery Services', acme), 'Configuring Git');
-    assert.equal(tidyTitle('Cache purge for www.acme-corp.com', acme), 'Cache purge for www.acme-corp.com');
-    assert.equal(tidyTitle('Using Edge Functions with Akamai', acme), 'Using Edge Functions with Akamai');
-    assert.equal(tidyTitle('Acme Corp', acme), null);
-    assert.equal(tidyTitle('Adding users to a team', { org: '_unassigned' }), 'Adding users to a team');
+    assert.deepEqual(namedIn('Acme Corp EDS Caching and Publishing', acme), ['Acme Corp', 'EDS']);
+    assert.deepEqual(namedIn("acme-corp's EDS: cache purge", acme), ["acme-corp's", 'EDS']);
+    assert.deepEqual(namedIn('Configuring Git with Adobe Edge Delivery Services', acme), ['Adobe Edge Delivery Services']);
+    assert.deepEqual(namedIn('Cache purge for www.acme-corp.com', acme), []);
+    assert.deepEqual(namedIn('Using Edge Functions with Akamai', acme), []);
+    assert.deepEqual(namedIn('Adding users to a team', { org: '_unassigned' }), []);
+
+    const asked = [];
+    const answers = ['Headless options in EDS without App Builder', 'Headless JSON options without App Builder'];
+    const env = {
+      AI: {
+        run: async (model, { messages }) => {
+          asked.push(messages);
+          return { response: answers.shift() };
+        },
+      },
+    };
+    assert.equal(await writeTitle(env, 'state', false, acme), 'Headless JSON options without App Builder');
+    assert.equal(asked.length, 2);
+    assert.equal(asked[1][2].content, 'Headless options in EDS without App Builder');
+    assert.match(asked[1][3].content, /"EDS"/);
+  });
+
+  it('keeps the title whole when the model names the product again', async () => {
+    const answers = ['Migrating AEM pages to EDS', 'Migrating AEM pages to Edge Delivery'];
+    const env = { AI: { run: async () => ({ response: answers.shift() }) } };
+    assert.equal(await writeTitle(env, 'state', false, {}), 'Migrating AEM pages to Edge Delivery');
+  });
+
+  it('keeps the first title when asking again fails or finds nothing', async () => {
+    let n = 0;
+    const env = {
+      AI: {
+        run: async () => {
+          n += 1;
+          if (n > 1) {
+            throw new Error('rate limited');
+          }
+          return { response: 'Sidekick login on EDS fails' };
+        },
+      },
+    };
+    assert.equal(await writeTitle(env, 'state', false, {}), 'Sidekick login on EDS fails');
+    const none = ['Sidekick login on EDS fails', 'None'];
+    const env2 = { AI: { run: async () => ({ response: none.shift() }) } };
+    assert.equal(await writeTitle(env2, 'state', false, {}), 'Sidekick login on EDS fails');
   });
 });
 
