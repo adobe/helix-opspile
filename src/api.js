@@ -759,7 +759,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
-    { results: appPosts }, agentTurn, { results: memberTech }, { results: rootLinks },
+    { results: appPosts }, agentTurn, { results: memberTech }, { results: rootLinks }, place,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -814,6 +814,11 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
         AND m.channel_id = t.channel_id AND m.id = t.root_id
       WHERE t.thread IN (SELECT value FROM json_each(?)) AND m.deleted = 0
         AND m.permalink IS NOT NULL`).bind(readKeys).all() : { results: [] },
+    // The Teams team (or Discord server) the channel is in: a Teams team's channels are
+    // mostly called Main or General, so the header names the team too.
+    env.DB.prepare(`SELECT group_name FROM channels
+      WHERE source = ? AND tenant = ? AND channel_id = ?`)
+      .bind(row.source, row.tenant, row.channel_id).first(),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -879,6 +884,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       teams,
       ...orgFields(rowOrgs, row.org),
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || row.title,
+      channel_group: (place && place.group_name) || null,
       label_thread: labelKey,
     },
     tech: (tech || []).map((t) => ({ tech: t.tech, p: t.p })),

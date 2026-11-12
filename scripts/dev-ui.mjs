@@ -779,8 +779,12 @@ function thread(asked) {
     }) => ({
       person, thread: t, read_at: readAt, via,
     }));
+  // As src/api.js: the Teams team the channel is in (channels.group_name).
+  const { ch } = entry;
+  const teamName = ch.teamId
+    ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null;
   return {
-    thread: entry.row,
+    thread: { ...entry.row, channel_group: teamName || null },
     members: group.map(({ row: m }) => ({
       thread: m.thread,
       root_at: m.root_at,
@@ -1213,7 +1217,7 @@ async function api(req, res, url) {
         ref,
         source: ch.source,
         name: ch.name,
-        group: ch.teamId ? store.teams.find((t) => t.slug === ch.team)?.name : null,
+        group: ch.teamId ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null,
         org: ch.org,
         orgName: ch.org,
         teams: [ch.team],

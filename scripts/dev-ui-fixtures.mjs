@@ -166,7 +166,9 @@ const CHANNELS = {
   cdn: {
     source: 'teams',
     channelId: 'CH-CDN',
-    name: 'CDN tickets',
+    // A Teams team's default channel: the thread header names the team alone.
+    name: 'Main',
+    groupName: 'Globex CDN',
     org: 'globex',
     team: 'edge',
     teamId: 'TEAM-EDGE',
