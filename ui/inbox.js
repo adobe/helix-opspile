@@ -522,6 +522,11 @@ function openSlackChoice(a) {
   el.style.top = `${Math.max(8, Math.min(r.bottom + 6, window.innerHeight - h - 8))}px`;
   el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
 }
+/**
+ * A channel's name as people know it: on Teams with its team first (`acme › Main`), since a
+ * Teams team's channels are mostly called Main or General; elsewhere its name.
+ */
+const channelTitle = (source, name, group) => (source === 'teams' && group ? `${group} › ${name}` : name);
 /** A title with the channel ids in it (`#C…`) as the channels' names. */
 const channelNames = (s) => String(s || '').replace(Markdown.CHANNEL_REF, (m, before, token) => {
   const c = channelRefs.get(token);
@@ -2777,7 +2782,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
   // suggests.
   const lead = `<div class="lead">${headSource(thread, members, t)}<h2>${emojify(channelNames(thread.title) || '(no text)')}</h2></div>`;
-  const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(thread.channel_name)}</span>` : '';
+  const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(channelTitle(thread.source, thread.channel_name, thread.channel_group))}</span>` : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}${chan}</div>
       <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
@@ -3928,7 +3933,7 @@ function renderStarted() {
     ...like, org: channel.org, org_name: channel.orgName, source: channel.source, permalink: null,
   }, [], like);
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
-    <div class="l1"><div class="lead">${source}<h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2></div><span class="chan" title="Channel">${esc(channel.name)}</span></div></div>`;
+    <div class="l1"><div class="lead">${source}<h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2></div><span class="chan" title="Channel">${esc(channelTitle(channel.source, channel.name, channel.group))}</span></div></div>`;
   // As openThread lays a thread out: a run of one author's messages has the avatar by its last.
   const items = [`<div class="day"><span>${esc(dayLabel(p.at))}</span></div>`];
   let last = null;
@@ -5348,7 +5353,7 @@ async function saveSettings(patch) {
 /** The open thread's channel, as the menu names it. */
 function channelLabel(t) {
   const name = t.channel_name || t.channel_id;
-  return t.source === 'teams' ? name : `#${name}`;
+  return t.source === 'teams' ? channelTitle(t.source, name, t.channel_group) : `#${name}`;
 }
 
 function renderTraces() {
