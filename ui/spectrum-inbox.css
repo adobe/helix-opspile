@@ -1041,6 +1041,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
   .ph > :not(.close) { grid-column: 2; }
   .ph .close { display: grid; grid-row: 1 / span 4; margin-top: calc(-1 * var(--spectrum-spacing-75)); }
+  /* The thread's header scrolls away with the thread and back (wireHeadAway in ui/inbox.js):
+     over its top, which leaves it room, moved up as far as the thread scrolled. */
+  #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
+  #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
   .ph h2 { flex-wrap: wrap; }
   .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
   .msg { gap: var(--spectrum-spacing-100); }
