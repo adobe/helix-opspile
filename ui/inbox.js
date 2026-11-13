@@ -2748,7 +2748,15 @@ const DRAFT_LINE = '<div class="draftbar" id="draftbar" hidden></div>';
  * reply box and the draft's line, which stays at the pane's bottom edge.
  */
 const BASH_LINE = '<div class="bashbar" id="bashbar" hidden></div>';
-const LINES = `${BASH_LINE}${DRAFT_LINE}`;
+/**
+ * Both, under the reply box. On a phone they would leave the thread a few lines of the screen,
+ * so there they are in a drawer (filled and opened by renderLines, below): its tab, one line
+ * under the reply box that says what is in it, and the sheet it opens from the bottom edge.
+ * On a wider screen the tab is not shown and the drawer is no box at all: the lines are the
+ * reply box's own, as before.
+ */
+const LINES = `<button type="button" class="linestab" id="linestab" aria-controls="linesdrawer" aria-expanded="false" hidden></button>
+  <div class="linesdrawer" id="linesdrawer"><div class="sheet" tabindex="-1"><div class="lineshead"><b id="lines-title"></b><button type="button" class="linesclose" data-lines="close" aria-label="Close" title="Close">✕</button></div>${BASH_LINE}${DRAFT_LINE}</div></div>`;
 
 // Only a touch screen, no pointer that hovers (phones): no Shift+Enter on the on-screen
 // keyboard, so Enter starts a new line there and Send sends, as in the Slack and Teams apps.
@@ -3420,6 +3428,16 @@ function draftLine(d, {
       <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}</div>`;
 }
 
+/**
+ * The thread's draft as its line shows it. A draft on its way (its reply shows in the feed,
+ * sending) is not offered again; it comes back if the reply fails.
+ */
+function lineDraft(key) {
+  const d = state.cache.get(key)?.data?.draft;
+  const going = d && state.sending.some((p) => p.thread === key && p.base === d.updated_at && p.status !== 'failed');
+  return going ? null : d;
+}
+
 /** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
 function renderDraftBar(key, force = false) {
   const el = $('draftbar');
@@ -3430,10 +3448,7 @@ function renderDraftBar(key, force = false) {
     draftPeek.key = null;
   }
   const data = state.cache.get(key)?.data;
-  // A draft on its way (its reply shows in the feed, sending) is not offered again; it comes
-  // back if the reply fails.
-  const going = (x) => x && state.sending.some((p) => p.thread === key && p.base === x.updated_at && p.status !== 'failed');
-  const d = going(data?.draft) ? null : data?.draft;
+  const d = lineDraft(key);
   const box = $('reply');
   const readonly = state.data?.me?.readonly;
   const c = state.composers.get(key);
@@ -3463,6 +3478,7 @@ function renderDraftBar(key, force = false) {
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
+  renderLines(key);
 }
 
 /**
@@ -3843,6 +3859,113 @@ function renderBashBar(key) {
   if (decide && !vault.loaded && list.some((r) => r.status === 'pending' && r.env.length)) {
     vaultLoad().then(() => { if (vault.values.size) renderBashBar(el.__key); });
   }
+  renderLines(key);
+}
+
+// ---------------------------------------------------------------- the lines' drawer (phones)
+// Not the filter drawer (DRAWER, below), which holds the filter rail on a narrow screen.
+// On a phone the draft's line and the command cards are in a drawer of their own: under the reply box only
+// its tab shows, one line that says what waits there (a command to decide on first, in the
+// notice color), and a tap opens them as a sheet from the screen's bottom edge, over the
+// thread. ✕, a tap beside the sheet and Escape close it; so does taking the draft into the
+// reply box or sending it, which happen in the thread; and so does opening another thread.
+// The stylesheet decides where this is a drawer (ui/spectrum-inbox.css, at the phone's
+// breakpoint): on a wider screen the tab is not shown, and the lines are where they were.
+
+// Where the stylesheet makes it a drawer. A screen that grows past that (a phone turned, a
+// window widened) has no drawer left to be open.
+const LINES_DRAWER = matchMedia('(max-width: 699px)');
+LINES_DRAWER.addEventListener('change', () => { if (!LINES_DRAWER.matches && linesDrawer.key) setLines(linesDrawer.key, false); });
+
+// The thread whose drawer is open, or null.
+const linesDrawer = { key: null };
+
+/**
+ * The tab's chips, for the requests and the draft the lines show: `[{ kind, icon, text }]`.
+ * Of the commands it says what matters most: those to decide on (`ask`), else that one runs,
+ * else how many ended.
+ */
+function linesChips(requests = [], draft = null) {
+  const count = (status) => requests.filter((r) => r.status === status).length;
+  const n = (k, what) => `${k} ${what}${k === 1 ? '' : 's'}`;
+  const chips = [];
+  if (count('pending')) chips.push({ kind: 'cmd ask', icon: BASH_ICON, text: `${n(count('pending'), 'command')} to decide` });
+  else if (count('running')) chips.push({ kind: 'cmd', icon: BASH_ICON, text: `${n(count('running'), 'command')} running` });
+  else if (requests.length) chips.push({ kind: 'cmd', icon: BASH_ICON, text: n(requests.length, 'past command') });
+  if (draft) chips.push({ kind: 'draft', icon: DRAFT_ICONS.draft, text: `Draft by ${draftBy(draft)}` });
+  return chips;
+}
+const LINES_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>';
+const linesTab = (chips) => `${chips.map((c) => `<span class="chip ${c.kind}">${c.icon}<span>${esc(c.text)}</span></span>`).join('')}${LINES_CHEVRON}`;
+/** What the sheet is called: what is in it. */
+const linesTitle = (chips) => {
+  const has = (kind) => chips.some((c) => c.kind.startsWith(kind));
+  if (has('cmd') && has('draft')) return 'Commands and draft';
+  return has('draft') ? 'Draft' : 'Commands';
+};
+
+/** The drawer's tab and whether it is open, from what the two lines show now. */
+function renderLines(key) {
+  const tab = $('linestab');
+  const el = $('linesdrawer');
+  const hit = state.cache.get(key);
+  // Not cached: the thread is being fetched again, and the drawer stays as it is until then.
+  if (!tab || !el || !hit || state.open !== key) return;
+  const chips = linesChips(hit.data?.bash_requests, lineDraft(key));
+  // Another thread's, or nothing left in it: closed.
+  if (linesDrawer.key !== key || !chips.length) linesDrawer.key = null;
+  const open = linesDrawer.key === key;
+  const html = linesTab(chips);
+  if (tab.__html !== html) {
+    tab.__html = html;
+    tab.innerHTML = html;
+    tab.hidden = !chips.length;
+    $('lines-title').textContent = linesTitle(chips);
+  }
+  tab.setAttribute('aria-expanded', String(open));
+  el.classList.toggle('open', open);
+  // A modal dialog only while it is one: on a wider screen the drawer is no box.
+  const sheet = el.firstElementChild;
+  const dialog = { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' };
+  for (const [name, value] of Object.entries(dialog)) if (open) sheet.setAttribute(name, value); else sheet.removeAttribute(name);
+  el.__key = key;
+  if (!el.__wired) wireLines(tab, el);
+}
+
+/** Opens or closes the drawer of thread `key`; `back` puts the focus back on its tab. */
+function setLines(key, open, { back = false } = {}) {
+  linesDrawer.key = open ? key : null;
+  renderLines(key);
+  if (open) $('linesdrawer')?.firstElementChild.focus({ preventScroll: true });
+  else if (back) $('linestab')?.focus({ preventScroll: true });
+}
+
+function wireLines(tab, el) {
+  el.__wired = true;
+  tab.addEventListener('click', () => setLines(el.__key, linesDrawer.key !== el.__key));
+  el.addEventListener('click', (e) => {
+    if (linesDrawer.key !== el.__key) return;
+    // ✕, or a tap beside the sheet.
+    if (e.target === el || e.target.closest('[data-lines="close"]')) { setLines(el.__key, false, { back: true }); return; }
+    // Taking the draft into the reply box and sending it happen in the thread.
+    if (e.target.closest('[data-draft="edit"], [data-draft="me"], [data-draft="bot"]')) setLines(el.__key, false);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (linesDrawer.key !== el.__key) return;
+    if (e.key === 'Tab') {
+      // The open sheet is modal: Tab goes round in it, not on into the thread behind it.
+      // What Tab stops at: also a person's chip in the draft, which is a `tabindex="0"`.
+      const stops = [...el.querySelectorAll('button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])')].filter((n) => !n.disabled && n.offsetParent);
+      const at = document.activeElement;
+      const to = e.shiftKey ? (at === stops[0] || !stops.includes(at)) && stops.at(-1) : at === stops.at(-1) && stops[0];
+      if (to) { e.preventDefault(); to.focus(); }
+      return;
+    }
+    // The draft's line takes Escape first, for what it has open.
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.preventDefault();
+    setLines(el.__key, false, { back: true });
+  });
 }
 
 function wireBashBar(el) {

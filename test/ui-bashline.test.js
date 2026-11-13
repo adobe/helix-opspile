@@ -201,9 +201,11 @@ describe('a command request\'s card', () => {
   });
 
   it('sits between the reply box and the draft\'s line, in every reply box', () => {
-    assert.match(js, /const LINES = `\$\{BASH_LINE\}\$\{DRAFT_LINE\}`;/);
+    // In the drawer's sheet (a box only on a phone, test/ui-linesdrawer.test.js), in this order.
+    assert.match(js, /const LINES = `<button type="button" class="linestab"[^`]*<div class="linesdrawer" id="linesdrawer"><div class="sheet"[^`]*<\/div>\$\{BASH_LINE\}\$\{DRAFT_LINE\}<\/div><\/div>`;/);
     assert.equal(js.match(/\$\{LINES\}<\/div>`/g).length, 5);
-    assert.doesNotMatch(js, /\$\{DRAFT_LINE\}<\/div>/);
+    // No reply box has the draft's line on its own.
+    assert.equal(js.match(/\$\{DRAFT_LINE\}/g).length, 1);
     const css = SCRIPTS['spectrum-inbox.css'];
     assert.match(css, /\.bashbar \{ flex-basis: 100%;/);
     assert.match(css, /\.bashbar\[hidden\] \{ display: none; \}/);
