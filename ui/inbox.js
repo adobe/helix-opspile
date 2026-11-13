@@ -4765,7 +4765,7 @@ async function postWith(path, payload, files = []) {
 // Picking one writes @Name and remembers the account, and the reply sends its id along, so
 // the server turns @Name into a real Slack or Teams mention.
 const mention = {
-  kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, waiting: null, picked: new Map(), names: new Set(),
+  kind: 'person', list: [], i: 0, from: -1, seq: 0, timer: null, waiting: null, pooled: null, picked: new Map(), names: new Set(),
 };
 // The box suggestions are for: the reply box, or the message being edited, whichever has the
 // focus; the list of suggestions next to it.
@@ -4792,13 +4792,38 @@ function mentionQuery(box, key) {
 // with the first suggestions of a thread), by `mentionScope`: with it, what is typed after the
 // @ is ranked here as the Worker ranks it (`Markdown.suggestMentions`, src/mention-match.js),
 // at once, instead of asking the Worker for every letter. A pool older than POOL_FRESH_MS is
-// still used, and asked for again in the background.
+// still used, and asked for again in the background; so is one of a channel that just had a
+// message (`stalePools`: it may be the admin bot's that someone was added, or the platform's
+// notice of it), and the suggestions follow the new pool once it is here. A name the pool has
+// nobody for asks the Worker, at once, when the pool is older than POOL_MISS_MS: someone may
+// have just been added, whom the Worker looks up then (src/post.js `mentionable`).
 // Kept by who is asking too (`state.as`): the experts leave the viewer out.
 const mentionPools = new Map(); // viewer and scope -> { pool, at, asking }
 const POOL_FRESH_MS = 2 * 60 * 1000;
+const POOL_MISS_MS = 5 * 1000;
 const POOLS_MAX = 20;
 const poolKey = (where) => `${state.as || ''}|${where}`;
 const keptPool = (where) => mentionPools.get(poolKey(where))?.pool;
+
+/** The channel of a thread key (`source:tenant:[team:]channel:root`), as a channel's ref. */
+function keyChannel(key) {
+  const parts = String(key).split(':');
+  return [parts[0], parts[1], ...parts.slice(parts[0] === 'teams' ? 3 : 2, -1)].join(':');
+}
+/** The channel a `mentionScope` is in, as a channel's ref. */
+function scopeChannel(where) {
+  const [kind, value] = where.split('=');
+  const v = decodeURIComponent(value || '');
+  return kind === 'thread' ? keyChannel(v) : v;
+}
+
+/** A message in `thread`: the kept pools of its channel are asked for again when next used. */
+function stalePools(thread) {
+  const channel = keyChannel(thread);
+  for (const [k, p] of mentionPools) {
+    if (p.pool && scopeChannel(k.slice(k.indexOf('|') + 1)) === channel) mentionPools.set(k, { ...p, at: 0 });
+  }
+}
 
 /** Keeps the pool of `where` from an answer of /api/mentionable that has one. */
 function keepPool(where, pool) {
@@ -4807,10 +4832,13 @@ function keepPool(where, pool) {
   while (mentionPools.size > POOLS_MAX) mentionPools.delete(mentionPools.keys().next().value);
 }
 
-/** Whether the next question about `where` should ask for its pool too (and that it does). */
-function askPool(where) {
+/**
+ * Whether the next question about `where` should ask for its pool too (and that it does): when
+ * it is older than `fresh`.
+ */
+function askPool(where, fresh = POOL_FRESH_MS) {
   const p = mentionPools.get(poolKey(where)) || {};
-  if (p.asking || (p.pool && Date.now() - p.at < POOL_FRESH_MS)) return false;
+  if (p.asking || (p.pool && Date.now() - p.at < fresh)) return false;
   mentionPools.set(poolKey(where), { ...p, asking: true });
   return true;
 }
@@ -4837,6 +4865,7 @@ function suggest(key) {
   const box = mentionBox();
   clearTimeout(mention.timer);
   mention.waiting = null;
+  mention.pooled = null;
   const em = box && emojiQuery(box);
   if (em) { suggestEmoji(key, em); return; }
   const hit = box && mentionQuery(box, key);
@@ -4845,9 +4874,17 @@ function suggest(key) {
   const seq = ++mention.seq;
   const kept = keptPool(where);
   if (kept) {
-    showPeople(key, hit, Markdown.suggestMentions(kept, hit.q));
-    // Stale: asked again for the next time, as the @ opening the suggestions asks.
-    if (askPool(where)) askMentionable(where, '', true).catch(() => {});
+    const people = Markdown.suggestMentions(kept, hit.q);
+    showPeople(key, hit, people);
+    // Stale, or nobody for the name: asked again (for a name, the Worker looks for whom it may
+    // not know yet), and what is typed by the time it is here is suggested from it.
+    const missed = Boolean(!people.length && hit.q.trim());
+    if (askPool(where, missed ? POOL_MISS_MS : POOL_FRESH_MS)) {
+      askMentionable(where, missed ? hit.q : '', true).then(() => {
+        if (mention.pooled === where && inPane(key) && mentionScope(key) === where) suggest(key);
+      }, () => {});
+    }
+    if (mentionPools.get(poolKey(where))?.asking) mention.pooled = where;
     return;
   }
   mention.waiting = where;
@@ -4944,6 +4981,7 @@ const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${emojiChip(p
 function closeMentions() {
   mention.list = [];
   mention.waiting = null;
+  mention.pooled = null;
   mention.seq += 1;
   clearTimeout(mention.timer);
   for (const ul of document.querySelectorAll('#pane ul.mentions')) { ul.hidden = true; ul.innerHTML = ''; }
@@ -5518,6 +5556,8 @@ function listen(team, live, { again = false } = {}) {
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     noteEvent(ev, team);
+    // A message in a channel: someone may have joined it, whom its kept pools do not have.
+    if (ev.type === 'thread' && ev.thread) stalePools(ev.thread);
     // The thread being started is in the inbox (in any room: it may be another team's channel).
     if (ev.type === 'thread' && ev.thread && ev.thread === state.awaiting) awaitStarted(ev.thread, { now: true });
     // A room only the notifications listen to: the inbox on screen is not its.

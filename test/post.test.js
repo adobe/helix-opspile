@@ -428,6 +428,50 @@ describe('mentions', () => {
     assert.equal(waited.length, 1);
     await waited[0];
   });
+
+  it('lists the members again for a name nobody matches: someone may just have been added', async () => {
+    const e = withAccounts(env());
+    // Listed a minute ago (the @ of the request to the admin bot), before they were added.
+    const now = Date.now();
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(now - 60 * 1000).toISOString(), '19:c');
+    const graphed = [];
+    let team = [{ userId: 'u-bob', email: null, displayName: 'Bob Builder' }];
+    const graph = async (path) => {
+      graphed.push(path);
+      return Response.json({ value: team });
+    };
+    const looked = [];
+    const getIdentity = async (env2, ref) => {
+      looked.push(ref.userId);
+      env2.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+        fetched_at) VALUES (?, ?, ?, 'person', 'Ash Newcomer', '2026-10-21T10:00:00Z')`)
+        .run(ref.source, ref.tenant, ref.userId);
+    };
+    const learn = { graph, getIdentity };
+    const ask = async (q) => (await mentionable(e, 'teams:T:G:19:c:5', q, inTeam, {
+      learn, pool: true,
+    })).json();
+    // Nobody new in the Teams team: listed, nothing looked up, still nobody.
+    assert.deepEqual((await ask('ash')).people, []);
+    assert.deepEqual([graphed.length, looked], [1, []]);
+    // Listed just now: typing on lists nothing again.
+    assert.deepEqual((await ask('ashn')).people, []);
+    assert.equal(graphed.length, 1);
+    // Half a minute later the admin bot has added them: listed, looked up, and in the answer,
+    // and in its pool, as a member.
+    team = [...team, { userId: 'u-ash', email: null, displayName: 'Ash Newcomer' }];
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(now - 31 * 1000).toISOString(), '19:c');
+    const { people, pool } = await ask('ash');
+    assert.deepEqual(people.map((p) => [p.id, p.name, p.member]), [['u-ash', 'Ash Newcomer', true]]);
+    assert.ok(pool.accounts.some((a) => a.id === 'u-ash' && a.member));
+    assert.deepEqual([graphed.length, looked], [2, ['u-ash']]);
+    // A name that matches someone lists nobody.
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = NULL WHERE channel_id = ?').run('19:c');
+    await ask('bob');
+    assert.equal(graphed.length, 2);
+  });
 });
 
 describe('channels to start a thread in', () => {

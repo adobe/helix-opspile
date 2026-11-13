@@ -1092,7 +1092,14 @@ channel or by its affinity, and the bots), and the page ranks what is typed afte
 with the Worker's own `suggestMentions` (in the markdown bundle), so completing a name asks the
 Worker nothing. Until the pool is there, each typed letter asks the Worker, as before. The page
 keeps a thread's pool for the page's life, and asks for it again in the background once it is
-two minutes old. The Worker reads the thread's place first, then whether the viewer may see
+two minutes old, or when a message came in in its channel since (the room's `thread` event: it
+may be an admin bot's confirmation that someone was added, or the platform's notice of it); the
+suggestions follow the new pool when it comes. A name the kept pool has nobody for asks the
+Worker at once, when the pool is more than five seconds old. The Worker, for a name that matches
+nobody, lists the channel's members again when that is more than 30 seconds old, and waits for
+it: someone just added who never posted is not in D1 until then (a Teams notice that they were
+added names them, and so records them, but not every channel gets one), and is in the answer
+when the listing found them. The Worker reads the thread's place first, then whether the viewer may see
 it and all the suggestions need at once: one round trip to D1 after the place, not up to four.
 
 **The thread's header.** Line 1 is the customer's icon with the platform's on it, the title,
