@@ -134,7 +134,7 @@ globalThis.Table = (() => {
 
     const count = el('span', { class: 'fv-count' });
     const find = el('input', {
-      class: 'fv-find', type: 'search', value: start.query, placeholder: of.placeholder || 'Filter rows', 'aria-label': `Filter the ${noun}s`, autocomplete: 'off', spellcheck: 'false',
+      class: 'fv-find', type: 'search', value: start.query, 'aria-label': `Filter the ${noun}s`, title: of.finds || '', autocomplete: 'off', spellcheck: 'false',
     });
     const thead = el('thead');
     const tbody = el('tbody');
@@ -228,7 +228,7 @@ globalThis.Table = (() => {
       timer = setTimeout(() => { query = find.value.trim().toLowerCase(); draw(); }, body.length > 5000 ? 150 : 0);
     });
     box.append(
-      el('div', { class: 'fv-bar' }, count, find, expand),
+      el('div', { class: 'fv-bar' }, count, el('label', { class: 's2-search fv-findbox' }, find), expand),
       el('div', { class: 'fv-scroll', tabindex: '0' }, el('table', { class: `fv-table ${of.cls || ''}` }, thead, tbody)),
       more,
     );
@@ -437,7 +437,7 @@ globalThis.Table = (() => {
         of: {
           noun: 'request',
           cls: 'fv-har',
-          placeholder: 'Filter: URL, status, failed',
+          finds: 'A part of the URL, a status, or "failed"',
           summary: recording.summary,
           rowClass: (i) => (failed(entries[i]) ? 'fv-failed' : null),
           words: (i) => (failed(entries[i]) ? `failed ${failure(entries[i])}` : ''),

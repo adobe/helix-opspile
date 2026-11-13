@@ -111,9 +111,6 @@ dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spe
 .mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: var(--spectrum-font-size-75); font-weight: 600; letter-spacing: var(--spectrum-detail-letter-spacing);
   text-transform: uppercase; color: var(--mute); }
 .mcpform label { color: var(--mute); font-size: var(--spectrum-font-size-100); }
-.mcpform .pair { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
-.mcpform .pair input:first-child { width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); flex: none; }
-.mcpform .pair input:last-child { flex: 1; min-width: 0; }
 .mcpform .hint { grid-column: 2; color: var(--faint); font-size: var(--spectrum-font-size-75); margin-top: calc(-1 * var(--spectrum-spacing-75)); }
 .mcpform .hint.wide { margin-top: 0; }
 .mcpform .hint .mono { overflow-wrap: anywhere; font-size: var(--spectrum-font-size-50); }
@@ -638,11 +635,7 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
   font-size: var(--spectrum-font-size-75);
 }
 .spectrum .ch.global .per .find {
-  min-height: var(--spectrum-component-height-75);
   margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75) var(--spectrum-spacing-300);
-  padding: 0 var(--spectrum-component-edge-to-text-75);
-  border-radius: calc(var(--spectrum-component-height-75) / 2);
-  font-size: var(--spectrum-font-size-75);
 }
 .spectrum .ch.global .per.flat .find { margin-left: 0; }
 
@@ -750,8 +743,6 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
   font-size: var(--spectrum-font-size-75);
 }
 .spectrum .mcpform :is(input, select, textarea) { min-width: 0; max-width: 100%; }
-.spectrum .mcpform .pair { gap: var(--spectrum-spacing-100); min-width: 0; }
-.spectrum .mcpform .pair input:first-child { flex: 0 1 auto; }
 .spectrum .mcpform .hint {
   margin-top: calc(-1 * var(--spectrum-spacing-75));
   color: var(--spectrum-neutral-subdued-content-color-default);
@@ -920,7 +911,6 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
   .spectrum #editor .text:last-child { margin-bottom: var(--spectrum-spacing-200); }
   .spectrum #editor .foot { padding: var(--spectrum-spacing-200); }
   .spectrum .channels { padding-left: var(--spectrum-spacing-200); padding-right: var(--spectrum-spacing-200); }
-  .spectrum .mcpform .pair input, .spectrum .mcpform .pair input:first-child { flex: 1 1 0; width: auto; }
 }
 
 /* Windows High Contrast: the cards and the alerts get an edge, as Spectrum's do. */
@@ -949,3 +939,11 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
 @media (max-width: 699px) {
   .spectrum #files, .spectrum #editor { background: var(--content); border-radius: var(--content-radius) var(--content-radius) 0px 0px; }
 }
+
+/* Fields say what they are for with a label (ui/spectrum.css), never a placeholder. */
+.spectrum .ch.global .per .find > input { min-height: var(--spectrum-component-height-75); font-size: var(--spectrum-font-size-75); }
+.spectrum .ch.global .setup { align-items: flex-end; }
+.spectrum .ch.global .setup > .what { flex-basis: 100%; }
+.spectrum .ch.global .setup .fld > input { width: calc(var(--spectrum-spacing-100) * 25); }
+.spectrum #editor .bar .newpath { display: flex; flex: 1; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum #editor .bar .newpath + .hint { flex-basis: 100%; margin: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }

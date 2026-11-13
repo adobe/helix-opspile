@@ -219,16 +219,19 @@ tr.left td { opacity: .55; }
   padding: 0 var(--spectrum-component-edge-to-text-100);
   font-weight: var(--spectrum-medium-font-weight);
 }
-.spectrum .form { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); }
+/* A form's fields sit on one line where they fit, their labels above them, its button level
+   with the fields. */
+.spectrum .form { gap: var(--spectrum-spacing-200) var(--spectrum-spacing-100); align-items: flex-end; margin-top: var(--spectrum-spacing-200); }
+.spectrum .form > .what { flex-basis: 100%; }
+.spectrum .form .fld > :is(input, select) { min-width: 0; }
+.spectrum #ruleForm .fld:has(#rPriority) { width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-100)); }
+.spectrum #list .form .fld { flex: 1 1 0px; }
+.spectrum #ruleForm .fld.grow { flex: 2 1 calc(var(--spectrum-spacing-1000) * 2); }
 
 /* ---- the list: SearchField and ListView ------------------------------------------------- */
 
 /* SearchField: a field as round as its height. */
-.spectrum #list .search {
-  margin-bottom: var(--spectrum-spacing-100);
-  padding: 0 var(--spectrum-component-edge-to-text-100);
-  border-radius: calc(var(--s2-ctl) / 2);
-}
+.spectrum #list .s2-search { margin-bottom: var(--spectrum-spacing-100); }
 .spectrum .row {
   gap: var(--spectrum-text-to-visual-300);
   min-height: var(--s2-ctl);
@@ -504,3 +507,12 @@ tr.left td { opacity: .55; }
   .spectrum #list { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
   .spectrum #detail { margin: 0; border-radius: var(--content-radius) var(--content-radius) 0px 0px; box-shadow: none; }
 }
+
+/* Deleting a team is asked about first: an AlertDialog (ui/spectrum.css draws the dialog and
+   its underlay), its title a Heading, Cancel the secondary Button, the one that deletes red. */
+.spectrum dialog.confirm { width: min(calc(var(--spectrum-spacing-1000) * 5), 92vw); padding: var(--spectrum-spacing-500); }
+.spectrum dialog.confirm h2 { margin: 0 0 var(--spectrum-spacing-300); font-size: var(--spectrum-font-size-400); font-weight: var(--spectrum-extra-bold-font-weight); }
+.spectrum dialog.confirm p { margin: 0; line-height: var(--spectrum-line-height-200); }
+.spectrum dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-500); }
+.spectrum dialog.confirm .apply button:not(.danger) { min-height: var(--s2-ctl); padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200)); border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); border-radius: var(--s2-pill); background: transparent; font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.confirm .apply button:not(.danger):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }

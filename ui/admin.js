@@ -163,6 +163,25 @@ function press(b, fn) {
 }
 /** `once`, with the button `b` disabled meanwhile. */
 const hold = (b, key, fn) => press(b, () => once(key, fn));
+/**
+ * Asks before something that cannot be taken back, in the page, with a modal <dialog>:
+ * resolves true for `yes`, false otherwise (Escape too). The focus starts on Cancel.
+ */
+function confirmFirst(question, detail, yes) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'confirm';
+    dlg.setAttribute('role', 'alertdialog');
+    dlg.setAttribute('aria-labelledby', 'confirmTitle');
+    dlg.innerHTML = `<form method="dialog"><h2 id="confirmTitle">${esc(question)}</h2><p>${esc(detail)}</p>
+      <div class="apply"><button value="no">Cancel</button><button value="yes" class="danger">${esc(yes)}</button></div></form>`;
+    dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
+    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('[value="no"]').focus();
+  });
+}
 /** How many channels, in words: "1 channel", "48 channels". */
 const channelCount = (n) => `${n} ${n === 1 ? 'channel' : 'channels'}`;
 
@@ -287,10 +306,10 @@ function drawList() {
         <span class="sub">${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
-    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
+    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
       <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
-      ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
-        <input id="ntSlug" placeholder="Slug" pattern="[a-z0-9][a-z0-9-]*" required><button class="primary">Create</button></form>` : ''}
+      ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><label class="fld grow"><span>Name</span><input id="ntName" required></label>
+        <label class="fld"><span>Slug</span><input id="ntSlug" pattern="[a-z0-9][a-z0-9-]*" required></label><button class="primary">Create</button></form>` : ''}
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     if (!state.me.admin) {
       wireFilter();
@@ -330,7 +349,7 @@ function drawList() {
         ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
     const open = state.requests.filter((r) => r.status === 'open' && match(r));
     const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
-    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter requests" value="${esc(state.filter)}">
+    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
       ${decided.length ? `<h2>Decided</h2>${decided.map(row).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page. Confirming one assigns the channel to the team, as adding it on the team's page does.</p>`;
@@ -341,10 +360,10 @@ function drawList() {
         ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
         <span class="sub">${channelCount(o.channels)}</span></div>`).join('');
-    $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter ${state.orgs.length} orgs" value="${esc(state.filter)}">
+    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter orgs" value="${esc(state.filter)}"></label>
       <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
       ${rows || '<div class="empty">Nothing matches.</div>'}
-      <h2>New org</h2><form class="form" id="newOrg"><input id="noName" placeholder="Display name" class="grow" required>
+      <h2>New org</h2><form class="form" id="newOrg"><label class="fld grow"><span>Display name</span><input id="noName" required></label>
         <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
@@ -544,13 +563,14 @@ function channelsCard(target) {
   // A team manager asks the admin team for a channel instead (a request).
   if (!state.me.admin) {
     return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><input id="pick" class="grow" placeholder="Ask for a channel: search by channel, Teams team, customer or id" autocomplete="off" aria-label="Ask for a channel"><div class="picks" id="picks" hidden></div></div>
+    <div class="form picker"><label class="fld grow"><span>Ask for a channel</span><input id="pick" autocomplete="off"></label><div class="picks" id="picks" hidden></div></div>
+    <p class="hint">Search by channel, Teams team, customer or id.</p>
     <div id="askSlot"></div>
     <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows under Requests. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
   }
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><input id="pick" class="grow" placeholder="${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}: search by channel, Teams team, customer, team or id" autocomplete="off" aria-label="${target === 'team' ? 'Add a channel' : 'Assign a channel'}"><div class="picks" id="picks" hidden></div></div>
-    <p class="hint">${target === 'team'
+    <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks" id="picks" hidden></div></div>
+    <p class="hint">Search by channel, Teams team, customer, team or id. ${target === 'team'
     ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
     : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
 }
@@ -980,12 +1000,12 @@ function ruleForm(r = {}) {
   const prefix = r.pattern ? prefixOf(r.pattern) : '';
   const mode = prefix !== null ? 'prefix' : 'regex';
   return `<form class="form" id="ruleForm" data-id="${r.id || ''}">
-    <select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
-    <select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select>
-    <input id="rPattern" class="grow mono" placeholder="aem-" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required>
-    <select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option></select>
-    <input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" title="Priority: the lowest matching rule wins">
-    <input id="rNote" placeholder="Note" value="${esc(r.note || '')}">
+    <label class="fld"><span>Field</span><select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label class="fld"><span>Match</span><select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select></label>
+    <label class="fld grow"><span>Pattern</span><input id="rPattern" class="mono" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required></label>
+    <label class="fld"><span>Platform</span><select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option></select></label>
+    <label class="fld"><span>Priority</span><input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" title="The lowest matching rule wins"></label>
+    <label class="fld"><span>Note (optional)</span><input id="rNote" value="${esc(r.note || '')}"></label>
     <button class="primary">${r.id ? 'Save rule' : 'Add rule'}</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}
   </form>`;
 }
@@ -1114,8 +1134,8 @@ async function showTeam(slug) {
       <span><b>Self-managed</b>: every member is a team manager and may add and remove members and edit the team's knowledge base.</span></label>
       <p class="hint">${admin ? 'Turning it on makes every member a manager, now and when they join. Turning it off keeps the roles as they are; new members join as members, and managers can be demoted.' : 'Only the admin team changes this.'}</p></div>` : ''}
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
-      <div class="form picker"><input id="mFind" class="grow" placeholder="Add a member: type a name or an email" autocomplete="off" aria-label="Add a member"><div class="picks" id="mPicks" hidden></div></div>
-      <p class="hint">Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
+      <div class="form picker"><label class="fld grow"><span>Add a member</span><input id="mFind" autocomplete="off"></label><div class="picks" id="mPicks" hidden></div></div>
+      <p class="hint">Type a name or an email. Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
@@ -1167,8 +1187,13 @@ async function showTeam(slug) {
     renderList();
   };
   if ($('tDelete')) {
-    // Only a team without rules or threads can be deleted (the API refuses the others).
-    $('tDelete').onclick = () => hold($('tDelete'), `delete:${slug}`, async () => {
+    // Only a team without rules or threads can be deleted (the API refuses the others), and
+    // only once you have said so: its members and their roles go with it.
+    $('tDelete').onclick = async () => (await confirmFirst(
+      `Delete ${team.name}?`,
+      'The team goes, and its members are no longer on it. A team that still has rules or threads is not deleted.',
+      'Delete team',
+    )) && hold($('tDelete'), `delete:${slug}`, async () => {
       const res = await call('/api/admin/teams', 'DELETE', { slug });
       if (!res.ok) { failed(`Delete ${team.name}`, res); return; }
       state.teams = state.teams.filter((t) => t.slug !== slug);
@@ -1278,9 +1303,9 @@ function askFor(c) {
   }
   const shares = !isHolding(c.team);
   $('askSlot').innerHTML = `<form class="form" id="askForm">
-    <span style="flex-basis:100%">Ask the admin team to add <b>${channelName(c)}</b> to ${esc(teamLabel(v.value))}
+    <span class="what">Ask the admin team to add <b>${channelName(c)}</b> to ${esc(teamLabel(v.value))}
       <span class="sub">(now in ${esc(teamLabel(c.team))}${shares ? '; it would be shared with this team and stay filed there' : ''})</span></span>
-    <input id="askNote" class="grow" maxlength="500" placeholder="Note for the admin team (optional): why this team should have it" aria-label="Note for the admin team">
+    <label class="fld grow"><span>Why this team should have it (optional)</span><input id="askNote" maxlength="500"></label>
     <button class="primary">Send request</button><button type="button" id="askCancel">Cancel</button></form>`;
   $('askNote').focus();
   $('askCancel').onclick = () => { $('askSlot').innerHTML = ''; $('pick').focus(); };
@@ -1337,7 +1362,7 @@ function drawRequest(r, preview) {
     </div></div>
     ${open ? `<div class="card"><h2>Confirming it</h2><div class="preview" id="rqPreview">${preview ? previewText(r, preview) : '<span class="sub">Trying it…</span>'}</div>
       <div class="form"><button class="primary" id="rqConfirm"${preview && preview.ok ? '' : ' disabled'}${off(`request:${r.id}`)}>Confirm</button></div></div>
-      <div class="card"><h2>Declining it</h2><form class="form" id="rqDeclineForm"><input id="rqReason" class="grow" maxlength="500" placeholder="Reason, for the manager (optional)" aria-label="Reason">
+      <div class="card"><h2>Declining it</h2><form class="form" id="rqDeclineForm"><label class="fld grow"><span>Reason, for the manager (optional)</span><input id="rqReason" maxlength="500"></label>
       <button class="danger" id="rqDecline"${off(`request:${r.id}`)}>Decline</button></form></div>` : ''}`;
   showStatus();
   if (!open) return;
@@ -1409,12 +1434,13 @@ async function showOrg(slug) {
   const domain = domains[0] || null;
   state.view = v;
   $('detail').innerHTML = `
-    <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><input class="big" id="oName" value="${esc(org.name || '')}" placeholder="${esc(org.slug)}" aria-label="Display name">
+    <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><h1 class="fill" id="oTitle">${esc(org.name || org.slug)}</h1>
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
+      <label for="oName">Display name</label><span class="inline"><input id="oName" class="fill" value="${esc(org.name || '')}"></span>
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
-      <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}" placeholder="example.com, or https://…/logo.png"></span>
+      <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}"></span>
       <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
     ${channelsCard('org')}
@@ -1427,6 +1453,7 @@ async function showOrg(slug) {
   /** Shows an org's fields as saved, without touching the field being typed in. */
   const show = (o) => {
     if (document.activeElement !== $('oName')) $('oName').value = o.name || '';
+    $('oTitle').textContent = o.name || slug;
     if (document.activeElement !== $('oIcon')) $('oIcon').value = o.icon || '';
     for (const x of $('oType').querySelectorAll('[data-type]')) x.setAttribute('aria-pressed', String(x.dataset.type === o.type));
     $('oIco').innerHTML = ico(o.icon, domain);

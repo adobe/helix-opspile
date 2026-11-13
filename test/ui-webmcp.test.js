@@ -62,7 +62,7 @@ beforeEach(() => {
   const page = piece('// ---------------------------------------------------------------- WebMCP', '/**\n * Asks the person on the page', 'WEBMCP_TOOLS', {
     state,
     STATUS_ORDER: ['critical'],
-    KIND_EMOJI: { question: '' },
+    KIND_ICON: { question: 'help' },
     PICKER: ['eyes'],
     searchEntry: (k) => state.data.threads.find((t) => t.thread === k),
     openThread: async (k) => {

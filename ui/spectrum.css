@@ -219,6 +219,7 @@ header .note { white-space: nowrap; }
   /* Workflow icons (@react-spectrum/s2, S2_Icon_*_20_N), as masks: they take currentColor. */
   --s2-icon-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTMuNzU0ODgsNy4yNDMxNmMuMjg3MTEtLjI5ODgzLjc2MTcyLS4zMDg2LDEuMDU5NTctLjAyMDUxbDUuMTgzNTksNC45ODYzMyw1LjE5NzI3LTQuOTk5MDJjLjI5Nzg1LS4yODgwOC43NzI0Ni0uMjc4MzIsMS4wNTk1Ny4wMjA1MS4yODcxMS4yOTY4Ny4yNzgzMi43NzI0Ni0uMDIwNTEsMS4wNTk1N2wtNS43MTY4LDUuNWMtLjI5MDA0LjI4MDI3LS43NDkwMi4yODAyNy0xLjAzOTA2LDBsLTUuNzAzMTItNS40ODczYy0uMTUzMzItLjE0NjQ5LS4yMzA0Ny0uMzQzNzUtLjIzMDQ3LS41NDAwNCwwLS4xODc1MS4wNjkzNC0uMzc1MDEuMjA5OTYtLjUxOTU0WiIvPjwvc3ZnPg==");
   --s2-icon-checkmark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuODY0MjYsMTUuNzM0MzhjLS4yMjI2NiwwLS40MzM1OS0uMDk4NjMtLjU3NjE3LS4yNjk1M2wtMy43NDcwNy00LjQ5ODA1Yy0uMjY1NjItLjMxODM2LS4yMjE2OC0uNzkxOTkuMDk1Ny0xLjA1NjY0LjMxNzM4LS4yNjU2Mi43OTAwNC0uMjIzNjMsMS4wNTY2NC4wOTU3bDMuMTUzMzIsMy43ODYxMyw3LjQzOTQ1LTkuNDY4NzVjLjI1NTg2LS4zMjYxNy43Mjg1Mi0uMzgxODQsMS4wNTI3My0uMTI2OTUuMzI2MTcuMjU1ODYuMzgyODEuNzI3NTQuMTI2OTUsMS4wNTI3M2wtOC4wMTE3MiwxMC4xOTgyNGMtLjEzOTY1LjE3ODcxLS4zNTI1NC4yODQxOC0uNTc5MS4yODcxMWgtLjAxMDc0WiIvPjwvc3ZnPg==");
+  --s2-icon-search: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LjUzIDE3LjQ3LTUuMDgzLTUuMDg0QzE0LjQxNyAxMS4xODYgMTUgOS42NiAxNSA4YzAtMy44Ni0zLjE0LTctNy03UzEgNC4xNCAxIDhzMy4xNCA3IDcgN2MxLjY2IDAgMy4xODUtLjU4NCA0LjM4Ni0xLjU1M2w1LjA4NCA1LjA4M2MuMTQ2LjE0Ny4zMzguMjIuNTMuMjJzLjM4NC0uMDczLjUzLS4yMmMuMjkzLS4yOTMuMjkzLS43NjcgMC0xLjA2TTggMTMuNWMtMy4wMzIgMC01LjUtMi40NjgtNS41LTUuNVM0Ljk2OCAyLjUgOCAyLjVzNS41IDIuNDY4IDUuNSA1LjUtMi40NjggNS41LTUuNSA1LjUiLz48L3N2Zz4=");
   --s2-icon-close: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTExLjA2MDYxLDEwbDUuMjA2NDgtNS4yMDYwNWMuMjkyOTctLjI5Mjk3LjI5Mjk3LS43Njc1OCwwLTEuMDYwNTVzLS43Njc1OC0uMjkyOTctMS4wNjA1NSwwbC01LjIwNjU0LDUuMjA2MDVMNC43OTM0NiwzLjczMzRjLS4yOTI5Ny0uMjkyOTctLjc2NzU4LS4yOTI5Ny0xLjA2MDU1LDBzLS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVsNS4yMDY0OCw1LjIwNjA1LTUuMjA2NDgsNS4yMDYwNWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTUuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNsNS4yMDY1NC01LjIwNjA1LDUuMjA2NTQsNS4yMDYwNWMuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1bC01LjIwNjQ4LTUuMjA2MDVaIi8+PC9zdmc+");
   /* Overlays in the content color, so they show on light and dark alike: faint for a selected
      or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
@@ -340,7 +341,6 @@ header .note { white-space: nowrap; }
 :where(.spectrum) input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]):focus-visible),
 :where(.spectrum) textarea:where(:focus-visible) { outline: none; }
 :where(.spectrum) select:where(:focus-visible) { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
-:where(.spectrum) input::placeholder, :where(.spectrum) textarea::placeholder { color: var(--spectrum-gray-600); opacity: 1; }
 :where(.spectrum) input:where(:disabled), :where(.spectrum) textarea:where(:disabled), :where(.spectrum) select:where(:disabled) {
   color: var(--spectrum-disabled-content-color);
   border-color: var(--spectrum-disabled-border-color);
@@ -414,6 +414,36 @@ header .note { white-space: nowrap; }
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-medium-font-weight);
 }
+
+/* A field has its label above it (FieldLabel): no field says what it is for with a placeholder,
+   which is gone once you type and reads as a value while you do not. What else there is to
+   say (a format, an example, what happens with it) is help text under the field. */
+.spectrum .fld { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; }
+.spectrum .fld > span { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); line-height: var(--spectrum-line-height-100); white-space: nowrap; }
+.spectrum .fld.grow { flex: 1; }
+.spectrum .fld > :is(input, select) { width: 100%; }
+/* SearchField: a field that filters or finds says so with the magnifier at its start, and
+   is named for assistive technology (aria-label); it has no visible label and no placeholder. */
+.spectrum .s2-search { position: relative; display: block; min-width: 0; }
+.spectrum .s2-search::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: calc(50% - var(--spectrum-workflow-icon-size-75) / 2);
+  inset-inline-start: var(--spectrum-component-edge-to-visual-100);
+  width: var(--spectrum-workflow-icon-size-75);
+  height: var(--spectrum-workflow-icon-size-75);
+  background: var(--spectrum-neutral-subdued-content-color-default);
+  mask: var(--s2-icon-search) center / contain no-repeat;
+  pointer-events: none;
+}
+.spectrum .s2-search > input {
+  width: 100%;
+  min-height: var(--s2-ctl);
+  padding-inline: calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--s2-pill);
+}
+@media (forced-colors: active) { .spectrum .s2-search::before { background: CanvasText; } }
 
 /* A label is written in sentence case, also where it is a stored value (vendor, declined). */
 .spectrum .tag::first-letter { text-transform: uppercase; }

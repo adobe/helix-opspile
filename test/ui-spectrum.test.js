@@ -135,6 +135,39 @@ describe('Spectrum 2', () => {
     }
   });
 
+  it('labels its fields, with no placeholder, and asks before a team is deleted', () => {
+    const written = [...Object.entries(PAGES), ...Object.entries(SCRIPTS)].filter(([name]) => /\.(html|js)$/.test(name));
+    for (const [name, text] of written) {
+      // A placeholder is gone once you type and reads as a value until then: a field has a
+      // label (`.fld`, a form's own <label>), a search field its magnifier and an aria-label.
+      assert.doesNotMatch(text, /placeholder\s*[=:]/, name);
+    }
+    assert.match(SCRIPTS['admin.js'], /<label class="fld grow"><span>Name<\/span><input id="ntName" required><\/label>/);
+    assert.match(SCRIPTS['admin.js'], /<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams"/);
+    assert.match(SCRIPTS['spectrum.css'], /\.spectrum \.s2-search::before \{[^}]*mask: var\(--s2-icon-search\)/);
+    // Deleting a team is confirmed in an alert dialog; resetting an org is not.
+    assert.match(SCRIPTS['admin.js'], /\$\('tDelete'\)\.onclick = async \(\) => \(await confirmFirst\(/);
+    assert.match(SCRIPTS['admin.js'], /\$\('oDelete'\)\.onclick = \(\) => hold\(/);
+    assert.match(SCRIPTS['admin.js'], /dlg\.setAttribute\('role', 'alertdialog'\)/);
+  });
+
+  it('shows what a filter\'s value or a thread is with Spectrum 2\'s workflow icons, not emoji', () => {
+    const js = SCRIPTS['inbox.js'];
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const maps = [...js.matchAll(/const (?:KIND|URGENCY|STATUS|RESOLVED|DRAFT|WAITING|TYPE)_ICON = \{([^}]*)\};/g)];
+    assert.equal(maps.length, 7);
+    for (const [, body] of maps) {
+      const names = [...body.matchAll(/: '([^']+)'/g)].map((m) => m[1]);
+      assert.ok(names.length > 1);
+      // Each is an icon the stylesheet has, by name; none is a character.
+      for (const name of names) {
+        assert.match(name, /^[a-z-]+$/);
+        assert.ok(css.includes(`.spectrum .wf-${name} { --wf: `), name);
+      }
+    }
+    assert.match(css, /\.spectrum \.wf \{[^}]*background: currentColor;\s*mask: var\(--wf\) center \/ contain no-repeat;/);
+  });
+
   it('draws its icons and checkboxes itself, and its overlays arrive', () => {
     const shared = SCRIPTS['spectrum.css'];
     // A chevron or a menu's checkmark is Spectrum 2's icon, a mask in the text's color, on an

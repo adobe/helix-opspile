@@ -603,18 +603,39 @@ function md(src, thread = '') {
 const URGENCY = ['low', 'normal', 'high', 'critical'];
 // None and low are one bucket.
 const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : 'low');
-const KIND_EMOJI = {
-  incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', people: '👋', meeting: '📅', alert: '🚨', other: '💬',
+// What a filter's value or a thread's kind and urgency is: a Spectrum 2 workflow icon each, by
+// name (`.wf-<name>`, a mask in ui/spectrum-inbox.css, in the color of the text around it).
+// Emoji are for what people put on messages. Critical and high are the same icon wherever
+// they show: as an urgency, as the status that is that urgency unseen, and on a thread's row.
+const wf = (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`;
+const KIND_ICON = {
+  incident: 'cloud-error',
+  security: 'lock',
+  question: 'help',
+  request: 'hand',
+  access: 'key',
+  people: 'community',
+  meeting: 'calendar',
+  alert: 'bell',
+  other: 'comment',
 };
-const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
+const URGENCY_ICON = {
+  critical: 'alert-diamond', high: 'alert-triangle', normal: 'dash', low: 'chevron-down',
+};
 // Every filter row has an icon, so the folded filter column (the rail) still tells them apart.
 const STATUS_ICON = {
-  critical: '‼️', hot: '❗', you: '🫵', waiting: '⏰', silent: '🔇', team: '🤝', quiet: '🍃',
+  critical: 'alert-diamond',
+  hot: 'alert-triangle',
+  you: 'user',
+  waiting: 'clock-pending',
+  silent: 'volume-off',
+  team: 'user-group',
+  quiet: 'more',
 };
-const RESOLVED_ICON = { open: '⭕', resolved: '✅', '(none)': '◌' };
-const DRAFT_ICON = { mine: '✍️', team: '📝', none: '📭' };
-const WAITING_ICON = { Us: '🛎️', Customer: '⏳', Nobody: '💤' };
-const TYPE_ICON = { conversation: '💬', alert: '🚨' };
+const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 'cancel' };
+const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
+const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
+const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
@@ -855,24 +876,24 @@ const colorOf = (map) => (v) => map[v] || 'c-none';
 const customerName = (v) => { const t = [...listed(), ...(state.data?.threads || [])].find((x) => x.org === v); return t ? orgName(t) : v; };
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
-    emoji: (v) => STATUS_ICON[v], color: (v) => `c-${v}` },
+    glyph: (v) => STATUS_ICON[v], color: (v) => `c-${v}` },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
-    emoji: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
+    glyph: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
   { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' }, emoji: (v) => RESOLVED_ICON[v],
+    label: { open: 'Unresolved', resolved: 'Resolved' }, glyph: (v) => RESOLVED_ICON[v],
     color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
   { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
-    emoji: (v) => DRAFT_ICON[v], color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
+    glyph: (v) => DRAFT_ICON[v], color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
     labelFn: customerName, limit: 12, face: (v) => tile(customerName(v)),
     group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
-  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
+  { id: 'kind', title: 'Kind', value: kindOf, glyph: (v) => KIND_ICON[v], color: colorOf(KIND_COLOR),
     order: ['incident', 'security', 'question', 'request', 'access', 'people', 'meeting', 'alert', 'other'] },
   { id: 'topic', title: 'Topic', value: topicsOf, multi: true, labelFn: (v) => vocabName('topics', v), limit: 12,
     face: (v) => tile(vocabName('topics', v)) },
   { id: 'tech', title: 'Tech stack', value: techOf, multi: true, labelFn: (v) => vocabName('tech', v), limit: 12,
     face: (v) => tile(vocabName('tech', v)) },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], emoji: (v) => WAITING_ICON[v],
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], glyph: (v) => WAITING_ICON[v],
     color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
     face: involvesFace,
@@ -880,7 +901,7 @@ const FACETS = [
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' }, emoji: (v) => TYPE_ICON[v],
+    label: { conversation: 'Conversations', alert: 'Alerts' }, glyph: (v) => TYPE_ICON[v],
     color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
     icon: (v) => PLATFORM_SITE[v],
@@ -1031,7 +1052,7 @@ function facetRows(f) {
   return rows.map(([v, n]) => {
     const color = f.color ? f.color(v) : 'c-accent';
     const ic = f.icon && f.icon(v, all);
-    const em = f.emoji && f.emoji(v);
+    const em = f.glyph && f.glyph(v);
     const face = !ic && !em && f.face && f.face(v);
     const g = f.group && f.group(v);
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
@@ -1041,7 +1062,7 @@ function facetRows(f) {
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico em">${em}</span>` : '<span></span>'))}
+      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
       <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
       <span class="n">${n}</span>
@@ -1164,16 +1185,15 @@ const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/
   .replace(/<@[^>]+>|@\S+/g, '').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ')
   .trim();
 
-const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
 const ourMove = (t) => t.waiting_on === 'us';
 
-/** The thread's mood: its kind first, then the reactions people left in it. */
+/** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
 function moods(t) {
   const out = [];
   const u = urgencyOf(t);
-  if (URGENCY_EMOJI[u]) out.push(`<span class="em" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>`);
+  if (u === 'critical' || u === 'high') out.push(`<span class="em ${u}" role="img" aria-label="${cap(u)} urgency" title="${cap(u)} urgency">${wf(URGENCY_ICON[u])}</span>`);
   const k = kindOf(t);
-  if (k) out.push(`<span class="em" title="${esc(k)}">${KIND_EMOJI[k] || '💬'}</span>`);
+  if (k) out.push(`<span class="em" role="img" aria-label="${esc(cap(k))}" title="${esc(cap(k))}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`);
   const rx = (t.reactions || []).map((r) => ({ ...r, html: emojiHtml(r.emoji, { slack: t.source === 'slack' }) }))
     .filter((r) => r.html).sort((a, b) => b.count - a.count).slice(0, 5);
   for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
@@ -1706,7 +1726,7 @@ const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="c
 /** The list's heading, made once: the search box (kept, as you type in it), then the controls. */
 function listHead(box) {
   if (box.querySelector('.rows')) return;
-  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
+  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" aria-label="Search threads on Slack, Teams and Discord" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
   // How tall the heading is, for what sticks under it (the customers' headings, GROUPS.sticky).
   const head = box.querySelector('.count');
   new ResizeObserver(() => box.style.setProperty('--list-head', `${head.offsetHeight}px`)).observe(head);
@@ -2540,7 +2560,7 @@ function sideComposer(key, thread) {
     <div class="side-bar"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
       <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
       <button type="button" class="side-exit" data-side-exit title="Back to replying in the thread (Esc)">✕ Exit sidebar</button></div>
-    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted" placeholder="Ask ${AGENT_NAME} about this thread…"></textarea>
+    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
     <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
 }
 
@@ -2752,8 +2772,7 @@ function composer(thread, resolve = '', key = thread.thread) {
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="Reply in thread"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-label="Reply in thread" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
 }
 
@@ -3751,7 +3770,7 @@ function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
     const has = kept.includes(v.name);
     const forget = has ? `<button type="button" class="forget" data-bash="forget" data-name="${esc(v.name)}" title="Forget the value of ${esc(v.name)} remembered on this device"${off}>Forget</button>` : '';
     return `<label class="var"><span class="nm"><code>$${esc(v.name)}</code>${has ? '<span class="kept">remembered</span>' : ''}${forget}</span>${v.description ? `<span class="ds">${esc(v.description)}</span>` : ''}
-      <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="Value"${off}></label>`;
+      <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"${off}></label>`;
   });
   const remember = vars.length ? `<label class="keep" title="Encrypted in this browser's storage, with a key that cannot be taken out of it. Filled in the next time a command asks for a variable of the same name."><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
   const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets what it prints, never what you fill in.' : 'The agent gets what it prints.'}`;
@@ -4265,7 +4284,7 @@ function composeHead({ channel }) {
   const shut = '<button class="linkish cancel" data-close title="Close (Esc); what you wrote stays until you post it">Cancel</button>';
   const where = channel
     ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? ` · <span>${channelWhere(channel)}</span>` : ''} · <button class="linkish" data-rechannel>Change</button></div>`
-    : '<div class="chanpick"><input id="chan-q" type="search" role="combobox" aria-label="Channel to post in" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" placeholder="Pick a channel: search by name or customer" autocomplete="off" spellcheck="false"><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
+    : '<div class="chanpick"><label class="fld" for="chan-q"><span>Channel</span></label><input id="chan-q" type="search" role="combobox" aria-describedby="chan-hint" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" autocomplete="off" spellcheck="false"><span class="hint" id="chan-hint">Search by its name or its customer.</span><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
 
@@ -4280,8 +4299,7 @@ function composeBox({ channel, posting, unsure }) {
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${channel ? attachButton(channel) : ''}
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="${channel ? `Write to ${esc(channel.name)}` : 'Write your message'}"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-label="${channel ? `Message to ${esc(channel.name)}` : 'Message'}" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : (unsure ? 'Post again' : 'Post')}</button></span></div>`;
 }
 
@@ -4460,7 +4478,7 @@ function renderStarted() {
   // Slack names the files of a post, not its message: replies wait for the thread in the inbox.
   const can = s.root !== null;
   const reply = `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false" placeholder="Reply in thread"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-label="Reply in thread" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Send once the thread is in the inbox: what you write waits here"'}>Send</button></span></div>`;
   const scroller = pane.querySelector('.scroller');
   const top = scroller && pane.__started === s ? scroller.scrollTop : null;
@@ -6980,7 +6998,7 @@ const FILTER_ARGS = {
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
   status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord'], resolved: ['open', 'resolved'],
-  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_EMOJI),
+  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
 const cap = (v) => v[0].toUpperCase() + v.slice(1);

@@ -247,7 +247,13 @@ shadow unless it floats (a menu, a popover, the filters slid out over the list),
 a dashed edge but a drop zone and the agent's thought bubble, and a page has one
 high-attention action at most: what deletes or declines is a secondary (outline) button,
 red only where a dialog confirms it. Labels are in sentence case, also where they are stored
-values (`vendor` shows as "Vendor"). The browser's chrome (`theme-color`) is the frame's
+values (`vendor` shows as "Vendor"). No field has a placeholder: it has a label above it
+(`<label class="fld">`, or a form's own), help text under it for a format or an example, and
+a field that filters or finds has the magnifier (`<label class="s2-search">`) and an
+`aria-label`. What a filter's value or a thread's kind and urgency is, the inbox shows with
+Spectrum 2's workflow icons (`wf('alert-diamond')` in `ui/inbox.js`, a mask in
+`ui/spectrum-inbox.css`); emoji are for what people put on messages. Deleting a team is
+asked about first, in an alert dialog. The browser's chrome (`theme-color`) is the frame's
 layer.
 Your menu's **Appearance** picks the color scheme per browser (localStorage `opspile.scheme`):
 the system's, as the browser prefers it (the default), light or dark. `ui/header.js` sets it as
