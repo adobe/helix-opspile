@@ -657,7 +657,7 @@ const SHELLS = {
   },
   // Until the kernel has them on Cloudflare: TLS for its programs, and a jq that starts.
   'slicc-kernel': {
-    has: 'The shell is GNU bash with real programs: coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), find, xargs, diff, rg, tar, gzip, zip and unzip, tree, column, rev, strings and hexdump, and curl. For now curl reaches the internet over plain http:// only: an https:// URL fails ("CONNECT tunnel failed"), and so does what needs one, the team\'s secrets included. Say in your note what you could not fetch because of it. There is no jq yet (read JSON with grep, sed and awk), no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell\'s own.',
+    has: 'The shell is GNU bash with real programs: coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), find, xargs, diff, cmp, tar, gzip, unzip, tree, column, rev and hexdump, and curl. For now curl reaches the internet over plain http:// only: an https:// URL fails ("CONNECT tunnel failed"), and so does what needs one, the team\'s secrets included. Say in your note what you could not fetch because of it. There is no jq yet (read JSON with grep, sed and awk), no rg, zip or strings, no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell\'s own.',
     ndjson: 'grep and awk',
   },
 };

@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -22,6 +23,7 @@ import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
 import { runtimeFor } from '../src/agent/kernel.js';
+import { IMAGE, imagePackage } from '../scripts/computer-image.mjs';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
@@ -585,6 +587,21 @@ describe('the agent\'s switchable tools', () => {
     assert.match(kernel, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
     assert.match(kernel, /The shell is GNU bash with real programs: coreutils/);
     assert.doesNotMatch(kernel, /just-bash/);
+    // Every program it is told it has is in the image (scripts/computer-image.mjs).
+    const named = /coreutils \(([^)]*) and the rest\), (.*?), and curl\./.exec(kernel);
+    const words = `${named[1]}, ${named[2]}, curl`.replace(/\(gawk\)/, '').replace(/ and /g, ', ')
+      .split(',')
+      .map((w) => w.trim())
+      .filter(Boolean);
+    const image = new Set();
+    for (const spec of IMAGE) {
+      // eslint-disable-next-line no-await-in-loop
+      const manifest = JSON.parse(await readFile(new URL(`../node_modules/${spec.name}/package.json`, import.meta.url), 'utf8'));
+      const { commands } = imagePackage(manifest, spec).manifest.slicc;
+      Object.keys(commands).forEach((c) => image.add(c));
+    }
+    assert.ok(words.length > 20);
+    assert.deepEqual(words.filter((w) => !image.has(w)), []);
     // What it cannot do yet is said, so that it does not try around it.
     assert.match(kernel, /plain http:\/\/ only/);
     assert.match(kernel, /There is no jq yet/);
