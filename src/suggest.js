@@ -16,6 +16,7 @@ import { CLEF } from './label.js';
 import {
   getChannel, isStaffDomain, loadRules, slackApi,
 } from './lookup.js';
+import { followChange } from './refile.js';
 import { ADMIN_TEAM } from './review.js';
 
 /**
@@ -426,7 +427,13 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
             // eslint-disable-next-line no-await-in-loop
             await getChannel(env, {
               source: ch.source, tenant: ch.tenant, channelId: ch.channel_id, groupId: ch.group_id,
-            }, now).catch(() => null);
+            }, now, {
+              // Renamed since its last lookup: its threads follow, as from the normalizer. A
+              // failure leaves the row as it was, so the next lookup finds the change again.
+              onChange: async (before, after) => followChange(env, ch, {
+                before, after,
+              }, await loadRules(env)),
+            }).catch(() => null);
           }
           // eslint-disable-next-line no-await-in-loop
           row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')

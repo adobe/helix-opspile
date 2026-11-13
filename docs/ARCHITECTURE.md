@@ -144,8 +144,9 @@ changes one after the other, so many can be made in a row. Applied, each moved c
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
 thread rows take the new org, team and kind, and the new org and team get their knowledge
-bases. A job starts from where each thread is filed in D1, not where it was when the job was
-queued, so several changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
+bases. A job starts from where each thread is filed in D1, and also moves what is still where it was
+when the job was queued (a message filed meanwhile points the row at the new place), so several
+changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
 **Team managers.** A member of a team can be its **manager**: they get the admin pages and
 the knowledge-base editor for that team only, where they add and remove members, promote
@@ -178,6 +179,18 @@ day. These are its only platform calls. Files only move forward to a newer versi
 tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2. A rule
 changed in D1 by hand needs pile 2 emptied and replayed; one changed in the admin UI re-files
 the channels it moves (below).
+
+**A renamed channel is re-filed** the same way, by the same `refile` jobs: the rules read a
+channel's name, its Teams team's name and its Slack Connect teams, so a channel renamed to a
+name a rule maps to an org (or another team, or a kind) takes its threads along. The normalizer
+notices it when a Slack rename event arrives, when a Teams notice says the channel or its team
+was renamed (it looks the channel up again then), and when a lookup (a day after the last, from a
+message or the cron) finds them changed; Discord renames are found by the lookups. It queues the
+moves only when the rules classify the channel differently than before, before it files the
+message that came with the change. A manual assignment is a rule, so a rename does not undo it
+(a channel assigned to a team keeps it, and takes the org its new name gives); the teams the
+channel is shared with stay. A rename event older than what D1 knows of the channel (a replay)
+is left out.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
