@@ -140,7 +140,15 @@ describe('the drawer', () => {
     });
     const stops = [stop('close'), stop('hidden', { offsetParent: null }), stop('field'),
       stop('busy', { disabled: true }), stop('send')];
-    const el = { ...listen('sheet'), __key: 'k', querySelectorAll: () => stops };
+    const asked = [];
+    const el = {
+      ...listen('sheet'),
+      __key: 'k',
+      querySelectorAll: (selector) => {
+        asked.push(selector);
+        return stops;
+      },
+    };
     wireLines(listen('tab'), el);
     assert.deepEqual(Object.keys(on).sort(), ['sheet.click', 'sheet.keydown', 'tab.click']);
     const target = (matches) => ({ closest: (sel) => (sel.includes(matches) ? {} : null) });
@@ -175,6 +183,8 @@ describe('the drawer', () => {
       return stayed ? focused.pop() : 'on';
     };
     assert.equal(tab('send'), 'close');
+    // Everything Tab can land on, a person's chip (`tabindex="0"`) too; not the sheet itself.
+    assert.deepEqual(asked, ['button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])']);
     assert.equal(tab('field'), 'on');
     assert.equal(tab('close', true), 'send');
     assert.equal(tab('field', true), 'on');

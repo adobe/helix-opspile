@@ -3966,7 +3966,8 @@ function wireLines(tab, el) {
     if (linesDrawer.key !== el.__key) return;
     if (e.key === 'Tab') {
       // The open sheet is modal: Tab goes round in it, not on into the thread behind it.
-      const stops = [...el.querySelectorAll('button, input, a[href]')].filter((n) => !n.disabled && n.offsetParent);
+      // What Tab stops at: also a person's chip in the draft, which is a `tabindex="0"`.
+      const stops = [...el.querySelectorAll('button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])')].filter((n) => !n.disabled && n.offsetParent);
       const at = document.activeElement;
       const to = e.shiftKey ? (at === stops[0] || !stops.includes(at)) && stops.at(-1) : at === stops.at(-1) && stops[0];
       if (to) { e.preventDefault(); to.focus(); }
