@@ -1466,8 +1466,12 @@ function searchRows(box) {
   cardGone();
   state.order = hits.map((h) => h.thread);
 }
+/** Where the thread scrolls to for message `el`: a little below its top, and below its header
+ * where that lies over it (on a phone, wireHeadAway). */
+const messageTop = (scroller, el) => Math.max(0, el.offsetTop - scroller.offsetTop
+  - parseFloat(getComputedStyle(scroller).paddingTop || 0) - 80);
 /** Scrolls the thread to message `el`, a little below its top. */
-const scrollToMessage = (scroller, el) => { scroller.scrollTop = Math.max(0, el.offsetTop - scroller.offsetTop - 80); };
+const scrollToMessage = (scroller, el) => { scroller.scrollTop = messageTop(scroller, el); };
 /** Marks message `el` for a moment: the one a search or a link was for. */
 function markFound(el) {
   el.classList.add('found');
@@ -1479,7 +1483,7 @@ function openMessage(thread, id) {
   const scroller = $('pane').querySelector('.scroller');
   const el = scroller?.querySelector(`[data-id="${CSS.escape(mid)}"]`);
   if (el) {
-    scroller.scrollTo({ top: Math.max(0, el.offsetTop - scroller.offsetTop - 80), behavior: 'smooth' });
+    scroller.scrollTo({ top: messageTop(scroller, el), behavior: 'smooth' });
     markFound(el);
     return;
   }
@@ -6252,6 +6256,52 @@ function wireDrawerSwipes() {
   main.addEventListener('touchcancel', end);
 }
 
+// On a phone the thread's header scrolls away with the thread, as if it were its top, and
+// comes back as you scroll up again, as far as you do: it lies over the thread, which leaves it
+// room at its top (`--ph-h`), and moves up by as much as the thread scrolled down (`--ph-off`).
+// A thread opened, or opened at a message, shows its header; an open dropdown of the header
+// keeps it where it is.
+/** How far the header is moved up (0 to `height`) after the thread scrolled down by `delta`. */
+const headAway = (off, delta, height) => Math.min(height, Math.max(0, off + delta));
+function wireHeadAway() {
+  const pane = $('pane');
+  const seen = new WeakMap();
+  let head = null;
+  let scroller = null;
+  let off = 0;
+  const place = () => pane.style.setProperty('--ph-off', `${off}px`);
+  const size = new ResizeObserver(() => {
+    if (!head?.isConnected) return;
+    pane.style.setProperty('--ph-h', `${head.offsetHeight}px`);
+    off = Math.min(off, head.offsetHeight);
+    place();
+  });
+  // The pane's contents, replaced: another thread, or the same one's new header.
+  new MutationObserver(() => {
+    const ph = pane.querySelector(':scope > .ph');
+    if (ph !== head) {
+      if (head) size.unobserve(head);
+      head = ph;
+      if (head) size.observe(head);
+    }
+    const now = pane.querySelector(':scope > .scroller');
+    if (now !== scroller) { scroller = now; off = 0; place(); }
+  }).observe(pane, { childList: true });
+  TAKING_TURNS.addEventListener('change', () => { off = 0; place(); });
+  pane.addEventListener('scroll', (e) => {
+    const el = e.target;
+    if (el !== scroller || !head) return;
+    // iOS bounces past either end: the thread's top and bottom are where it is.
+    const top = Math.min(el.scrollHeight - el.clientHeight, Math.max(0, el.scrollTop));
+    // Its first scroll is where it was placed as it opened, by the page, not by you.
+    const last = seen.has(el) ? seen.get(el) : top;
+    seen.set(el, top);
+    if (!TAKING_TURNS.matches || state.headOpen || state.expertsOpen) return;
+    off = headAway(off, top - last, head.offsetHeight);
+    place();
+  }, true);
+}
+
 // ---------------------------------------------------------------- wiring
 function move(step) {
   if (!state.order.length) return;
@@ -6363,6 +6413,7 @@ async function start() {
     if (e.target === e.currentTarget && state.filtering) setFiltering(false);
   });
   wireDrawerSwipes();
+  wireHeadAway();
   wireRail();
   wireLogos();
   $('pane').onclick = async (e) => {

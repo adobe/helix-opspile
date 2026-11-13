@@ -240,6 +240,15 @@ describe('inbox page', () => {
     assert.equal(drawerOpens(0.4, -0.1), false);
   });
 
+  it('moves the thread\'s header away on a phone as the thread scrolls, and back', () => {
+    const { headAway } = piece('const headAway', 'function wireHeadAway', 'headAway');
+    // Down: as far as the thread went, until it is gone; up: back as far, until it is all there.
+    assert.equal(headAway(0, 40, 140), 40);
+    assert.equal(headAway(120, 40, 140), 140);
+    assert.equal(headAway(140, -30, 140), 110);
+    assert.equal(headAway(20, -30, 140), 0);
+  });
+
   it('opens the personal view unless the address names a team', () => {
     const { personalAsked } = piece('const personalAsked', 'function fromUrl', 'personalAsked');
     const asks = (search) => personalAsked(new URLSearchParams(search));
