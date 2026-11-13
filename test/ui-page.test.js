@@ -96,8 +96,8 @@ describe('inbox page', () => {
     for (const iso of ['2024-03-01T07:05:00Z', '2023-12-31T23:59:00Z', '2024-06-15T13:30:00Z']) {
       const d = new Date(iso);
       assert.equal(clock(iso), d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
-      // The day of a message, in the year it is of, and looked at in a later one.
-      const then = new Date(d.getFullYear(), 11, 31, 23);
+      // The day of a message, on another day of its year, and looked at in a later year.
+      const then = new Date(d.getFullYear(), 6, 4);
       assert.equal(dayLabel(iso, then), d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
       assert.equal(dayLabel(iso), d.toLocaleDateString(undefined, {
         weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
