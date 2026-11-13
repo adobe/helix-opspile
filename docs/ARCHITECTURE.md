@@ -1471,12 +1471,29 @@ The inboxes of the thread's teams hear of each message and answer through the te
 (`{ type: 'sidebar' }`).
 
 In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
-it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. The reply
-box turns into the sidebar's, in purple, saying that only the team sees it and nothing goes to
-the platform, with **✕ Exit sidebar** (and Esc, and opening another thread). Each run of sidebar
-messages shows between the thread's messages where it happened, folded to one line ("Lena Berg
-had a sidebar conversation with Thread Agent · 4 messages · not posted"), which unfolds it; the
-one you are in stays open at the bottom, with the agent working on its answer.
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
+of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
+a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
+thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
+"the sidebar"):
+
+- **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from
+  the list's left edge to the content area's right (the list's least 380, 440 for the thread,
+  the panel's least 360), measured, because the filters fold to a rail on some screens. While
+  the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
+  panel, so the thread stays the widest by far and the list gives up room too, down to its
+  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
+  conversation of the thread, each under when it started, the agent working on its answer, and
+  a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
+  A line in the thread opens the panel at its conversation, also for someone who may not talk
+  to the agent (viewing as someone else): they read there, without a box.
+- **In the thread**, on a narrower screen: a line unfolds its conversation where it is, the one
+  you are in stays open at the bottom, with the agent working on its answer, and the reply box
+  turns into the sidebar's.
+
+Both are purple, say that only the team sees it and that nothing goes to the platform, and are
+left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
+sidebar you are in from one to the other, with what is typed in its box.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
