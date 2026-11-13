@@ -48,7 +48,7 @@ still answer.
 | `POST /api/kb/mcp/oauth/start`, `GET /api/kb/mcp/oauth/callback`, `POST /api/kb/mcp/oauth/disconnect` | The OAuth sign-in of an agents' MCP server (`auth: oauth`), for whoever may edit it: `start { id }` answers with the URL of the server's sign-in (discovery, client registration and PKCE done); the server sends the browser back to `callback?code&state`, which only the person who started may finish, keeps the grant (sealed with `TOKEN_KEY`), lists the tools and returns to the editor; `disconnect { id }` revokes the grant where the server can, and forgets it. |
 | `POST /teams/bot` | The messaging endpoint of the opspile Teams bot. The bot is notification-only and opspile reads Teams through Graph, so it answers every activity with 200 and keeps nothing. |
 | `GET /api/kb/extraction?repo=`, `POST`/`DELETE /api/kb/extraction/rule`, `POST`/`DELETE /api/kb/extraction/tech`, `POST /api/kb/extraction/test` | A team's extraction rules and tech stack (src/extract.js), from its knowledge base (`?repo=`, or `{ repo, … }`): `GET` the team's and the admin team's, which apply to every channel (the members of the team, read-only: `may: false`); `rule { id?, name, kind, target, field, pattern, flags, value, transform, exclude, script, enabled }` adds a rule or changes rule `id`, `DELETE rule { id }`; `tech { tech, name, description, enabled }` adds or changes a technology, `DELETE tech { tech }`; `test { rule, text }` what a rule finds, unsaved too. For the admin team and the team's managers. |
-| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, its shell (`runtime`), which `PUT { tool: "computer", team, runtime }` chooses (`just-bash` or `slicc-kernel`), for the admin team only. |
+| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, its shell (`runtime`) and the image of its kernels (`image`, one of `images`), which `PUT { tool: "computer", team, runtime }` (`just-bash` or `slicc-kernel`) and `PUT { tool: "computer", team, image }` choose, for the admin team only. |
 | `POST`, `PUT`, `DELETE /api/kb/tools/secrets` | The secrets of the agents' computers, for whoever may edit the knowledge base: `POST { repo, name, value, hosts, description? }` adds one (`name` is the shell's variable, `ACME_API_KEY`; `hosts` the only hosts it is sent to, `api.example.com` or `*.example.com`), `PUT { id, … }` changes it (`value` absent: kept), `DELETE { id }` removes it. The value is sealed with `TOKEN_KEY` and never shown again. |
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `check { server }` connects to it and lists its tools again. |
 | `POST /api/kb/github/manifest`, `GET /api/kb/github/created` | The GitHub App of the global `github` server, for the admin team: `{ org?, name? }` answers with the manifest the editor posts to GitHub; GitHub sends the admin back to `created?code&state`, which keeps the app (its private key sealed with `TOKEN_KEY`) and goes on to its installation page. `PUT /api/kb/github/installation { id, approved }` allows an installation (agents read only allowed ones) or revokes it. |
@@ -155,6 +155,7 @@ Nothing below is committed; set it on the Worker.
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
 | `RAW` | R2 bucket | Pile 1: `helix-opspile-raw` (`-stage` for stage) |
 | `CHANNELS` | R2 bucket | Pile 2: `helix-opspile-channels` (`-stage`) |
+| `IMAGES` | R2 bucket | The images of the agents' computers on the SLICC kernel (docs/ARCHITECTURE.md, "The computer's shell"): `helix-opspile-images` (`-stage`). `cf deploy` makes it, and `npm run computer:images -- --mode prod` fills it, which the deploy job does. Never give it a lifecycle rule |
 | `FILES` | R2 bucket | Copies of the files attached to messages, for agents' computers: `helix-opspile-files` (`-stage`). Delete them after 30 days with a lifecycle rule, set once by hand after the first deploy: `npx wrangler r2 bucket lifecycle add helix-opspile-files expire-30d --expire-days 30` |
 | `DB` | D1 | `helix-opspile` (`-stage`): teams, people, identities, channels, rules, orgs, partner domains, threads, messages, watermarks, mentions, backfills, labels, facts, drafts, agent repos and their mirrors |
 | `AI` | Workers AI | Clef (thread labels, re-threading, the agents' prompt-injection check) and Clairic (facts), `bge-base-en-v1.5` embeddings |
@@ -415,11 +416,14 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   remember it on the device, encrypted.
   **Shell**, in the same row of a team's knowledge base, is what runs the commands of that
   team's agents, and only the admin team chooses it: **just-bash** (the default), or **SLICC
-  kernel (experimental)**, GNU bash and real programs (coreutils, grep, sed, gawk, find, diff,
-  curl, tar, gzip, unzip) on the [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel),
-  over the same files. For now that shell's curl reaches plain `http://` only, so nothing over
-  `https://` and none of the secrets, and it has no `jq`: see docs/ARCHITECTURE.md, "The
-  computer's shell".
+  kernel (experimental)**, GNU bash and real programs on the
+  [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel), over the same files. With the
+  kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, find,
+  diff, curl, tar, gzip, zip) or **Data** (Base, with ripgrep, sqlite3 and strings). Images
+  are defined in [scripts/computer-images.mjs](scripts/computer-images.mjs) and live in the
+  `IMAGES` bucket, not in the Worker. For now that shell's curl reaches plain `http://` only,
+  so nothing over `https://` and none of the secrets, and it has no `jq`: see
+  docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages. Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See
@@ -645,20 +649,24 @@ thinking shows in her inbox).
 
 `npm run computer:dev` runs an agent's computer by itself in local workerd
 ([scripts/dev-computer/worker.mjs](scripts/dev-computer/worker.mjs)): the real `ThreadAgent` with
-its Workspace and both shells, without a model, an inbox or D1 (so without secrets). No
-Cloudflare login is needed. `runtime` chooses the shell, as a team's choice does, and stays
-until the next change:
+its Workspace and both shells, without a model, an inbox or D1 (so without secrets), and with
+the images in a local bucket. No Cloudflare login is needed. `runtime` chooses the shell and
+`image` the kernel's image, as a team's choice does, and they stay until the next change:
 
 ```sh
 npm run computer:dev    # http://localhost:8788
 curl localhost:8788 -d '{"command":"uname -a; ls -la","runtime":"slicc-kernel"}'
+curl localhost:8788 -d '{"command":"sqlite3 --version","image":"data"}'
 curl localhost:8788 -d '{"command":"sleep 9","timeout":2}'
 curl localhost:8788/uploads -d '{"a.log":"line 1\nERROR boom\n"}'   # the thread's uploads
+curl localhost:8788/shell -d '{}'                                     # what the agent is told
 curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another agent
 ```
 
-Use it for a new version of `@ai-ecoverse/slicc-kernel` or of the programs of its image
-(`scripts/computer-image.mjs`): Node's tests cannot run the kernel.
+Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image or program
+(`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `cf dev` runs the whole
+Worker with its own local bucket, which `node scripts/computer-images.mjs --upload --local`
+fills.
 
 ### Measure the inbox
 
@@ -823,9 +831,10 @@ To deploy by hand instead: deploys go through the new Cloudflare CLI,
 prod` or `--mode stage` selects the Worker). `cf deploy` and `cf dev` also build the inbox's
 markdown bundle, the knowledge-base editor's and the code highlighter's
 (`src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` and `src/ui-highlight.bundle.js`, not
-committed; `npm run build` by hand), and the programs of the agents' computers on the SLICC
-kernel (`src/computer-image/`, from the pinned `@ai-ecoverse/wasm-*` packages, not committed
-either).
+committed; `npm run build` by hand). The images of the agents' computers on the SLICC kernel
+are not part of the Worker: after the first deploy, and whenever
+[scripts/computer-images.mjs](scripts/computer-images.mjs) or a package it uses changes,
+`npm run computer:images -- --mode prod` uploads what is new to the `IMAGES` bucket.
 
 ```sh
 npm install

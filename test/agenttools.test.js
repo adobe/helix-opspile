@@ -11,7 +11,6 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -22,13 +21,14 @@ import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durab
 import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
-import { runtimeFor } from '../src/agent/kernel.js';
-import { IMAGE, imagePackage } from '../scripts/computer-image.mjs';
+import { commandsOf } from '../src/agent/image.js';
+import { runtimeFor, shellFor } from '../src/agent/kernel.js';
+import { build } from '../scripts/computer-images.mjs';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
-import { quiet } from './fakes.js';
+import { fakeBucket, quiet } from './fakes.js';
 
 // Made-up people, teams, channels, ids and tokens only.
 const ADA = {
@@ -251,6 +251,65 @@ describe('agent tools', () => {
     res = await put(admin, { runtime: 'just-bash' });
     assert.equal(res.body.runtime.runtime, 'just-bash');
     assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'just-bash');
+  });
+
+  it('have the kernel\'s image, one of those in the images bucket', async () => {
+    const index = (...names) => JSON.stringify({
+      v: 1,
+      images: names.map((name) => ({
+        name, title: name.toUpperCase(), description: `for ${name}`, digest: `d-${name}`, bytes: 9e6,
+      })),
+    });
+    const e = env({ IMAGES: fakeBucket({ 'images/index.json': index('base', 'data') }) });
+    const computerOf = async (me, repo = 'kb-team-helix') => (await call(e, me, 'GET', `/api/kb/tools?repo=${repo}`))
+      .body.tools.find((t) => t.tool === 'computer');
+    let computer = await computerOf(manager);
+    assert.deepEqual(computer.image, { image: 'base' });
+    assert.deepEqual(computer.images, [
+      {
+        name: 'base', title: 'BASE', description: 'for base', digest: 'd-base', bytes: 9e6,
+      },
+      {
+        name: 'data', title: 'DATA', description: 'for data', digest: 'd-data', bytes: 9e6,
+      },
+    ]);
+    assert.equal((await computerOf(admin, 'kb-org-acme')).images, undefined);
+
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', ...body });
+    assert.equal((await put(manager, { image: 'data' })).status, 403);
+    let res = await put(admin, { image: 'gpu' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /give image: base or data/);
+    assert.equal((await put(admin, { image: 'data', team: 'nobody' })).status, 404);
+    // One that is refused changes nothing, not even the shell that came with it.
+    assert.equal((await put(admin, { runtime: 'slicc-kernel', image: 'gpu' })).status, 400);
+    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 0);
+
+    // The shell and its image in one, or the image alone.
+    res = await put(admin, { runtime: 'slicc-kernel', image: 'data' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.runtime.runtime, 'slicc-kernel');
+    assert.deepEqual([res.body.image.image, res.body.image.by], ['data', 'Ada']);
+    assert.deepEqual(await shellFor(e, target(SLACK, 'slack', 'C1')), { runtime: 'slicc-kernel', image: 'data' });
+    res = await put(admin, { image: 'base' });
+    assert.deepEqual(Object.keys(res.body).sort(), ['image', 'ok', 'team', 'tool']);
+    computer = await computerOf(manager);
+    assert.deepEqual([computer.image.image, computer.runtime.runtime], ['base', 'slicc-kernel']);
+
+    // An image the bucket lost stays the team's choice, and shows as it is.
+    await put(admin, { image: 'data' });
+    await e.IMAGES.put('images/index.json', index('base'));
+    computer = await computerOf(admin);
+    assert.equal(computer.image.image, 'data');
+    assert.deepEqual(computer.images.map((i) => i.name), ['base']);
+
+    // Without a bucket, or an empty one, there is nothing to choose, and the answer says why.
+    const bare = env();
+    assert.deepEqual((await call(bare, admin, 'GET', '/api/kb/tools?repo=kb-team-helix'))
+      .body.tools.find((t) => t.tool === 'computer').images, []);
+    res = await call(bare, admin, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', image: 'base' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /no images in the images bucket/);
   });
 });
 
@@ -575,42 +634,53 @@ describe('the agent\'s switchable tools', () => {
     assert.equal((await stopped.exec(['ls'], {})).error.code, 'spawn_error');
   });
 
-  it('are told what the shell of their computer has, by the shell their team chose', async () => {
-    const ctx = { env: env(), hasThread: true, target: async () => target(SLACK, 'slack', 'C1') };
-    const guide = (options) => agentToolsExtension(ctx, ['computer'], options).sections
-      .find((s) => s.key === 'computer').render({});
+  it('are told what the shell of their computer has, by the shell and image their team chose', async () => {
+    const guide = (shell) => agentToolsExtension({
+      env: env(),
+      hasThread: true,
+      target: async () => target(SLACK, 'slack', 'C1'),
+      ...(shell ? { shell } : {}),
+    }, ['computer']).sections.find((s) => s.key === 'computer').render({});
     const justBash = await guide();
-    assert.equal(await guide({ runtime: 'just-bash' }), justBash);
+    assert.equal(await guide(async () => ({ runtime: 'just-bash' })), justBash);
     assert.match(justBash, /The shell is just-bash: cat, grep, sed, awk, jq,/);
     assert.match(justBash, /use its \.requests\.ndjson file with jq:/);
-    const kernel = await guide({ runtime: 'slicc-kernel' });
-    assert.match(kernel, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    assert.match(kernel, /The shell is GNU bash with real programs: coreutils/);
-    assert.doesNotMatch(kernel, /just-bash/);
-    // Every program it is told it has is in the image (scripts/computer-image.mjs).
-    const named = /coreutils \(([^)]*) and the rest\), (.*?), and curl\./.exec(kernel);
-    const words = `${named[1]}, ${named[2]}, curl`.replace(/\(gawk\)/, '').replace(/ and /g, ', ')
-      .split(',')
-      .map((w) => w.trim())
-      .filter(Boolean);
-    const image = new Set();
-    for (const spec of IMAGE) {
-      // eslint-disable-next-line no-await-in-loop
-      const manifest = JSON.parse(await readFile(new URL(`../node_modules/${spec.name}/package.json`, import.meta.url), 'utf8'));
-      const { commands } = imagePackage(manifest, spec).manifest.slicc;
-      Object.keys(commands).forEach((c) => image.add(c));
-    }
-    assert.ok(words.length > 20);
-    assert.deepEqual(words.filter((w) => !image.has(w)), []);
+
+    // With the kernel, what its image says it has (scripts/computer-images.mjs).
+    const { images } = await build();
+    const shellOf = (image) => async () => ({
+      runtime: 'slicc-kernel', image: image.name, tools: image.tools, commands: commandsOf(image),
+    });
+    const base = await guide(shellOf(images[0]));
+    assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
+    assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. For now curl`));
+    assert.doesNotMatch(base, /just-bash|sqlite3/);
+    const data = await guide(shellOf(images[1]));
+    assert.match(data, /curl, rg, sqlite3, strings\. For now curl/);
     // What it cannot do yet is said, so that it does not try around it.
-    assert.match(kernel, /plain http:\/\/ only/);
-    assert.match(kernel, /There is no jq yet/);
-    assert.match(kernel, /use its \.requests\.ndjson file with grep and awk:/);
-    // The rest is the same computer: its uploads, and the commands a person runs.
-    assert.match(kernel, /uploads\/ in that directory is read-only/);
-    assert.match(kernel, /request_bash asks a person on the team/);
-    // A shell this deployment does not know is the default.
-    assert.equal(await guide({ runtime: 'docker' }), justBash);
+    for (const text of [base, data]) {
+      assert.match(text, /plain http:\/\/ only/);
+      assert.match(text, /There is no jq here: read JSON with grep, sed and awk\./);
+      assert.match(text, /use its \.requests\.ndjson file with grep and awk:/);
+      // The rest is the same computer: its uploads, and the commands a person runs.
+      assert.match(text, /uploads\/ in that directory is read-only/);
+      assert.match(text, /request_bash asks a person on the team/);
+    }
+    // An image with jq says nothing of its absence.
+    const withJq = await guide(async () => ({
+      runtime: 'slicc-kernel', image: 'json', tools: 'cat, jq', commands: ['cat', 'jq'],
+    }));
+    assert.doesNotMatch(withJq, /There is no jq/);
+    assert.match(withJq, /use its \.requests\.ndjson file with jq:/);
+    // An image the bucket does not have (or no bucket): the agent looks for itself.
+    const unknown = await guide(async () => ({ runtime: 'slicc-kernel', image: 'gone' }));
+    assert.match(unknown, /The shell is GNU bash with real programs: ls \/usr\/bin lists them\. For now curl/);
+    assert.doesNotMatch(unknown, /There is no jq/);
+    // A shell that cannot be asked about is just-bash's text, not a failed prompt.
+    const failing = async () => {
+      throw new Error('storage');
+    };
+    assert.equal(await guide(failing), justBash);
   });
 
   it('are absent while off', async () => {

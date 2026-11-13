@@ -10,18 +10,22 @@
  * governing permissions and limitations under the License.
  */
 
+import { DEFAULT_IMAGE, isImageName } from './image.js';
+
 /**
  * The second shell of the agents' computers (the `computer` tool, src/agent/computer.js): GNU
- * bash and the programs of src/computer-image/ (scripts/computer-image.mjs) on the SLICC
- * kernel (@ai-ecoverse/slicc-kernel/cloudflare), where a team chose it over just-bash
- * (`runtimeFor`, the knowledge-base editor's Computer tool).
+ * bash and real programs on the SLICC kernel (@ai-ecoverse/slicc-kernel/cloudflare), where a
+ * team chose it over just-bash (`shellFor`, the knowledge-base editor's Computer tool).
  *
  * The kernel runs in the ThreadAgent object, its processes in Dynamic Workers (env.LOADER)
  * that have no network of their own. It is a backend of the same Workspace as just-bash
  * (`sliccBackend`), so the thread's files are the same ones, mounted at /workspace, the
- * uploads among them. The kernel's own root (/root, /tmp, /etc, and the image under
- * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`): installed
- * with the first command of a thread, and again when a deploy brings another image.
+ * uploads among them. The kernel's own root (/root, /tmp, /etc, and its programs under
+ * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
+ *
+ * Its programs are an image (src/agent/image.js): the team's choice among those in the
+ * `IMAGES` bucket, installed from there when the kernel boots, and again when the team
+ * chooses another or a deploy changes it.
  *
  * Its programs reach the network through the kernel's proxy, which hands every request to a
  * transport: here `gatewayFetch`, the same `forward` as just-bash's SecretGateway
@@ -42,80 +46,89 @@ export const RUNTIMES = [
   {
     runtime: 'slicc-kernel',
     title: 'SLICC kernel (experimental)',
-    description: 'GNU bash with real programs (WebAssembly): coreutils, grep, sed, gawk, find,'
-      + ' diff, curl, tar, gzip and unzip, with processes, pipes and signals, on the same files.'
-      + ' For now its curl reaches plain http:// only, so nothing over https:// and none of the'
-      + ' secrets, and it has no jq. A command takes about a tenth of a second longer, and each'
-      + ' thread keeps its own copy of the programs (12 MB).',
+    description: 'GNU bash with real programs (WebAssembly), with processes, pipes and signals,'
+      + ' on the same files. Which programs is the image\'s choice, below. For now its curl'
+      + ' reaches plain http:// only, so nothing over https:// and none of the secrets, and it'
+      + ' has no jq. A command takes about a tenth of a second longer, and each thread keeps its'
+      + ' own copy of the image.',
   },
 ];
 export const DEFAULT_RUNTIME = 'just-bash';
 export const isRuntime = (runtime) => RUNTIMES.some((r) => r.runtime === runtime);
 
-/** The option of the Computer tool that names its shell (`agent_tool_options`). */
-const OPTION = 'runtime';
+/** An option of a team's Computer tool (`agent_tool_options`): its row, or null. */
+const option = async (env, team, name) => (team && env.DB ? env.DB.prepare(`SELECT value,
+    changed_by, changed_at FROM agent_tool_options WHERE tool = 'computer' AND team = ?
+    AND name = ?`).bind(team, name).first() : null);
+
+async function setOption(env, {
+  team, name, value, by,
+}) {
+  const at = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by,
+      changed_at) VALUES ('computer', ?, ?, ?, ?, ?)
+    ON CONFLICT (tool, team, name) DO UPDATE SET value = excluded.value,
+      changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
+    .bind(team, name, value, by, at).run();
+  return { by, at };
+}
 
 /**
  * The shell of a team's computers: `{ runtime, by, at }`, `by` and `at` only once someone
  * chose. A value this deployment does not know (an older one, after a rollback) is the default.
  */
 export async function teamRuntime(env, team) {
-  const row = team && env.DB ? await env.DB.prepare(`SELECT value, changed_by, changed_at
-      FROM agent_tool_options WHERE tool = 'computer' AND team = ? AND name = ?`)
-    .bind(team, OPTION).first() : null;
+  const row = await option(env, team, 'runtime');
   return row && isRuntime(row.value)
     ? { runtime: row.value, by: row.changed_by, at: row.changed_at }
     : { runtime: DEFAULT_RUNTIME };
 }
 
-/** The shell of an agent's computer, by its target's team (src/agent/agent.js `target`). */
-export async function runtimeFor(env, target) {
-  return (await teamRuntime(env, target && target.team)).runtime;
-}
-
 /** Sets the shell of a team's computers, as `by` (a name), now: `{ runtime, by, at }`. */
 export async function setTeamRuntime(env, { team, runtime, by }) {
-  const at = new Date().toISOString();
-  await env.DB.prepare(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by,
-      changed_at) VALUES ('computer', ?, ?, ?, ?, ?)
-    ON CONFLICT (tool, team, name) DO UPDATE SET value = excluded.value,
-      changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
-    .bind(team, OPTION, runtime, by, at).run();
-  return { runtime, by, at };
-}
-
-const MODULES = '/node_modules';
-const decoder = new TextDecoder();
-
-/** Whether `name` is installed as `manifest` says: its package.json is written last. */
-async function installed(kernel, name, manifest) {
-  try {
-    return decoder.decode(await kernel.readFile(`${MODULES}/${name}/package.json`)) === manifest;
-  } catch {
-    return false;
-  }
+  return {
+    runtime,
+    ...await setOption(env, {
+      team, name: 'runtime', value: runtime, by,
+    }),
+  };
 }
 
 /**
- * Installs `packages` (src/computer-image/) in `kernel` where they are not yet, or are another
- * version: every file under /node_modules/<name>, the manifest last, so that a package half
- * written (the object stopped) is written again. Resolves to how many it wrote.
+ * The image of a team's computers on the kernel (src/agent/image.js): `{ image, by, at }`,
+ * `by` and `at` only once someone chose. Whether the bucket has it is asked where it is used.
  */
-export async function installImage(kernel, packages) {
-  let wrote = 0;
-  for (const { name, manifest, files } of packages) {
-    // eslint-disable-next-line no-await-in-loop
-    if (!await installed(kernel, name, manifest)) {
-      for (const [path, data] of Object.entries(files)) {
-        // eslint-disable-next-line no-await-in-loop
-        await kernel.writeFile(`${MODULES}/${name}/${path}`, new Uint8Array(data));
-      }
-      // eslint-disable-next-line no-await-in-loop
-      await kernel.writeFile(`${MODULES}/${name}/package.json`, manifest);
-      wrote += 1;
-    }
-  }
-  return wrote;
+export async function teamImage(env, team) {
+  const row = await option(env, team, 'image');
+  return row && isImageName(row.value)
+    ? { image: row.value, by: row.changed_by, at: row.changed_at }
+    : { image: DEFAULT_IMAGE };
+}
+
+/** Sets the image of a team's computers, as `by` (a name), now: `{ image, by, at }`. */
+export async function setTeamImage(env, { team, image, by }) {
+  return {
+    image,
+    ...await setOption(env, {
+      team, name: 'image', value: image, by,
+    }),
+  };
+}
+
+/**
+ * The shell of an agent's computer, by its target's team (src/agent/agent.js `target`):
+ * `{ runtime, image }`, `image` only with the kernel.
+ */
+export async function shellFor(env, target) {
+  const team = target && target.team;
+  const { runtime } = await teamRuntime(env, team);
+  return runtime === 'slicc-kernel'
+    ? { runtime, image: (await teamImage(env, team)).image } : { runtime };
+}
+
+/** `shellFor`'s runtime alone. */
+export async function runtimeFor(env, target) {
+  return (await shellFor(env, target)).runtime;
 }
 
 /**

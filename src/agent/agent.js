@@ -23,8 +23,7 @@ import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import { fetchTransport } from '@ai-ecoverse/slicc-kernel';
-import { createCloudflareKernel, sliccBackend } from '@ai-ecoverse/slicc-kernel/cloudflare';
-import { PACKAGES } from '../computer-image/index.js';
+import { attachKernel, createCloudflareKernel, sliccBackend } from '@ai-ecoverse/slicc-kernel/cloudflare';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
 import { armTag, cacheRetention } from '../experiments.js';
@@ -38,7 +37,10 @@ import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
 } from './computer.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, installImage, overWorkspace, runtimeFor,
+  commandsOf, DEFAULT_IMAGE, installImage, readImage,
+} from './image.js';
+import {
+  DEFAULT_RUNTIME, gatewayFetch, overWorkspace, shellFor,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -82,11 +84,14 @@ import { latestTurn } from './turn.js';
  * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
  * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
  * secrets where the shell names them. Where the team chose the SLICC kernel as the computer's
- * shell (src/agent/kernel.js), the kernel runs in this object, on the same Workspace, and its
- * requests go through the same gateway code.
+ * shell (src/agent/kernel.js), the kernel runs in this object, on the same Workspace, with the
+ * programs of the team's image from the `IMAGES` bucket (src/agent/image.js), and its requests
+ * go through the same gateway code.
  */
 
 const TARGET_TTL_MS = 5 * 60 * 1000;
+// How long what the agent is told of its image is taken from memory, not from the bucket.
+const IMAGE_TTL_MS = 5 * 60 * 1000;
 const SCRIPT_TIMEOUT_MS = 5 * 60 * 1000;
 // QuickJS interrupt polls a script may compute for between tool calls: about 5 s on Workers.
 const SCRIPT_INTERRUPT_BUDGET = 50_000;
@@ -168,15 +173,16 @@ export class ThreadAgent extends Agent {
           pinned: (session) => seedPin(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
+          // What the computer's shell is and has, for the agent's prompt.
+          shell: () => this.shellInfo(),
         };
         this.agentContext = agent;
         // In this order, which is the system prompt's: opspile, the tools the team turned on,
         // code mode, the MCP servers, and the staff's instructions last. A reinstall replaces
         // an extension in place.
         this.registry.install(opspileExtension(agent));
-        this.registry.install(agentToolsExtension(agent, await this.currentTools(), {
-          runtime: await this.currentRuntime(),
-        }));
+        await this.currentRuntime();
+        this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
         this.registry.install(cogsExtension(this));
@@ -245,48 +251,56 @@ export class ThreadAgent extends Agent {
     return this.tools;
   }
 
-  /** The shell of the computer last installed (src/agent/kernel.js), from storage at first. */
+  /**
+   * The shell of the computer last installed (src/agent/kernel.js), and with the kernel its
+   * image, from storage at first.
+   */
   async currentRuntime() {
     this.runtime ??= (await this.ctx.storage.get('runtime')) || DEFAULT_RUNTIME;
+    this.image ??= (await this.ctx.storage.get('image')) || DEFAULT_IMAGE;
     return this.runtime;
   }
 
   /**
    * Before the agent is told something: are its switchable tools still the ones turned on, and
-   * its computer's shell the one its team chose? A change is installed at once when Pi is open,
-   * else when it opens. A failure keeps them.
+   * its computer's shell and image the ones its team chose? A change is installed at once when
+   * Pi is open, else when it opens. A failure keeps them.
    */
   async syncTools() {
     try {
       const before = await this.currentTools();
-      const shell = await this.currentRuntime();
+      const runtime = await this.currentRuntime();
       const target = await this.target();
       const now = await toolsFor(this.env, target);
       // Asked only where there is a computer: its shell is nothing to an agent without one.
-      const runtime = now.includes('computer') ? await runtimeFor(this.env, target) : shell;
-      if (now.join(',') === before.join(',') && runtime === shell) {
+      const shell = now.includes('computer') ? await shellFor(this.env, target) : { runtime };
+      const image = shell.image || this.image;
+      const same = shell.runtime === runtime && image === this.image;
+      if (now.join(',') === before.join(',') && same) {
         return;
       }
-      if (runtime !== shell) {
-        await this.changeRuntime(runtime);
+      if (!same) {
+        await this.changeShell(shell.runtime, image);
       }
       this.tools = now;
       await this.ctx.storage.put('tools', now);
       if (this.agentContext) {
-        this.registry.install(agentToolsExtension(this.agentContext, now, { runtime }));
+        this.registry.install(agentToolsExtension(this.agentContext, now));
       }
-      console.log(JSON.stringify({ route: 'agent', tools: now, runtime }));
+      console.log(JSON.stringify({
+        route: 'agent', tools: now, runtime: shell.runtime, ...(shell.image ? { image } : {}),
+      }));
     } catch (e) {
       console.log(JSON.stringify({ route: 'agent', tools: 'sync failed', error: e.message }));
     }
   }
 
   /**
-   * The computer gets another shell, with the next command: a new Workspace over the same
-   * files. A kernel that ran here is ended; its root stays in this object's SQLite (the image,
-   * about 12 MB), for when the team chooses it again.
+   * The computer gets another shell, or its kernel another image, with the next command: a new
+   * Workspace over the same files. A kernel that ran here is ended; its root stays in this
+   * object's SQLite (the image), for when the team chooses the kernel again.
    */
-  async changeRuntime(runtime) {
+  async changeShell(runtime, image = this.image) {
     const kernel = await (this.booting || Promise.resolve(null)).catch(() => null);
     if (this.ws && kernel) {
       await this.ws.close().catch(() => {});
@@ -294,11 +308,39 @@ export class ThreadAgent extends Agent {
     this.ws = null;
     this.computerReady = false;
     this.booting = undefined;
+    this.imageInfo = null;
     if (kernel) {
       kernel.terminate();
     }
     this.runtime = runtime;
+    this.image = image;
     await this.ctx.storage.put('runtime', runtime);
+    await this.ctx.storage.put('image', image);
+  }
+
+  /**
+   * What the agent is told its shell is: `{ runtime }`, and with the kernel `image`, what the
+   * image says it has (`tools`) and its commands, from the bucket (kept for a few minutes).
+   * Without the image (no bucket, or it is gone), the agent is told to look for itself.
+   */
+  async shellInfo() {
+    const runtime = await this.currentRuntime();
+    if (runtime !== 'slicc-kernel') {
+      return { runtime };
+    }
+    const kept = this.imageInfo;
+    if (!kept || kept.name !== this.image || Date.now() - kept.at > IMAGE_TTL_MS) {
+      const image = await readImage(this.env.IMAGES, this.image).catch(() => null);
+      this.imageInfo = {
+        at: Date.now(),
+        name: this.image,
+        ...(image ? { tools: image.tools, commands: commandsOf(image) } : {}),
+      };
+    }
+    const { name, tools, commands } = this.imageInfo;
+    return {
+      runtime, image: name, ...(tools ? { tools, commands } : {}),
+    };
   }
 
   /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
@@ -341,7 +383,8 @@ export class ThreadAgent extends Agent {
   /**
    * The SLICC kernel of the computer (src/agent/kernel.js), made with the first command: its
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
-   * own, the image installed (src/computer-image/). What its programs ask of the network goes
+   * own, the team's image installed from the `IMAGES` bucket (src/agent/image.js: a boot
+   * without the bucket or the image fails, and says so). What its programs ask of the network goes
    * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
    * follow redirects themselves, through it again. A Worker's clock stands still while it
    * computes, so the kernel asks this object for the time before each timed wait.
@@ -362,16 +405,38 @@ export class ThreadAgent extends Agent {
           }),
         },
       });
-      const installed = await installImage(kernel, PACKAGES);
-      console.log(JSON.stringify({
-        route: 'agent', kernel: 'booted', installed, ms: Date.now() - started,
-      }));
+      try {
+        const image = await readImage(this.env.IMAGES, this.image);
+        if (!image) {
+          throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
+        }
+        const installed = await installImage(kernel, this.env.IMAGES, image, {
+          remove: (path) => this.removeFromKernel(kernel, path),
+        });
+        console.log(JSON.stringify({
+          route: 'agent', kernel: 'booted', image: image.name, ...installed, ms: Date.now() - started,
+        }));
+      } catch (e) {
+        kernel.terminate();
+        throw e;
+      }
       return kernel;
     })().catch((e) => {
       this.booting = undefined;
       throw e;
     });
     return this.booting;
+  }
+
+  /** Removes `path` and what is in it from the kernel's own root, as root. */
+  // eslint-disable-next-line class-methods-use-this
+  async removeFromKernel(kernel, path) {
+    const client = await attachKernel(await kernel.connect(), { locks: null });
+    try {
+      await client.fs.rm(path, { force: true });
+    } finally {
+      await client.close();
+    }
   }
 
   /** The shell of the computer, as a backend of its Workspace: the one its team chose. */
@@ -722,6 +787,7 @@ export class ThreadAgent extends Agent {
       turn,
       tools: await this.currentTools(),
       runtime: await this.currentRuntime(),
+      ...(this.runtime === 'slicc-kernel' ? { image: this.image } : {}),
       mcp: catalog.servers.map((s) => ({
         name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
       })),

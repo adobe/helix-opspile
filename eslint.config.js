@@ -14,9 +14,7 @@ import { recommended } from '@adobe/eslint-config-helix';
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**',
-      // The computer's programs and their generated list (scripts/computer-image.mjs).
-      'src/computer-image/**'],
+    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**'],
   },
   {
     ...recommended,

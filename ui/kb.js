@@ -809,8 +809,29 @@ function toolRow(t) {
 // ---- the computer's shell -------------------------------------------------------------------
 //
 // What runs the commands of a team's agents (src/agent/kernel.js): just-bash, or GNU bash and
-// real programs on the SLICC kernel, which is experimental. In a team's knowledge base, in the
-// Computer tool's row, for the admin team to choose; everyone else sees which it is.
+// real programs on the SLICC kernel, which is experimental, and with the kernel which image:
+// the programs it has (src/agent/image.js), one of those in the deployment's images bucket.
+// In a team's knowledge base, in the Computer tool's row, for the admin team to choose;
+// everyone else sees what it is.
+
+/** The image picker of the team's kernels, with what the chosen image is; '' without the kernel. */
+function imageBlock(t) {
+  if (t.runtime.runtime !== 'slicc-kernel') return '';
+  const b = base();
+  if (!t.images.length) return '<div class="sub err">No image is in this deployment\'s images bucket yet (npm run computer:images): commands fail until one is.</div>';
+  const now = t.images.find((i) => i.name === t.image.image);
+  const options = t.images.map((i) => `<option value="${esc(i.name)}"${i === now ? ' selected' : ''}>${esc(i.title)}</option>`).join('');
+  const gone = now ? '' : `<option value="" selected>${esc(t.image.image)} (not there)</option>`;
+  const by = t.image.by ? `<div class="sub by">Chosen by ${esc(t.image.by)}, ${esc(ago(t.image.at))}</div>` : '';
+  return `<label class="sub mine">Image
+      <select data-image aria-label="The image of the computers of ${esc(b.name)}"
+        title="${t.mayRuntime ? `The programs the agents of ${esc(b.name)} have` : 'Only the admin team chooses it.'}"${t.mayRuntime ? '' : ' disabled'}>${gone}${options}</select>
+    </label>
+    <div class="sub${now ? '' : ' err'}">${esc(now ? `${now.description} ${megabytes(now.bytes)} in each thread that runs a command.` : `The bucket has no image ${t.image.image}: commands fail until another is chosen.`)}</div>
+    ${by}`;
+}
+
+const megabytes = (bytes) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
 /** The shell of the team's computers: a picker, what the chosen one is, and who chose it. */
 function shellBlock(t) {
@@ -826,6 +847,7 @@ function shellBlock(t) {
     </label>
     <div class="sub">${esc(now.description)}</div>
     ${by}
+    ${imageBlock(t)}
   </div>`;
 }
 
@@ -834,27 +856,43 @@ const SHELL_CONFIRM = {
   'slicc-kernel': (where) => `From their next message, the agents of ${where} run their commands in GNU bash on the SLICC kernel, on the same files. It is experimental: for now its curl reaches plain http:// only, so nothing over https:// and none of the secrets, and it has no jq.`,
 };
 
-/** The handler of the computer's shell picker. */
+/** The handlers of the computer's shell and image pickers. */
 function bindShell(computer, stale) {
   const b = base();
-  const el = $('editor').querySelector('[data-runtime]');
-  if (!el) return;
-  el.onchange = async () => {
-    const chosen = computer.runtimes.find((r) => r.runtime === el.value);
-    if (!(await ask(`Use ${chosen.title} for ${b.name}?`, SHELL_CONFIRM[chosen.runtime](b.name), 'Use it'))) {
-      el.value = computer.runtime.runtime;
-      return;
-    }
-    const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: 'computer', team: b.slug, runtime: chosen.runtime }) });
-    if (stale()) return;
-    if (!ok) {
-      el.value = computer.runtime.runtime;
-      showNote({ kind: 'err', text: body.error || 'Choosing the shell failed.' });
-      return;
-    }
-    computer.runtime = body.runtime;
-    renderMcp({ kind: 'ok', text: `The agents of ${b.name} use ${chosen.title}, from their next message.` });
-  };
+  const put = (choice) => call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: 'computer', team: b.slug, ...choice }) });
+  const shell = $('editor').querySelector('[data-runtime]');
+  if (shell) {
+    shell.onchange = async () => {
+      const chosen = computer.runtimes.find((r) => r.runtime === shell.value);
+      if (!(await ask(`Use ${chosen.title} for ${b.name}?`, SHELL_CONFIRM[chosen.runtime](b.name), 'Use it'))) {
+        shell.value = computer.runtime.runtime;
+        return;
+      }
+      const { ok, body } = await put({ runtime: chosen.runtime });
+      if (stale()) return;
+      if (!ok) {
+        shell.value = computer.runtime.runtime;
+        showNote({ kind: 'err', text: body.error || 'Choosing the shell failed.' });
+        return;
+      }
+      computer.runtime = body.runtime;
+      renderMcp({ kind: 'ok', text: `The agents of ${b.name} use ${chosen.title}, from their next message.` });
+    };
+  }
+  const image = $('editor').querySelector('[data-image]');
+  if (image) {
+    image.onchange = async () => {
+      const chosen = computer.images.find((i) => i.name === image.value);
+      const { ok, body } = chosen ? await put({ image: chosen.name }) : { ok: false, body: {} };
+      if (stale()) return;
+      if (!ok) {
+        renderMcp({ kind: 'err', text: body.error || 'Choosing the image failed.' });
+        return;
+      }
+      computer.image = body.image;
+      renderMcp({ kind: 'ok', text: `The agents of ${b.name} have the ${chosen.title} image, from their next message. Their files stay.` });
+    };
+  }
 }
 
 // ---- the computer's secrets -----------------------------------------------------------------

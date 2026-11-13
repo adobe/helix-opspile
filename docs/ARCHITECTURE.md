@@ -1714,7 +1714,7 @@ says not to quote them, and code does not stop the shell from reading or sending
 
 **The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
 does not run. The admin team can give a team's agents another shell (`runtime`, a row of
-`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the picker in the
+`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
 Computer tool's row of the team's knowledge base): GNU bash and real programs on the
 [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
 `src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
@@ -1736,14 +1736,34 @@ the default. An agent follows its team's choice before each delivery, as it foll
   fails where it happens. The kernel's driver makes its mount point with `mkdir -p`, which the
   Workspace refuses in a directory with a read-only mount: `patientFs` answers it when the
   directory is there.
-- **Its programs** are the image, `src/computer-image/`, which `scripts/computer-image.mjs`
-  builds from the `@ai-ecoverse/wasm-*` packages ([homescoop](https://github.com/ai-ecoverse/homescoop))
-  this repository pins: bash, coreutils, grep, sed, gawk, findutils, diff and cmp, curl, gzip,
-  tar, unzip, tree, which, rev, column and hexdump. Every file is copied as `<n>.bin`, because
-  wrangler imports `*.bin` as bytes and would compile a `.wasm` import, and the Worker carries
-  them (about 4.5 MB of its 10 MB, compressed). `installImage` writes them under
-  `/node_modules` with a thread's first command (about 12 MB of the object's SQLite, for each
-  thread that runs one), and again when a deploy brings another version.
+- **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
+  by what a computer is for. The Worker carries none: they are in the `IMAGES` bucket, and the
+  admin team chooses one per team, next to the shell (`image`, another row of
+  `agent_tool_options`; `base` without one).
+  - **What an image is.** `scripts/computer-images.mjs` defines them (`IMAGES`) and builds
+    them from the `@ai-ecoverse/wasm-*` packages ([homescoop](https://github.com/ai-ecoverse/homescoop))
+    this repository pins: `base` (bash, coreutils, grep, sed, gawk, findutils, diff and cmp,
+    curl, gzip, tar, zip and unzip, tree, which, rev, column, hexdump) and `data` (base, with
+    ripgrep, sqlite3 and strings). An image names what the agent is told it has (`tools`), and
+    the build fails if that names a command the image lacks.
+  - **In the bucket.** `blobs/<sha256>` is one file by its content, so images share what they
+    have in common; `images/<name>.json` is an image's manifest (its packages, their files and
+    hashes, and a `digest` of them all); `images/index.json` lists the images for the editor.
+    An Emscripten program's JavaScript glue is there as an empty file: the kernel runs the
+    program without it in a Worker, but finds the command by it.
+  - **Uploading.** `npm run computer:images -- --mode prod` (the deploy job runs it after
+    `cf deploy`, which makes the bucket) sends the blobs no manifest there names, then the
+    manifests, then the index, so a kernel that boots meanwhile finds an image whole. It
+    never deletes: a blob no image names any more stays.
+  - **Installing.** When a kernel boots, `installImage` reads the team's image and makes
+    `/node_modules` it: one read when it is the one installed (its digest is kept in
+    `/node_modules/.opspile-image.json`), else each package that is not there as the image has
+    it is written from the bucket, checked against its hash, and the packages only the image
+    before had are removed. So each thread that runs a command keeps its own copy (9 MB for
+    `base`, 15 MB for `data`) in its object's SQLite. A boot without the bucket, or without the
+    image, fails and says so: the command answers "the computer failed".
+  - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
+    whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
   every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
   `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
@@ -1756,11 +1776,14 @@ the default. An agent follows its team's choice before each delivery, as it foll
     secrets, which are only sent over HTTPS.
   - **No `jq`.** `@ai-ecoverse/wasm-jq` is built with threads (it imports a shared memory and
     Emscripten's pthread functions), which the kernel has none of in a Worker: it does not
-    start, so it is not in the image.
-  - **No `rg`, `strings`, `yq` or `clear`**, which just-bash has: the first two exist as
-    packages and were left out for the Worker's size, `yq` is 28 MB.
+    start, so it is in no image.
   - No JavaScript runtime: the kernel's `node` (slicc-jsh) is a JS program, which it does not
     run in a Worker.
+
+  Both of the first two are fixed in the kernel by
+  [slicc-kernel#1829](https://github.com/ai-ecoverse/slicc-kernel/pull/1829). With a release
+  that has it, the Worker imports the TLS engine and passes it to the kernel
+  (`network.tlsEngine`), and `jq` goes into the images.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits

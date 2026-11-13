@@ -163,8 +163,5 @@ src/ui-editor.bundle.js
 src/ui-highlight.bundle.js
 src/ui-spectrum.bundle.js
 
-# Built by scripts/computer-image.mjs (npm run build; cf deploy and cf dev build it too)
-src/computer-image/
-
 # Production threads and Clef's judgements of them (scripts/rank.mjs)
 .rank/

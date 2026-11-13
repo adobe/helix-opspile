@@ -173,20 +173,26 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
-**Computer shell.** just-bash ⇄ slicc-kernel (`agent_tool_options`, the team's; `runtime` in the
-agent's storage, the one its Workspace was made for; `src/agent/kernel.js`). A team without a row,
-or with a value this deployment does not know (written by a later one, read after a rollback), has
-just-bash. The agent compares the two before each delivery (`syncTools`), as it does its tools: a
-change ends the kernel if one runs, drops the Workspace, and is stored before the next command
-makes a new one, over the same files. A command still running in the old shell is ended. The
+**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
+(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
+storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
+with a value this deployment does not know (written by a later one, read after a rollback), has
+just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
+tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
+command makes a new one, over the same files. An image the bucket does not have is still the
+team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
 kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
 `/tmp`): nothing reads it until the team chooses the kernel again.
 
-**Kernel image.** absent → installed, per package (`/node_modules/<name>/package.json` in the
-kernel's root, `installImage` in `src/agent/kernel.js`). A package's manifest is written last,
-after its files, and a package counts as installed only when its manifest is the one this deploy
-brings: one half written (the object stopped), or of another version, is written again at the
-kernel's next boot.
+**Kernel image.** absent → installed → another installed (`/node_modules/.opspile-image.json` in
+the kernel's root: the digest of the image there, and its packages; `installImage` in
+`src/agent/image.js`). A kernel's boot compares that digest with the manifest in the bucket and
+does nothing when they agree. Else it writes each package that is not there as the image has it,
+the package's manifest last, so one half written (the object stopped) is written again; then it
+removes the packages only the image before had; and it writes the state last, so a boot that
+failed half way (a blob missing from the bucket) starts over at the next command and finds what
+it finished. The bucket is written in the same order (`scripts/computer-images.mjs`): blobs,
+then manifests, then the index, so a manifest never names a blob that is not there.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
 (`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
