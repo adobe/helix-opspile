@@ -88,7 +88,7 @@ describe('counting entries', () => {
 });
 
 describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed' }, () => {
-  it('shows a team\'s members its knowledge base, read-only', async () => {
+  it('shows the members of every team its knowledge base, read-only', async () => {
     const srv = await gitServer();
     try {
       srv.create('kb-team-helix');
@@ -99,8 +99,11 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
         ('kb-team-edge', 'team', 'edge', 'r', '2026-10-22T00:00:00Z')`);
       const env = { DB, ARTIFACTS: srv.artifacts };
       const bases = await (await call(env, MEMBER, 'GET', '/api/kb')).json();
-      assert.deepEqual(bases.bases.map((b) => [b.repo, b.may]), [['kb-team-helix', false]]);
+      // Every team's, as every thread agent reads them; not a customer their teams do not own.
+      assert.deepEqual(bases.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false], ['kb-team-helix', false]]);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/files?repo=kb-team-helix')).status, 200);
+      assert.equal((await call(env, MEMBER, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 200);
+      assert.equal((await call(env, MEMBER, 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).status, 200);
       assert.equal((await (await call(env, MEMBER, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).may, false);
@@ -113,8 +116,8 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       const [managed] = (await (await call(env, ADMIN, 'GET', '/api/kb/mcp?repo=kb-team-helix')).json()).servers;
       assert.equal(managed.url, secret);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/tools?repo=kb-team-helix')).status, 200);
-      // Not another team's, not a customer's.
-      for (const repo of ['kb-team-edge', 'kb-org-acme']) {
+      // Not a customer's.
+      for (const repo of ['kb-org-acme']) {
         // eslint-disable-next-line no-await-in-loop
         assert.equal((await call(env, MEMBER, 'GET', `/api/kb/files?repo=${repo}`)).status, 404);
         // eslint-disable-next-line no-await-in-loop
@@ -169,9 +172,9 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       const concept = (title) => `---\ntype: Reference\ntitle: ${title}\n---\nBody\n`;
       for (const [me, repos, may] of [
         [MEMBER, [['kb-team-helix', false], ['kb-org-acme', false]], false],
-        [EDGE, [['kb-org-acme', false]], false],
+        [EDGE, [['kb-team-helix', false], ['kb-org-acme', false]], false],
         [HELIX_MANAGER, [['kb-team-helix', true], ['kb-org-acme', true]], true],
-        [EDGE_MANAGER, [['kb-org-acme', true]], true],
+        [EDGE_MANAGER, [['kb-team-helix', false], ['kb-org-acme', true]], true],
       ]) {
         // eslint-disable-next-line no-await-in-loop
         const bases = await (await call(env, me, 'GET', '/api/kb')).json();
@@ -226,7 +229,7 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
 
       // Once the channel is no longer shared with edge, edge no longer owns acme.
       DB.sqlite.exec('DELETE FROM channel_teams');
-      assert.deepEqual((await (await call(env, EDGE, 'GET', '/api/kb')).json()).bases, []);
+      assert.deepEqual((await (await call(env, EDGE, 'GET', '/api/kb')).json()).bases.map((b) => b.repo), ['kb-team-helix']);
       assert.equal((await call(env, EDGE, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
       assert.equal((await put(EDGE_MANAGER, 'a.md', concept('A'))).status, 404);
       assert.equal((await call(env, EDGE_MANAGER, 'DELETE', '/api/kb/mcp', { id: server })).status, 404);

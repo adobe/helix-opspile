@@ -222,8 +222,10 @@ describe('/api/kb/extraction', () => {
     assert.equal(res.body.global, true);
     assert.equal(res.body.inherited, null);
 
+    // Another team's members see them (as they read its knowledge base), and change nothing.
     res = await call(e, outsider, 'GET', '/api/kb/extraction?repo=kb-team-helix');
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.may, false);
     res = await call(e, admin, 'GET', '/api/kb/extraction?repo=kb-org-acme');
     assert.equal(res.status, 404);
     res = await call(e, member, 'POST', '/api/kb/extraction/rule', {

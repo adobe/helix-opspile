@@ -82,7 +82,19 @@ passed, the page looks again every minute while it is on screen.
 
 **Channel filing.** filed → moving → re-filed (`src/refile.js`). "Moving" is not stored: a job's
 payload and `threads.path` say where it stands. The watermarks of what has to be redone are cleared
-before the thread row moves, since a retry compares against that row.
+before the thread row moves, since a retry compares against that row. Two things start a move: a
+rule change in the admin pages (`plan`, `enqueueMoves`), and a change in what the rules read of one
+channel (`followChange`): its name, its Teams team's name or its Slack Connect teams, from a Slack
+rename event, a Teams notice of a rename (which looks the channel up again) or a lookup that finds
+them changed (a day after the last, also from the cron). That one queues jobs only when the rules
+classify the channel differently than before, before the channel's row is written (the row is
+the guard: a failure to queue fails the job with the old row, and its retry finds the change
+again; the jobs wait 30 seconds, so they read the new row), and before the message that came
+with the change is filed: that message points its thread's row at the new folder, so a job moves both the folder it
+was queued with and the row's. A rename event older than the channel's row (`fetched_at`: out of
+order, or a replay of pile 1) changes nothing, and the write says so again, so of two handled at
+once the later wins. A job from `followChange` carries the classification it moved from (`was`):
+a thread a newer message already re-filed in its row still gets its derived data redone.
 
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
@@ -106,7 +118,13 @@ event and the draft goes on with its `created_at` and `origin`, as if it had not
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
 makes a retry safe: `post_keys` goes claimed → answered, or is removed when the platform refused. A
 claim with no answer means nobody knows, and then only the person can decide to send it again. A key
-lasts a day, so after that Retry turns into Send again.
+lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
+way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
+and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+
+**Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
+shows on the message at once. It goes once the thread's reactions agree after the platform took it,
+when the platform refused it, or after a minute. A second click on the same emoji replaces it.
 
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
 `{ text, from, base }`). Only a box that holds the draft unchanged follows it.

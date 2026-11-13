@@ -17,6 +17,9 @@ import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
 import { ensureKnowledgeBase } from './kb.js';
+import { setTeamDefault } from './agent/enabled.js';
+import { AGENT_TOOLS, setToolSwitch } from './agent/agenttools.js';
+import { GLOBAL_SERVERS, setGlobalSwitch } from './agent/globals.js';
 import { isStaffDomain, loadRules, toChannel } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
 import {
@@ -661,7 +664,29 @@ async function team(env, slug, me) {
   });
 }
 
-async function createTeam(env, body) {
+/**
+ * What a new team starts with, as `by` (a name): thread agents on by default in its channels
+ * (`agent_teams`), and the agent tools and global MCP servers marked `newTeams` on for the
+ * team. Its managers switch any of them off in the knowledge-base editor.
+ */
+async function newTeamDefaults(env, slug, by) {
+  await setTeamDefault(env, slug, true, by);
+  for (const t of AGENT_TOOLS.filter((x) => x.newTeams && !x.internal)) {
+    // eslint-disable-next-line no-await-in-loop
+    await setToolSwitch(env, {
+      tool: t.tool, scope: 'team', target: slug, enabled: true, by,
+    });
+  }
+  for (const g of GLOBAL_SERVERS.filter((x) => x.newTeams)) {
+    // eslint-disable-next-line no-await-in-loop
+    await setGlobalSwitch(env, {
+      server: g.server, scope: 'team', target: slug, enabled: true, by,
+    });
+  }
+}
+
+/** POST /api/admin/teams `{ slug, name }`: a new team, with what new teams start with. */
+async function createTeam(env, me, body) {
   const slug = clean(body.slug).toLowerCase();
   const name = clean(body.name);
   if (!SLUG.test(slug)) {
@@ -675,6 +700,7 @@ async function createTeam(env, body) {
   if (!meta.changes) {
     return json({ error: `there is a team ${slug} already` }, 409);
   }
+  await newTeamDefaults(env, slug, me.name || me.email);
   await ensureKnowledgeBase(env, 'team', slug).catch(() => null);
   return json({ ok: true, team: { slug, name } });
 }
@@ -722,6 +748,12 @@ async function deleteTeam(env, body) {
   }
   // The channels shared with it stay filed where they are (migration 0024 cascades too).
   await env.DB.prepare('DELETE FROM channel_teams WHERE team = ?').bind(slug).run();
+  // So is what it had switched on: a team made later with its slug starts afresh.
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM agent_teams WHERE team = ?').bind(slug),
+    env.DB.prepare('DELETE FROM agent_tool_switches WHERE scope = \'team\' AND target = ?').bind(slug),
+    env.DB.prepare('DELETE FROM mcp_global_switches WHERE scope = \'team\' AND target = ?').bind(slug),
+  ]);
   const { meta } = await env.DB.prepare('DELETE FROM teams WHERE slug = ?').bind(slug).run();
   return meta.changes ? json({ ok: true }) : json({ error: 'no such team' }, 404);
 }
@@ -1022,7 +1054,7 @@ export async function admin(request, env, url, me) {
   }
   switch (route) {
     case 'GET teams': return listTeams(env, me);
-    case 'POST teams': return createTeam(env, body);
+    case 'POST teams': return createTeam(env, me, body);
     case 'PUT teams': return updateTeam(env, body);
     case 'DELETE teams': return withAccessSync(env, 'team deleted', deleteTeam(env, body));
     case 'GET team': return team(env, q('slug'), me);

@@ -13,7 +13,9 @@
 import { repoName } from '../kb.js';
 
 /**
- * The repositories an agent can read: its team's and its customer's knowledge base, and the
+ * The repositories an agent can read: its team's and its customer's knowledge base, the other
+ * teams' (src/agent/tools.js writes those of the teams its channel is shared with and only reads
+ * the rest), and the
  * GitHub repositories listed for the team, the customer or everyone in `agent_repos`. GitHub
  * repositories are read from mirrors in Artifacts, which the cron imports and refreshes, so
  * reads need no GitHub token and hit no GitHub rate limit.
@@ -60,21 +62,59 @@ export async function listedRepos(env, { team, org }) {
 }
 
 /**
- * Every repository the agent may name, by the id it uses: `kb-team`, `kb-org`, and
- * `owner/name` for GitHub.
+ * The other ops teams' knowledge bases, the channel's own `shares` first (src/shares.js): the
+ * teams `channelId` is shared with, which follow its threads and whose knowledge base its agent
+ * writes too, then every other team, whose knowledge base it only reads. Only knowledge bases
+ * that exist (`knowledge_bases`); `team` itself is `kb-team`.
  */
-export async function accessibleRepos(env, { team, org }) {
+async function otherTeamKbs(env, { team, source, channelId }) {
+  if (!env.DB) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name, c.team IS NOT NULL AS shared
+    FROM teams t JOIN knowledge_bases k ON k.kind = 'team' AND k.slug = t.slug
+    LEFT JOIN channel_teams c ON c.team = t.slug AND c.source = ? AND c.channel_id = ?
+    WHERE t.slug != ?
+    ORDER BY shared DESC, t.slug`).bind(source || '', String(channelId || ''), team || '').all();
+  return (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
+    slug: r.slug, name: r.name || r.slug, shared: Boolean(r.shared),
+  }));
+}
+
+/**
+ * Every repository the agent may name, by the id it uses: `kb-team`, `kb-org`, the other
+ * teams' knowledge bases by their own name (`kb-team-<slug>`), and `owner/name` for GitHub.
+ * The agent writes its team's, its customer's and those of the teams its channel is shared
+ * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`).
+ */
+export async function accessibleRepos(env, {
+  team, org, source, channelId,
+}) {
   const repos = [];
   const teamKb = repoName('team', team);
   const orgKb = repoName('org', org);
   if (teamKb) {
     repos.push({
-      id: 'kb-team', artifact: teamKb, writable: true, kind: 'kb', what: `knowledge base of the ops team ${team}`,
+      id: 'kb-team', artifact: teamKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the ops team ${team}`,
     });
   }
   if (orgKb) {
     repos.push({
-      id: 'kb-org', artifact: orgKb, writable: true, kind: 'kb', what: `knowledge base of the customer ${org}`,
+      id: 'kb-org', artifact: orgKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the customer ${org}`,
+    });
+  }
+  for (const t of await otherTeamKbs(env, { team, source, channelId })) {
+    const artifact = repoName('team', t.slug);
+    repos.push({
+      id: artifact,
+      artifact,
+      team: t.slug,
+      writable: t.shared,
+      kind: 'kb',
+      scope: t.shared ? 'shared' : 'other',
+      what: t.shared
+        ? `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`
+        : `knowledge base of the ops team ${t.slug} (${t.name})`,
     });
   }
   for (const r of await listedRepos(env, { team, org })) {

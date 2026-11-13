@@ -1008,10 +1008,40 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .msg.agent .bubble code { background: var(--them-code); }
 
 .msg.agent.failed .bubble { color: var(--mute); }
-.msg.agent .spin { display: inline-block; border-radius: 50%; margin-right: calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100));
- animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
+/* The agent at work: no spinner, but two highlights going once around its bubble's border (the
+   halo, laid over the border and cut to it), then down the trail to the middle circle and the
+   small one, and back up through the middle one: a turn each, crossfading where they hand over.
+   Three animations of one length, which keep in step (ui/inbox.js, keepHaloTurning): two seconds
+   around the bubble, half a second on each circle. */
+@property --halo-turn { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@property --halo-on { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+.msg.agent.working .bubble:has(> .halo) { --ladder: calc(var(--spectrum-animation-duration-6000) + var(--spectrum-animation-duration-1000)); }
+.msg.agent .halo { position: absolute; inset: calc(-1 * var(--spectrum-border-width-200)); border-radius: inherit; pointer-events: none; }
+.msg.agent .halo i { position: absolute; inset: 0; border-radius: inherit; padding: var(--spectrum-border-width-200);
+  mask: linear-gradient(var(--spectrum-black) 0 0) content-box exclude, linear-gradient(var(--spectrum-black) 0 0);
+  animation: halo-ladder var(--ladder) linear infinite; }
+.msg.agent.working .bubble:has(> .halo)::before { animation: halo-ladder-mid var(--ladder) linear infinite; }
+.msg.agent.working .bubble:has(> .halo)::after { animation: halo-ladder-small var(--ladder) linear infinite; }
+@keyframes halo-ladder {
+  0% { --halo-turn: 0turn; opacity: 0; } 1.5% { opacity: 1; } 55.643% { opacity: 1; }
+  57.143%, 100% { --halo-turn: 1turn; opacity: 0; }
+}
+@keyframes halo-ladder-mid {
+  0%, 55.643% { --halo-turn: 0turn; --halo-on: 0%; } 57.143% { --halo-on: 100%; }
+  69.929% { --halo-on: 100%; } 71.429% { --halo-turn: 1turn; --halo-on: 0%; }
+  84.214% { --halo-turn: 1turn; --halo-on: 0%; } 85.714% { --halo-on: 100%; }
+  98.5% { --halo-on: 100%; } 100% { --halo-turn: 2turn; --halo-on: 0%; }
+}
+@keyframes halo-ladder-small {
+  0%, 69.929% { --halo-turn: 0turn; --halo-on: 0%; } 71.429% { --halo-on: 100%; }
+  84.214% { --halo-on: 100%; } 85.714%, 100% { --halo-turn: 1turn; --halo-on: 0%; }
+}
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .msg.agent .spin { animation: none; } }
+/* Without motion, the highlights stand still on the bubble, and the circles are plain. */
+@media (prefers-reduced-motion: reduce) {
+  .msg.agent .halo i, .msg.agent.working .bubble:has(> .halo)::before,
+  .msg.agent.working .bubble:has(> .halo)::after { animation: none; }
+}
 .seen { text-align: right; color: var(--faint); font-size: var(--spectrum-font-size-50); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
 .empty { padding: var(--spectrum-spacing-600); text-align: center; }
 
@@ -1600,7 +1630,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bubble .gallery > img.att:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 
 /* The thread agent's turn: an outlined bubble in the accent's visual color (dashed while it
-   is done, solid and faintly filled while it works), its working sign a ProgressCircle. A
+   is done, solid and faintly filled while it works, with a highlight going round it). A
    thought has no tail, so all four corners are round. */
 .spectrum .msg.agent .bubble { border: var(--spectrum-border-width-200) dashed var(--spectrum-accent-visual-color); border-bottom-right-radius: var(--spectrum-corner-radius-extra-large-default); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .msg.agent .bubble::before, .spectrum .msg.agent .bubble::after { border-width: var(--spectrum-border-width-200); }
@@ -1611,6 +1641,26 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: var(--spectrum-accent-subtle-background-color-default);
 }
 .spectrum .msg.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+/* The agent at work: its border a paler track with the halo's two heads going round it, glowing;
+   the trail's circles alike while the heads are there (their border drawn in their background,
+   over the bubble's fill). */
+.spectrum .msg.agent.working .bubble:has(> .halo) { border-color: var(--spectrum-accent-color-400); }
+.spectrum .msg.agent .halo { filter: drop-shadow(0 0 var(--spectrum-spacing-75) var(--spectrum-accent-visual-color)); }
+.spectrum .msg.agent .halo i {
+  background: repeating-conic-gradient(from var(--halo-turn), transparent 0turn 0.2turn,
+    var(--spectrum-accent-color-900) 0.4turn, var(--spectrum-accent-color-1000) 0.47turn, transparent 0.5turn);
+}
+.spectrum .msg.agent.working .bubble:has(> .halo)::before,
+.spectrum .msg.agent.working .bubble:has(> .halo)::after {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--spectrum-accent-subtle-background-color-default) 0 0) padding-box,
+    repeating-conic-gradient(from var(--halo-turn), transparent 0turn 0.2turn,
+      color-mix(in srgb, var(--spectrum-accent-color-900) var(--halo-on), transparent) 0.4turn,
+      color-mix(in srgb, var(--spectrum-accent-color-1000) var(--halo-on), transparent) 0.47turn, transparent 0.5turn) border-box,
+    linear-gradient(var(--spectrum-accent-color-400) 0 0) border-box;
+  box-shadow: 0 0 var(--spectrum-spacing-75) color-mix(in srgb, var(--spectrum-accent-visual-color) var(--halo-on), transparent);
+}
 .spectrum .msg.agent button.face:hover .av, .spectrum .msg.agent button.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); outline-offset: var(--spectrum-focus-indicator-gap); }
 
 /* The sidebar: purple, Spectrum's color for what is neither the customer's nor posted. The folded
@@ -1704,7 +1754,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .composer.sidebar textarea:focus { border-color: var(--spectrum-purple-1000); border-style: solid; }
 .spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
 .spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
-.spectrum .msg.agent .spin, .spectrum .file-view .fv-wait .spin {
+.spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);
   border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);

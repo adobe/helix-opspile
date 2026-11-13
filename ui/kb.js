@@ -914,7 +914,7 @@ const TOOL_CONFIRM = {
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `Built-in tools: off until they are turned on for every channel of ${b.name}, or for one of its channels (a channel's own switch wins).`
+  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer and Extraction rules on.`
     : `Built-in tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }
@@ -1225,8 +1225,8 @@ function bindExtraction() {
 // ---- global MCP servers ---------------------------------------------------------------
 //
 // opspile's own servers (src/agent/globals.js): the browser (Cloudflare Browser Run) and GitHub
-// (read-only, as the opspile GitHub App). Set up once; off until they are turned on for a team
-// here, or for one channel (a channel's switch wins over its team's).
+// (read-only, as the opspile GitHub App). Set up once; on or off for a team here (new teams
+// start with both on), or for one channel (a channel's switch wins over its team's).
 
 const toolTags = (tools) => tools.map((t) => `<span class="src" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}">${esc(t.name)}</span>`).join('');
 
@@ -1374,7 +1374,7 @@ function renderMcp(shownNote) {
     a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team and the managers of ${b.kind === 'team' ? b.name : 'its ops teams'} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
-  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: off until they are turned on for ${b.name}, or for one of its channels.`
+  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with both on.`
     : `Built-in, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   holdList(() => {
     $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
@@ -2051,8 +2051,8 @@ window.addEventListener('popstate', async () => {
   // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
   state.settings = state.me.readonly ? null : state.me.settings || null;
   Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
-  // Team managers see their teams' knowledge bases only, and the other members of a team see
-  // its knowledge base read-only (the API lists no others, and says which they change).
+  // The members of an ops team see every team's knowledge base, and those of the customers
+  // their teams own; managers change their teams' (the API says which, `may`).
   if (!state.me.admin && !state.me.teams?.length) {
     $('bases').innerHTML = '<div class="empty">The agents are for the members of an ops team.</div>';
     $('editor').innerHTML = `<div class="empty"><a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;

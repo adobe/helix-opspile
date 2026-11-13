@@ -41,6 +41,8 @@ import { membershipOn } from './membership.js';
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
  *   through a service binding. The admins approve, as when a person asks the bot.
  *
+ * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
+ *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
  */
@@ -74,6 +76,7 @@ export const AGENT_TOOLS = [
       + ' or deny: what the person fills in goes to that one run, is kept nowhere, and is taken'
       + ' out of what the agent reads of the output.',
     platforms: null,
+    newTeams: true,
   },
   {
     tool: 'extraction_rules',
@@ -87,6 +90,7 @@ export const AGENT_TOOLS = [
       + ' a thread, and shows on this page, attributed to the agent. It cannot change the admin'
       + ' team\'s rules.',
     platforms: null,
+    newTeams: true,
   },
   {
     tool: 'any_thread',

@@ -104,6 +104,19 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, ADA, 'POST', '/api/admin/teams', { slug: 'helix', name: 'Again' })).status, 409);
     r = await call(e, ADA, 'POST', '/api/admin/teams', { slug: 'search', name: 'Search ops' });
     assert.equal(r.status, 200);
+    // A new team has thread agents on by default, and some tools and global servers on.
+    const rowsOf = (sql) => e.DB.sqlite.prepare(sql).all().map((t) => ({ ...t }));
+    assert.deepEqual(rowsOf('SELECT team, enabled, changed_by FROM agent_teams'), [
+      { team: 'search', enabled: 1, changed_by: 'Ada' },
+    ]);
+    assert.deepEqual(rowsOf(`SELECT tool, scope, target, enabled, changed_by
+      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules'].map((tool) => ({
+      tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
+    })));
+    assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by
+      FROM mcp_global_switches ORDER BY server`), ['browser', 'github'].map((server) => ({
+      server, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
+    })));
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'search', name: 'Search' })).status, 200);
 
     // Finding people to add: people in D1 and platform accounts not linked yet, staff first,
@@ -142,6 +155,9 @@ describe('admin: teams and members', () => {
     assert.match((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'helix' })).body.error, /1 rule\(s\) and 3 thread\(s\)/);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'admin' })).status, 400);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'search' })).status, 200);
+    for (const table of ['agent_teams', 'agent_tool_switches', 'mcp_global_switches']) {
+      assert.equal(e.DB.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
+    }
   });
 });
 
@@ -219,14 +235,15 @@ describe('admin: team managers', () => {
     const me = asBo(bo);
     const r = await as(e, me, 'GET', '/api/kb');
     // helix owns acme (a channel of acme's is filed under it): its managers change acme's too.
-    assert.deepEqual(r.body.bases.map((b) => b.repo), ['kb-team-helix', 'kb-org-acme']);
-    assert.equal((await as(e, me, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 404);
+    // Every team's they read, as every thread agent does; they change only their own.
+    assert.deepEqual(r.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false], ['kb-team-helix', true], ['kb-org-acme', true]]);
+    assert.equal((await as(e, me, 'GET', '/api/kb/channels?repo=kb-team-edge')).status, 200);
+    assert.equal((await as(e, me, 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
     assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
-    // A member of edge reads edge's, and changes none.
+    // A member of edge reads the teams', and changes none.
     const cy = await as(e, asMe(CY), 'GET', '/api/kb');
-    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false]]);
-    assert.deepEqual(r.body.bases.map((b) => b.may), [true, true]);
-    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-team-helix')).status, 404);
+    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may]), [['kb-team-edge', false], ['kb-team-helix', false]]);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
     assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
   });

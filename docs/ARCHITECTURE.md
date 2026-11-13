@@ -144,8 +144,9 @@ changes one after the other, so many can be made in a row. Applied, each moved c
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
 thread rows take the new org, team and kind, and the new org and team get their knowledge
-bases. A job starts from where each thread is filed in D1, not where it was when the job was
-queued, so several changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
+bases. A job starts from where each thread is filed in D1, and also moves what is still where it was
+when the job was queued (a message filed meanwhile points the row at the new place), so several
+changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
 **Team managers.** A member of a team can be its **manager**: they get the admin pages and
 the knowledge-base editor for that team only, where they add and remove members, promote
@@ -178,6 +179,18 @@ day. These are its only platform calls. Files only move forward to a newer versi
 tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2. A rule
 changed in D1 by hand needs pile 2 emptied and replayed; one changed in the admin UI re-files
 the channels it moves (below).
+
+**A renamed channel is re-filed** the same way, by the same `refile` jobs: the rules read a
+channel's name, its Teams team's name and its Slack Connect teams, so a channel renamed to a
+name a rule maps to an org (or another team, or a kind) takes its threads along. The normalizer
+notices it when a Slack rename event arrives, when a Teams notice says the channel or its team
+was renamed (it looks the channel up again then), and when a lookup (a day after the last, from a
+message or the cron) finds them changed; Discord renames are found by the lookups. It queues the
+moves only when the rules classify the channel differently than before, before it files the
+message that came with the change. A manual assignment is a rule, so a rename does not undo it
+(a channel assigned to a team keeps it, and takes the org its new name gives); the teams the
+channel is shared with stay. A rename event older than what D1 knows of the channel (a replay)
+is left out.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
@@ -411,24 +424,27 @@ frontmatter with a required `type`, links between concepts, an `index.md` per di
 to them; `generated` says which agent wrote it and when, and `verified` will record staff
 review. Every change is a commit, so a bad memory is a `git revert`.
 
-[Thread agents](#thread-agents) are the writers. Code, not the agent, writes `index.md` and `log.md`
+[Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
+customer's knowledge base, and those of the teams its channel is shared with (`channel_teams`);
+every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
 and stamps `generated`, and a write that is not a well-formed concept is refused. For now
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
-concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
-to it, the team's first and then the customer's, to the end of its system prompt, read again
+concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
+to it, its team's first, then those of the teams its channel is shared with, then the customer's,
+to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
 whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The other members of a team see its knowledge base there read-only (its
+and the concepts. The members of every ops team see every team's knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), and the customers' it owns the
-same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`), as every thread agent reads them,
+and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -458,7 +474,11 @@ question: it is one channel, and switches back as easily). The switch is a row i
 `agent_channels` with who set it and when. A team's knowledge base also has the team's
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
-channels it gets later too. A channel nobody switched has an agent when its team's default or
+channels it gets later too. A new team starts with it on (the admin team's name for it in
+`changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
+the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
+`newTeams`); the teams from before that have them as they had them, and deleting a team
+deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
@@ -1486,8 +1506,8 @@ written by people outside its control.
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
-| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
-| `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
+| `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone
@@ -1554,8 +1574,8 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. They are off until
-the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. A new team starts
+with both on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
 and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
@@ -1633,7 +1653,8 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Four tools are off until they are turned on. Three by the admin team or a team's managers, as
+Four tools are off until they are turned on (a new team starts with `computer` and
+`extraction_rules` on for the team). Three by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
