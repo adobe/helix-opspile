@@ -421,8 +421,16 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .expertlist small { display: block; font-size: var(--spectrum-font-size-50); color: var(--mute); }
 .expertlist li { display: flex; align-items: flex-start; }
 
-.feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); }
-.day { text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-100); }
+/* The feed is a size container: a message's header line is as wide as the feed
+   (`--msg-line`), which is how its quick reactions know whether they have room on it. */
+.feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); container: feed / inline-size; }
+/* The day stays on top while its messages scroll by, so a long day's messages still say which
+   day they are of: a band of the pane's color, as wide as the feed, which covers the day before
+   it whatever the two are called (a pill alone would leave the ends of a longer one showing).
+   Its padding is the room it had as margins, so nothing in the feed moved; what scrolls under
+   it fades out below it. Under the quick reactions and the picker, over the rest of a message. */
+.day { position: sticky; top: 0; z-index: 2; text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300) - var(--spectrum-spacing-100)) 0 calc(-1 * var(--spectrum-spacing-75)); padding: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); background: var(--pane); }
+.day::after { content: ""; position: absolute; inset: 100% 0 auto; height: var(--spectrum-spacing-75); background: linear-gradient(var(--pane), transparent); pointer-events: none; }
 
 .divider { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
 .divider::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) solid var(--line); }
@@ -510,7 +518,17 @@ main.siding #pane { margin-right: var(--side-w); }
 .msg.adobe { flex-direction: row-reverse; }
 .msg .col { max-width: min(74%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .msg.adobe .col { align-items: flex-end; }
+/* The header line: who and when, then the quick reactions (below, with their rules). It is as
+   wide as the feed has room beside the avatar (`--msg-line`), not as the bubble, and takes none
+   of the column's width (the margin takes it back): the bubble alone says how wide a message
+   is. Its lines stack upwards (wrap-reverse), so their start, where its items are held, is the
+   bottom: the bubble's top edge. */
+.msg { --msg-line: calc(100cqw - var(--spectrum-spacing-75) - var(--spectrum-spacing-500) - var(--spectrum-spacing-50) - var(--spectrum-spacing-100)); }
+.msg .head { flex: none; display: flex; flex-wrap: wrap-reverse; align-items: flex-start; width: var(--msg-line); margin-right: calc(-1 * var(--msg-line)); }
+.msg.adobe .head { flex-direction: row-reverse; margin-right: 0; margin-left: calc(-1 * var(--msg-line)); }
 .msg .who { margin: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.msg .head .who { min-width: 0; margin-right: 0; }
+.msg.adobe .head .who { margin-right: var(--spectrum-spacing-200); margin-left: 0; }
 
 .msg.cont .who { display: none; }
 .bubble { background: var(--them);
@@ -963,14 +981,25 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .srcpop .view .none { margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--mute); font-size: var(--spectrum-font-size-100); }
 .srcpop .view .none a { color: var(--link); }
 .srcpop iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--spectrum-white); }
-/* Quick reactions on hovering a message, like Slack: held at the avatar's side of the bubble, so
-   a short one's row grows into the pane, not past its edge. They show once the pointer has rested
-   on the message for a moment, not as it passes over the thread; focus shows them at once. */
-.msg .quick { position: absolute; top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); left: var(--spectrum-spacing-100); z-index: 3; display: flex;
- visibility: hidden; transition: visibility var(--spectrum-animation-duration-0); }
-.msg.adobe .quick { left: auto; right: var(--spectrum-spacing-100); }
-.msg:hover .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
-.msg .quick:focus-within { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
+/* Quick reactions on hovering a message's bubble, like Slack. They are the bubble's: the name
+   has the profile card and the time its whole date, so pointing at the header shows neither
+   under a bar. They sit on the header line, after the time and just over the bubble's top
+   edge, and stay while the pointer is on them. Where the line has no room for both (a narrow
+   pane, a long name) they wrap to a line of their own above the header (the header line's
+   wrap-reverse), at the avatar's side, so they grow into the pane. A message that goes on from
+   the one before has no header: over its bubble's top edge, as before.
+   `.quick-at` is their place in the line: as wide as they are, so the line knows when to
+   wrap, and of no height, so neither line makes the message any taller.
+   They show once the pointer has rested on the bubble for a moment, not as it passes over the
+   thread, and go a moment after it left, which is the time it has to reach them across the
+   header, or from a bubble shorter than its header; focus, and their open picker, show them
+   at once. */
+.msg .quick-at { flex: none; display: flex; align-items: flex-end; height: 0; margin: 0 var(--spectrum-spacing-100); }
+.msg .quick { position: relative; top: var(--spectrum-spacing-50); z-index: 3; flex: none; display: flex;
+ visibility: hidden; transition: visibility var(--spectrum-animation-duration-0) linear var(--spectrum-animation-duration-1000); }
+.msg.cont .quick { top: var(--spectrum-spacing-300); }
+.msg:has(.bubble:hover) .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
+.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
 .msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
 .msg .quick button[aria-pressed="true"] { background: var(--sel); }
@@ -1065,6 +1094,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 [data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg .who b[data-p] { cursor: default; }
 .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+/* The time says its whole date when pointed at, as the name shows its card: in the thread, and
+   in the sidebar's messages wherever they show. */
+.feed time[title], .sc-body time[title] { cursor: default; }
+.feed time[title]:hover, .sc-body time[title]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
 .pcard { position: fixed; z-index: 20; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); background: var(--card);
   border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 var(--spectrum-spacing-100) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400)) var(--spectrum-transparent-black-400); }
 .pcard[hidden] { display: none; }
@@ -1224,9 +1257,11 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
      over its top, which leaves it room, moved up as far as the thread scrolled. */
   #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
   #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
+  /* The day stays under the header, which is that room, as far as the header is in view. */
+  .day { top: calc(-1 * var(--ph-off, 0px)); }
   .ph h2 { flex-wrap: wrap; }
   .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
-  .msg { gap: var(--spectrum-spacing-100); }
+  .msg { gap: var(--spectrum-spacing-100); --msg-line: calc(100cqw - var(--spectrum-spacing-500) + var(--spectrum-spacing-50) - var(--spectrum-spacing-100)); }
   .msg .face { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); }
   .msg .face .av { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); font-size: var(--spectrum-font-size-50); }
   .msg .col { max-width: calc(100% - calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50))); }

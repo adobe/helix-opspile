@@ -1391,8 +1391,10 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 
 ### Steering reactions
 
-Resting the pointer on a message for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟.
-Three of them steer the inbox, on any message of the thread:
+Resting the pointer on a message's bubble for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟,
+beside the message's header (above it where the pane is narrow), never over it: the name there
+shows the profile card, and the time the whole date. Three of them steer the inbox, on any
+message of the thread:
 
 - **👀 seen**: the person who put it is on it. For them it counts like having posted (higher);
   for the rest of the team, a colleague's 👀 since the customer last wrote puts the thread in
