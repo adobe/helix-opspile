@@ -1320,6 +1320,16 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   channel, so every open inbox follows at once; a reply box that took the draft in and still
   holds it unchanged follows the draft, one with your own changes keeps them (and the line says
   the draft changed since). What you type and do not save stays with its thread in the tab.
+- **On a phone** (a screen up to 699 px wide) the draft's line and the command cards (see
+  "Agent tools") would leave the thread a few lines of the screen, so they are in a **drawer**
+  (`renderLines`, `ui/inbox.js`). Under the reply box only its tab shows: one line that says
+  what waits there ("1 command to decide", "Draft by …"), outlined as a command's card while
+  one waits for a decision. A tap opens the lines as a sheet from the screen's bottom edge,
+  over the thread, the rest dimmed. ✕, a tap beside the sheet and Escape close it; so do Edit
+  and the sends, which happen in the thread, and opening another thread. Run, Deny, View draft
+  and Discard leave it open, and Undo of a discard shows over it. It is the same markup on
+  every screen: on a wider one the stylesheet shows no tab and makes the drawer no box
+  (`display: contents`), so the lines are the reply box's own.
 - In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
   one shows ✓), in the status's color and outlined while the team has not read the thread; the
   personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
@@ -1745,7 +1755,8 @@ every change of a request (`{ type: 'bash' }`), and keeps the request for an hou
 saying how it ended (a nonzero exit, a timeout and a failure marked) and who decided. An agent
 often asks a few times until a command works, so of the requests that ended only the latest
 shows (`bashCards`), with a button for the earlier ones (**2 earlier**), all in one box. The
-card itself says that a command runs or was denied; a toast only says what went wrong.
+card itself says that a command runs or was denied; a toast only says what went wrong. On a
+phone the cards are in the drawer the draft's line is in (see "Drafts").
 
 How a request ended comes back to the agent **as an input of its own**, as a discarded draft
 does (`harness.submit`, with the request's id as the operation, so once): what the command
