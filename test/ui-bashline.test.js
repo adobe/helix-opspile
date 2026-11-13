@@ -134,7 +134,7 @@ describe('a command request\'s card', () => {
 
   it('sits between the reply box and the draft\'s line, in every reply box', () => {
     assert.match(js, /const LINES = `\$\{BASH_LINE\}\$\{DRAFT_LINE\}`;/);
-    assert.equal(js.match(/\$\{LINES\}<\/div>`/g).length, 4);
+    assert.equal(js.match(/\$\{LINES\}<\/div>`/g).length, 5);
     assert.doesNotMatch(js, /\$\{DRAFT_LINE\}<\/div>/);
     const css = SCRIPTS['spectrum-inbox.css'];
     assert.match(css, /\.bashbar \{ flex-basis: 100%;/);

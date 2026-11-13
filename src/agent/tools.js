@@ -76,6 +76,9 @@ const SOURCE = Type.Object({
 });
 const text = (t) => ({ output: [{ type: 'text', text: t }] });
 const fail = (t) => ({ output: [{ type: 'text', text: t }], isError: true });
+// While the agent answers a sidebar message (src/sidebar.js), nothing it does reaches the channel.
+const SIDEBAR_REFUSED = 'Not while you answer a sidebar message: the sidebar never reaches the channel. Nothing was sent. Say in your answer what you would send, or put it in the draft.';
+const inSidebar = async (ctx) => Boolean(ctx.inSidebar && await ctx.inSidebar());
 // Whom the `@Name`s of a reply or draft mention (src/post.js `writtenMentions`), for its answer:
 // an `@Name` that is not named there stays text, and nobody is notified.
 const taggedNote = (mentions) => `, tags ${mentions.map((m) => m.name).join(', ') || 'nobody'}`;
@@ -777,7 +780,9 @@ const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel
  * with its own, and with `request_bash`, a command for a person to run there
  * (src/agent/bashrequest.js).
  * `tools` is the list of keys that are on; `ctx` as for opspileExtension, with
- * `posted(platformMessageId)` to call for every message the agent posts, and
+ * `posted(platformMessageId)` to call for every message the agent posts, `inSidebar()`, whether
+ * the turn answers a sidebar message (src/agent/sidebar.js: then posting, reacting and asking
+ * the admin bots are refused), and
  * `schedule(when, callback, payload)`, the ThreadAgent's.
  */
 export function agentToolsExtension(ctx, tools) {
@@ -799,6 +804,9 @@ export function agentToolsExtension(ctx, tools) {
       }),
       executionMode: 'sequential',
       async execute(args) {
+        if (await inSidebar(ctx)) {
+          return fail(SIDEBAR_REFUSED);
+        }
         const t = await ctx.target();
         const max = MAX_POST[t.source];
         if (max && String(args.text || '').trim().length > max) {
@@ -844,6 +852,9 @@ export function agentToolsExtension(ctx, tools) {
       }),
       executionMode: 'sequential',
       async execute(args) {
+        if (await inSidebar(ctx)) {
+          return fail(SIDEBAR_REFUSED);
+        }
         const t = await ctx.target();
         const res = await reactAsApp(env, t.key, args.message, args.emoji);
         if (res.error) {
@@ -928,6 +939,10 @@ export function agentToolsExtension(ctx, tools) {
       }),
       executionMode: 'sequential',
       async execute(args) {
+        // The admin bots answer in the channel, and on Slack the request is posted in #general.
+        if (await inSidebar(ctx)) {
+          return fail(SIDEBAR_REFUSED);
+        }
         const t = await ctx.target();
         // Asked again each time: the tools an agent has are only as new as its latest message.
         if (!(await toolsFor(env, t)).includes('membership')) {

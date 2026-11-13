@@ -687,6 +687,59 @@ function channelLinksFor(texts) {
     }));
 }
 
+// The sidebar messages sent in this preview: the made-up agent answers those.
+const sidebarLive = new Set();
+
+// How long the made-up agent takes to answer in the sidebar, and what it says it is doing.
+const SIDEBAR_STEPS = [
+  [0, 'Reading your message'], [2500, 'Looking things up in the knowledge bases and repositories'], [5000, 'Reading the thread'],
+];
+const SIDEBAR_MS = 7000;
+
+/** The made-up agent's answer to a sidebar message: about the thread, never posted. */
+function sidebarAnswer(question) {
+  const q = question.split('\n')[0].slice(0, 120);
+  return `About “${q}”: as far as this thread goes, **it looks like the CDN, not the origin**.\n\n`
+    + '- Preview answers 200 for the same paths, so the origin is fine\n'
+    + '- The 503s started right after the 14:00 cache flush\n\n'
+    + 'I left the draft as it is. Nothing of this went to the channel; say so if you want it in the draft.';
+}
+
+/**
+ * The agent's turn on the latest sidebar message of `entry` (src/agent/turn.js), while it has
+ * not answered it: working for a few seconds, then done, and its answer goes into the sidebar
+ * (as ThreadAgent.keepTurn keeps it). Null when nothing waits.
+ */
+function sidebarTurn(entry) {
+  const key = entry.row.thread;
+  const list = store.sidebars.get(key) || [];
+  const asked = [...list].reverse().find((m) => m.role === 'person');
+  if (!asked || !sidebarLive.has(asked.id)) {
+    return null;
+  }
+  const answered = list.find((m) => m.reply_to === asked.id);
+  const t = Date.now() - Date.parse(asked.at);
+  const turn = { sidebar: asked.id, startedAt: asked.at };
+  if (!answered && t < SIDEBAR_MS) {
+    const [, doing] = SIDEBAR_STEPS.filter(([at]) => t >= at).pop();
+    return {
+      ...turn, state: 'working', text: doing, endedAt: null,
+    };
+  }
+  const endedAt = answered ? answered.at
+    : new Date(Date.parse(asked.at) + SIDEBAR_MS).toISOString();
+  const answer = answered ? answered.body : sidebarAnswer(asked.body);
+  if (!answered) {
+    list.push({
+      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt,
+    });
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+  }
+  return {
+    ...turn, state: 'done', text: answer, endedAt,
+  };
+}
+
 const AGENT_NOTE = 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
   + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
   + '- Filed *cdn-503-after-config-change* in the ACME knowledge base';
@@ -704,6 +757,11 @@ const agentAsked = new WeakMap();
 function agentTurn(entry, { asked = false } = {}) {
   if (entry.row.channel_id !== 'C0ACMEAEM') {
     return undefined;
+  }
+  // A sidebar message waits for its answer: the agent works on it, then answers.
+  const side = sidebarTurn(entry);
+  if (side) {
+    return side;
   }
   const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
     .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
@@ -827,11 +885,15 @@ function thread(asked) {
     draft: drafts.get(key) || null,
     // As src/api.js: the commands the agent asked a person to run (src/bashrequests.js).
     bash_requests: store.bashRequests.get(key) || [],
-    // As src/api.js: the agent's latest finished turn, kept when it ended.
+    // As src/api.js: the agent's latest finished turn, kept when it ended; one of the
+    // sidebar's is not.
     agent_turn: (() => {
       const t = agentTurn(entry);
-      return t && t.state !== 'working' ? t : null;
+      return t && t.state !== 'working' && !t.sidebar ? t : null;
     })(),
+    // As src/api.js: whether the thread has an agent, and what the sidebar said to it.
+    agent: agentTurn(entry) !== undefined,
+    sidebar: store.sidebars.get(key) || [],
   };
 }
 
@@ -1343,6 +1405,34 @@ async function api(req, res, url) {
     console.log(`command ${id} on ${key}: ${bash[1]}`);
     broadcast(entry.row.team, { type: 'bash', thread: key });
     return json(res, { ok: true, request }, bash[1] === 'run' ? 202 : 200);
+  }
+  if (url.pathname === '/api/agent/sidebar' && req.method === 'POST') {
+    // As src/agent/stub.js talkToAgent: into the thread's sidebar and the agent's conversation,
+    // never to the platform.
+    const { thread: key, text: raw } = await readJson(req);
+    const entry = store.threads.get(key);
+    const said = String(raw || '').trim();
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    if (!said || said.length > 8000) {
+      return json(res, { error: 'write what to ask the agent (up to 8000 characters)' }, 400);
+    }
+    if (agentTurn(entry) === undefined) {
+      return json(res, { error: 'this thread has no agent' }, 409);
+    }
+    const me = store.people.get(ME);
+    const message = {
+      id: `sb_${crypto.randomUUID()}`, role: 'person', by: { id: ME, name: me.name }, body: said, state: 'done', reply_to: null, at: new Date().toISOString(),
+    };
+    if (!store.sidebars.has(key)) {
+      store.sidebars.set(key, []);
+    }
+    store.sidebars.get(key).push(message);
+    sidebarLive.add(message.id);
+    console.log(`sidebar message on ${key} (not posted)`);
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+    return json(res, { message }, 202);
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.

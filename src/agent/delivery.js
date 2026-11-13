@@ -90,6 +90,22 @@ export async function idle(agent, payload) {
   await agent.harness.submit(IDLE_PROMPT, { operationId: `idle:${mark}`, whenBusy: 'followUp' });
 }
 
+/**
+ * How new messages join what the agent is doing: steered into a run, as the latest input of its
+ * turn, except while a sidebar message is pending (src/agent/sidebar.js). Steered into its turn,
+ * they would become the turn's input: posting would be allowed again with the sidebar question in
+ * context, and its answer would be kept as the thread's note. Then they follow, as a run of their
+ * own. A pending list that cannot be read counts as one with a sidebar message.
+ */
+export async function whenBusy(agent) {
+  try {
+    const pending = agent.harness.pending ? await agent.harness.pending() : [];
+    return pending.some((p) => String(p.operationId || '').startsWith('sidebar:')) ? 'followUp' : 'steer';
+  } catch {
+    return 'followUp';
+  }
+}
+
 async function tell(agent, { retry }) {
   const { env, ctx: { storage } } = agent;
   const problem = modelProblem(env);
@@ -138,7 +154,7 @@ async function tell(agent, { retry }) {
   await agent.syncUploads(entry);
   const receipt = await agent.harness.submit(input, {
     operationId: `messages:${last}`,
-    whenBusy: 'steer',
+    whenBusy: await whenBusy(agent),
   });
   await armIdle(agent, last);
   await storage.put('mark', last);

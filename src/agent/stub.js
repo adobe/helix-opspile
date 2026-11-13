@@ -14,6 +14,8 @@ import { AGENT_EMAIL, entryOf } from '../drafts.js';
 import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
+import { notifyRoom } from '../notify.js';
+import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
 import { agentEnabled } from './enabled.js';
 
 /**
@@ -134,6 +136,47 @@ export async function seedAgent(env, me, body, inTeam) {
   const by = me.name || me.email || 'staff';
   const res = await agent.seed(kb ? { by, text, kb } : { by, text });
   return json(res, res.error ? 503 : 202);
+}
+
+/**
+ * POST /api/agent/sidebar `{ thread, text }`: a person on the team talks to the thread's agent in
+ * the inbox's sidebar (src/sidebar.js). The message goes into the thread's sidebar and into the
+ * agent's conversation, and nowhere else: never to the platform. The agent answers it when it is
+ * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may work
+ * the thread. Answers 202 with the message.
+ */
+export async function talkToAgent(env, me, body, inTeam) {
+  const text = String((body && body.text) || '').trim();
+  if (!text || text.length > MAX_SIDEBAR) {
+    return json({ error: `write what to ask the agent (up to ${MAX_SIDEBAR} characters)` }, 400);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const t = await threadTarget(env, body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (!t.enabled) {
+    return json({ error: 'this thread has no agent' }, 409);
+  }
+  const by = me.name || me.email || 'staff';
+  // Written first: the agent's answer is kept only for a message the thread has.
+  const message = await addSidebarMessage(env, t.entry.key, {
+    id: sidebarId(), person: me.id, name: by, text,
+  });
+  const agent = await agentStub(env, t.entry.key);
+  const res = await agent.sidebar({ id: message.id, by, text })
+    .catch((e) => ({ error: e.message }));
+  if (res.error) {
+    await env.DB.prepare('DELETE FROM sidebar_messages WHERE id = ?').bind(message.id).run();
+    return json({ error: res.error }, 503);
+  }
+  await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+  return json({ message }, 202);
 }
 
 /**
