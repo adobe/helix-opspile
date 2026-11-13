@@ -51,13 +51,14 @@ import { promisify } from 'node:util';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** What every image has: the shell, the text tools, archives and curl. */
+/** What every image has: the shell, the text tools, jq, archives and curl. */
 const BASE = [
   { name: '@ai-ecoverse/wasm-bash' },
   { name: '@ai-ecoverse/wasm-coreutils' },
   { name: '@ai-ecoverse/wasm-grep' },
   { name: '@ai-ecoverse/wasm-sed' },
   { name: '@ai-ecoverse/wasm-gawk' },
+  { name: '@ai-ecoverse/wasm-jq' },
   { name: '@ai-ecoverse/wasm-findutils' },
   { name: '@ai-ecoverse/wasm-diffutils', commands: ['diff', 'cmp'] },
   { name: '@ai-ecoverse/wasm-curl' },
@@ -69,21 +70,19 @@ const BASE = [
   { name: '@ai-ecoverse/wasm-util-linux', commands: ['rev', 'column', 'hexdump'] },
 ];
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), find, xargs, diff, cmp, tar, gzip, zip, unzip, tree, column, rev, hexdump, curl';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, find, xargs, diff, cmp, tar, gzip, zip, unzip, tree, column, rev, hexdump, curl';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
  * people who choose, `tools` is what the agent is told it has (every word of it a command of
  * the image: `build` checks), and each package comes with all of its commands or those named.
- * jq is in none yet: @ai-ecoverse/wasm-jq needs a kernel that runs programs linked with
- * pthreads.
  */
 export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, find, diff, tar, gzip, zip and curl:'
-      + ' for reading logs and text, and asking APIs.',
+    description: 'GNU bash, coreutils, grep, sed, gawk, jq, find, diff, tar, gzip, zip and curl:'
+      + ' for reading logs, text and JSON, and asking APIs.',
     tools: BASE_TOOLS,
     packages: BASE,
   },

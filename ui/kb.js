@@ -853,7 +853,7 @@ function shellBlock(t) {
 
 const SHELL_CONFIRM = {
   'just-bash': (where) => `From their next message, the agents of ${where} run their commands in just-bash again, on the same files.`,
-  'slicc-kernel': (where) => `From their next message, the agents of ${where} run their commands in GNU bash on the SLICC kernel, on the same files. It is experimental: for now its curl reaches plain http:// only, so nothing over https:// and none of the secrets, and it has no jq.`,
+  'slicc-kernel': (where) => `From their next message, the agents of ${where} run their commands in GNU bash on the SLICC kernel, on the same files, with the programs of its image. It is experimental: a command takes a little longer, and what a program does there may differ from just-bash's own.`,
 };
 
 /** The handlers of the computer's shell and image pickers. */

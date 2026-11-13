@@ -418,12 +418,11 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   team's agents, and only the admin team chooses it: **just-bash** (the default), or **SLICC
   kernel (experimental)**, GNU bash and real programs on the
   [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel), over the same files. With the
-  kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, find,
-  diff, curl, tar, gzip, zip) or **Data** (Base, with ripgrep, sqlite3 and strings). Images
-  are defined in [scripts/computer-images.mjs](scripts/computer-images.mjs) and live in the
-  `IMAGES` bucket, not in the Worker. For now that shell's curl reaches plain `http://` only,
-  so nothing over `https://` and none of the secrets, and it has no `jq`: see
-  docs/ARCHITECTURE.md, "The computer's shell".
+  kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, jq,
+  find, diff, curl, tar, gzip, zip) or **Data** (Base, with ripgrep, sqlite3 and strings).
+  Images are defined in [scripts/computer-images.mjs](scripts/computer-images.mjs) and live in
+  the `IMAGES` bucket, not in the Worker. curl and the secrets work there as in just-bash:
+  see docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages. Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See

@@ -22,8 +22,12 @@ import { Workspace } from '@cloudflare/computer';
 import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
-import { fetchTransport } from '@ai-ecoverse/slicc-kernel';
-import { attachKernel, createCloudflareKernel, sliccBackend } from '@ai-ecoverse/slicc-kernel/cloudflare';
+import {
+  attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, sliccBackend,
+} from '@ai-ecoverse/slicc-kernel/cloudflare';
+import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
+// wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
+import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
 import { armTag, cacheRetention } from '../experiments.js';
@@ -386,8 +390,10 @@ export class ThreadAgent extends Agent {
    * own, the team's image installed from the `IMAGES` bucket (src/agent/image.js: a boot
    * without the bucket or the image fails, and says so). What its programs ask of the network goes
    * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
-   * follow redirects themselves, through it again. A Worker's clock stands still while it
-   * computes, so the kernel asks this object for the time before each timed wait.
+   * follow redirects themselves, through it again. For `https://` the kernel's proxy ends a
+   * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile the
+   * one in the image), and hands the request to the same transport. A Worker's clock stands
+   * still while it computes, so the kernel asks this object for the time before each timed wait.
    */
   kernel() {
     this.booting ??= (async () => {
@@ -403,6 +409,7 @@ export class ThreadAgent extends Agent {
             fetch: gatewayFetch((request) => forward(this.env, { agent: this.name }, request)),
             redirect: 'manual',
           }),
+          tlsEngine: compiledTlsEngine(createTlsEngine, tlsWasm),
         },
       });
       try {

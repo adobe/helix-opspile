@@ -653,28 +653,27 @@ describe('the agent\'s switchable tools', () => {
     });
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. For now curl`));
+    assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet. There is no npm`));
     assert.doesNotMatch(base, /just-bash|sqlite3/);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, rg, sqlite3, strings\. For now curl/);
-    // What it cannot do yet is said, so that it does not try around it.
+    assert.match(data, /curl, rg, sqlite3, strings\. curl reaches the internet\./);
     for (const text of [base, data]) {
-      assert.match(text, /plain http:\/\/ only/);
-      assert.match(text, /There is no jq here: read JSON with grep, sed and awk\./);
-      assert.match(text, /use its \.requests\.ndjson file with grep and awk:/);
+      // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
+      assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);
+      assert.match(text, /use its \.requests\.ndjson file with jq:/);
       // The rest is the same computer: its uploads, and the commands a person runs.
       assert.match(text, /uploads\/ in that directory is read-only/);
       assert.match(text, /request_bash asks a person on the team/);
     }
-    // An image with jq says nothing of its absence.
-    const withJq = await guide(async () => ({
-      runtime: 'slicc-kernel', image: 'json', tools: 'cat, jq', commands: ['cat', 'jq'],
+    // An image without jq says so, and what to read JSON with instead.
+    const plain = await guide(async () => ({
+      runtime: 'slicc-kernel', image: 'text', tools: 'cat, sed', commands: ['cat', 'sed'],
     }));
-    assert.doesNotMatch(withJq, /There is no jq/);
-    assert.match(withJq, /use its \.requests\.ndjson file with jq:/);
+    assert.match(plain, /There is no jq here: read JSON with grep, sed and awk\./);
+    assert.match(plain, /use its \.requests\.ndjson file with grep and awk:/);
     // An image the bucket does not have (or no bucket): the agent looks for itself.
     const unknown = await guide(async () => ({ runtime: 'slicc-kernel', image: 'gone' }));
-    assert.match(unknown, /The shell is GNU bash with real programs: ls \/usr\/bin lists them\. For now curl/);
+    assert.match(unknown, /The shell is GNU bash with real programs: ls \/usr\/bin lists them\. curl reaches/);
     assert.doesNotMatch(unknown, /There is no jq/);
     // A shell that cannot be asked about is just-bash's text, not a failed prompt.
     const failing = async () => {

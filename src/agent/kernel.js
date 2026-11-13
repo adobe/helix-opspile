@@ -47,10 +47,9 @@ export const RUNTIMES = [
     runtime: 'slicc-kernel',
     title: 'SLICC kernel (experimental)',
     description: 'GNU bash with real programs (WebAssembly), with processes, pipes and signals,'
-      + ' on the same files. Which programs is the image\'s choice, below. For now its curl'
-      + ' reaches plain http:// only, so nothing over https:// and none of the secrets, and it'
-      + ' has no jq. A command takes about a tenth of a second longer, and each thread keeps its'
-      + ' own copy of the image.',
+      + ' on the same files, with curl and the secrets as in just-bash. Which programs is the'
+      + ' image\'s choice, below. A command takes about a tenth of a second longer, and each'
+      + ' thread keeps its own copy of the image.',
   },
 ];
 export const DEFAULT_RUNTIME = 'just-bash';

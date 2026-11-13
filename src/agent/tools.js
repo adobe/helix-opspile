@@ -649,8 +649,7 @@ const JUST_BASH = 'The shell is just-bash: cat, grep, sed, awk, jq, sort, uniq, 
 
 /**
  * What the agent is told its shell has, with the SLICC kernel (src/agent/kernel.js): the
- * programs its image names (`shell.tools`, src/agent/image.js), and what it cannot do yet on
- * Cloudflare: TLS for its programs, and so the secrets.
+ * programs its image names (`shell.tools`, src/agent/image.js).
  */
 function kernelShell(shell) {
   const has = shell.tools
@@ -658,7 +657,7 @@ function kernelShell(shell) {
     : 'The shell is GNU bash with real programs: ls /usr/bin lists them.';
   const jq = !shell.commands || shell.commands.includes('jq') ? ''
     : ' There is no jq here: read JSON with grep, sed and awk.';
-  return `${has} For now curl reaches the internet over plain http:// only: an https:// URL fails ("CONNECT tunnel failed"), and so does what needs one, the team's secrets included. Say in your note what you could not fetch because of it.${jq} There is no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  return `${has} curl reaches the internet.${jq} There is no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**

@@ -369,7 +369,8 @@ describe('the images this repository builds', () => {
     assert.ok(toolNames(base.tools).length > 20);
     assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, jq' }] }), /tells the agent of jq/);
+    assert.ok(commandsOf(base).includes('jq'));
+    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
 
     // A kernel installs what was built, from a bucket with its objects.
     const objects = objectsOf(built);

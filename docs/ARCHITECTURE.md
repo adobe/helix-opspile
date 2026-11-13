@@ -1752,8 +1752,8 @@ the default. An agent follows its team's choice before each delivery, as it foll
   `agent_tool_options`; `base` without one).
   - **What an image is.** `scripts/computer-images.mjs` defines them (`IMAGES`) and builds
     them from the `@ai-ecoverse/wasm-*` packages ([homescoop](https://github.com/ai-ecoverse/homescoop))
-    this repository pins: `base` (bash, coreutils, grep, sed, gawk, findutils, diff and cmp,
-    curl, gzip, tar, zip and unzip, tree, which, rev, column, hexdump) and `data` (base, with
+    this repository pins: `base` (bash, coreutils, grep, sed, gawk, jq, findutils, diff and
+    cmp, curl, gzip, tar, zip and unzip, tree, which, rev, column, hexdump) and `data` (base, with
     ripgrep, sqlite3 and strings). An image names what the agent is told it has (`tools`), and
     the build fails if that names a command the image lacks.
   - **In the bucket.** `blobs/<sha256>` is one file by its content, so images share what they
@@ -1769,7 +1769,7 @@ the default. An agent follows its team's choice before each delivery, as it foll
     `/node_modules` it: one read when it is the one installed (its digest is kept in
     `/node_modules/.opspile-image.json`), else each package that is not there as the image has
     it is written from the bucket, checked against its hash, and the packages only the image
-    before had are removed. So each thread that runs a command keeps its own copy (9 MB for
+    before had are removed. So each thread that runs a command keeps its own copy (10 MB for
     `base`, 15 MB for `data`) in its object's SQLite. A boot without the bucket, or without the
     image, fails and says so: the command answers "the computer failed".
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
@@ -1779,21 +1779,20 @@ the default. An agent follows its team's choice before each delivery, as it foll
   `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
   taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
   again.
-- **What it cannot do yet**, and the agent is told so (`SHELLS` in `src/agent/tools.js`):
-  - **No `https://`.** curl speaks TLS to the kernel's proxy, which ends it with
-    `@ai-ecoverse/wasm-tls-engine`, loaded by `import()` of a `data:` URL and compiled at run
-    time. Workers allow neither, so `CONNECT` answers 501. Plain `http://` works. With it go the
-    secrets, which are only sent over HTTPS.
-  - **No `jq`.** `@ai-ecoverse/wasm-jq` is built with threads (it imports a shared memory and
-    Emscripten's pthread functions), which the kernel has none of in a Worker: it does not
-    start, so it is in no image.
-  - No JavaScript runtime: the kernel's `node` (slicc-jsh) is a JS program, which it does not
-    run in a Worker.
-
-  Both of the first two are fixed in the kernel by
-  [slicc-kernel#1829](https://github.com/ai-ecoverse/slicc-kernel/pull/1829). With a release
-  that has it, the Worker imports the TLS engine and passes it to the kernel
-  (`network.tlsEngine`), and `jq` goes into the images.
+- **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
+  `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
+  loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
+  run time. Workers allow neither, so the Worker carries the engine itself (a dependency,
+  0.25 MB compressed: wrangler compiles the `.wasm` import at build) and passes it in
+  (`network.tlsEngine`, `compiledTlsEngine`). The real TLS connection is `fetch`'s: a server
+  whose certificate Cloudflare refuses answers curl as an HTTP error (526), not as a TLS
+  error, so `curl` without `-f` exits 0 on it.
+- **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
+  second one, so `pthread_create` fails with `EAGAIN`. jq declares 64 MiB of memory, a whole
+  Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+- **What it does not have:** a JavaScript runtime (the kernel's `node`, slicc-jsh, is a JS
+  program, which it does not run in a Worker), python, and `yq`, `xan` and `html-to-markdown`,
+  which just-bash has.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
