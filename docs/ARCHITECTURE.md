@@ -1398,14 +1398,37 @@ answer (or a failed request), and whenever `status()` finds a finished turn it h
 that stopped half way and counts as failed now). The page asks `GET /api/agent` when the thread
 opens or changes, and every few seconds while the agent works or a new message waits for it;
 what the agent says wins over the kept turn when it is about a later one. A turn in progress is
-only ever the agent's to say, so it comes in after the messages. Its avatar and name open the agent
-settings of the thread's team (Agents, its thread agents, at the thread's channel).
+only ever the agent's to say, so it comes in after the messages. Its avatar opens the sidebar
+(below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
+thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
 on unless they turn it off, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
 Agents does too, a select on each channel with an agent. Hidden, the page does not ask
 `GET /api/agent` at all.
+
+**The sidebar.** Anyone who may work a thread can talk to its agent in the inbox, about the
+thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`). Each
+message goes into the agent's own conversation as an input of its own (`ThreadAgent.sidebar`,
+`src/agent/sidebar.js`), after the run it is in, never steered into one; so the agent remembers
+it in later turns. It goes into the thread's history too: `sidebar_messages` in D1, the person's
+message when it is sent, the agent's answer when the turn ends (the turn's closing text, up to
+8000 characters, kept by `keepTurn` instead of the thread's note, which stays the turn before).
+Nothing of it is posted: while the agent's latest input is a sidebar message, `post_message`,
+`add_reaction` and `request_membership` refuse (the admin bots answer in the channel), and so do
+they when the transcript cannot be read. The input starts with a line that names the message,
+and only an input that starts with it is one: a customer quoting it is told inside a delivery.
+The inboxes of the thread's teams hear of each message and answer through the team's room
+(`{ type: 'sidebar' }`).
+
+In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. The reply
+box turns into the sidebar's, in purple, saying that only the team sees it and nothing goes to
+the platform, with **✕ Exit sidebar** (and Esc, and opening another thread). Each run of sidebar
+messages shows between the thread's messages where it happened, folded to one line ("Lena Berg
+had a sidebar conversation with Thread Agent · 4 messages · not posted"), which unfolds it; the
+one you are in stays open at the bottom, with the agent working on its answer.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the

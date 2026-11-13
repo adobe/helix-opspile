@@ -800,6 +800,23 @@ describe('inbox page', () => {
     assert.equal(placed.pop(), null);
   });
 
+  it('talks to the agent in the sidebar through its own route only, and says who did', () => {
+    const from = html.indexOf('async function askSide');
+    const ask = html.slice(from, html.indexOf('\n}\n', from));
+    assert.match(ask, /request\('POST', '\/api\/agent\/sidebar'/);
+    assert.doesNotMatch(ask, /\/api\/post|sendAsApp|postPending/);
+    const { sidePeople } = piece('/** "Lena Berg", "You"', '/** One message of a sidebar conversation', 'sidePeople', {
+      state: { me: { id: 1 } },
+    });
+    const said = (...people) => people.map((by) => ({ role: 'person', by }));
+    const lena = { id: 2, name: 'Lena Berg' };
+    const me = { id: 1, name: 'Dana Ops' };
+    assert.equal(sidePeople([...said(lena), { role: 'agent' }, ...said(lena)]), 'Lena Berg');
+    assert.equal(sidePeople(said(me)), 'You');
+    assert.equal(sidePeople(said(me, lena)), 'Lena Berg and you');
+    assert.equal(sidePeople(said(lena, { id: 3, name: 'Tom' }, me)), 'Lena Berg, Tom and you');
+  });
+
   it('tells bells apart as the server does, whatever order the filters come in', () => {
     const { bellKey } = piece('// As src/settings.js compares them.', 'const bellOn', 'bellKey');
     const me = { teams: [{ slug: 'helix' }] };

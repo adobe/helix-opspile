@@ -14,10 +14,11 @@ import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import {
-  agentStatus, decideBash, seedAgent, tellDiscarded,
+  agentStatus, decideBash, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
 import { agentEnabled } from './agent/enabled.js';
 import { keptTurn } from './agent/kept.js';
+import { sidebarFor } from './sidebar.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -762,8 +763,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
-    { results: appPosts }, agentTurn, { results: memberTech }, { results: rootLinks }, place,
-    bashRequests,
+    { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
+    bashRequests, sidebar,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -808,7 +809,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // The agent's latest finished turn (src/agent/kept.js), where the channel has an agent, as
     // GET /api/agent decides: the inbox shows it with the messages.
     row.kind === 'channel' ? Promise.all([keptTurn(env, key), agentEnabled(env, row.channel_id, row.team)])
-      .then(([turn, on]) => (on ? turn : null)) : null,
+      .then(([turn, on]) => ({ on, turn: on ? turn : null })) : null,
     // The technologies each member shows (labels.tech), for the header's tech stack.
     env.DB.prepare(`SELECT thread, tech FROM labels
       WHERE thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
@@ -826,6 +827,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // The commands the agent asked a person to run (src/bashrequests.js): waiting, running,
     // or ended within the hour.
     requestsFor(env, entryKeys),
+    // What the team said to the agent in the inbox's sidebar, and its answers (src/sidebar.js):
+    // shown between the messages, folded; never on the platform.
+    sidebarFor(env, entryKeys),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -924,7 +928,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     facts: found || [],
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
     draft: draftOf(drafts, entryKeys),
-    agent_turn: agentTurn || null,
+    agent_turn: (agentOn && agentOn.turn) || null,
+    // Whether the thread has an agent, which the sidebar talks to.
+    agent: Boolean(agentOn && agentOn.on),
+    sidebar,
     bash_requests: bashRequests,
   };
 }
@@ -1141,6 +1148,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/agent/seed' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return seedAgent(env, me, body, working);
+  }
+  // The sidebar: a person talks to the thread's agent, never to the channel (src/sidebar.js).
+  if (url.pathname === '/api/agent/sidebar' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return talkToAgent(env, me, body, working);
   }
   // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);

@@ -447,6 +447,43 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .msg.agent a.face:hover .av, .msg.agent a.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg.agent .who a:hover b, .msg.agent .who a:focus-visible b { text-decoration: underline; }
 .msg.agent a:focus-visible { outline: none; }
+/* Its avatar opens the sidebar: a button, with a speech bubble on it. */
+.msg.agent button.face { border: 0; padding: 0; background: none; cursor: pointer; color: inherit; }
+.msg.agent button.face:focus-visible { outline: none; }
+.bubble-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); padding: var(--spectrum-border-width-200); box-sizing: border-box; border-radius: 50%; pointer-events: none; }
+
+/* The sidebar (ui/inbox.js, "the sidebar"): a conversation with the thread's agent, folded to one
+   line in the feed where it happened, and unfolded below it; the reply box in sidebar mode. */
+.sidechat { margin: var(--spectrum-spacing-200) 0; }
+.sidechat .sc-head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%; text-align: left; font: inherit; cursor: pointer; }
+.sidechat.live .sc-head { cursor: default; }
+.sidechat .faces { display: flex; flex: none; }
+.sidechat .faces .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
+.sidechat .faces .av + .av { margin-left: calc(-1 * var(--spectrum-spacing-50)); }
+.sidechat .sc-what { flex: 1; min-width: 0; }
+.sidechat .sc-meta { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.sidechat .chev { flex: none; transition: transform var(--spectrum-animation-duration-100) ease-out; }
+.sidechat.open .chev { transform: rotate(90deg); }
+.sidechat .sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
+.sidechat .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
+.sidechat .sm.person { flex-direction: row-reverse; }
+.sidechat .sm .face { position: relative; flex: none; }
+.sidechat .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
+.sidechat .sm.person .col { align-items: flex-end; }
+.sidechat .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
+.sidechat .sm.pending .bubble { opacity: .7; }
+.sidechat .sc-foot { display: flex; justify-content: center; }
+.sidechat .sc-continue { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); font: inherit; cursor: pointer; }
+.sidechat :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
+.sidechat .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
+.sidechat.blank .sc-body { padding-top: var(--spectrum-spacing-200); }
+.composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
+.composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
+.composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
+.composer.sidebar .side-bar { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-100); }
+.composer.sidebar .side-bar .face { position: relative; flex: none; }
+.composer.sidebar .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
 .msg .face .badge-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
  border: var(--spectrum-border-width-200) solid var(--pane); }
 /* A run of one author's messages: the name above the first, the avatar beside the last. */
@@ -1520,6 +1557,99 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: var(--spectrum-accent-subtle-background-color-default);
 }
 .spectrum .msg.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum .msg.agent button.face:hover .av, .spectrum .msg.agent button.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+/* The sidebar: purple, Spectrum's color for what is neither the customer's nor posted. The folded
+   line a quiet, dashed card; unfolded, the agent's answers outlined as its notes are, in purple,
+   yours and colleagues' filled. In sidebar mode the reply box is the sidebar's: tinted, with a
+   purple field and an Ask button in purple, and a line that says where it goes. */
+.spectrum .bubble-ico { color: var(--spectrum-white); background: var(--spectrum-purple-background-color-default); }
+.spectrum .sidechat {
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-purple-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--spectrum-purple-subtle-background-color-default);
+}
+.spectrum .sidechat.open { border-style: solid; }
+.spectrum .sidechat.live { border-width: var(--spectrum-border-width-200); box-shadow: 0 0 0 var(--spectrum-spacing-50) color-mix(in srgb, var(--spectrum-purple-visual-color) 18%, transparent); }
+.spectrum .sidechat .sc-head {
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: none;
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .sidechat:not(.live) .sc-head:hover { background: color-mix(in srgb, var(--spectrum-purple-visual-color) 10%, transparent); }
+.spectrum .sidechat .sc-head:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .sidechat .sc-what b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sidechat .sc-meta, .spectrum .sidechat .chev { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sidechat .faces .av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-purple-subtle-background-color-default); font-size: var(--spectrum-font-size-50); }
+.spectrum .sidechat .sc-body { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
+.spectrum .sidechat .sm .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sidechat .sm .who b { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sidechat .sm .bubble { border-radius: var(--spectrum-corner-radius-extra-large-default); }
+.spectrum .sidechat .sm.person .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); }
+.spectrum .sidechat .sm.person .bubble a { color: var(--spectrum-white); }
+.spectrum .sidechat .sm.person .bubble code { background: var(--spectrum-transparent-black-400); }
+.spectrum .sidechat .sm.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sidechat .sm.agent.working .bubble { border-style: solid; }
+.spectrum .sidechat .sm.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum .sidechat .spin {
+  display: inline-block;
+  border-radius: 50%;
+  width: var(--spectrum-progress-circle-size-small);
+  height: var(--spectrum-progress-circle-size-small);
+  margin-right: var(--spectrum-spacing-75);
+  border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);
+  border-top-color: var(--spectrum-purple-visual-color);
+  vertical-align: text-bottom;
+  animation: spin var(--spectrum-animation-duration-2000) linear infinite;
+}
+.spectrum .sidechat .sc-meta .spin { margin-right: 0; }
+@media (prefers-reduced-motion: reduce) { .spectrum .sidechat .spin { animation: none; } }
+.spectrum .sidechat .sc-wait { text-align: center; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sidechat .sc-continue {
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
+  border-radius: calc(var(--spectrum-component-height-100) / 2);
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-purple-1000);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .sidechat .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .sidechat :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+.spectrum .composer .sidebtn {
+  width: var(--spectrum-component-height-200);
+  height: var(--spectrum-component-height-200);
+  border: 0;
+  border-radius: var(--s2-radius);
+  background: none;
+}
+.spectrum .composer .sidebtn:hover, .spectrum .composer .sidebtn:focus-visible { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .composer .sidebtn:hover .av { outline: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); outline-offset: var(--spectrum-border-width-100); }
+.spectrum .composer.sidebar {
+  background: var(--spectrum-purple-subtle-background-color-default);
+  border-top: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
+}
+.spectrum .composer.sidebar .side-bar { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .composer.sidebar .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
+.spectrum .composer.sidebar .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .composer.sidebar .side-exit {
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
+  border-radius: calc(var(--spectrum-component-height-100) / 2);
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .composer.sidebar .side-exit:hover { border-color: var(--spectrum-gray-800); }
+.spectrum .composer.sidebar .side-exit:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .composer.sidebar textarea { border-color: var(--spectrum-purple-visual-color); border-style: dashed; background: var(--spectrum-background-layer-2-color); }
+.spectrum .composer.sidebar textarea:focus { border-color: var(--spectrum-purple-1000); border-style: solid; }
+.spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
+.spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
 .spectrum .msg.agent .spin, .spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);

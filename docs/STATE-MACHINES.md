@@ -142,7 +142,8 @@ that stopped half way with no run pending counts as failed after 15 minutes. A f
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
-progress is never kept.
+progress is never kept. A turn that answers a sidebar message is kept as its answer instead
+(`sidebar_messages`, below), and the row stays the turn before it.
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
 asks again; after five in a row the spinner goes.
@@ -169,6 +170,19 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 124 by itself. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
 deadline, without what the command printed, which is kept nowhere.
+
+**Sidebar message.** asked → answered (or failed → answered) (`sidebar_messages`, `src/sidebar.js`,
+`src/agent/sidebar.js`). The person's row is written before the agent is told, and deleted when the
+agent did not take it, so an answer is only ever kept for a message the thread has (the insert
+selects it). The answer's id is the message's with `:answer`: a turn kept twice writes one answer, a
+failed one is replaced by the next attempt's, and a finished one by nothing. It is never dated
+before its message. Whether a turn is the sidebar's is not stored: it is read from the turn's input
+(`turnSidebar`), at every `post_message`, `add_reaction` and `request_membership`, which refuse
+while it is, and when the transcript cannot be read.
+
+**Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕ Exit,
+Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
+a message the inbox did not take goes back into it.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
