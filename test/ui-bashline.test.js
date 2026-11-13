@@ -226,6 +226,16 @@ describe('a command request\'s card', () => {
     assert.match(css, /\.bashbar \.cmd \{[^}]*white-space: pre-wrap; overflow-wrap: anywhere;/);
   });
 
+  it('stands a card\'s first line, and a decided card\'s command, on one baseline', () => {
+    // The command, in another font, and the earlier ones' button sat 4px lower than how the
+    // request stands: the line's baseline was its icon's bottom edge, not its text's.
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\.bashbar \.head \{ display: flex; align-items: baseline;/);
+    assert.match(css, /\.bashbar \.what \{ flex: none; display: inline-flex; align-items: baseline;/);
+    assert.match(css, /\.bashbar \.what svg \{ flex: none; align-self: center; \}/);
+    assert.match(css, /\.bashbar \.br:not\(\.pending\) \{ flex-direction: row; align-items: baseline;/);
+  });
+
   it('keeps Deny and Run in sight while a tall card scrolls', () => {
     const css = SCRIPTS['spectrum-inbox.css'];
     assert.match(css, /\.bashbar \.foot \{ position: sticky; bottom: 0;/);

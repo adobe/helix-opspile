@@ -848,10 +848,13 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar[hidden] { display: none; }
 .bashbar .br { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
-.bashbar .head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+/* A card's first line stands on one baseline, its text's: a decided card lines its command, in
+   another font, and the earlier ones' button up with it. The icon is centered on the line, and
+   is not what the line's baseline is taken from (as the first item's bottom edge would be). */
+.bashbar .head { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
 .bashbar .id { flex: none; }
-.bashbar .what { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
-.bashbar .what svg { flex: none; }
+.bashbar .what { flex: none; display: inline-flex; align-items: baseline; gap: var(--spectrum-spacing-75); }
+.bashbar .what svg { flex: none; align-self: center; }
 .bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bashbar .why { margin: 0; overflow-wrap: anywhere; }
 .bashbar .cmd { margin: 0; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
