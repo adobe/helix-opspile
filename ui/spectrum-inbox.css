@@ -68,7 +68,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
 .fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
 .fr.off .lab { text-decoration: line-through; color: var(--mute); }
-.fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+.fr.off .ind, .fr.off .ico, .fr.off .bar, .fr.off .logo { opacity: 0.4; }
 @media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; } }
 .fr .ind { width: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); height: var(--spectrum-spacing-300); background: var(--faint); }
 .fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
@@ -111,10 +111,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
  }
 
 /* Threads: fixed-height rows, two lines, as in Apple Mail. */
-#threads { background: var(--col); border-left: var(--spectrum-border-width-100) solid var(--line); border-right: var(--spectrum-border-width-100) solid var(--line);
-  scrollbar-width: none; }
-/* The open thread's lifted row (#lift) is drawn across the list's right edge: no scrollbar there. */
-#threads::-webkit-scrollbar { display: none; }
+#threads { background: var(--col); border-left: var(--spectrum-border-width-100) solid var(--line); border-right: var(--spectrum-border-width-100) solid var(--line); }
 #threads .count { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-bottom: var(--spectrum-border-width-100) solid var(--line);
   position: sticky; top: 0; z-index: 1; }
 .t { height: var(--row-h, var(--spectrum-spacing-800)); padding: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-200); border-bottom: var(--spectrum-border-width-100) solid var(--line); cursor: pointer;
@@ -161,7 +158,6 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .find svg { flex: none; }
 .find input { flex: 1; min-width: 0; padding: 0;
  }
-.find input::placeholder { color: var(--faint); }
 .find:focus-within kbd { display: none; }
 @media (hover: none) { .find kbd { display: none; } }
 #threads .count .found { color: var(--mute); }
@@ -220,14 +216,9 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .t .dot.ring:not([class*="c-"]) { background: transparent; }
 
 /*
- * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
- * The filter cards stick out of the page's left edge and hang over the thread list by a
- * third of their corner radius while one of their filters is on; pointing at one moves
- * nothing. They need room to do so (and to cast their shadow): the filter column reaches
- * into the thread list by --fg, and lets the pointer through where it has no card. The open thread's row is lifted out of its column, over the pane, by a copy
- * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
- * the list's heading and the open thread's header, and the list shows no scrollbar for it
- * to cover.
+ * The filters are a column of their own on the frame. Folded to a rail (below) they slide out
+ * over the thread list: the column reaches into the list by --fg for that, and lets the
+ * pointer through where it has no card.
  */
 :root { --fg: var(--spectrum-spacing-700); }
 main { position: relative; background: var(--col); }
@@ -237,11 +228,7 @@ main { position: relative; background: var(--col); }
 #filters::-webkit-scrollbar { display: none; }
 #filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)));
  border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
-  --out: 0px; margin-right: calc(-1 * var(--out)); padding-right: calc(var(--spectrum-spacing-200) + var(--out));
-  transition: margin-right var(--spectrum-animation-duration-300) ease-out, padding-right var(--spectrum-animation-duration-300) ease-out; }
-/* A card hangs further out by its right edge and padding alone: its contents stay put. */
-main:not(.rail) #filters .card.active { --out: calc(var(--r) / 3); }
-@media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+  padding-right: var(--spectrum-spacing-200); }
 /* Room for the filter cards' overhang, so they never cover a status dot. */
 .t { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
 #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
@@ -281,20 +268,16 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 @media (hover: none) {
   :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
 }
-main.rail #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
 @media (prefers-reduced-motion: reduce) {
   main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
 }
-#lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
-#lift .t { position: absolute;
-  content-visibility: visible;
- box-shadow: var(--lift-shadow);
-  padding: calc(calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) + var(--lv) - var(--spectrum-border-width-100)) calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) + var(--lr) - var(--spectrum-border-width-100)) 0 calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) + var(--ll) - var(--spectrum-border-width-100)); }
 
 .t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
 @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
 .msg.enter, .sys.enter { animation: rise var(--spectrum-animation-duration-700) ease-out; }
 @keyframes rise { from { transform: translateY(calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50))); opacity: 0; } to { transform: none; opacity: 1; } }
+/* For those who ask the browser for less motion, a new row or message is simply there. */
+@media (prefers-reduced-motion: reduce) { .t.enter, .msg.enter, .sys.enter { animation: none; } }
 .post { display: flex; align-items: center; gap: var(--spectrum-spacing-100); color: var(--mute); font-size: var(--spectrum-font-size-75); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-75); }
 .post::before, .post::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) dashed var(--line); }
 .composer { flex: none; border-top: var(--spectrum-border-width-100) solid var(--line); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); display: flex; align-items: flex-end; }
@@ -465,7 +448,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .bubble-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); padding: var(--spectrum-border-width-200); box-sizing: border-box; border-radius: 50%; pointer-events: none; }
 
 /* The sidebar (ui/inbox.js, "the sidebar"): a conversation with the thread's agent, folded to one
-   line in the feed where it happened, and unfolded below it; the reply box in sidebar mode. */
+   line in the feed where it happened, and unfolded below it; the reply box in sidebar mode. On a
+   wide screen it is unfolded in a panel beside the thread instead (`#side`, below). */
 .sidechat { margin: var(--spectrum-spacing-200) 0; }
 .sidechat .sc-head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%; text-align: left; font: inherit; cursor: pointer; }
 .sidechat.live .sc-head { cursor: default; }
@@ -474,28 +458,59 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sidechat .faces .av + .av { margin-left: calc(-1 * var(--spectrum-spacing-50)); }
 .sidechat .sc-what { flex: 1; min-width: 0; }
 .sidechat .sc-meta { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75); }
-.sidechat .chev { flex: none; transition: transform var(--spectrum-animation-duration-100) ease-out; }
+.sidechat .chev { flex: none; margin-left: var(--spectrum-spacing-50); transition: transform var(--spectrum-animation-duration-100) ease-out; }
 .sidechat.open .chev { transform: rotate(90deg); }
-.sidechat .sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
-.sidechat .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
-.sidechat .sm.person { flex-direction: row-reverse; }
-.sidechat .sm .face { position: relative; flex: none; }
-.sidechat .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
-.sidechat .sm.person .col { align-items: flex-end; }
-.sidechat .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
-.sidechat .sm.pending .bubble { opacity: .7; }
-.sidechat .sc-foot { display: flex; justify-content: center; }
-.sidechat .sc-continue { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); font: inherit; cursor: pointer; }
-.sidechat :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
-.sidechat .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
+/* Beside the panel the thread's column is narrower: what the line counts goes under who talked. */
+.sidechat.paneled .sc-head { flex-wrap: wrap; }
+.sidechat.paneled .sc-what { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
+.sidechat.paneled .sc-meta { margin-left: auto; }
+/* What a conversation shows (`.sc-body`): under its line in the feed, or in the panel. */
+.sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
+.sc-body .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
+.sc-body .sm.person { flex-direction: row-reverse; }
+.sc-body .sm .face { position: relative; flex: none; }
+.sc-body .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
+.sc-body .sm.person .col { align-items: flex-end; }
+.sc-body .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
+.sc-body .sm.pending .bubble { opacity: .7; }
+.sc-body .sc-foot { display: flex; justify-content: center; }
+.sc-body .sc-continue { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); font: inherit; cursor: pointer; }
+.sc-body :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
+.sc-body .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
 .sidechat.blank .sc-body { padding-top: var(--spectrum-spacing-200); }
 .composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
 .composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 .composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
 .composer.sidebar .side-bar { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-100); }
-.composer.sidebar .side-bar .face { position: relative; flex: none; }
-.composer.sidebar .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+:is(.side-bar, .sp-head) .face { position: relative; flex: none; }
+.side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
+/* The sidebar beside the thread (placeSidePanel): a panel at the right edge of the thread's
+   column, which makes room for it. While it shows, the content area is shared 3 : 5 : 3 between
+   the list, the thread and the panel: the thread, which has the code and the logs, stays the
+   widest by far, and what flanks it is as wide on either side. So the list gives up room too
+   (its rows keep their height, and end in an ellipsis sooner), down to its least width; the
+   panel is 3 of the thread's column's 8, 360px at least, and 560px at most, where its lines get
+   too long to read. It shows where the three have room (syncSideRoom in ui/inbox.js, which
+   these widths are part of). Its top, its conversations, which scroll, and its box, as the
+   thread's are. */
+main { --nav-w: var(--filters-w); --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 70)); }
+main.rail { --nav-w: var(--rail); }
+main.siding { grid-template-columns: var(--nav-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), calc((100% - var(--nav-w)) * 3 / 11)) 1fr; }
+#side { grid-row: 1; grid-column: 3; justify-self: end; width: var(--side-w); display: flex; flex-direction: column; overflow: hidden; }
+#side[hidden] { display: none; }
+main.siding #pane { margin-right: var(--side-w); }
+#side .sp-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+#side .sp-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
+#side .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
+#side .sc-body { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-300) var(--spectrum-spacing-400); }
+#side .sc-body .sm .col { max-width: 88%; }
+#side .sp-when { text-align: center; margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-50); }
+#side .sp-when:first-child { margin-top: 0px; }
+#side .sc-wait.blank { margin: auto 0; padding: var(--spectrum-spacing-400) 0; }
+#side .scroller:has(.sc-wait.blank) { display: flex; flex-direction: column; }
+#side .scroller:has(.sc-wait.blank) .sc-body { flex: 1; }
+#side .composer { padding-left: var(--spectrum-spacing-300); padding-right: var(--spectrum-spacing-300); }
 .msg .face .badge-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
  border: var(--spectrum-border-width-200) solid var(--pane); }
 /* A run of one author's messages: the name above the first, the avatar beside the last. */
@@ -645,7 +660,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 :is(.file-view, .file-dialog) .fv-bar { display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100));
   border-bottom: var(--spectrum-border-width-100) solid var(--line); background: var(--col); }
 :is(.file-view, .file-dialog) .fv-count { flex: 1 0 auto; color: var(--mute); white-space: nowrap; }
-:is(.file-view, .file-dialog) .fv-find { flex: 0 1 calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); width: 0; min-width: calc(var(--spectrum-spacing-100) * 8 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); font: inherit; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-300);
+:is(.file-view, .file-dialog) .fv-findbox { flex: 0 1 calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); width: 0; min-width: calc(var(--spectrum-spacing-100) * 8 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+:is(.file-view, .file-dialog) .fv-find { font: inherit; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-300);
   border: var(--spectrum-border-width-100) solid var(--line); background: var(--card); color: var(--ink); }
 :is(.file-view, .file-dialog) .fv-expand { flex: none; padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); line-height: 1.3; border-radius: var(--spectrum-corner-radius-300); cursor: pointer; }
 :is(.file-view, .file-dialog) .fv-scroll { max-height: calc(var(--spectrum-spacing-100) * 42 + var(--spectrum-spacing-75)); overflow: auto; overscroll-behavior: contain; }
@@ -703,7 +719,7 @@ dialog.file-dialog::backdrop { background: rgb(var(--spectrum-black-rgb), var(--
 .file-dialog .fv-link:hover { text-decoration: underline; }
 .file-dialog .fv-close { padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: var(--spectrum-corner-radius-300); cursor: pointer; }
 .file-dialog .fv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.file-dialog .fv-find { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
+.file-dialog .fv-findbox { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
 .file-dialog :is(.fv-scroll, .fv-text) { flex: 1; max-height: none; }
 .file-dialog .fv-table :is(th, td) { max-width: 60ch; }
 @media (prefers-reduced-motion: reduce) { .file-view .fv-wait .spin { animation: none; } }
@@ -866,9 +882,13 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar[hidden] { display: none; }
 .bashbar .br { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
-.bashbar .head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
-.bashbar .what { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
-.bashbar .what svg { flex: none; }
+/* A card's first line stands on one baseline, its text's: a decided card lines its command, in
+   another font, and the earlier ones' button up with it. The icon is centered on the line, and
+   is not what the line's baseline is taken from (as the first item's bottom edge would be). */
+.bashbar .head { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+.bashbar .id { flex: none; }
+.bashbar .what { flex: none; display: inline-flex; align-items: baseline; gap: var(--spectrum-spacing-75); }
+.bashbar .what svg { flex: none; align-self: center; }
 .bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bashbar .why { margin: 0; overflow-wrap: anywhere; }
 .bashbar .cmd { margin: 0; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -876,14 +896,22 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
 .bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
 .bashbar .br:not(.pending) .cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), 1fr));
+/* Those that ended: one box, a line each. Only the latest shows, until its button shows the rest. */
+.bashbar .hist { flex: none; display: flex; flex-direction: column; min-width: 0; }
+.bashbar .more { cursor: pointer; }
+/* A field is as wide as a line of text reads well, so that what it is for fits in a line or
+   two; several sit side by side where there is room. Never wider than a narrow card. */
+.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), calc(var(--spectrum-spacing-100) * 70)));
   align-items: end; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .var { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
 .bashbar .var .nm { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; }
 .bashbar .var input { width: 100%; min-width: 0; }
 .bashbar .keep { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); cursor: pointer; }
 .bashbar .keep input { margin: 0; }
-.bashbar .foot { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+/* Deny and Run stay in sight at the bar's bottom edge while a tall card scrolls under them. */
+.bashbar .foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: var(--spectrum-spacing-200);
+  margin: 0 calc(-1 * var(--spectrum-spacing-100)) calc(-1 * var(--spectrum-spacing-100)) calc(-1 * var(--spectrum-spacing-200));
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .note { flex: 1; min-width: 0; cursor: help; }
 .bashbar .acts { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
 .bashbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
@@ -892,12 +920,50 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
 @media (prefers-reduced-motion: reduce) { .bashbar .spin { animation: none; } }
 @container bash (max-width: 560px) {
-  .bashbar .foot { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-100); }
-  /* Stretched to the card's width, not as wide as the command: that is what cuts it. */
-  .bashbar .br:not(.pending) { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-75); }
-  .bashbar .br:not(.pending) .head { max-width: none; }
-  .bashbar .br:not(.pending) .cmd { flex: none; }
+  /* The note runs with the card: only Deny and Run stay at the bar's bottom edge, side by side. */
+  .bashbar .foot { display: contents; }
+  .bashbar .acts { position: sticky; bottom: 0; padding-top: var(--spectrum-spacing-75); }
   .bashbar .acts button { flex: 1; }
+  /* What a card's first line cannot hold goes on to a second. */
+  .bashbar .head { flex-wrap: wrap; row-gap: 0px; }
+  /* Decided: how it stands, with the earlier ones' button beside it, over the command. Its
+     lines are as wide as the card, not as the command: that is what cuts the command, and what
+     keeps the bar from scrolling sideways. */
+  .bashbar .br:not(.pending) { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+  .bashbar .br:not(.pending) .head { grid-column: 1; max-width: none; }
+  .bashbar .br:not(.pending) .more { grid-column: 2; grid-row: 1; }
+  .bashbar .br:not(.pending) .cmd { grid-column: 1 / -1; grid-row: 2; }
+}
+/* The drawer of the draft's line and the command cards. On a phone they would leave the thread
+   a few lines of the screen, so under the reply box there is only the drawer's tab: one line of
+   chips that say what waits in it. A tap opens the drawer over the thread: a sheet from the
+   screen's bottom edge, as tall as what it holds, up to most of the screen, the rest dimmed.
+   On a wider screen there is no tab, and the drawer and its sheet are no boxes: the lines are
+   the reply box's own. */
+.linestab, .lineshead { display: none; }
+.linesdrawer, .linesdrawer .sheet { display: contents; }
+@media (max-width: 699px) {
+  .linestab { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; cursor: pointer; text-align: left; }
+  .linestab[hidden] { display: none; }
+  .linestab .chip { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+  .linestab .chip.cmd { flex: none; }
+  .linestab .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .linestab svg { flex: none; }
+  .linestab .chev { margin-left: auto; }
+  .linesdrawer { display: none; }
+  /* Over the thread and what floats in it, under a toast: Undo of a discard is in one. */
+  .linesdrawer.open { position: fixed; inset: 0; z-index: 9; display: flex; flex-direction: column; justify-content: flex-end; }
+  .linesdrawer .sheet { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); max-height: 85dvh; overflow: hidden auto; overscroll-behavior: contain;
+    padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); }
+  .lineshead { position: sticky; top: 0; z-index: 1; flex: none; display: flex; align-items: center; justify-content: space-between;
+    margin: 0 calc(-1 * var(--spectrum-spacing-200)); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
+  .linesclose { cursor: pointer; }
+  /* In the sheet the cards are as tall as they are: the sheet scrolls, not the cards in it,
+     and Deny and Run are where their card ends. */
+  .linesdrawer .bashbar { flex: none; max-height: none; overflow: visible; }
+  .linesdrawer .bashbar .br.pending .cmd { max-height: none; }
+  .linesdrawer .bashbar .acts { position: static; }
+  .linesdrawer .draftbar { flex: none; }
 }
 /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
 .composer.checking textarea { flex: 0 0 calc(50% - calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-400))); margin-right: auto; }
@@ -1028,9 +1094,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 [data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg .who b[data-p] { cursor: default; }
 .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
-/* The time says its whole date when pointed at, as the name shows its card. */
-.feed time[title] { cursor: default; }
-.feed time[title]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+/* The time says its whole date when pointed at, as the name shows its card: in the thread, and
+   in the sidebar's messages wherever they show. */
+.feed time[title], .sc-body time[title] { cursor: default; }
+.feed time[title]:hover, .sc-body time[title]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
 .pcard { position: fixed; z-index: 20; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); background: var(--card);
   border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 var(--spectrum-spacing-100) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400)) var(--spectrum-transparent-black-400); }
 .pcard[hidden] { display: none; }
@@ -1181,7 +1248,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   #pane { transform: translateX(100%); visibility: hidden; }
   main.reading #pane { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) ease-out; }
   main.reading #threads { transform: translateX(-25%); visibility: hidden; }
-  #lift { display: none !important; }
   .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
   .t .cust { max-width: 40%; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
@@ -1231,16 +1297,19 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   --brown: var(--spectrum-brown-visual-color);
   --crimson: var(--spectrum-red-visual-color);
   --teams: var(--spectrum-indigo-visual-color);
-  --row-read: var(--spectrum-background-layer-1-color);
-  --row-unread: var(--spectrum-background-layer-2-color);
+  /* The list and the thread are one content area, on the base: a row is told from the next by
+     its hairline, an unread one by its bold title, not by a second gray. */
+  --col: var(--content);
+  --row-read: var(--content);
+  --row-unread: var(--content);
   /* ListView's highlight selection: blue-900 mixed into the base, and outlined in it. */
   --s2-row-sel: color-mix(in srgb, var(--spectrum-blue-900) 10%, var(--spectrum-gray-25));
   --s2-row-sel-hover: color-mix(in srgb, var(--spectrum-blue-900) 15%, var(--spectrum-gray-25));
   --s2-row-hover: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity));
   --s2-row-down: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-down-opacity));
   --sel: var(--s2-row-sel);
-  /* Floating layers: the filter cards hang over the list (elevated), the open row is lifted
-     out of it (dragged). */
+  /* Floating layers: the folded filters slid out over the list (elevated); the filters' drawer
+     and a lightbox's image (dragged). */
   --r: var(--spectrum-corner-radius-large-default);
   --card-shadow: var(--s2-elevated);
   --lift-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6)
@@ -1375,13 +1444,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .tag.hot { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
 .spectrum .tag.us { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
 .spectrum .tag.tech { color: var(--spectrum-neutral-content-color-default); }
-/* The open thread's row, lifted out of the list (#lift): selected, and dragged above it. */
-.spectrum #lift .t {
-  border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900);
-  border-radius: var(--spectrum-corner-radius-large-default);
-  background: var(--s2-row-sel);
-}
-.spectrum #lift .t .faces .av { border-color: var(--s2-row-sel); }
 .spectrum mark { background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
 
 /* The list's toolbar, sticky on layer 1. */
@@ -1416,7 +1478,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border: 0;
   outline: none;
 }
-.spectrum .find input::placeholder { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .find kbd { padding: 0 var(--spectrum-spacing-75); }
 /* The views (each team, then Personal): S2's SegmentedControl, the picked one raised. */
 .spectrum #threads .count .order {
@@ -1584,20 +1645,20 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* Highlighted code (src/ui-highlight.js): the token groups, in the 1200 shades, which keep
    4.5:1 on a code block in either color scheme (test/ui-highlight.test.js). On your own
    bubble's accent the code stays its white. */
-.spectrum .bubble pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
-.spectrum .bubble pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
-.spectrum .bubble pre.hl .hl-string,
-.spectrum .bubble pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
-.spectrum .bubble pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
-.spectrum .bubble pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
-.spectrum .bubble pre.hl .hl-function,
-.spectrum .bubble pre.hl .hl-link { color: var(--spectrum-blue-1200); }
-.spectrum .bubble pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
-.spectrum .bubble pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
-.spectrum .bubble pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
-.spectrum .bubble pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
-.spectrum .bubble pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .bubble pre.hl .hl-emphasis { font-style: italic; }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-string,
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-function,
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-link { color: var(--spectrum-blue-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-emphasis { font-style: italic; }
 .spectrum .msg.mine .bubble pre.hl [class^="hl-"] { color: inherit; }
 .spectrum .bubble blockquote.quote { border-radius: var(--spectrum-corner-radius-75) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-75); }
 .spectrum .bubble blockquote.quote > p.quote-by { font-size: var(--spectrum-font-size-75); }
@@ -1648,17 +1709,18 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .msg.agent button.face:hover .av, .spectrum .msg.agent button.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); outline-offset: var(--spectrum-focus-indicator-gap); }
 
 /* The sidebar: purple, Spectrum's color for what is neither the customer's nor posted. The folded
-   line a quiet, dashed card; unfolded, the agent's answers outlined as its notes are, in purple,
+   line a quiet card in the subtle purple (an InlineAlert's subtle fill, with no edge); unfolded, the agent's answers outlined as its notes are, in purple,
    yours and colleagues' filled. In sidebar mode the reply box is the sidebar's: tinted, with a
    purple field and an Ask button in purple, and a line that says where it goes. */
 .spectrum .bubble-ico { color: var(--spectrum-white); background: var(--spectrum-purple-background-color-default); }
 .spectrum .sidechat {
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-purple-visual-color);
+  border: var(--spectrum-border-width-200) solid transparent;
   border-radius: var(--spectrum-corner-radius-large-default);
   background: var(--spectrum-purple-subtle-background-color-default);
 }
-.spectrum .sidechat.open { border-style: solid; }
-.spectrum .sidechat.live { border-width: var(--spectrum-border-width-200); box-shadow: 0 0 0 var(--spectrum-spacing-50) color-mix(in srgb, var(--spectrum-purple-visual-color) 18%, transparent); }
+/* The one you are writing in has an edge, as a field with the focus has; so have the ones the
+   panel beside the thread shows. */
+.spectrum .sidechat:is(.live, .paneled) { border-color: var(--spectrum-purple-visual-color); }
 .spectrum .sidechat .sc-head {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
   border: 0;
@@ -1673,16 +1735,16 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .sidechat .sc-meta, .spectrum .sidechat .chev { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .sidechat .faces .av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-purple-subtle-background-color-default); font-size: var(--spectrum-font-size-50); }
 .spectrum .sidechat .sc-body { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
-.spectrum .sidechat .sm .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .sidechat .sm .who b { color: var(--spectrum-neutral-content-color-default); }
-.spectrum .sidechat .sm .bubble { border-radius: var(--spectrum-corner-radius-extra-large-default); }
-.spectrum .sidechat .sm.person .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); }
-.spectrum .sidechat .sm.person .bubble a { color: var(--spectrum-white); }
-.spectrum .sidechat .sm.person .bubble code { background: var(--spectrum-transparent-black-400); }
-.spectrum .sidechat .sm.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .sidechat .sm.agent.working .bubble { border-style: solid; }
-.spectrum .sidechat .sm.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
-.spectrum .sidechat .spin {
+.spectrum .sc-body .sm .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sc-body .sm .who b { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .sm .bubble { border-radius: var(--spectrum-corner-radius-extra-large-default); }
+.spectrum .sc-body .sm.person .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); }
+.spectrum .sc-body .sm.person .bubble a { color: var(--spectrum-white); }
+.spectrum .sc-body .sm.person .bubble code { background: var(--spectrum-transparent-black-400); }
+.spectrum .sc-body .sm.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .sm.agent.working .bubble { border-style: solid; }
+.spectrum .sc-body .sm.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum :is(.sidechat, .sc-body) .spin {
   display: inline-block;
   border-radius: 50%;
   width: var(--spectrum-progress-circle-size-small);
@@ -1694,9 +1756,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   animation: spin var(--spectrum-animation-duration-2000) linear infinite;
 }
 .spectrum .sidechat .sc-meta .spin { margin-right: 0; }
-@media (prefers-reduced-motion: reduce) { .spectrum .sidechat .spin { animation: none; } }
-.spectrum .sidechat .sc-wait { text-align: center; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .sidechat .sc-continue {
+@media (prefers-reduced-motion: reduce) { .spectrum :is(.sidechat, .sc-body) .spin { animation: none; } }
+.spectrum .sc-body .sc-wait { text-align: center; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sc-body .sc-continue {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
   border-radius: calc(var(--spectrum-component-height-100) / 2);
@@ -1705,8 +1767,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-bold-font-weight);
 }
-.spectrum .sidechat .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
-.spectrum .sidechat :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+.spectrum .sc-body .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 .spectrum .composer .sidebtn {
   width: var(--spectrum-component-height-200);
   height: var(--spectrum-component-height-200);
@@ -1720,9 +1782,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: var(--spectrum-purple-subtle-background-color-default);
   border-top: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
 }
-.spectrum .composer.sidebar .side-bar { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .composer.sidebar .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
-.spectrum .composer.sidebar .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.side-bar, .sp-head) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
+.spectrum .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .composer.sidebar .side-exit {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
@@ -1734,10 +1796,37 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .composer.sidebar .side-exit:hover { border-color: var(--spectrum-gray-800); }
 .spectrum .composer.sidebar .side-exit:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
-.spectrum .composer.sidebar textarea { border-color: var(--spectrum-purple-visual-color); border-style: dashed; background: var(--spectrum-background-layer-2-color); }
+.spectrum .composer.sidebar textarea { border-color: var(--spectrum-purple-visual-color); background: var(--spectrum-background-layer-2-color); }
 .spectrum .composer.sidebar textarea:focus { border-color: var(--spectrum-purple-1000); border-style: solid; }
 .spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
 .spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
+/* The sidebar's panel: the thread's column ends where it starts, and it has the content area's
+   right corners. All of it is in the sidebar's purple, half as strong as a line in the thread
+   is, as it is much more of the page; its top and its box are divided from what scrolls
+   between them as the thread's are, in purple. ✕ is a quiet ActionButton. */
+.spectrum #side {
+  --side-line: color-mix(in srgb, var(--spectrum-purple-visual-color) 25%, transparent);
+  background: color-mix(in srgb, var(--spectrum-purple-subtle-background-color-default) 50%, var(--content));
+  border-left: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
+  border-radius: 0px var(--content-radius) var(--content-radius) 0px;
+}
+.spectrum main.siding #pane { border-radius: 0px; }
+.spectrum #side .sp-close {
+  width: var(--spectrum-component-height-100);
+  height: var(--spectrum-component-height-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+  transition: background-color var(--s2-ease);
+}
+.spectrum #side .sp-close:hover { background: color-mix(in srgb, var(--spectrum-purple-visual-color) 15%, transparent); }
+.spectrum #side .sp-close:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #side .sp-when { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); transition: color var(--s2-ease); }
+/* The conversation whose line was picked in the thread, for a moment. */
+.spectrum #side .sp-when.found { color: var(--spectrum-purple-1000); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #side .sp-head { border-bottom: var(--spectrum-border-width-100) solid var(--side-line); }
+.spectrum #side .composer.sidebar { border-top: var(--spectrum-border-width-100) solid var(--side-line); background: none; }
 .spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);
@@ -1837,12 +1926,13 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bubble .file-view.failed, .spectrum .file-view .fv-wait { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum :is(.file-view, .file-dialog) .fv-bar { gap: var(--spectrum-spacing-100); background: var(--spectrum-background-layer-1-color); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum :is(.file-view, .file-dialog) .fv-count { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* The preview's filter: a SearchField, size S (ui/spectrum.css draws its magnifier). */
 .spectrum :is(.file-view, .file-dialog) .fv-find {
   min-height: var(--spectrum-component-height-75);
-  padding: 0 var(--spectrum-component-edge-to-text-75);
+  padding-inline: calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-75)) var(--spectrum-component-edge-to-text-75);
   background: var(--spectrum-gray-25);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
-  border-radius: var(--s2-radius);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
 }
 .spectrum :is(.file-view, .file-dialog) .fv-find:hover { border-color: var(--spectrum-gray-400); }
 .spectrum :is(.file-view, .file-dialog) .fv-find:focus { border-color: var(--spectrum-gray-800); }
@@ -2035,15 +2125,15 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .srcpop > blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
 .spectrum .srcpop .view .none { color: var(--spectrum-neutral-subdued-content-color-default); }
 
-/* The thread's shared draft under the reply box: a dashed card in the accent's subtle fill,
+/* The thread's shared draft under the reply box: a card in the accent's subtle fill, with no edge,
    "Send as me" the accent Button, "as the bot" an outline one, the rest small ActionButtons. */
 .spectrum .draftbar {
   gap: var(--spectrum-spacing-100);
   font-size: var(--spectrum-font-size-75);
   color: var(--spectrum-neutral-subdued-content-color-default);
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-accent-visual-color);
+  border: 0;
   border-radius: var(--spectrum-corner-radius-large-default);
-  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
+  background: var(--spectrum-accent-subtle-background-color-default);
 }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
@@ -2078,21 +2168,30 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
 .spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
 .spectrum .draftbar button.ico:disabled { background: none; }
-/* A command the agent asks a person to run: a dashed card as the draft's, in the notice color
-   while it waits, since running it is a decision; a plain outline once that is made. The
+/* A command the agent asks a person to run: a card as the draft's, in the notice color's subtle
+   fill while it waits, since running it is a decision; in gray once that is made. The
    command is a code block, the fields small TextFields, Run the accent Button and Deny an
    outline one. */
 .spectrum .bashbar .br {
   font-size: var(--spectrum-font-size-75);
   color: var(--spectrum-neutral-subdued-content-color-default);
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-notice-visual-color);
+  border: 0;
   border-radius: var(--spectrum-corner-radius-large-default);
-  background: color-mix(in srgb, var(--spectrum-notice-subtle-background-color-default) 50%, var(--pane));
+  background: var(--spectrum-notice-subtle-background-color-default);
 }
-.spectrum .bashbar .br:not(.pending) { border-style: solid; border-color: var(--spectrum-gray-300); background: none; }
+.spectrum .bashbar .br:not(.pending) { background: var(--spectrum-gray-75); }
 .spectrum .bashbar .what { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .bashbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.spectrum .bashbar .br.failed .by { color: var(--spectrum-negative-content-color-default); }
+.spectrum .bashbar .id { font-family: var(--s2-code); font-size: var(--spectrum-font-size-50); color: var(--spectrum-gray-600); }
+/* Not as it was meant to go: a nonzero exit, a timeout, a run that failed. */
+.spectrum .bashbar .st.bad { color: var(--spectrum-negative-content-color-default); }
+/* Those that ended share one outline, a hairline between them. */
+.spectrum .bashbar .hist { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .bashbar .hist .br { border: 0; border-radius: 0px; }
+.spectrum .bashbar .hist .br + .br { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+/* The card's own fill, so that what scrolls under Deny and Run does not show through. */
+.spectrum .bashbar .acts { background: inherit; }
+.spectrum .bashbar .foot { background: inherit; border-radius: 0 0 var(--spectrum-corner-radius-large-default) var(--spectrum-corner-radius-large-default); }
 .spectrum .bashbar .why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .bashbar .cmd {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
@@ -2125,8 +2224,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bashbar button.deny { color: var(--spectrum-neutral-content-color-default); background: transparent; border-color: var(--spectrum-gray-400); }
 .spectrum .bashbar button.deny:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
 .spectrum .bashbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
-/* Forget: a link, not a button of the card's. */
-.spectrum .bashbar button.forget, .spectrum .bashbar button.forget:disabled {
+/* Forget, and the earlier requests: links, not buttons of the card's. */
+.spectrum .bashbar button:is(.forget, .more), .spectrum .bashbar button.forget:disabled {
   min-height: 0px;
   padding: 0px;
   border: 0;
@@ -2144,8 +2243,46 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   vertical-align: text-bottom;
 }
 @media (hover: none) and (pointer: coarse) {
-  .spectrum .bashbar button:not(.forget) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
+  .spectrum .bashbar button:not(.forget, .more) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
   .spectrum .bashbar .var input { min-height: var(--spectrum-component-height-100); font-size: var(--spectrum-font-size-100); }
+}
+/* The drawer's tab (phones): a quiet row under the reply box; with a command to decide on, the
+   dashed outline and fill of that command's card. The sheet: the pane's surface, raised, its
+   top corners round. */
+.spectrum .linestab {
+  min-height: var(--spectrum-component-height-100);
+  padding: 0 var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .linestab:has(.chip.ask) {
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-notice-visual-color);
+  background: color-mix(in srgb, var(--spectrum-notice-subtle-background-color-default) 50%, var(--pane));
+}
+.spectrum .linestab svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .linestab .chip.ask { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .linestab .chip.draft { color: var(--spectrum-accent-content-color-default); }
+.spectrum .linesdrawer.open { background: var(--spectrum-transparent-black-500); }
+.spectrum .linesdrawer.open .sheet {
+  background: var(--pane);
+  border-radius: var(--spectrum-corner-radius-large-default) var(--spectrum-corner-radius-large-default) 0 0;
+  box-shadow: var(--s2-elevated);
+  outline: none;
+}
+.spectrum .lineshead { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); background: var(--pane); }
+.spectrum .linesclose {
+  width: var(--spectrum-component-height-100);
+  min-height: var(--spectrum-component-height-100);
+  padding: 0;
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
 }
 /* A finger needs more than the pointer: the line's buttons grow to the next control height. */
 @media (hover: none) and (pointer: coarse) {
@@ -2334,9 +2471,10 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    and name, and the list by customer until one is picked: each customer a heading over its
    threads. Its one mark is red: the badge counts the messages that mention you and that you
    have not read, beside a customer, and the threads it counts are marked in the same red.
-   Unread is bold; nothing else is red, nothing else has a count. */
+   Unread is bold; nothing else is red, nothing else has a count. A customer's \2260 excludes
+   it, as on the expert view's cards: over the end of its name, before the badge. */
 main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
-main.simple .fr .lab { grid-column: 2; }
+main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
 /* A logo: the icon over the customer's initial, which shows where there is none. */
@@ -2379,7 +2517,7 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum main.simple .t .cust { color: var(--spectrum-neutral-content-color-default); }
 .spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
 .spectrum #threads .rows > .grp {
-  background: var(--spectrum-background-layer-1-color);
+  background: var(--content);
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-100);
@@ -2411,3 +2549,98 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum .card h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
 .spectrum .card h3 .clear + .atme { margin-left: var(--spectrum-spacing-75); }
 .spectrum #threads .count .filt .at { display: inline-grid; margin-left: var(--spectrum-spacing-75); }
+
+/* ==== The app frame ============================================================================
+   Spectrum 2's app frame (ui/spectrum.css): the header and the filters, which navigate, are on
+   the frame's layer; the thread list and the open thread are the content area, one container
+   (`main::before`, behind both) with a divider between the list and what is picked in it. On a
+   phone the content area is the page, under the header, its top corners rounded. */
+.spectrum main { background: transparent; }
+.spectrum #threads, .spectrum #pane { background: transparent; }
+.spectrum #threads { border: 0; }
+@media (min-width: 700px) {
+  .spectrum main { padding: 0 var(--frame-gap) var(--frame-gap) var(--frame-gap); }
+  .spectrum main::before { content: ""; grid-row: 1; grid-column: 1 / 3; background: var(--content);
+    border-radius: var(--content-radius); box-shadow: var(--content-shadow); }
+  .spectrum #threads { grid-row: 1; grid-column: 1; border-radius: var(--content-radius) 0px 0px var(--content-radius); }
+  .spectrum #pane { grid-row: 1; grid-column: 2; border-left: var(--spectrum-border-width-100) solid var(--line);
+    border-radius: 0px var(--content-radius) var(--content-radius) 0px; }
+}
+@media (min-width: 1100px) {
+  .spectrum main { padding-left: 0px; }
+  .spectrum main::before { grid-column: 2 / 4; }
+  .spectrum #filters { grid-row: 1; grid-column: 1; }
+  .spectrum #threads { grid-column: 2; }
+  .spectrum #pane { grid-column: 3; }
+  /* The filters: groups on the frame, each under its title, with no card, shadow or overhang.
+     Folded to the rail they are icons on the frame; slid out over the list they float, so
+     there they are Popovers: on layer 2, elevated. */
+  .spectrum #filters .card { background: transparent; box-shadow: none;
+    transition: background-color var(--s2-ease), box-shadow var(--s2-ease); }
+  .spectrum main:not(.rail) #filters { margin-right: 0px; padding: var(--spectrum-spacing-100) var(--frame-gap) var(--frame-gap) var(--spectrum-spacing-300); pointer-events: auto; }
+  .spectrum main:not(.rail) #filters .card { margin-left: 0px; padding: 0px; border-radius: 0px; }
+  .spectrum :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .card {
+    background: var(--s2-popover); box-shadow: var(--s2-elevated); }
+}
+@media (max-width: 699px) {
+  .spectrum main { background: var(--content); border-radius: var(--content-radius) var(--content-radius) 0px 0px; }
+}
+/* A group's title stands alone: no light before it, which said nothing. Its values are written
+   as they are stored (critical, high); here they start with a capital, as every label does. A
+   customer's name is its own. */
+.spectrum .card h3::before { display: none; }
+.spectrum .card:not([data-f="customer"]) .fr .lab::first-letter { text-transform: uppercase; }
+
+/* ==== Workflow icons ===========================================================================
+   What a filter's value or a thread's kind and urgency is (ui/inbox.js, `wf`): Spectrum 2's
+   workflow icons (@react-spectrum/s2, S2_Icon_*_20_N) as masks, in the color of the text around
+   them, where emoji used to stand in for icons. On a thread's row the two urgencies that show
+   keep their meaning's color, as an InlineAlert's icon does. */
+.spectrum .wf {
+  display: inline-block;
+  flex: none;
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  vertical-align: middle;
+  background: currentColor;
+  mask: var(--wf) center / contain no-repeat;
+}
+.spectrum .fr .ico.wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); justify-self: center; border-radius: 0; color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fr .lab.dim ~ .ico.wf, .spectrum .fr:has(.lab.dim) .ico.wf { color: var(--spectrum-disabled-content-color); }
+.spectrum .moods .em .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .moods .em.critical .wf { color: var(--spectrum-negative-visual-color); }
+.spectrum .moods .em.high .wf { color: var(--spectrum-notice-visual-color); }
+@media (forced-colors: active) { .spectrum .wf { background: CanvasText; } }
+.spectrum .wf-chevron-down { --wf: var(--s2-icon-chevron); }
+.spectrum .wf-alert-diamond { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc5NDkyYy0uNjAxMDcsMC0xLjE2NjUtLjIzNDM4LTEuNTkxMzEtLjY1OTE4TDEuODY0MjYsMTEuNTkwODJjLS44NzY0Ni0uODc2OTUtLjg3NjQ2LTIuMzA0NjktLjAwMDQ5LTMuMTgxNjRMOC40MDkxOCwxLjg2NDI2Yy44NDg2My0uODQ5NjEsMi4zMzI1Mi0uODQ5NjEsMy4xODIxMywwbDYuNTQ0NDMsNi41NDQ5MmMuODc2NDYuODc2OTUuODc2NDYsMi4zMDQ2OS4wMDA0OSwzLjE4MTY0aC0uMDAwNDlsLTYuNTQ0OTIsNi41NDQ5MmMtLjQyNDMyLjQyNDgtLjk4OTc1LjY1OTE4LTEuNTkwODIuNjU5MThaTTEwLDIuNzA1MDhjLS4yMDAyLDAtLjM4ODY3LjA3ODEyLS41Mjk3OS4yMTk3M2wtNi41NDU0MSw2LjU0NDkyYy0uMjkxOTkuMjkxOTktLjI5MTk5Ljc2ODU1LjAwMDQ5LDEuMDYwNTVsNi41NDQ0Myw2LjU0NDkyYy4yODMyLjI4MzIuNzc3ODMuMjgzMiwxLjA2MDA2LDBsNi41NDQ5Mi02LjU0NDkyYy4yOTI0OC0uMjkxOTkuMjkyNDgtLjc2ODU1LDAtMS4wNjA1NWwtNi41NDQ0My02LjU0NDkyYy0uMTQxNi0uMTQxNi0uMzMwMDgtLjIxOTczLS41MzAyNy0uMjE5NzNaIiBzdHJva2Utd2lkdGg9IjAiLz48cGF0aCBkPSJNOS45OTkzNiwxNC45OTgzNGMtLjIzMDY1LjAwODEyLS40NTUzOC0uMDczNzgtLjYyNjYxLS4yMjgzNS0uMzMwMzMtLjM2NDYyLS4zMzAzMy0uOTE5OTMsMC0xLjI4NDU1LjE2OTM1LS4xNTgzMi4zOTQ4My0uMjQyNzkuNjI2NjQtLjIzNDc2LjIzNjM1LS4wMDk0Ny40NjU4OS4wODAyNi42MzMwMi4yNDc0NS4xNjIwNy4xNjc3LjI0OTE2LjM5Mzg2LjI0MTM3LjYyNjgxLjAxMjM4LjIzNDY5LS4wNjk1OS40NjQ2LS4yMjc3LjYzODY0LS4xNzM1OC4xNjQ1NS0uNDA3ODYuMjQ5NTktLjY0NjcxLjIzNDc1WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0iTTEwLDExLjYyNWMtLjQxNDA2LDAtLjc1LS4zMzU5NC0uNzUtLjc1di01YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djVjMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiIHN0cm9rZS13aWR0aD0iMCIvPjwvc3ZnPg=="); }
+.spectrum .wf-alert-triangle { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTkuOTk5MzYsMTUuMTIzMzRjLS4yMzA2NS4wMDgxMi0uNDU1MzgtLjA3Mzc4LS42MjY2MS0uMjI4MzUtLjMzMDMzLS4zNjQ2Mi0uMzMwMzMtLjkxOTkzLDAtMS4yODQ1NS4xNjkzNS0uMTU4MzIuMzk0ODMtLjI0Mjc5LjYyNjY0LS4yMzQ3Ni4yMzYzNS0uMDA5NDcuNDY1ODkuMDgwMjYuNjMzMDIuMjQ3NDUuMTYyMDcuMTY3Ny4yNDkxNi4zOTM4Ni4yNDEzNy42MjY4MS4wMTIzOC4yMzQ2OS0uMDY5NTkuNDY0Ni0uMjI3Ny42Mzg2NC0uMTczNTguMTY0NTUtLjQwNzg2LjI0OTU5LS42NDY3MS4yMzQ3NVoiLz48cGF0aCBkPSJtMTAsMTEuNzVjLS40MTQwNiwwLS43NS0uMzM1OTQtLjc1LS43NXYtNGMwLS40MTQwNi4zMzU5NC0uNzUuNzUtLjc1cy43NS4zMzU5NC43NS43NXY0YzAsLjQxNDA2LS4zMzU5NC43NS0uNzUuNzVaIi8+PHBhdGggZD0ibTE2LjczMzQsMThIMy4yNjY2Yy0uODAwMjksMC0xLjUyMjk1LS40MTAxNi0xLjkzMjYyLTEuMDk3NjZzLS40MjcyNS0xLjUxODU1LS4wNDYzOS0yLjIyMjY2TDguMDIxLDIuMjMyNDJjLjM5MzU1LS43Mjc1NCwxLjE1MTg2LTEuMTc5NjksMS45NzktMS4xNzk2OXMxLjU4NTQ1LjQ1MjE1LDEuOTc5LDEuMTc5NjlsNi43MzM0LDEyLjQ0NzI3Yy4zODA4Ni43MDQxLjM2MzI4LDEuNTM1MTYtLjA0NjM5LDIuMjIyNjZzLTEuMTMyMzIsMS4wOTc2Ni0xLjkzMjYyLDEuMDk3NjZaTTEwLDIuNTUyNzNjLS4xMzQyOCwwLS40Njc3Ny4wMzgwOS0uNjU5NjcuMzkyNThMMi42MDY5MywxNS4zOTI1OGMtLjE4MzExLjMzODg3LS4wNTAyOS42MzE4NC4wMTU2Mi43NDEyMS4wNjU0My4xMTAzNS4yNTkyOC4zNjYyMS42NDQwNC4zNjYyMWgxMy40NjY4Yy4zODQ3NywwLC41Nzg2MS0uMjU1ODYuNjQ0MDQtLjM2NjIxLjA2NTkyLS4xMDkzOC4xOTg3My0uNDAyMzQuMDE1NjItLjc0MTIxTDEwLjY1OTY3LDIuOTQ1MzFjLS4xOTE4OS0uMzU0NDktLjUyNTM5LS4zOTI1OC0uNjU5NjctLjM5MjU4WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-user { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTEwLDExLjI1Yy0yLjYxOTE0LDAtNC43NS0yLjI0MzE2LTQuNzUtNVM3LjM4MDg2LDEuMjUsMTAsMS4yNXM0Ljc1LDIuMjQzMTYsNC43NSw1LTIuMTMwODYsNS00Ljc1LDVabTAtOC41Yy0xLjc5MTk5LDAtMy4yNSwxLjU3MDMxLTMuMjUsMy41czEuNDU4MDEsMy41LDMuMjUsMy41LDMuMjUtMS41NzAzMSwzLjI1LTMuNS0xLjQ1ODAxLTMuNS0zLjI1LTMuNVoiLz48cGF0aCBkPSJtMTcuMjQ5MDIsMTguNzVjLS4zNzc5MywwLS43MDMxMi0uMjg1MTYtLjc0NDYzLS42Njg5NS0uMjYyNy0yLjQyODcxLTMuMTIwMTItNC4zMzEwNS02LjUwNDM5LTQuMzMxMDUtMy40MTM1NywwLTYuMjcwNTEsMS44OTg0NC02LjUwMzQyLDQuMzIyMjctLjA0MDA0LjQxMjExLS40MDk2Ny43Mjc1NC0uODE4MzYuNjczODMtLjQxMjExLS4wMzkwNi0uNzE0MzYtLjQwNTI3LS42NzQ4LS44MTgzNi4zMDYxNS0zLjE4MzU5LDMuODE4ODUtNS42Nzc3Myw3Ljk5NjU4LTUuNjc3NzMsNC4yMDg1LDAsNy42NDYsMi40Mzc1LDcuOTk1NjEsNS42Njg5NS4wNDQ0My40MTIxMS0uMjUyOTMuNzgyMjMtLjY2NTA0LjgyNzE1LS4wMjczNC4wMDI5My0uMDU0NjkuMDAzOTEtLjA4MTU0LjAwMzkxWiIvPjwvc3ZnPg=="); }
+.spectrum .wf-clock-pending { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEzLjIxOTczLDEyLjY1NzIzYy0uMTI4OTEsMC0uMjU5NzctLjAzMzItLjM3OTg4LS4xMDM1MmwtMy4yMjA3LTEuODk1NTFjLS4yMjg1Mi0uMTM0NzctLjM2OTE0LS4zODA4Ni0uMzY5MTQtLjY0NjQ4di01YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djQuNTcxMjlsMi44NTE1NiwxLjY3NzczYy4zNTY0NS4yMDk5Ni40NzU1OS42Njk5Mi4yNjU2MiwxLjAyNzM0LS4xMzk2NS4yMzczLS4zOTA2Mi4zNjkxNC0uNjQ3NDYuMzY5MTRaIi8+PHBhdGggZD0iTTEwLDE4Ljc3MTQ4Yy00LjgyNTIsMC04Ljc1LTMuOTI0OC04Ljc1LTguNzVDMS4yNSw2LjQ5NzA3LDMuMzQ3NjYsMy4zMzIwMyw2LjU5Mzc1LDEuOTU4OThjLjM3Njk1LS4xNjMwOS44MjAzMS4wMTY2Ljk4MjQyLjM5ODQ0LjE2MjExLjM4MDg2LS4wMTY2LjgyMTI5LS4zOTg0NC45ODI0Mi0yLjY4OTQ1LDEuMTM4NjctNC40Mjc3MywzLjc2MDc0LTQuNDI3NzMsNi42ODE2NCwwLDMuOTk4MDUsMy4yNTE5NSw3LjI1LDcuMjUsNy4yNSwxLjcyMzYzLDAsMy4zOTQ1My0uNjE1MjMsNC43MDMxMi0xLjczMjQyLjMxNTQzLS4yNjk1My43ODgwOS0uMjMzNCwxLjA1NzYyLjA4Mzk4LjI2OTUzLjMxNDQ1LjIzMTQ1Ljc4ODA5LS4wODM5OCwxLjA1NjY0LTEuNTgwMDgsMS4zNDg2My0zLjU5NjY4LDIuMDkxOC01LjY3Njc2LDIuMDkxOFoiLz48cGF0aCBkPSJNMTAuMjUwOTgsMi44MjUyaC0uMDI5M2wtLjIyMTY4LS4wMDM5MWMtLjQ0MTQxLDAtLjc5OTgtLjM1ODQtLjc5OTgtLjc5OThzLjM1ODQtLjc5OTguNzk5OC0uNzk5OGwuMjc4MzIuMDAzOTFjLjQ0MTQxLjAxNTYyLjc4NzExLjM4NjcyLjc3MTQ4LjgyODEyLS4wMTU2Mi40MzE2NC0uMzcwMTIuNzcxNDgtLjc5ODgzLjc3MTQ4WiIvPjxwYXRoIGQ9Ik0xMy4zODg2NywzLjU3MzI0Yy0uMTE2MjEsMC0uMjMzNC0uMDI1MzktLjM0NTctLjA3OTFsLS4xOTgyNC0uMDg5ODRjLS40MDUyNy0uMTczODMtLjU5Mjc3LS42NDQ1My0uNDE3OTctMS4wNTA3OHMuNjQ0NTMtLjU5NDczLDEuMDUwNzgtLjQxNzk3Yy4wODY5MS4wMzcxMS4xNzM4My4wNzYxNy4yNTg3OS4xMTcxOS4zOTg0NC4xOTE0MS41NjU0My42Njg5NS4zNzQwMiwxLjA2NzM4LS4xMzc3LjI4NjEzLS40MjI4NS40NTMxMi0uNzIxNjguNDUzMTJaIi8+PHBhdGggZD0iTTE1Ljk3NTU5LDUuNTAzOTFjLS4yMjI2NiwwLS40NDQzNC0uMDkxOC0uNjAyNTQtLjI3MzQ0bC0uMTQ1NTEtLjE1OTE4Yy0uMzA0NjktLjMyMDMxLS4yOTE5OS0uODI3MTUuMDI3MzQtMS4xMzA4Ni4zMjAzMS0uMzA0NjkuODI2MTctLjI5Mjk3LDEuMTMwODYuMDI3MzQuMDY1NDMuMDY5MzQuMTI5ODguMTM4NjcuMTkyMzguMjA5OTYuMjkwMDQuMzMyMDMuMjU2ODQuODM3ODktLjA3NjE3LDEuMTI4OTEtLjE1MTM3LjEzMTg0LS4zMzg4Ny4xOTcyNy0uNTI2MzcuMTk3MjdaIi8+PHBhdGggZD0iTTE3LjU5MTgsOC4yOTQ5MmMtLjMzNDk2LDAtLjY0NzQ2LS4yMTE5MS0uNzU4NzktLjU0Njg4bC0uMDc1Mi0uMjE2OGMtLjE1MDM5LS40MTUwNC4wNjM0OC0uODc0MDIuNDc5NDktMS4wMjQ0MS40MTQwNi0uMTUyMzQuODc0MDIuMDY0NDUsMS4wMjQ0MS40Nzk0OWwuMDg4ODcuMjU1ODZjLjEzOTY1LjQxODk1LS4wODY5MS44NzIwNy0uNTA1ODYsMS4wMTE3Mi0uMDgzOTguMDI4MzItLjE2ODk1LjA0MTAyLS4yNTI5My4wNDEwMloiLz48cGF0aCBkPSJNMTcuOTcxNjgsMTEuNWMtLjAyMjQ2LDAtLjA0Mzk1LS4wMDA5OC0uMDY2NDEtLjAwMjkzLS40NDA0My0uMDM2MTMtLjc2ODU1LS40MjE4OC0uNzMxNDUtLjg2MjNsLjAxNTYyLS4yMzE0NWMuMDI1MzktLjQ0MTQxLjM3MjA3LS43ODcxMS44NDU3LS43NTE5NS40NDA0My4wMjUzOS43NzczNC40MDQzLjc1MTk1Ljg0NTdsLS4wMTk1My4yNjg1NWMtLjAzNDE4LjQxNzk3LS4zODM3OS43MzQzOC0uNzk1OS43MzQzOFoiLz48cGF0aCBkPSJNMTcuOTcxNjgsMTEuNWMtLjAyMjQ2LDAtLjA0Mzk1LS4wMDA5OC0uMDY2NDEtLjAwMjkzLS40NDA0My0uMDM2MTMtLjc2ODU1LS40MjE4OC0uNzMxNDUtLjg2MjNsLjAxNTYyLS4yMzE0NWMuMDI1MzktLjQ0MTQxLjM3MjA3LS43ODcxMS44NDU3LS43NTE5NS40NDA0My4wMjUzOS43NzczNC40MDQzLjc1MTk1Ljg0NTdsLS4wMTk1My4yNjg1NWMtLjAzNDE4LjQxNzk3LS4zODM3OS43MzQzOC0uNzk1OS43MzQzOFoiLz48cGF0aCBkPSJNMTYuNjUxNTMsMTQuNDAzOTdjLS4wMTk1My0uMDExMS0uMDM3NzItLjAyMjU3LS4wNTYyOC0uMDM1MzctLjM2NS0uMjQ5MTEtLjQ1OTU3LS43NDY2My0uMjA5NjEtMS4xMTExNWwuMTI3OTktLjE5MzQ3Yy4yNDAyNi0uMzcxMTYuNzEyNS0uNTAwMzIsMS4xMDY4NS0uMjM1NjQuMzcwMzEuMjM5NzguNDc1OS43MzU2OS4yMzU2NCwxLjEwNjg1bC0uMTQ5NzIuMjIzOGMtLjIzNjMxLjM0NjQ0LS42OTY2Mi40NDg2OC0xLjA1NDg3LjI0NDk4WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-volume-off { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4Ljc4MDI3LDE3LjczOTI2TDIuMjgwMjcsMS4yMzkyNmMtLjI5Mjk3LS4yOTI5Ny0uNzY3NTgtLjI5Mjk3LTEuMDYwNTUsMHMtLjI5Mjk3Ljc2NzU4LDAsMS4wNjA1NWwyLjcyMTY4LDIuNzIxNjhoLS42OTE0MWMtMS4yNDAyMywwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2NS41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1aDEuNjI4OTFjLjE5ODI0LDAsLjM5MTYuMDgwMDguNTMwMjcuMjE4NzVsMi42MDM1MiwyLjYwNDQ5Yy4zMzU5NC4zMzU5NC43ODEyNS41MTM2NywxLjIzNTM1LjUxMzY3LjIyNTU5LDAsLjQ1MzEyLS4wNDM5NS42NzA5LS4xMzQ3Ny42NTcyMy0uMjcxNDgsMS4wODEwNS0uOTA2MjUsMS4wODEwNS0xLjYxNzE5di00LjUyNjM3bDYuNzE5NzMsNi43MTk3M2MuMTQ2NDguMTQ2NDguMzM3ODkuMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1Wm0tOS4yODAyNy0xLjEzMjgxYzAsLjE0NTUxLS4wOTY2OC4yMDgwMS0uMTU0My4yMzE0NS0uMDU4NTkuMDI0NDEtLjE3MDkuMDQ2ODgtLjI3MjQ2LS4wNTM3MWwtMi42MDM1Mi0yLjYwNDQ5Yy0uNDI0OC0uNDI0OC0uOTg5MjYtLjY1ODItMS41OTA4Mi0uNjU4MmgtMS42Mjg5MWMtLjQxMzA5LDAtLjc1LS4zMzY5MS0uNzUtLjc1di01LjVjMC0uNDEzMDkuMzM2OTEtLjc1Ljc1LS43NWgyLjE5MTQxbDQuMDU4NTksNC4wNTg1OXY2LjAyNjM3WiIvPjxwYXRoIGQ9Im04LjI1ODc5LDQuMDczMjRsLjgxNDQ1LS44MTQ0NWMuMTA0NDktLjEwMjU0LjIxNTgyLS4wNzYxNy4yNzI0Ni0uMDU0NjkuMDcwMzEuMDI5My4xNTQzLjA5Mjc3LjE1NDMuMjMxNDV2Mi41OTA4MmMwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtMi41OTA4MmMwLS43MDk5Ni0uNDIzODMtMS4zNDQ3My0xLjA4MDA4LTEuNjE3MTktLjY1NzIzLS4yNzA1MS0xLjQwNDMtLjEyMjA3LTEuOTA3MjMuMzc5ODhsLS44MTQ0NS44MTQ0NWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVzLjc2NzU4LjI5Mjk3LDEuMDYwNTUsMFoiLz48cGF0aCBkPSJtMTMuMjIyNjYsOS44MjUyYy4wNDAwNC4zODU3NC4zNjUyMy42NzI4NS43NDUxMi42NzI4NS4wMjUzOSwwLC4wNTE3Ni0uMDAwOTguMDc4MTItLjAwMzkxLjQxMjExLS4wNDI5Ny43MTE5MS0uNDExMTMuNjY4OTUtLjgyMzI0LS4wOTk2MS0uOTYyODktLjU3MzI0LTEuNzkzOTUtMS4yOTg4My0yLjI3NzM0LS4zNDQ3My0uMjI4NTItLjgxMDU1LS4xMzU3NC0xLjA0MDA0LjIwODAxLS4yMjk0OS4zNDQ3My0uMTM2NzIuODEwNTUuMjA4MDEsMS4wNDAwNC4zNDc2Ni4yMzE0NS41ODU5NC42NzM4My42Mzg2NywxLjE4MzU5WiIvPjxwYXRoIGQ9Im0xNy4yNSwxMC4wMTc1OGMwLC44NjYyMS0uMjg0MTgsMS42ODY1Mi0uODAwNzgsMi4zMDk1Ny0uMjYzNjcuMzE5MzQtLjIxODc1Ljc5MTk5LjA5OTYxLDEuMDU2NjQuMTQwNjIuMTE1MjMuMzA5NTcuMTcxODguNDc4NTIuMTcxODguMjE0ODQsMCwuNDI5NjktLjA5Mjc3LjU3ODEyLS4yNzE0OC43MzgyOC0uODkyNTgsMS4xNDQ1My0yLjA1MjczLDEuMTQ0NTMtMy4yNjY2LDAtMS42ODU1NS0uNzk3ODUtMy4yNjU2Mi0yLjA4MzAxLTQuMTI0MDItLjM0NzY2LS4yMjk0OS0uODExNTItLjEzNjcyLTEuMDQxMDIuMjA3MDMtLjIyOTQ5LjM0NDczLS4xMzY3Mi44MTA1NS4yMDcwMywxLjA0MTAyLjg3NDAyLjU4MzAxLDEuNDE2OTksMS42ODU1NSwxLjQxNjk5LDIuODc1OThaIi8+PC9zdmc+"); }
+.spectrum .wf-user-group { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTEyLjI1MjkzLDExLjk0OTIyYy0yLjI3NjM3LDAtNC4xMjc5My0xLjk0NjI5LTQuMTI3OTMtNC4zMzg4N3MxLjg1MTU2LTQuMzM4ODcsNC4xMjc5My00LjMzODg3LDQuMTI3OTMsMS45NDYyOSw0LjEyNzkzLDQuMzM4ODctMS44NTE1Niw0LjMzODg3LTQuMTI3OTMsNC4zMzg4N1ptMC03LjE3NzczYy0xLjQ0OTIyLDAtMi42Mjc5MywxLjI3MzQ0LTIuNjI3OTMsMi44Mzg4N3MxLjE3ODcxLDIuODM4ODcsMi42Mjc5MywyLjgzODg3LDIuNjI3OTMtMS4yNzM0NCwyLjYyNzkzLTIuODM4ODctMS4xNzg3MS0yLjgzODg3LTIuNjI3OTMtMi44Mzg4N1ptLTUuMzc1OTgsMTIuODQwODJjLjIxNDg0LTEuOTkyMTksMi41NzYxNy0zLjU1MjczLDUuMzc1OTgtMy41NTI3MywyLjgyMzI0LDAsNS4xODQ1NywxLjU1NjY0LDUuMzc1OTgsMy41NDQ5Mi4wNDAwNC40MTMwOS40MTYwMi43MjY1Ni44MTgzNi42NzM4My40MTIxMS0uMDM5MDYuNzEzODctLjQwNTI3LjY3MzgzLS44MTgzNi0uMjYzNjctMi43NDgwNS0zLjI4MTI1LTQuOTAwMzktNi44NjgxNi00LjkwMDM5LTMuNjE0MjYsMC02LjU2NjQxLDIuMTAzNTItNi44NjgxNiw0Ljg5MjU4LS4wNDM5NS40MTExMy4yNTM5MS43ODEyNS42NjYwMi44MjYxNy4wMjczNC4wMDI5My4wNTM3MS4wMDM5MS4wODEwNS4wMDM5MS4zNzc5MywwLC43MDMxMi0uMjg1MTYuNzQ1MTItLjY2OTkyWm0uMjQwMjMtNy44OTM1NWMuMTY4OTUtLjM3NzkzLjAwMDk4LS44MjIyNy0uMzc2OTUtLjk5MjE5LS45ODUzNS0uNDQyMzgtMS42MjEwOS0xLjQ3MTY4LTEuNjIxMDktMi42MjIwNywwLTEuNTY1NDMsMS4xNzg3MS0yLjgzODg3LDIuNjI3OTMtMi44Mzg4Ny4xNTIzNCwwLC4zMDA3OC4wMTQ2NS40NDYyOS4wNDEwMi40MDIzNC4wODEwNS43OTk4LS4xOTIzOC44NzQwMi0uNjAwNTkuMDc1Mi0uNDA3MjMtLjE5MzM2LS43OTg4My0uNjAwNTktLjg3NDAyLS4yMzM0LS4wNDM5NS0uNDczNjMtLjA2NjQxLS43MTk3My0uMDY2NDEtMi4yNzYzNywwLTQuMTI3OTMsMS45NDYyOS00LjEyNzkzLDQuMzM4ODcsMCwxLjc0MDIzLjk4MzQsMy4zMDY2NCwyLjUwNTg2LDMuOTkxMjEuMDk5NjEuMDQzOTUuMjA0MS4wNjU0My4zMDc2Mi4wNjU0My4yODYxMywwLC41NTk1Ny0uMTY1MDQuNjg0NTctLjQ0MjM4Wm0tNC43NDYwOSw2LjM4ODY3Yy4yMDUwOC0xLjkwMjM0LDIuMzY5MTQtMy40MjY3Niw1LjAzMjIzLTMuNTQ1OS40MTQwNi0uMDE4NTUuNzM0MzgtLjM2ODE2LjcxNTgyLS43ODIyMy0uMDE3NTgtLjQwMjM0LS4zNDk2MS0uNzE2OC0uNzQ4MDUtLjcxNjgtLjAxMTcyLDAtLjAyMzQ0LDAtLjAzNDE4LjAwMDk4LTMuNDUzMTIuMTU0My02LjE2Nzk3LDIuMjA3MDMtNi40NTgwMSw0Ljg4MTg0LS4wNDM5NS40MTIxMS4yNTM5MS43ODIyMy42NjUwNC44MjcxNS4wMjgzMi4wMDI5My4wNTQ2OS4wMDM5MS4wODIwMy4wMDM5MS4zNzc5MywwLC43MDMxMi0uMjg1MTYuNzQ1MTItLjY2ODk1WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-more { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PGNpcmNsZSBjeD0iMTAiIGN5PSIxMC4wMjExNCIgcj0iMS41Ii8+PHBhdGggZD0ibTEwLDguNWMtLjgyODQzLDAtMS41LjY3MTU3LTEuNSwxLjVzLjY3MTU3LDEuNSwxLjUsMS41LDEuNS0uNjcxNTcsMS41LTEuNS0uNjcxNTctMS41LTEuNS0xLjVaIi8+PGNpcmNsZSBjeD0iNCIgY3k9IjEwLjAyMTE0IiByPSIxLjUiLz48Y2lyY2xlIGN4PSI0IiBjeT0iMTAiIHI9IjEuNSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTAuMDIxMTQiIHI9IjEuNSIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTAiIHI9IjEuNSIvPjwvc3ZnPg=="); }
+.spectrum .wf-dash { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LDEwLjc1SDJjLS40MTQwNiwwLS43NS0uMzM1OTQtLjc1LS43NXMuMzM1OTQtLjc1Ljc1LS43NWgxNmMuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzVzLS4zMzU5NC43NS0uNzUuNzVaIi8+PC9zdmc+"); }
+.spectrum .wf-circle { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTEwLDE4Ljc1Yy00LjgyNDcxLDAtOC43NS0zLjkyNDgtOC43NS04Ljc1UzUuMTc1MjksMS4yNSwxMCwxLjI1czguNzUsMy45MjQ4LDguNzUsOC43NS0zLjkyNTI5LDguNzUtOC43NSw4Ljc1Wm0wLTE2Yy0zLjk5NzU2LDAtNy4yNSwzLjI1MTk1LTcuMjUsNy4yNXMzLjI1MjQ0LDcuMjUsNy4yNSw3LjI1LDcuMjUtMy4yNTE5NSw3LjI1LTcuMjUtMy4yNTI0NC03LjI1LTcuMjUtNy4yNVoiIHN0cm9rZS13aWR0aD0iMCIvPjwvc3ZnPg=="); }
+.spectrum .wf-checkmark-circle { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc1Yy00LjgyNTIsMC04Ljc1LTMuOTI0OC04Ljc1LTguNzVTNS4xNzQ4LDEuMjUsMTAsMS4yNXM4Ljc1LDMuOTI0OCw4Ljc1LDguNzUtMy45MjQ4LDguNzUtOC43NSw4Ljc1Wk0xMCwyLjc1Yy0zLjk5ODA1LDAtNy4yNSwzLjI1MTk1LTcuMjUsNy4yNXMzLjI1MTk1LDcuMjUsNy4yNSw3LjI1LDcuMjUtMy4yNTE5NSw3LjI1LTcuMjUtMy4yNTE5NS03LjI1LTcuMjUtNy4yNVoiLz48cGF0aCBkPSJNOS4yMjI2NiwxMy41Yy0uMjExOTEsMC0uNDE1MDQtLjA4OTg0LS41NTc2Mi0uMjQ4MDVsLTIuNTEwNzQtMi43OTE5OWMtLjI3NzM0LS4zMDg1OS0uMjUxOTUtLjc4MjIzLjA1NTY2LTEuMDU5NTdzLjc4MTI1LS4yNTE5NSwxLjA1OTU3LjA1NTY2bDEuODkzNTUsMi4xMDY0NSwzLjQ4NzMtNC43NTU4NmMuMjQzMTYtLjMzMzk4LjcxMDk0LS40MDkxOCwxLjA0Nzg1LS4xNjExMy4zMzM5OC4yNDQxNC40MDYyNS43MTM4Ny4xNjExMywxLjA0Nzg1bC00LjAzMjIzLDUuNWMtLjEzMjgxLjE4MjYyLS4zNDE4LjI5NDkyLS41NjczOC4zMDU2Ni0uMDExNzIuMDAwOTgtLjAyNDQxLjAwMDk4LS4wMzcxMS4wMDA5OFoiLz48L3N2Zz4="); }
+.spectrum .wf-cancel { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTE2LjIwMTIzLDE2LjE2NTUzYzEuNTczOTctMS41ODI4OSwyLjU0ODc3LTMuNzYyMjEsMi41NDg3Ny02LjE2NTUzLDAtNC44MjQ3MS0zLjkyNTI5LTguNzUtOC43NS04Ljc1LTIuNDAzMzIsMC00LjU4MjY0Ljk3NDg1LTYuMTY1NTksMi41NDg4My0uMDA2NDcuMDA1OTgtLjAxNTA4LjAwNzgxLS4wMjE0Mi4wMTQxNnMtLjAwODE4LjAxNDg5LS4wMTQyMi4wMjE0OGMtMS41NzM5NywxLjU4Mjg5LTIuNTQ4NzcsMy43NjIyMS0yLjU0ODc3LDYuMTY1NTMsMCw0LjgyNDcxLDMuOTI1MjksOC43NSw4Ljc1LDguNzUsMi40MDMzMiwwLDQuNTgyNjQtLjk3NDg1LDYuMTY1NTktMi41NDg4My4wMDY0Ny0uMDA1OTguMDE1MDgtLjAwNzgxLjAyMTQyLS4wMTQxNnMuMDA4MTgtLjAxNDg5LjAxNDIyLS4wMjE0OFpNMTcuMjUsMTBjMCwxLjcyOTI1LS42MTA0NywzLjMxNzM4LTEuNjI0NjMsNC41NjQ4Mkw1LjQzNTE4LDQuMzc0NjNjMS4yNDc0NC0xLjAxNDE2LDIuODM1NjMtMS42MjQ2Myw0LjU2NDgyLTEuNjI0NjMsMy45OTc1NiwwLDcuMjUsMy4yNTI0NCw3LjI1LDcuMjVaTTIuNzUsMTBjMC0xLjcyOTI1LjYxMDQ3LTMuMzE3MzgsMS42MjQ2My00LjU2NDgybDEwLjE5MDE5LDEwLjE5MDE5Yy0xLjI0NzQ0LDEuMDE0MTYtMi44MzU2MywxLjYyNDYzLTQuNTY0ODIsMS42MjQ2My0zLjk5NzU2LDAtNy4yNS0zLjI1MjQ0LTcuMjUtNy4yNVoiLz48L3N2Zz4="); }
+.spectrum .wf-edit { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE3Ljc4MDc2LDEuNzU2ODRjLTEuMjcxOTctMS4wNDEwMi0zLjIyNzA1LS44OTg0NC00LjQ1MDIuMzIzMjRMMy4wNzc2NCwxMi4zMzM5OGMtLjMyMDMxLjMxOTM0LS41NTg1OS43MTY4LS42ODg5NiwxLjE1MDM5bC0xLjM4NDI4LDQuNTgzOThjLS4wODAwOC4yNjQ2NS0uMDA3ODEuNTUxNzYuMTg3NS43NDcwNy4xNDI1OC4xNDI1OC4zMzQ0Ny4yMTk3My41MzAyNy4yMTk3My4wNzIyNywwLC4xNDU1MS0uMDEwNzQuMjE2OC0uMDMyMjNsNC41ODI1Mi0xLjM4Mzc5Yy40MzM1OS0uMTI5ODguODMxNTQtLjM2ODE2LDEuMTUwODgtLjY4ODQ4LDAsMCwxMC4xNjg0Ni0xMC4xNjc5NywxMC4zNTU0Ny0xMC4zNTU0Ny42NDc5NS0uNjQ3NDYuOTkzMTYtMS41NDQ5Mi45NDc3NS0yLjQ1OTk2LS4wNDU5LS45MTUwNC0uNDgxNDUtMS43NzUzOS0xLjE5NDgyLTIuMzU4NFpNMi44NDQ3MywxNy4xNjMwOWwuOTc5OTgtMy4yNDYwOWMuMDI3MTYtLjA5MDMzLjA2NzE0LS4xNzU3OC4xMTM3Ny0uMjU3MzJsMi40MDg2OSwyLjQwOTE4Yy0uMDgxNTQuMDQ2MzktLjE2NzE4LjA4NjQzLS4yNTc4MS4xMTM3N2wtMy4yNDQ2My45ODA0N1ptMTQuMTIxNTgtMTEuNjQ3NDZjLS4xNTQ3Mi4xNTU1Mi03LjA5OTg1LDcuMTAwMS05LjUyNTQ1LDkuNTI1ODhsLTIuNDc0NjEtMi40NzUxTDE0LjM5MTExLDMuMTQwNjJjLjM4NjIzLS4zODY3Mi44OTYtLjU4NTk0LDEuMzg5NjUtLjU4NTk0LjM4MDg2LDAsLjc1MjQ0LjExOTE0LDEuMDUwMjkuMzYyMy4zOTE2LjMyMTI5LjYyMTA5Ljc3MjQ2LjY0NiwxLjI3MjQ2LjAyNDkuNDkzMTYtLjE2MTEzLjk3NjU2LS41MTA3NCwxLjMyNjE3WiIgLz48L3N2Zz4="); }
+.spectrum .wf-user-edit { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LjU3MTAyLDEwLjA0Mjc2Yy0uOTY1OS0uNzkxNDYtMi40NTMyLS42ODg0NC0zLjM3OS4yMzkzbC00LjE4MjYsNC4xODI2Yy0uMjQ4LjI0NzYtLjQzMjYuNTU1Ny0uNTMzMi44OTA2bC0uOTU0MDgsMy4xNTk3Yy0uMDgwMDguMjY0Ny0uMDA3ODEuNTUxOC4xODc1Ljc0NzEuMTQyNTguMTQyNi4zMzM5OC4yMTk3LjUzMDI4LjIxOTcuMDcyMywwLC4xNDU1LS4wMTAyLjIxNjgtLjAzMjJsMy4xNTgyLS45NTM2Yy4zMzU5LS4xMDExLjY0NDUtLjI4NTIuODkwNi0uNTMyNywwLDAsNC4xMjUtNC4xMjQ2LDQuMjUyOS00LjI1My40OTMyLS40OTI3Ljc1NjktMS4xNzUzLjcyMTctMS44NzItLjAzNDItLjY5NjgtLjM2NjItMS4zNTExLS45MDkxLTEuNzk1NVptLTcuMjA5LDcuNTY2NGwuNTUwOC0xLjgyMTJjLjAxNy0uMDU3NC4wNTc4LS4xMDE5LjA5MDMtLjE1MTdsMS4zMzIzLDEuMzMyMmMtLjA1MDEuMDMyOC0uMDk0OC4wNzM3LS4xNTMxLjA5MTRsLTEuODIwMy41NDkzWm02LjMzNDktNC45NTg1Yy0uMDkyNy4wOTMzLTIuMjUxMiwyLjI1MTUtMy40NTU4LDMuNDU1OWwtMS4zNzY0LTEuMzc2LDMuMzg3OS0zLjM4OGMuMjIxNy0uMjIxNi41MTI3LS4zMzY5Ljc5My0uMzM2OS4yMDk5LDAsLjQxMzEuMDY1LjU3NjEuMTk4My4yMTg4LjE3ODcuMzQ2Ny40MzA2LjM2MDQuNzA4NS4wMTM3LjI3ODMtLjA4NjkuNTQtLjI4NTIuNzM4MloiIHN0cm9rZS13aWR0aD0iMCIvPjxwYXRoIGQ9Im04Ljk5OTgzLDExLjI0OTY3Yy0yLjYxOTE0LDAtNC43NS0yLjI0MzE2LTQuNzUtNVM2LjM4MDY5LDEuMjQ5NjcsOC45OTk4MywxLjI0OTY3czQuNzUsMi4yNDMxNiw0Ljc1LDUtMi4xMzA4Niw1LTQuNzUsNVptMC04LjVjLTEuNzkxOTksMC0zLjI1LDEuNTcwMzEtMy4yNSwzLjVzMS40NTgwMSwzLjUsMy4yNSwzLjUsMy4yNS0xLjU3MDMxLDMuMjUtMy41LTEuNDU4MDEtMy41LTMuMjUtMy41WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0ibTEuNzUwODEsMTguNzQ5NjdjLS4wMjM5MywwLS4wNDgzNC0uMDAwOTgtLjA3Mjc1LS4wMDM5MS0uNDEyNi0uMDM5MDYtLjcxNDM2LS40MDUyNy0uNjc0OC0uODE4MzYuMzA2NjQtMy4xODM1OSwzLjgxOTM0LTUuNjc3NzMsNy45OTY1OC01LjY3NzczLjI0ODA1LDAsLjQ5MzE2LjAwODc5LjczNDM4LjAyNTM5LjQxMzA5LjAyODMyLjcyNDYxLjM4NjcyLjY5NTguNzk5OHMtLjM4MTM1LjcxMDk0LS44MDAyOS42OTYyOWMtLjIwNzAzLS4wMTQ2NS0uNDE2OTktLjAyMTQ4LS42Mjk4OC0uMDIxNDgtMy40MTMwOSwwLTYuMjcwMDIsMS44OTg0NC02LjUwMzQyLDQuMzIyMjctLjAzNzYuMzg3Ny0uMzYzNzcuNjc3NzMtLjc0NTYxLjY3NzczWiIgc3Ryb2tlLXdpZHRoPSIwIi8+PC9zdmc+"); }
+.spectrum .wf-edit-no { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LjI1LDE5LjAyMzQ0Yy0uMTkyMzgsMC0uMzgzNzktLjA3MzI0LS41MzAyNy0uMjE5NzNMMS4yMTk3MywyLjMwMzcxYy0uMjkyOTctLjI5Mjk3LS4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1cy43Njc1OC0uMjkyOTcsMS4wNjA1NSwwbDE2LjUsMTYuNWMuMjkyOTcuMjkyOTcuMjkyOTcuNzY3NTgsMCwxLjA2MDU1LS4xNDY0OC4xNDY0OC0uMzM3ODkuMjE5NzMtLjUzMDI3LjIxOTczWiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0ibTE0LjM5ODQ0LDEwLjIwNzAzbC0xLjA2MDU1LTEuMDYwNTUsMy42NTIzNC0zLjY1MzMyYy4zNDg2My0uMzQ4NjMuNTM1MTYtLjgzMTA1LjUxMDc0LTEuMzI0MjItLjAyNTM5LS41LS4yNTQ4OC0uOTUyMTUtLjY0NjQ4LTEuMjczNDQtLjY4NDU3LS41NTg1OS0xLjc1NDg4LS40NjA5NC0yLjQzOTQ1LjIyMzYzbC0zLjU1MTc2LDMuNTUxNzZjLS4yOTI5Ny4yOTI5Ny0uNzY3NTguMjkyOTctMS4wNjA1NSwwcy0uMjkyOTctLjc2NzU4LDAtMS4wNjA1NWwzLjU1MTc2LTMuNTUxNzZjMS4yMjI2Ni0xLjIyMzYzLDMuMTc5NjktMS4zNjUyMyw0LjQ0OTIyLS4zMjMyNC43MTM4Ny41ODM5OCwxLjE0OTQxLDEuNDQzMzYsMS4xOTUzMSwyLjM1OTM4LjA0NTkuOTE1MDQtLjI5OTgsMS44MTE1Mi0uOTQ4MjQsMi40NTg5OGwtMy42NTIzNCwzLjY1MzMyWiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0ibTEwLjMzODg3LDEzLjIwNjA1Yy0uMjkyOTctLjI5Mjk3LS43Njc1OC0uMjkyOTctMS4wNjA1NSwwbC0xLjgzNzQsMS44Mzc0LTIuNDc1MS0yLjQ3NTEsMS43OTM5NS0xLjc5Mzk1Yy4yOTI5Ny0uMjkyOTcuMjkyOTctLjc2NzU4LDAtMS4wNjA1NXMtLjc2NzU4LS4yOTI5Ny0xLjA2MDU1LDBsLTIuNjIzMDUsMi42MjMwNWMtLjMxOTM0LjMxODM2LS41NTY2NC43MTU4Mi0uNjg3NSwxLjE0OTQxbC0xLjM4NDc3LDQuNTgzOThjLS4wODAwOC4yNjQ2NS0uMDA3ODEuNTUxNzYuMTg3NS43NDcwNy4xNDI1OC4xNDI1OC4zMzM5OC4yMTk3My41MzAyNy4yMTk3My4wNzIyNywwLC4xNDU1MS0uMDEwNzQuMjE2OC0uMDMyMjNsNC41ODM5OC0xLjM4Mzc5Yy40MzI2Mi0uMTI5ODguODMwMDgtLjM2ODE2LDEuMTUwMzktLjY4ODQ4bDIuNjY2MDItMi42NjYwMmMuMjkyOTctLjI5Mjk3LjI5Mjk3LS43Njc1OCwwLTEuMDYwNTVabS03LjQ5NDE0LDMuOTU4OThsLjk3OTQ5LTMuMjQ1MTJjLjAyNzM0LS4wOTA1OC4wNjc0NC0uMTc2MjcuMTE0MTQtLjI1NzgxbDIuNDA4ODEsMi40MDg2OWMtLjA4MTQyLjA0NjYzLS4xNjY4Ny4wODY0My0uMjU3MzIuMTEzNzdsLTMuMjQ1MTIuOTgwNDdaIiBzdHJva2Utd2lkdGg9IjAiLz48L3N2Zz4="); }
+.spectrum .wf-cloud-error { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTE1LjUsOS4wMjExMmMtMi40ODUzNSwwLTQuNSwyLjAxNDcxLTQuNSw0LjVzMi4wMTQ2NSw0LjUsNC41LDQuNSw0LjQ3OTk4LTIuMDE0NzcsNC40Nzk5OC00LjUtMS45OTQ3NS00LjUtNC40Nzk5OC00LjVaTTE2LjQ1LDE1LjkxNThjMCwuNDcyNDEtLjQyNTQzLjg1NTY5LS45NS44NTU2OXMtLjk1LS4zODMyOC0uOTUtLjg1NTY5di0uMjg4NjNjMC0uNDcyNDEuNDI1NDMtLjg1NTY5Ljk1LS44NTU2OXMuOTUuMzgzMjguOTUuODU1Njl2LjI4ODYzWk0xNi4zNzUsMTMuNDIwOWMwLC40MTQwNi0uMzkxODUuNzUtLjg3NS43NXMtLjg3NS0uMzM1OTQtLjg3NS0uNzV2LTIuNjQ5NDFjMC0uNDE0MDYuMzkxODUtLjc1Ljg3NS0uNzVzLjg3NS4zMzU5NC44NzUuNzV2Mi42NDk0MVoiLz48cGF0aCBkPSJNOS4yNSwxNi45OTgwNUgzLjcxNzc3Yy0xLjkwMzMyLDAtMy40NTIxNS0xLjU0Nzg1LTMuNDUyMTUtMy40NTExNywwLTEuNDkyMTkuOTY2OC0yLjc4MDI3LDIuMzI0MjItMy4yNS0uMDQyOTctLjIzMTQ1LS4wNjQ0NS0uNDY1ODItLjA2NDQ1LS43MDMxMiwwLTIuMTc5NjksMS44MDk1Ny0zLjk1MjE1LDQuMDMzMi0zLjk1MjE1LjI3OTMsMCwuNTU3NjIuMDI5My44MzEwNS4wODc4OS42Mzc3LTEuOTU4OTgsMi40NzY1Ni0zLjM0NzY2LDQuNTg4ODctMy4zNDc2NiwyLjQ5NjA5LDAsNC41NjczOCwxLjg3MDEyLDQuODE4MzYsNC4zNTA1OS4wNDE5OS40MTIxMS0uMjU4NzkuNzc5My0uNjcwOS44MjEyOS0uNDAwMzkuMDQ5OC0uNzc5My0uMjU3ODEtLjgyMTI5LS42NzA5LS4xNzI4NS0xLjcxMDk0LTEuNjAzNTItMy4wMDA5OC0zLjMyNjE3LTMuMDAwOTgtMS42NjMwOSwwLTMuMDgwMDgsMS4yNTE5NS0zLjI5Njg4LDIuOTEyMTEtLjAzMTI1LjIzNTM1LS4xNzE4OC40NDIzOC0uMzc4OTEuNTU3NjItLjIwODAxLjExNzE5LS40NTg5OC4xMjUtLjY3NDguMDI4MzItLjM0ODYzLS4xNTgyLS43MDg5OC0uMjM4MjgtMS4wNjkzNC0uMjM4MjgtMS4zOTY0OCwwLTIuNTMzMiwxLjA5OTYxLTIuNTMzMiwyLjQ1MjE1LDAsLjMzMjAzLjA2OTM0LjY1NjI1LjIwNjA1Ljk2NDg0LjA5OTYxLjIyMzYzLjA4MzAxLjQ4MjQyLS4wNDM5NS42OTIzOHMtLjM0ODYzLjM0Mzc1LS41OTM3NS4zNTkzOGMtMS4wMjUzOS4wNjY0MS0xLjgyODEyLjkxNjk5LTEuODI4MTIsMS45MzY1MiwwLDEuMDc2MTcuODc1OTgsMS45NTExNywxLjk1MjE1LDEuOTUxMTdoNS41MzIyM2MuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzVzLS4zMzU5NC43NS0uNzUuNzVaIi8+PC9zdmc+"); }
+.spectrum .wf-lock { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTExLjI1LDExLjVjMC0uNjg5NDUtLjU2MDU1LTEuMjUtMS4yNS0xLjI1cy0xLjI1LjU2MDU1LTEuMjUsMS4yNWMwLC40MDI1OS4yMDM2MS43NDQ4Ny41Ljk3MzYzdi43NzYzN2MwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtLjc3NjM3Yy4yOTYzOS0uMjI4NzYuNS0uNTcxMDQuNS0uOTczNjNaIi8+PHBhdGggZD0iTTE1LDcuMDI1Mzl2LS41MjUzOWMwLTIuNzU2ODQtMi4yNDMxNi01LTUtNXMtNSwyLjI0MzE2LTUsNXYuNTI1MzljLTEuMTIxNTguMTI2MjItMiwxLjA3MDA3LTIsMi4yMjQ2MXY2LjVjMCwxLjI0MDIzLDEuMDA5NzcsMi4yNSwyLjI1LDIuMjVoOS41YzEuMjQwMjMsMCwyLjI1LTEuMDA5NzcsMi4yNS0yLjI1di02LjVjMC0xLjE1NDU0LS44Nzg0Mi0yLjA5ODM5LTItMi4yMjQ2MVpNMTAsM2MxLjkyOTY5LDAsMy41LDEuNTcwMzEsMy41LDMuNXYuNWgtN3YtLjVjMC0xLjkyOTY5LDEuNTcwMzEtMy41LDMuNS0zLjVaTTE1LjUsMTUuNzVjMCwuNDEzMDktLjMzNjkxLjc1LS43NS43NUg1LjI1Yy0uNDEzMDksMC0uNzUtLjMzNjkxLS43NS0uNzV2LTYuNWMwLS40MTMwOS4zMzY5MS0uNzUuNzUtLjc1aDkuNWMuNDEzMDksMCwuNzUuMzM2OTEuNzUuNzV2Ni41WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-help { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTkuOTg4MSwxNS41MjY3OWMtLjIzMDY1LjAwODEzLS40NTUzOC0uMDczODctLjYyNjYxLS4yMjg2Mi0uMzMwMzMtLjM2NTA1LS4zMzAzMy0uOTIxMDIsMC0xLjI4NjA3LjE2OTM1LS4xNTg1MS4zOTQ4My0uMjQzMDguNjI2NjQtLjIzNTA0LjIzNjM1LS4wMDk0OC40NjU4OS4wODAzNS42MzMwMi4yNDc3NS4xNjIwNy4xNjc5LjI0OTE2LjM5NDMyLjI0MTM3LjYyNzU1LjAxMjM4LjIzNDk3LS4wNjk1OS40NjUxNS0uMjI3Ny42Mzk0LS4xNzM1OC4xNjQ3NC0uNDA3ODYuMjQ5ODgtLjY0NjcxLjIzNTAzWiIvPjxwYXRoIGQ9Im0xMCwxOC43NWMtNC44MjUyLDAtOC43NS0zLjkyNDgtOC43NS04Ljc1UzUuMTc0OCwxLjI1LDEwLDEuMjVzOC43NSwzLjkyNDgsOC43NSw4Ljc1LTMuOTI0OCw4Ljc1LTguNzUsOC43NVptMC0xNmMtMy45OTgwNSwwLTcuMjUsMy4yNTE5NS03LjI1LDcuMjVzMy4yNTE5NSw3LjI1LDcuMjUsNy4yNSw3LjI1LTMuMjUxOTUsNy4yNS03LjI1LTMuMjUxOTUtNy4yNS03LjI1LTcuMjVaIi8+PHBhdGggZD0ibTkuOTkyMTksMTIuNzA2MDVjLS40MTQwNiwwLS43NS0uMzM1OTQtLjc1LS43NSwwLTEuMDIyNDYuMDcwMzEtMS43MTM4NywxLjAzOTA2LTIuNjgyNjIuNzg1MTYtLjc4NjEzLjkxNzk3LTEuMTAxNTYuOTE3OTctMS42NTEzNywwLS4yMDk5Ni0uMDY2NDEtMS4yNTc4MS0xLjM3NDAyLTEuMjU3ODEtMS4zNjUyMywwLTEuNTEwNzQsMS4xNTYyNS0xLjUyNjM3LDEuMzg3Ny0uMDI2MzcuNDEzMDktLjM5MjU4LjcyMDctLjc5Njg4LjY5OTIyLS40MTQwNi0uMDI3MzQtLjcyNjU2LS4zODM3OS0uNjk5MjItLjc5Njg4LjA2MzQ4LS45NjQ4NC43NzYzNy0yLjc5MDA0LDMuMDIyNDYtMi43OTAwNCwxLjg4NjcyLDAsMi44NzQwMiwxLjM4NzcsMi44NzQwMiwyLjc1NzgxLDAsMS4xNDM1NS0uNDU3MDMsMS44MTA1NS0xLjM1NzQyLDIuNzExOTEtLjU3NjE3LjU3NjE3LS41OTk2MS44MTE1Mi0uNTk5NjEsMS42MjIwNywwLC40MTQwNi0uMzM1OTQuNzUtLjc1Ljc1WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-hand { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE2LjQwMDM5LDUuMTI1OThjLS4zNTY5My0uMDYwNzktLjcwNTMyLS4wMTg4LTEuMDI3MzQuMDg5NnYtLjg3MDg1YzAtMS4xNzE4OC0uOTUzMTItMi4xMjUtMi4xMjUtMi4xMjUtLjM5MDk5LDAtLjcwMy4xMDg4OS0uOTUzNjEuMjg3ODQtLjM3NTk4LS41OTkzNy0xLjAzNzk2LTEuMDAxNzEtMS43OTYzOS0xLjAwMTcxLS45NjU4MiwwLTEuNzczNjguNjUxMzctMi4wMzEyNSwxLjUzNTE2LS4yMjU1OS0uMDgxNzktLjQ2NTMzLS4xMzM3OS0uNzE4NzUtLjEzMzc5LTEuMTcxODgsMC0yLjEyNS45NTMxMi0yLjEyNSwyLjEyNXYzLjY5NjI5Yy0uMzIzMjQtLjQxMzU3LS43NzU3Ni0uNjk0MzQtMS4yOTU5LS43ODYxMy0uNTYxNTItLjEwMTU2LTEuMTI1LjAyNjM3LTEuNTg3ODkuMzUxNTYtLjQ2NTgyLjMyNTItLjc3NTM5LjgxMjUtLjg3NDAyLDEuMzcxMDktLjA5ODYzLjU1OTU3LjAyNjM3LDEuMTIzMDUuMzUxNTYsMS41ODg4N2wyLjc1LDMuOTE2MDJjMS44NDE4LDIuMzgwODYsMy41NjI1LDMuMzIzMjQsNi4wOTE4LDMuMzIzMjQuMDU0NjksMCwuMTA5MzgsMCwuMTY1MDQtLjAwMDk4LDMuMjI0NjEtLjAyODMyLDUuNTE4NTUtMi40MDUyNyw2LjEzMzc5LTYuMzQ2NjhsLjc4MDI3LTQuNTY3MzhjLjE5NjI5LTEuMTU1MjctLjU4MzAxLTIuMjU0ODgtMS43MzczLTIuNDUyMTVabS0uNTIzNDQsNi43NzgzMmMtLjUwMDk4LDMuMjExOTEtMi4yMDIxNSw1LjA2NjQxLTQuNjcxODgsNS4wODc4OS0yLjEyNS4wMjM0NC0zLjQ2MTkxLS42ODM1OS01LjAzMDI3LTIuNzExOTFsLTIuNzI5NDktMy44ODY3MmMtLjA5NTctLjEzNjcyLS4xMzI4MS0uMzAyNzMtLjEwMzUyLS40Njc3Ny4wMjkzLS4xNjQwNi4xMjAxMi0uMzA3NjIuMjU2ODQtLjQwMzMyLjI4MjIzLS4xOTcyNy42NzI4NS0uMTI5ODguODcyMDcuMTU1MjdsMS4yODkwNiwxLjgzMDA4Yy4yMzkyNi4zMzg4Ny43MDcwMy40MjI4NSwxLjA0NDkyLjE4MTY0LjE4NzUtLjEzMTg0LjI4Njg3LS4zMzQ0Ny4zMDYwMy0uNTQ2MTQuMDA3Mi0uMDA0NjQuMDEyMzMtLjAyMDc1LjAxMjMzLS4wNjcxNHYtNi4wNDM5NWMwLS4zNDQ3My4yODAyNy0uNjI1LjYyNS0uNjI1cy42MjUuMjgwMjcuNjI1LjYyNXYzLjc1NzgxYzAsLjQxNDA2LjMzNTk0Ljc1Ljc1Ljc1cy43NS0uMzM1OTQuNzUtLjc1VjMuNjMwODZjMC0uMzQ0NzMuMjgwMjctLjYyNS42MjUtLjYyNXMuNjI1LjI4MDI3LjYyNS42MjV2NS4wMzAyN2MwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtNC4zMTY0MWMwLS4zNDQ3My4yODAyNy0uNjI1LjYyNS0uNjI1cy42MjUuMjgwMjcuNjI1LjYyNXYyLjc3MjQ2YzAsLjAzMDI3LS4wMDA4Ni4xOTE5Ny0uMDAwODYuMTkxOTdsLS4yODMzMiwxLjY1ODYxYy0uMDY5MzQuNDA4Mi4yMDUwOC43OTU5LjYxMzI4Ljg2NTIzLjQwMTM3LjA3NTIuNzk0OTItLjIwNDEuODY1MjMtLjYxMzI4bC4zNTkzOC0yLjEwNDQ5Yy4wNTc2Mi0uMzM4ODcuMzY5MTQtLjU2ODM2LjcyMTY4LS41MTA3NC4zMzg4Ny4wNTc2Mi41NjgzNi4zODE4NC41MTA3NC43MjE2OGwtLjc4MjIzLDQuNTc4MTJaIi8+PC9zdmc+"); }
+.spectrum .wf-key { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTIuMDczMjQsMTIuNjY3OTdjMS4xMDkzOC0xLjMyMzI0LDMuMjQyOC0xLjQ2ODc1LDUuMDE2MzYtLjQ0MTg5TDE1LjY1NjI1LDEuNDMxNjRjLjI1NzgxLS4zMjQyMi43MzA0Ny0uMzc2OTUsMS4wNTM3MS0uMTIyMDcuMzI1Mi4yNTc4MS4zNzg5MS43Mjk0OS4xMjIwNywxLjA1MzcxbC0uNTYwNzkuNzA2NTQsMi4yMTExOCwxLjg1NTk2Yy4xNTQzLjEyODkxLjI1LjMxNTQzLjI2NTYyLjUxNjYuMDE1NjIuMjAwMi0uMDUwNzguMzk5NDEtLjE4MjYyLjU1MDc4bC0yLjEwNzQyLDIuNDE1MDRjLS4xNDg0NC4xNjk5Mi0uMzU2NDUuMjU2ODQtLjU2NTQzLjI1Njg0LS4xNzA5LDAtLjM0MTgtLjA1NzYyLS40ODI0Mi0uMTc1NzhsLTIuMDY0NTgtMS43MzI5MS0uNjIyMDcuNzgzOTQsMi4wNDUwNCwxLjcxNTU4Yy4zMTczOC4yNjU2Mi4zNTg0LjczOTI2LjA5MTgsMS4wNTY2NC0uMTQ4NDQuMTc2NzYtLjM2MDM1LjI2NzU4LS41NzQyMi4yNjc1OC0uMTcwOSwwLS4zNDE4LS4wNTc2Mi0uNDgyNDItLjE3NTc4bC0yLjAxMjk0LTEuNjg4NzItMy41MjU1MSw0LjQ0MjE0Yy43MDIwMy43MzY1NywxLjE1NjM3LDEuNjI3NDQsMS4yNTMzLDIuNTQxNS4wOTE4Ljg3MzA1LS4xNDc0NiwxLjY5OTIyLS42NzQ4LDIuMzI4MTItLjYyNTk4Ljc0NTEyLTEuNTc5MSwxLjExOTE0LTIuNjA5MzgsMS4xMTkxNC0xLjAxMTcyLDAtMi4wOTc2Ni0uMzYwMzUtMy4wMjA1MS0xLjA4MjAzLTEuMDMzMi0uODA3NjItMS42OTQzNC0xLjkyNzczLTEuODE0NDUtMy4wNzEyOS0uMDkwODItLjg3MjA3LjE0ODQ0LTEuNjk4MjQuNjczODMtMi4zMjUyWk0xNS44MTE1Miw2Ljg2NzE5bDEuMTIxMDktMS4yODQxOC0xLjU5NDEyLTEuMzM3ODktMS4wNjAxOCwxLjMzNTgyLDEuNTMzMiwxLjI4NjI1Wk0yLjg5MTYsMTQuODM2OTFjLjA3NjE3LjczMDQ3LjU0Mjk3LDEuNDk1MTIsMS4yNDYwOSwyLjA0NTksMS4yMTQ4NC45NDcyNywyLjg0Mzc1LDEuMDMxMjUsMy41NTY2NC4xODA2Ni4zMzY5MS0uNDAyMzQuMzY2MjEtLjg3NzkzLjMzMjAzLTEuMjA3MDMtLjA3NzE1LS43MzA0Ny0uNTQyOTctMS40OTQxNC0xLjI0NzA3LTIuMDQ0OTItLjY1MTM3LS41MDk3Ny0xLjQyMTg4LS43Njk1My0yLjEwNjQ1LS43Njk1My0uNTkwODIsMC0xLjExOTE0LjE5NDM0LTEuNDUwMi41ODg4Ny0uMzM1OTQuNDAxMzctLjM2NTIzLjg3NzkzLS4zMzEwNSwxLjIwNjA1WiIvPjwvc3ZnPg=="); }
+.spectrum .wf-community { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLjA1ODczLDExLjk5ODA1Yy0yLjA4ODg3LDAtMy43ODgwOS0xLjc4NDE4LTMuNzg4MDktMy45Nzc1NHMxLjY5OTIyLTMuOTc4NTIsMy43ODgwOS0zLjk3ODUyLDMuNzg4MDksMS43ODUxNiwzLjc4ODA5LDMuOTc4NTItMS42OTkyMiwzLjk3NzU0LTMuNzg4MDksMy45Nzc1NFpNMTAuMDU4NzMsNS41NDE5OWMtMS4yNjE3MiwwLTIuMjg4MDksMS4xMTIzLTIuMjg4MDksMi40Nzg1MnMxLjAyNjM3LDIuNDc3NTQsMi4yODgwOSwyLjQ3NzU0LDIuMjg4MDktMS4xMTEzMywyLjI4ODA5LTIuNDc3NTQtMS4wMjYzNy0yLjQ3ODUyLTIuMjg4MDktMi40Nzg1MloiLz48cGF0aCBkPSJNNC41NTMzNiwxNy45OTgwNWMtLjAyNjg2LDAtLjA1NDItLjAwMDk4LS4wODE1NC0uMDAzOTEtLjQxMjExLS4wNDQ5Mi0uNzA5NDctLjQxNTA0LS42NjUwNC0uODI3MTUuMjc1ODgtMi41NDU5LDIuOTYzMzgtNC40NjY4LDYuMjUxOTUtNC40NjY4LDMuMjY0NjUsMCw2LjAxMTIzLDEuOTY1ODIsNi4yNTI5Myw0LjQ3NTU5LjAzOTU1LjQxMzA5LS4yNjIyMS43NzkzLS42NzQ4LjgxODM2LS40MTUwNC4wNDI5Ny0uNzc4MzItLjI2MjctLjgxODM2LS42NzM4My0uMTY1NTMtMS43MjA3LTIuMzAwNzgtMy4xMjAxMi00Ljc1OTc3LTMuMTIwMTItMi40Nzk0OSwwLTQuNTcwOCwxLjM3NDAyLTQuNzYwNzQsMy4xMjg5MS0uMDQxNS4zODM3OS0uMzY2Ny42Njg5NS0uNzQ0NjMuNjY4OTVaIi8+PHBhdGggZD0iTS43NDk2NSwxNWMtLjEzNjcyLDAtLjI3NTM5LS4wMzcxMS0uMzk5NDEtLjExNTIzLS4zNTA1OS0uMjIwNy0uNDU1NTctLjY4NDU3LS4yMzQzOC0xLjAzNTE2Ljg1NTk2LTEuMzU3NDIsMi40Mzk5NC0yLjMxMTUyLDQuMzQ1MjEtMi42MTQyNi40MTI2LS4wNzEyOS43OTM0Ni4yMTI4OS44NTg4OS42MjIwNy4wNjQ5NC40MDkxOC0uMjEzODcuNzkzOTUtLjYyMjU2Ljg1ODQtMS40NTc1Mi4yMzI0Mi0yLjY5NTguOTU1MDgtMy4zMTI5OSwxLjkzNDU3LS4xNDI1OC4yMjU1OS0uMzg2MjMuMzQ5NjEtLjYzNDc3LjM0OTYxWiIvPjxwYXRoIGQ9Ik00LjE4NjY2LDEwYy0uMDUyNzMsMC0uMTA1OTYtLjAwNTg2LS4xNTk2Ny0uMDE3NTgtMS43NDc1Ni0uMzc4OTEtMy4wMTYxMS0yLjAxNzU4LTMuMDE2MTEtMy44OTQ1MywwLTIuMTkzMzYsMS42OTkyMi0zLjk3NzU0LDMuNzg3Ni0zLjk3NzU0LjY4NDU3LDAsMS4zNTU0Ny4xOTMzNiwxLjkzOTk0LjU1OTU3LjM1MTA3LjIxOTczLjQ1NzUyLjY4MjYyLjIzNzc5LDEuMDM0MTgtLjIyMDcuMzUwNTktLjY4NDA4LjQ1NTA4LTEuMDMzNjkuMjM3My0uMzQ1Ny0uMjE2OC0uNzQxMjEtLjMzMTA1LTEuMTQ0MDQtLjMzMTA1LTEuMjYxMjMsMC0yLjI4NzYsMS4xMTEzMy0yLjI4NzYsMi40Nzc1NCwwLDEuMTc2NzYuNzcxNDgsMi4xOTgyNCwxLjgzNDQ3LDIuNDI5NjkuNDA0NzkuMDg3ODkuNjYxNjIuNDg3My41NzM3My44OTE2LS4wNzYxNy4zNTE1Ni0uMzg3MjEuNTkwODItLjczMjQyLjU5MDgyWiIvPjxwYXRoIGQ9Ik0xOS4yNTAzNSwxNWMtLjI0OTAyLDAtLjQ5MjE5LS4xMjQwMi0uNjM0NzctLjM0OTYxLS42MTcxOS0uOTc5NDktMS44NTU0Ny0xLjcwMjE1LTMuMzEyOTktMS45MzQ1Ny0uNDA4NjktLjA2NDQ1LS42ODc1LS40NDkyMi0uNjIyNTYtLjg1ODQuMDY1NDMtLjQwOTE4LjQ0OTIyLS42OTIzOC44NTg4OS0uNjIyMDcsMS45MDUyNy4zMDI3MywzLjQ4OTI2LDEuMjU2ODQsNC4zNDUyMSwyLjYxNDI2LjIyMTE5LjM1MDU5LjExNjIxLjgxNDQ1LS4yMzQzOCwxLjAzNTE2LS4xMjQwMi4wNzgxMi0uMjYyNy4xMTUyMy0uMzk5NDEuMTE1MjNaIi8+PHBhdGggZD0iTTE1LjgxMzM0LDEwYy0uMzQ1NywwLS42NTYyNS0uMjM5MjYtLjczMjQyLS41OTA4Mi0uMDg3ODktLjQwNDMuMTY4OTUtLjgwMzcxLjU3MzczLS44OTE2LDEuMDYyOTktLjIzMTQ1LDEuODM0NDctMS4yNTI5MywxLjgzNDQ3LTIuNDI5NjksMC0xLjM2NjIxLTEuMDI2MzctMi40Nzc1NC0yLjI4NzYtMi40Nzc1NC0uNDAyODMsMC0uNzk4MzQuMTE0MjYtMS4xNDQwNC4zMzEwNS0uMzQ5MTIuMjE3NzctLjgxMzQ4LjExMzI4LTEuMDMzNjktLjIzNzMtLjIxOTczLS4zNTE1Ni0uMTEzMjgtLjgxNDQ1LjIzNzc5LTEuMDM0MTguNTg0NDctLjM2NjIxLDEuMjU1MzctLjU1OTU3LDEuOTM5OTQtLjU1OTU3LDIuMDg4MzgsMCwzLjc4NzYsMS43ODQxOCwzLjc4NzYsMy45Nzc1NCwwLDEuODc2OTUtMS4yNjg1NSwzLjUxNTYyLTMuMDE2MTEsMy44OTQ1My0uMDUzNzEuMDExNzItLjEwNjkzLjAxNzU4LS4xNTk2Ny4wMTc1OFoiLz48L3N2Zz4="); }
+.spectrum .wf-calendar { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE1Ljc1LDNoLTJ2LTFjMC0uNDE0MDYtLjMzNTk0LS43NS0uNzUtLjc1cy0uNzUuMzM1OTQtLjc1Ljc1djFoLTQuNXYtMWMwLS40MTQwNi0uMzM1OTQtLjc1LS43NS0uNzVzLS43NS4zMzU5NC0uNzUuNzV2MWgtMmMtMS4yNDA3MiwwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2MTAuNWMwLDEuMjQwMjMsMS4wMDkyOCwyLjI1LDIuMjUsMi4yNWgxMS41YzEuMjQwNzIsMCwyLjI1LTEuMDA5NzcsMi4yNS0yLjI1VjUuMjVjMC0xLjI0MDIzLTEuMDA5MjgtMi4yNS0yLjI1LTIuMjVabS0xMS41LDEuNWgydi41YzAsLjQxNDA2LjMzNTk0Ljc1Ljc1Ljc1cy43NS0uMzM1OTQuNzUtLjc1di0uNWg0LjV2LjVjMCwuNDE0MDYuMzM1OTQuNzUuNzUuNzVzLjc1LS4zMzU5NC43NS0uNzV2LS41aDJjLjQxMzU3LDAsLjc1LjMzNjkxLjc1Ljc1djEuNzVIMy41di0xLjc1YzAtLjQxMzA5LjMzNjQzLS43NS43NS0uNzVabTExLjUsMTJINC4yNWMtLjQxMzU3LDAtLjc1LS4zMzY5MS0uNzUtLjc1di03LjI1aDEzdjcuMjVjMCwuNDEzMDktLjMzNjQzLjc1LS43NS43NVoiLz48cmVjdCB4PSI1IiB5PSIxMCIgd2lkdGg9IjIiIGhlaWdodD0iMiIgcng9IjEiIHJ5PSIxIi8+PHJlY3QgeD0iOSIgeT0iMTAiIHdpZHRoPSIyIiBoZWlnaHQ9IjIiIHJ4PSIxIiByeT0iMSIvPjxyZWN0IHg9IjEzIiB5PSIxMCIgd2lkdGg9IjIiIGhlaWdodD0iMiIgcng9IjEiIHJ5PSIxIi8+PHJlY3QgeD0iNSIgeT0iMTMiIHdpZHRoPSIyIiBoZWlnaHQ9IjIiIHJ4PSIxIiByeT0iMSIvPjxyZWN0IHg9IjkiIHk9IjEzIiB3aWR0aD0iMiIgaGVpZ2h0PSIyIiByeD0iMSIgcnk9IjEiLz48cmVjdCB4PSIxMyIgeT0iMTMiIHdpZHRoPSIyIiBoZWlnaHQ9IjIiIHJ4PSIxIiByeT0iMSIvPjwvc3ZnPg=="); }
+.spectrum .wf-bell { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE3Ljc4NjEzLDEyLjY3NTc4Yy0uMTY4NDYtLjMwODU5LS4zNDA4Mi0uNjA3NDItLjUxMTIzLS45MDIzNC0uODI2NjYtMS40MzQ1Ny0xLjU0MTAyLTIuNjcyODUtMS41NDEwMi00LjYyMDEyLDAtMy4xMTkxNC0yLjUzNzYtNS42NTcyMy01LjY1NzIzLTUuNjU3MjNzLTUuNjU3MjMsMi41MzgwOS01LjY1NzIzLDUuNjU3MjNjMCwxLjc2NjYtLjc1ODc5LDMuMDQ4ODMtMS41NjIwMSw0LjQwNTI3LS4yMjAyMS4zNzIwNy0uNDQxNDEuNzQ2MDktLjY0OTQxLDEuMTMwODYtLjM3NTk4LjY5NjI5LS4zNTY5MywxLjUyMDUxLjA1MDc4LDIuMjA0MS40MTIxMS42OTA0MywxLjEzNjcyLDEuMTAyNTQsMS45Mzg0OCwxLjEwMjU0aDMuMDUyMjVjMCwxLjUxNjYsMS4yMzM0LDIuNzUsMi43NSwyLjc1czIuNzUtMS4yMzM0LDIuNzUtMi43NWgzLjA1NTE4Yy44MDMyMiwwLDEuNTI3ODMtLjQxMzA5LDEuOTM4OTYtMS4xMDU0Ny40MDc3MS0uNjg3NS40MjM4My0xLjUxNTYyLjA0MjQ4LTIuMjE0ODRabS03Ljc4NjYyLDQuNTcwMzFjLS42ODk0NSwwLTEuMjUtLjU2MDU1LTEuMjUtMS4yNWgyLjVjMCwuNjg5NDUtLjU2MDU1LDEuMjUtMS4yNSwxLjI1Wm02LjQ1NDEtMy4xMjEwOWMtLjA2NjQxLjExMTMzLS4yNjIyMS4zNzEwOS0uNjQ4OTMuMzcxMDlINC4xOTcyN2MtLjI2ODU1LDAtLjUxMTcyLS4xMzg2Ny0uNjUwMzktLjM3MTA5LS4wNjQ0NS0uMTA4NC0uMTk1MzEtLjM5NTUxLS4wMTg1NS0uNzIyNjYuMTk4MjQtLjM2ODE2LjQwOTY3LS43MjQ2MS42MTk2My0xLjA3OTEuODcxMDktMS40NzA3LDEuNzcxNDgtMi45OTIxOSwxLjc3MTQ4LTUuMTY5OTIsMC0yLjI1MzkxLDEuOTAzODEtNC4xNTcyMyw0LjE1NzIzLTQuMTU3MjNzNC4xNTcyMywxLjkwMzMyLDQuMTU3MjMsNC4xNTcyM2MwLDIuMzQ4NjMuODg1MjUsMy44ODM3OSwxLjc0MTcsNS4zNjkxNC4xNjQ1NS4yODUxNi4zMzA1Ny41NzMyNC40OTM2NS44NzIwNy4xODA2Ni4zMzEwNS4wNDkzMi42MjEwOS0uMDE1NjIuNzMwNDdaIi8+PC9zdmc+"); }
+.spectrum .wf-comment { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTYuMjUsMTljLS4wOTkxMiwwLS4xOTg3My0uMDE5NTMtLjI5MzQ2LS4wNTk1Ny0uMjc2ODYtLjExODE2LS40NTY1NC0uMzg5NjUtLjQ1NjU0LS42OTA0M3YtMy4yNWgtLjc1Yy0yLjA2Nzg3LDAtMy43NS0xLjY4MjYyLTMuNzUtMy43NXYtNS41YzAtMi4wNjczOCwxLjY4MjEzLTMuNzUsMy43NS0zLjc1aDEwLjVjMi4wNjc4NywwLDMuNzUsMS42ODI2MiwzLjc1LDMuNzV2NS41YzAsMi4wNjczOC0xLjY4MjEzLDMuNzUtMy43NSwzLjc1aC00LjU0Mjk3bC0zLjkzNzAxLDMuNzkwMDRjLS4xNDI1OC4xMzc3LS4zMjk1OS4yMDk5Ni0uNTIwMDIuMjA5OTZabS0xLjUtMTUuNWMtMS4yNDA3MiwwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2NS41YzAsMS4yNDAyMywxLjAwOTI4LDIuMjUsMi4yNSwyLjI1aDEuNWMuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzV2Mi4yMzczbDIuODg0NzctMi43NzczNGMuMTM5NjUtLjEzNDc3LjMyNjE3LS4yMDk5Ni41MjAwMi0uMjA5OTZoNC44NDUyMWMxLjI0MDcyLDAsMi4yNS0xLjAwOTc3LDIuMjUtMi4yNXYtNS41YzAtMS4yNDAyMy0xLjAwOTI4LTIuMjUtMi4yNS0yLjI1SDQuNzVaIi8+PC9zdmc+"); }
+.spectrum .wf-call-center { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTE2Ljk1MTE3LDYuMjQ5MDJoLTEuMjg2NDRjLS4zOTc4My0yLjg0OTQ5LTIuNzg2MzgtNS4wNDg4My01LjY3MzAzLTUuMDQ4ODMtLjAwMzMsMC0uMDA1OTguMDAxODMtLjAwOTI4LjAwMTk1LS4wMDMzLS4wMDAxMi0uMDA1OTgtLjAwMTk1LS4wMDkyOC0uMDAxOTUtMi44ODYxNywwLTUuMjc0NDEsMi4xOTg2MS01LjY3Mjg1LDUuMDQ4ODNoLTEuMjUxNDZjLTEuMTI5ODgsMC0yLjA0ODgzLjkxODk1LTIuMDQ4ODMsMi4wNDg4M3YzLjY0NTUxYzAsMS4xMjAxMi45MTExMywyLjA0MDA0LDIuMDMzNjksMi4wNDg4M2wxLjcxMDQ1LjAwNzgxaC4wMDM0MmMuMDQ0NzQsMCwuMDgzNTYtLjAxNzk0LjEyNjE2LS4wMjUzOS4wNDI2LjAwNzQ1LjA4MTQ4LjAyNTM5LjEyNjI4LjAyNTM5aC4wMDE5NWMuNDE0MDYtLjAwMDk4Ljc0OTAyLS4zMzc4OS43NDgwNS0uNzUxOTVsLS4wMTQ2NS02LjE2MzA5YzAtMi40MTc5NywxLjkwMDg4LTQuMzg0NzcsNC4yMzc3OS00LjM4NDc3LjAwMzMsMCwuMDA1OTgtLjAwMTgzLjAwOTI4LS4wMDE5NS4wMDMzLjAwMDEyLjAwNTk4LjAwMTk1LjAwOTI4LjAwMTk1LDIuMzM2OTEsMCw0LjIzNzc5LDEuOTY2OCw0LjIzNzc5LDQuMzg0Nzd2Ni42NjUwNGMwLC4wMDMxNy4wMDE3MS4wMDU2Mi4wMDE3Ny4wMDg3OS0uMjIxOTguOTE4OTUtLjk1NDM1LDEuNzIwNDYtMi4wMTExNywyLjIxOTI0LS4zMzczNC0uNTgzMDEtLjk0NjY2LS45NzgwMy0xLjY0ODMyLS45NzgwM2gtMS4xNDM1NWMtMS4wNjI5OSwwLTEuOTI4MjIuODk3NDYtMS45MjgyMiwycy44NjUyMywyLDEuOTI4MjIsMmgxLjE0MzU1Yy44OTEwNSwwLDEuNjM1OTMtLjYzMzc5LDEuODU1OS0xLjQ4NzE4LDEuNzI1OTUtLjY3MTYzLDIuOTQ5MzQtMS45NTUyLDMuMjg0MjQtMy40ODM1Mi4wMDIzMi0uMDEwNzQtLjAwMTM0LS4wMjA3NS4wMDA1NS0uMDMxMzdsMS4yNTY3Ny0uMDA1NzRjMS4xMTk2My0uMDA4NzksMi4wMzA3Ni0uOTI4NzEsMi4wMzA3Ni0yLjA0ODgzdi0zLjY0NTUxYzAtMS4xMjk4OC0uOTE4OTUtMi4wNDg4My0yLjA0ODgzLTIuMDQ4ODNaTTIuNSwxMS45NDMzNnYtMy42NDU1MWMwLS4zMDI3My4yNDYwOS0uNTQ4ODMuNTQ4ODMtLjU0ODgzaDEuMTg4MjlsLjAxMDg2LDQuNzQ4NjYtMS4yMDQ1My0uMDA1NDljLS4yOTk4LS4wMDE5NS0uNTQzNDYtLjI0OTAyLS41NDM0Ni0uNTQ4ODNaTTEwLjU3MTc4LDE3LjVoLTEuMTQzNTVjLS4yMzYzMywwLS40MjgyMi0uMjI0NjEtLjQyODIyLS41cy4xOTE4OS0uNS40MjgyMi0uNWgxLjE0MzU1Yy4yMzYzMywwLC40MjgyMi4yMjQ2MS40MjgyMi41cy0uMTkxODkuNS0uNDI4MjIuNVpNMTcuNSwxMS45NDMzNmMwLC4yOTk4LS4yNDM2NS41NDY4OC0uNTQwNTMuNTQ4ODNsLTEuMjI5OTguMDA1NjJ2LTQuNzQ4NzhoMS4yMjE2OGMuMzAyNzMsMCwuNTQ4ODMuMjQ2MDkuNTQ4ODMuNTQ4ODN2My42NDU1MVoiLz48L3N2Zz4="); }
+.spectrum .wf-clock { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTEwLDE4Ljc1Yy00LjgyNTIsMC04Ljc1LTMuOTI0OC04Ljc1LTguNzVTNS4xNzQ4LDEuMjUsMTAsMS4yNXM4Ljc1LDMuOTI0OCw4Ljc1LDguNzUtMy45MjQ4LDguNzUtOC43NSw4Ljc1Wm0wLTE2Yy0zLjk5ODA1LDAtNy4yNSwzLjI1MTk1LTcuMjUsNy4yNXMzLjI1MTk1LDcuMjUsNy4yNSw3LjI1LDcuMjUtMy4yNTE5NSw3LjI1LTcuMjUtMy4yNTE5NS03LjI1LTcuMjUtNy4yNVoiLz48cGF0aCBkPSJtMTMuMjQ5MDIsMTIuNjQ0NTNjLS4xMjg5MSwwLS4yNTk3Ny0uMDMzMi0uMzc4OTEtLjEwMzUybC0zLjIyMDctMS44OTQ1M2MtLjIyOTQ5LS4xMzQ3Ny0uMzcwMTItLjM4MDg2LS4zNzAxMi0uNjQ2NDh2LTVjMC0uNDE0MDYuMzM1OTQtLjc1Ljc1LS43NXMuNzUuMzM1OTQuNzUuNzV2NC41NzEyOWwyLjg1MDU5LDEuNjc2NzZjLjM1NzQyLjIwOTk2LjQ3NjU2LjY2OTkyLjI2NjYsMS4wMjYzNy0uMTM5NjUuMjM4MjgtLjM5MDYyLjM3MDEyLS42NDc0Ni4zNzAxMloiLz48L3N2Zz4="); }
+.spectrum .wf-pause-circle { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc1Yy00LjgyNTIsMC04Ljc1LTMuOTI0OC04Ljc1LTguNzVTNS4xNzQ4LDEuMjUsMTAsMS4yNXM4Ljc1LDMuOTI0OCw4Ljc1LDguNzUtMy45MjQ4LDguNzUtOC43NSw4Ljc1Wk0xMCwyLjc1Yy0zLjk5ODA1LDAtNy4yNSwzLjI1MTk1LTcuMjUsNy4yNXMzLjI1MTk1LDcuMjUsNy4yNSw3LjI1LDcuMjUtMy4yNTE5NSw3LjI1LTcuMjUtMy4yNTE5NS03LjI1LTcuMjUtNy4yNVoiIHN0cm9rZS13aWR0aD0iMCIvPjxwYXRoIGQ9Ik0xMS43NSwxMy41Yy0uNDE0MDYsMC0uNzUtLjMzNTk0LS43NS0uNzV2LTUuNWMwLS40MTQwNi4zMzU5NC0uNzUuNzUtLjc1cy43NS4zMzU5NC43NS43NXY1LjVjMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiIHN0cm9rZS13aWR0aD0iMCIvPjxwYXRoIGQ9Ik04LjI1LDEzLjVjLS40MTQwNiwwLS43NS0uMzM1OTQtLjc1LS43NXYtNS41YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djUuNWMwLC40MTQwNi0uMzM1OTQuNzUtLjc1Ljc1WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PC9zdmc+"); }
+.spectrum .wf-chat { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTE2Ljc1LDJoLThjLTEuMjQyNjQsMC0yLjI1LDEuMDA3MzYtMi4yNSwyLjI1di41YzAsLjQxNDA2LjMzNTk0Ljc1Ljc1Ljc1cy43NS0uMzM1OTQuNzUtLjc1di0uNWMwLS40MTMwOS4zMzY5MS0uNzUuNzUtLjc1aDhjLjQxMjUsMCwuNzUuMzM3NS43NS43NXY0LjVjMCwuNDEyNS0uMzM3NS43NS0uNzUuNzVoLS43NWMtLjQxNDIxLDAtLjc1LjMzNTc5LS43NS43NXYxLjY1MTM3bC0xLjc1LTEuNTQxOTl2LTEuMTA5MzhjMC0xLjI0MjY0LTEuMDA3MzYtMi4yNS0yLjI1LTIuMjVIMy4yNWMtMS4yNDI2NCwwLTIuMjUsMS4wMDczNi0yLjI1LDIuMjV2NC41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1djIuMTM2NzJjMCwuMzgyODEuMjI3NTQuNzIzNjMuNTgwMDguODY5MTQuMTE5MTQuMDQ4ODMuMjQ0MTQuMDcyMjcuMzY1MjMuMDcyMjcuMjM4MjgsMCwuNDY1ODItLjA4ODg3LjYxODE2LS4yNDUxMmwzLjIxOTczLTIuODMzMDFoMy4yMTY4YzEuMjQyNjQsMCwyLjI1LTEuMDA3MzYsMi4yNS0yLjI1di0xLjM5MjgybDEuNjM5NjUsMS40NDM2Yy4xODA2Ni4xODA2Ni40MTk5Mi4yNzUzOS42NjUwNC4yNzUzOS4xMjIwNywwLC4yNDYwOS0uMDIzNDQuMzY0MjYtLjA3MjI3LjM1MjU0LS4xNDY0OC41ODEwNS0uNDg2MzMuNTgxMDUtLjg2NzE5di0yLjEzNjcyYzEuMjQwMjMsMCwyLjI1LTEuMDA5NzcsMi4yNS0yLjI1di00LjVjMC0xLjI0MjY0LTEuMDA3MzYtMi4yNS0yLjI1LTIuMjVaTTEyLDEzLjc1YzAsLjQxMjUtLjMzNzUuNzUtLjc1Ljc1aC0zLjc4MzJsLTIuNzE2OCwyLjM5MzU1di0xLjY0MzU1YzAtLjQxNDIxLS4zMzU3OS0uNzUtLjc1LS43NWgtLjc1Yy0uNDEyNSwwLS43NS0uMzM3NS0uNzUtLjc1di00LjVjMC0uNDEyNS4zMzc1LS43NS43NS0uNzVoOGMuNDEyNSwwLC43NS4zMzc1Ljc1Ljc1djQuNVoiLz48L3N2Zz4="); }
+
+/* A new thread's channel: a field with its label above it and its help text below, not a
+   placeholder (ui/spectrum.css, "A field has its label above it"). */
+.spectrum .chanpick .fld { margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .chanpick > .hint { display: block; margin-top: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }

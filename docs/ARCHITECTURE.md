@@ -589,7 +589,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Besides its cards it has one switch, **Mentions** (the @ at the top right of the
+  views. Unless the expert view is on (the user menu, the `expert` setting), it is the simple
+  one: a column of customers by logo and name instead of the cards, and the list by customer
+  until one is picked. A customer's ≠ in that column, or a Shift-click on it, excludes it as on
+  the cards (`not.customer=` in the URL, and in a bell on the view): its threads leave the list,
+  and it stays at the end of the column, struck through and out of the red badge of **All
+  customers**, with or without threads, until a click brings it back. **All customers** drops
+  the pick and what is excluded.
+  Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones the red badge counts. The
   customers without such a thread leave the column while it is on. Team views do not have it:
@@ -1340,6 +1347,16 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   channel, so every open inbox follows at once; a reply box that took the draft in and still
   holds it unchanged follows the draft, one with your own changes keeps them (and the line says
   the draft changed since). What you type and do not save stays with its thread in the tab.
+- **On a phone** (a screen up to 699 px wide) the draft's line and the command cards (see
+  "Agent tools") would leave the thread a few lines of the screen, so they are in a **drawer**
+  (`renderLines`, `ui/inbox.js`). Under the reply box only its tab shows: one line that says
+  what waits there ("1 command to decide", "Draft by …"), outlined as a command's card while
+  one waits for a decision. A tap opens the lines as a sheet from the screen's bottom edge,
+  over the thread, the rest dimmed. ✕, a tap beside the sheet and Escape close it; so do Edit
+  and the sends, which happen in the thread, and opening another thread. Run, Deny, View draft
+  and Discard leave it open, and Undo of a discard shows over it. It is the same markup on
+  every screen: on a wider one the stylesheet shows no tab and makes the drawer no box
+  (`display: contents`), so the lines are the reply box's own.
 - In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
   one shows ✓), in the status's color and outlined while the team has not read the thread; the
   personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
@@ -1456,12 +1473,29 @@ The inboxes of the thread's teams hear of each message and answer through the te
 (`{ type: 'sidebar' }`).
 
 In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
-it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. The reply
-box turns into the sidebar's, in purple, saying that only the team sees it and nothing goes to
-the platform, with **✕ Exit sidebar** (and Esc, and opening another thread). Each run of sidebar
-messages shows between the thread's messages where it happened, folded to one line ("Lena Berg
-had a sidebar conversation with Thread Agent · 4 messages · not posted"), which unfolds it; the
-one you are in stays open at the bottom, with the agent working on its answer.
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
+of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
+a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
+thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
+"the sidebar"):
+
+- **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from
+  the list's left edge to the content area's right (the list's least 380, 440 for the thread,
+  the panel's least 360), measured, because the filters fold to a rail on some screens. While
+  the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
+  panel, so the thread stays the widest by far and the list gives up room too, down to its
+  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
+  conversation of the thread, each under when it started, the agent working on its answer, and
+  a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
+  A line in the thread opens the panel at its conversation, also for someone who may not talk
+  to the agent (viewing as someone else): they read there, without a box.
+- **In the thread**, on a narrower screen: a line unfolds its conversation where it is, the one
+  you are in stays open at the bottom, with the agent working on its answer, and the reply box
+  turns into the sidebar's.
+
+Both are purple, say that only the team sees it and that nothing goes to the platform, and are
+left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
+sidebar you are in from one to the other, with what is typed in its box.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
@@ -1751,8 +1785,10 @@ thread wait or run at a time. A thread's agent only: a knowledge-base agent has 
 the request under.
 
 The inbox shows each request as a card between the reply box and the draft's line
-(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): the command, the reason, a
-password field per variable, **Run** and **Deny**, for whoever may work the thread. A person can
+(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): its id, which is how the
+agent names it in its notes, the command (highlighted as shell, to be read before it is run),
+the reason, a password field per variable, **Run** and **Deny**, for whoever may work the
+thread; Deny and Run stay in sight at the cards' bottom edge while a tall card scrolls. A person can
 have the page **remember** what they fill in, by variable name, on that device: encrypted
 (AES-GCM) in localStorage, with a key made in the browser that cannot be exported and is kept in
 IndexedDB; the next request with a variable of that name has it filled in, and **Forget** removes
@@ -1762,8 +1798,12 @@ second is told who was first), the computer still on, every variable filled in. 
 agent's computer's, as its own `bash`: the same Workspace, working directory and team secrets
 (as placeholders), with the person's values as variables of that one run. `run` answers 202 once
 the command has started; the page hears how it ended through the team's room, as it hears of
-every change of a request (`{ type: 'bash' }`), and keeps the card for an hour, saying how it
-ended and who decided.
+every change of a request (`{ type: 'bash' }`), and keeps the request for an hour, on one line,
+saying how it ended (a nonzero exit, a timeout and a failure marked) and who decided. An agent
+often asks a few times until a command works, so of the requests that ended only the latest
+shows (`bashCards`), with a button for the earlier ones (**2 earlier**), all in one box. The
+card itself says that a command runs or was denied; a toast only says what went wrong. On a
+phone the cards are in the drawer the draft's line is in (see "Drafts").
 
 How a request ended comes back to the agent **as an input of its own**, as a discarded draft
 does (`harness.submit`, with the request's id as the operation, so once): what the command

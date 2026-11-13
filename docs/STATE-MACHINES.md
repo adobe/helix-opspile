@@ -202,9 +202,14 @@ ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of 
 once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
 queued right behind one does not hide it.
 
-**Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕ Exit,
+**Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕,
 Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
-a message the inbox did not take goes back into it.
+a message the inbox did not take goes back into it. Where it shows is not a state of its own: it
+is worked out from the content area's width (`side.wide`, `syncSideRoom`), whenever the
+thread's column changes its width; not from the thread's own, which the panel changes. With room, the mode is the panel beside the thread
+(`sidePaneled`), which someone who may not talk to the agent can open too, to read; without, it is
+the thread's reply box turned into the sidebar's (`sideInline`), only for who may talk to it. The
+panel is the open thread's: it goes whenever `side.key` is not the open thread (`syncReading`).
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
@@ -351,7 +356,23 @@ again with it. A failed import is not final: a code block a minute later tries a
 `ui/inbox.js`). What is typed into a request's fields stays with the request in the tab, so a card
 drawn again keeps it, and goes with Run. Remembered values are read once a page, the first time a
 card has a field: a value that no longer decrypts (its key is gone) is not there. While the room
-says a request changed and the thread is fetched again, the cards stay as they are.
+says a request changed and the thread is fetched again, the cards stay as they are: the open
+thread keeps its cached requests until the fetch replaces them, so a click shows on its card at
+once.
+
+**Drawer (phones).** closed → open → closed (`linesDrawer.key`, the thread whose drawer is open,
+`ui/inbox.js`). The tab opens it; ✕, a tap beside the sheet, Escape, taking the draft into the
+reply box, sending it, and nothing left in it close it, and another thread's drawer is never
+open. What the tab says is worked out from the thread's requests and the draft its line shows
+(`lineDraft`: not one on its way), each time either line is drawn. While the thread is fetched
+again the drawer stays as it is, open or closed. Only the stylesheet knows whether it is a
+drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows, and a screen that
+grows past the phone's breakpoint closes it. Open, the sheet is a modal dialog: Tab goes round in
+it.
+
+**Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
+the requests that ended within the hour only the latest shows, until its button shows the rest;
+it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.

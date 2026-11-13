@@ -264,6 +264,7 @@ describe('message header styles', () => {
 
   it('says the time can be pointed at, as the name can', () => {
     assert.match(rule('.feed time[title]:hover'), /text-decoration: underline dotted;/);
+    assert.match(rule('.sc-body time[title]:hover'), /text-decoration: underline dotted;/);
     assert.match(rule('.msg .who b[data-p]:hover'), /text-decoration: underline dotted;/);
   });
 
