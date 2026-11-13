@@ -7,8 +7,8 @@
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="rgb(17, 17, 17)" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="rgb(255, 255, 255)" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="rgb(27, 27, 27)" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="rgb(248, 248, 248)" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Support">
 <!-- Spectrum 2 (README, "Spectrum 2"): its typefaces, the tokens the stylesheets use, what every
@@ -26,7 +26,7 @@
   <button id="review" class="tool" hidden title="Review Clef labels (admin team)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg>Review labels</button>
   <span class="spacer"></span>
   <span id="offline" class="note" hidden title="Live updates stopped; trying again">Reconnecting…</span>
-  <button id="reviewing" class="mode review" hidden title="Reviewing Clef labels. Click to stop."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg><span class="lbl">Reviewing labels</span><span class="x" aria-hidden="true">✕</span></button>
+  <button id="reviewing" class="mode review" hidden title="Reviewing Clef labels. Click to stop."><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.5h5.6l6.4 6.4-5.1 5.1L2.5 7.6V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.2" cy="5.7" r="1.2" fill="currentColor"/></svg><span class="lbl">Reviewing labels</span><span class="x" aria-hidden="true"><span class="s2-cross"></span></span></button>
   <button id="viewing" class="mode as" hidden title="Read-only. Click to see your own inbox again."></button>
   <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account, team and shortcuts">
     <span class="av" id="userAv"></span>
@@ -38,17 +38,17 @@
     <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
       <p class="hint">See the inbox as someone else, read-only.</p></section>
     <section id="expertBox" hidden><h4>Personal view</h4>
-      <button class="item" id="expertView" role="switch" aria-checked="false"><span class="ck">✓</span>Expert view</button>
+      <button class="item" id="expertView" role="switch" aria-checked="false"><span class="ck s2-check" aria-hidden="true"></span>Expert view</button>
       <p class="hint">Every filter, and each thread's status, people and reactions.</p></section>
     <section id="notifyBox" hidden><h4>Notifications</h4>
-      <button class="item" id="notifyMentions" role="switch" aria-checked="true"><span class="ck">✓</span>When someone mentions me</button>
-      <button class="item" id="notifyThreads" role="switch" aria-checked="true" title="Threads you posted in, were mentioned in or put 👀 on"><span class="ck">✓</span>When someone writes in my threads</button>
-      <button class="item" id="notifySound" role="switch" aria-checked="true" title="On this device: a chime with each notification"><span class="ck">✓</span>Play a sound</button>
+      <button class="item" id="notifyMentions" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>When someone mentions me</button>
+      <button class="item" id="notifyThreads" role="switch" aria-checked="true" title="Threads you posted in, were mentioned in or put 👀 on"><span class="ck s2-check" aria-hidden="true"></span>When someone writes in my threads</button>
+      <button class="item" id="notifySound" role="switch" aria-checked="true" title="On this device: a chime with each notification"><span class="ck s2-check" aria-hidden="true"></span>Play a sound</button>
       <div id="bells"></div>
       <p class="hint" id="notifyHint"></p>
       <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
     <section id="tracesBox" hidden><h4>Thread Agent</h4>
-      <button class="item" id="tracesAll" role="switch" aria-checked="true"><span class="ck">✓</span>Show its thinking under threads</button>
+      <button class="item" id="tracesAll" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>Show its thinking under threads</button>
       <div id="tracesHere" hidden><label class="hint" for="tracesChannel" id="tracesChannelLabel"></label><select id="tracesChannel">
         <option value="">As everywhere</option><option value="on">Shown</option><option value="off">Hidden</option></select></div>
       <p class="hint" id="tracesHint"></p></section>
@@ -66,8 +66,7 @@
 <main>
   <section id="filters" aria-label="Filters"></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
-  <section id="pane" aria-label="Messages"><div class="empty">Pick a thread.</div></section>
-  <div id="lift" inert aria-hidden="true" hidden></div>
+  <section id="pane" aria-label="Messages"><div class="empty pick">Pick a thread.</div></section>
 </main>
 <script src="markdown.js"></script>
 <script src="rank.js"></script>

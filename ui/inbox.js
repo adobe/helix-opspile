@@ -603,18 +603,39 @@ function md(src, thread = '') {
 const URGENCY = ['low', 'normal', 'high', 'critical'];
 // None and low are one bucket.
 const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(3, Math.round(t.label.urgency))] : 'low');
-const KIND_EMOJI = {
-  incident: '🔥', security: '🔒', question: '❓', request: '🙋', access: '🔑', people: '👋', meeting: '📅', alert: '🚨', other: '💬',
+// What a filter's value or a thread's kind and urgency is: a Spectrum 2 workflow icon each, by
+// name (`.wf-<name>`, a mask in ui/spectrum-inbox.css, in the color of the text around it).
+// Emoji are for what people put on messages. Critical and high are the same icon wherever
+// they show: as an urgency, as the status that is that urgency unseen, and on a thread's row.
+const wf = (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`;
+const KIND_ICON = {
+  incident: 'cloud-error',
+  security: 'lock',
+  question: 'help',
+  request: 'hand',
+  access: 'key',
+  people: 'community',
+  meeting: 'calendar',
+  alert: 'bell',
+  other: 'comment',
 };
-const URGENCY_ICON = { critical: '🆘', high: '⚡', normal: '🔹', low: '▫️' };
+const URGENCY_ICON = {
+  critical: 'alert-diamond', high: 'alert-triangle', normal: 'dash', low: 'chevron-down',
+};
 // Every filter row has an icon, so the folded filter column (the rail) still tells them apart.
 const STATUS_ICON = {
-  critical: '‼️', hot: '❗', you: '🫵', waiting: '⏰', silent: '🔇', team: '🤝', quiet: '🍃',
+  critical: 'alert-diamond',
+  hot: 'alert-triangle',
+  you: 'user',
+  waiting: 'clock-pending',
+  silent: 'volume-off',
+  team: 'user-group',
+  quiet: 'more',
 };
-const RESOLVED_ICON = { open: '⭕', resolved: '✅', '(none)': '◌' };
-const DRAFT_ICON = { mine: '✍️', team: '📝', none: '📭' };
-const WAITING_ICON = { Us: '🛎️', Customer: '⏳', Nobody: '💤' };
-const TYPE_ICON = { conversation: '💬', alert: '🚨' };
+const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 'cancel' };
+const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
+const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
+const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
@@ -855,24 +876,24 @@ const colorOf = (map) => (v) => map[v] || 'c-none';
 const customerName = (v) => { const t = [...listed(), ...(state.data?.threads || [])].find((x) => x.org === v); return t ? orgName(t) : v; };
 const FACETS = [
   { id: 'status', title: 'Status', value: statusOf, order: STATUS_ORDER, label: STATUS_LABEL, hint: STATUS_HINT,
-    emoji: (v) => STATUS_ICON[v], color: (v) => `c-${v}` },
+    glyph: (v) => STATUS_ICON[v], color: (v) => `c-${v}` },
   { id: 'urgency', title: 'Urgency', value: urgencyOf, order: ['critical', 'high', 'normal', 'low'],
-    emoji: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
+    glyph: (v) => URGENCY_ICON[v], color: colorOf(URGENCY_COLOR) },
   { id: 'resolved', title: 'Resolved', value: resolvedOf, order: ['open', 'resolved'],
-    label: { open: 'Unresolved', resolved: 'Resolved' }, emoji: (v) => RESOLVED_ICON[v],
+    label: { open: 'Unresolved', resolved: 'Resolved' }, glyph: (v) => RESOLVED_ICON[v],
     color: colorOf({ open: 'c-red', resolved: 'c-green' }) },
   { id: 'draft', into: 'resolved', title: 'Draft', value: draftState, order: ['mine', 'team', 'none'], label: DRAFT_LABEL, hint: DRAFT_HINT,
-    emoji: (v) => DRAFT_ICON[v], color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
+    glyph: (v) => DRAFT_ICON[v], color: colorOf({ mine: 'c-blue', team: 'c-blue' }) },
   { id: 'customer', title: 'Customer', value: (t) => t.org, icon: (v, ts) => { const t = ts.find((x) => x.org === v && orgIcon(x)); return t && orgIcon(t); },
     labelFn: customerName, limit: 12, face: (v) => tile(customerName(v)),
     group: orgGroup, groups: ORG_GROUPS, groupLabel: ORG_GROUP_LABEL, color: (v) => ORG_COLOR[orgGroup(v)] },
-  { id: 'kind', title: 'Kind', value: kindOf, emoji: (v) => KIND_EMOJI[v], color: colorOf(KIND_COLOR),
+  { id: 'kind', title: 'Kind', value: kindOf, glyph: (v) => KIND_ICON[v], color: colorOf(KIND_COLOR),
     order: ['incident', 'security', 'question', 'request', 'access', 'people', 'meeting', 'alert', 'other'] },
   { id: 'topic', title: 'Topic', value: topicsOf, multi: true, labelFn: (v) => vocabName('topics', v), limit: 12,
     face: (v) => tile(vocabName('topics', v)) },
   { id: 'tech', title: 'Tech stack', value: techOf, multi: true, labelFn: (v) => vocabName('tech', v), limit: 12,
     face: (v) => tile(vocabName('tech', v)) },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], emoji: (v) => WAITING_ICON[v],
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], glyph: (v) => WAITING_ICON[v],
     color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
     face: involvesFace,
@@ -880,7 +901,7 @@ const FACETS = [
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' }, emoji: (v) => TYPE_ICON[v],
+    label: { conversation: 'Conversations', alert: 'Alerts' }, glyph: (v) => TYPE_ICON[v],
     color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
     icon: (v) => PLATFORM_SITE[v],
@@ -1031,7 +1052,7 @@ function facetRows(f) {
   return rows.map(([v, n]) => {
     const color = f.color ? f.color(v) : 'c-accent';
     const ic = f.icon && f.icon(v, all);
-    const em = f.emoji && f.emoji(v);
+    const em = f.glyph && f.glyph(v);
     const face = !ic && !em && f.face && f.face(v);
     const g = f.group && f.group(v);
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
@@ -1041,7 +1062,7 @@ function facetRows(f) {
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico em">${em}</span>` : '<span></span>'))}
+      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
       <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
       <span class="n">${n}</span>
@@ -1136,7 +1157,7 @@ function filterCards() {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
     const at = personal() && f.id === 'customer' ? atButton() : '';
-    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}${at}</h3>
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">Clear</span>' : ''}${at}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
   // Only the cards whose counts or selection changed are rebuilt.
@@ -1164,16 +1185,15 @@ const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/
   .replace(/<@[^>]+>|@\S+/g, '').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ')
   .trim();
 
-const URGENCY_EMOJI = { critical: '🆘', high: '⚡' };
 const ourMove = (t) => t.waiting_on === 'us';
 
-/** The thread's mood: its kind first, then the reactions people left in it. */
+/** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
 function moods(t) {
   const out = [];
   const u = urgencyOf(t);
-  if (URGENCY_EMOJI[u]) out.push(`<span class="em" title="${esc(u)} urgency">${URGENCY_EMOJI[u]}</span>`);
+  if (u === 'critical' || u === 'high') out.push(`<span class="em ${u}" role="img" aria-label="${cap(u)} urgency" title="${cap(u)} urgency">${wf(URGENCY_ICON[u])}</span>`);
   const k = kindOf(t);
-  if (k) out.push(`<span class="em" title="${esc(k)}">${KIND_EMOJI[k] || '💬'}</span>`);
+  if (k) out.push(`<span class="em" role="img" aria-label="${esc(cap(k))}" title="${esc(cap(k))}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`);
   const rx = (t.reactions || []).map((r) => ({ ...r, html: emojiHtml(r.emoji, { slack: t.source === 'slack' }) }))
     .filter((r) => r.html).sort((a, b) => b.count - a.count).slice(0, 5);
   for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
@@ -1706,7 +1726,7 @@ const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="c
 /** The list's heading, made once: the search box (kept, as you type in it), then the controls. */
 function listHead(box) {
   if (box.querySelector('.rows')) return;
-  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" placeholder="Search Slack, Teams and Discord" aria-label="Search threads" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
+  box.innerHTML = `<div class="count"><label class="find">${LOUPE}<input id="q" type="search" aria-label="Search threads on Slack, Teams and Discord" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="ctl"></div></div><div class="rows"></div>`;
   // How tall the heading is, for what sticks under it (the customers' headings, GROUPS.sticky).
   const head = box.querySelector('.count');
   new ResizeObserver(() => box.style.setProperty('--list-head', `${head.offsetHeight}px`)).observe(head);
@@ -1896,72 +1916,6 @@ function threadRows() {
   noteSeen();
 }
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
-
-// The open thread's row, lifted out of its column: a copy of it over the real one, wider by
-// LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
-// list's heading while its row is below it, and slides under it with its row: above the
-// heading's lower edge #lift fades out, over its top LIFT.v and shadow (LIFT.shade) at rest,
-// over less and less of it as the row goes under, to a hard edge once it has.
-const LIFT = { left: 10, right: 16, v: 3, room: 48, shade: 16 };
-let liftOf = null;
-function syncLift(copy) {
-  const list = $('threads');
-  const lift = $('lift');
-  const sel = list.querySelector('.t.sel');
-  lift.hidden = !sel;
-  if (!sel) { liftOf = null; return; }
-  if (copy || liftOf !== sel) {
-    liftOf = sel;
-    lift.innerHTML = sel.outerHTML;
-    lift.firstElementChild.classList.remove('enter');
-  }
-  const main = lift.parentElement.getBoundingClientRect();
-  const box = list.getBoundingClientRect();
-  const head = list.querySelector('.count')?.offsetHeight || 0;
-  const r = sel.getBoundingClientRect();
-  const over = LIFT.v + LIFT.shade;
-  const f = over - Math.min(Math.max(box.top + head - r.top, 0), over);
-  const mask = `linear-gradient(transparent ${head - f}px, #000 ${head - (LIFT.v * f) / over}px)`;
-  Object.assign(lift.style, {
-    left: `${box.left - main.left - LIFT.room}px`,
-    top: `${box.top - main.top}px`,
-    width: `${box.width + 2 * LIFT.room}px`,
-    height: `${box.height}px`,
-    maskImage: mask,
-    webkitMaskImage: mask,
-  });
-  const { style } = lift.firstElementChild;
-  // With the filters in a drawer the list starts at the page's left edge: the copy stops there.
-  const ll = Math.min(LIFT.left, Math.max(0, box.left - main.left));
-  // Moved with a transform: the copy follows the row as the list scrolls, and a move by
-  // `top` would count as a layout shift (CLS) on every scroll.
-  Object.assign(style, {
-    left: '0px',
-    top: '0px',
-    transform: `translate(${r.left - box.left + LIFT.room - ll}px, ${r.top - box.top - LIFT.v}px)`,
-    width: `${r.width + ll + LIFT.right}px`,
-    height: `${r.height + 2 * LIFT.v}px`,
-  });
-  style.setProperty('--ll', `${ll}px`);
-  style.setProperty('--lr', `${LIFT.right}px`);
-  style.setProperty('--lv', `${LIFT.v}px`);
-}
-{
-  let frame = 0;
-  let copy = false;
-  const later = (again) => {
-    copy ||= again;
-    if (!frame) {
-      frame = requestAnimationFrame(() => { frame = 0; syncLift(copy); copy = false; });
-    }
-  };
-  new MutationObserver(() => later(true)).observe($('threads'), {
-    childList: true, subtree: true, attributes: true, characterData: true,
-  });
-  $('threads').addEventListener('scroll', () => later(false), { passive: true });
-  $('threads').addEventListener('animationend', () => later(false));
-  new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
-}
 
 // ---------------------------------------------------------------- messages
 const QUESTION_LABEL = { next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved' };
@@ -2345,8 +2299,8 @@ const pct = (p) => `${Math.round(p * 100)}%`;
 /** A dropdown of the header: its button (or `main`, a link with the button beside it) and list. */
 function headMenu(name, { button, main = '', label, list }) {
   const toggle = main
-    ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}">▾</button>`
-    : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev" aria-hidden="true">▾</span></button>`;
+    ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}"><span class="s2-chevron" aria-hidden="true"></span></button>`
+    : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev s2-chevron" aria-hidden="true"></span></button>`;
   return `<div class="hm${main ? ' split' : ''}" data-hm="${name}">${toggle}<div class="hmpop" role="group" aria-label="${esc(label)}" hidden>${list}</div></div>`;
 }
 
@@ -2595,7 +2549,7 @@ function sideGroup(key, run, { last, trailing }) {
   const body = open ? `<div class="sc-body">${run.map((m) => sideMessage(key, m)).join('')}${doing}${queued}${more}</div>` : '';
   return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" aria-expanded="${open}"${live ? ' aria-disabled="true"' : ''}>
-      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev" aria-hidden="true">▸</span>'}
+      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}
     </button>${body}</div>`;
 }
 
@@ -2606,7 +2560,7 @@ function sideComposer(key, thread) {
     <div class="side-bar"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
       <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
       <button type="button" class="side-exit" data-side-exit title="Back to replying in the thread (Esc)">✕ Exit sidebar</button></div>
-    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted" placeholder="Ask ${AGENT_NAME} about this thread…"></textarea>
+    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
     <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
 }
 
@@ -2699,7 +2653,7 @@ function expertsHtml(key) {
   if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
   const open = state.expertsOpen === key;
   const top = list[0];
-  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests">▾</button>` : '';
+  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests"><span class="s2-chevron" aria-hidden="true"></span></button>` : '';
   const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
   return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
 }
@@ -2818,8 +2772,7 @@ function composer(thread, resolve = '', key = thread.thread) {
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="Reply in thread"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-label="Reply in thread" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
 }
 
@@ -3700,7 +3653,9 @@ async function discardDraft(key) {
 // Each request is a card between the reply box and the draft's line: the command, the agent's
 // reason, a field for every variable it asked for, and Run and Deny. What is filled in goes to
 // the Worker with Run, for that one run; the agent is told what the command printed, never a
-// value. The card stays for an hour after the request ended, saying how.
+// value. A request that ended stays for an hour, on one line, saying how; of several, only the
+// latest shows, with the earlier ones a click away, so that an agent that tries a few times does
+// not fill the pane with what it tried.
 
 // What a person fills in can be remembered on this device, by variable name: encrypted
 // (AES-GCM) in localStorage, with a key made here that cannot be exported, kept in IndexedDB.
@@ -3775,6 +3730,8 @@ function vaultForget(name) {
 // `remember`): in this tab only, so a card drawn again keeps it. The requests being sent.
 const bashTyped = new Map();
 const bashBusy = new Set();
+// The threads whose earlier requests, those that ended before the latest one, are shown.
+const bashEarlier = new Set();
 
 const BASH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M4.6 6.3l2 1.7-2 1.7M8.4 9.9h3"/></svg>';
 /** How long from now until `iso`: "under a minute", "25m", "23h", "3d". */
@@ -3785,30 +3742,44 @@ function timeLeft(iso, now = Date.now()) {
   if (s < 48 * 3600) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
-/** How a request that is no longer waiting stands, in a few words; `hint` says the rest. */
+/**
+ * How a request that is no longer waiting stands: `text` in a few words (`bad`: not as it was
+ * meant to go: a nonzero exit, a timeout, a failure), `rest` who decided and when, `hint` the
+ * tooltip.
+ */
 function bashState(r) {
   const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
+  const by = ` · by ${who} · ${ago(r.finished_at)}`;
   const told = 'The agent was told what the command printed.';
   if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
-  if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code} · by ${who} · ${ago(r.finished_at)}`, hint: told };
-  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout · by ${who} · ${ago(r.finished_at)}`, hint: told };
-  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'} · by ${who} · ${ago(r.finished_at)}`, hint: 'The agent was told.' };
-  if (r.status === 'denied') return { text: `Denied by ${who} · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code}`, rest: by, bad: r.exit_code !== 0, hint: told };
+  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
   return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
 }
 /**
  * A request's card. Waiting, and `decide` (the viewer may run it): a form with a field for each
  * variable (`kept`: the names a remembered value fills), Run and Deny, disabled while `busy`.
- * Otherwise how it stands, with the command on one line.
+ * Otherwise how it stands, with the command on one line; `earlier`, on the latest request that
+ * ended: how many ended before it, behind a button that shows them (`all`: they are shown).
+ * Every card has the request's id, which is how the agent names it in its notes.
  */
-function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
-  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><span class="by">${line}</span></div>`;
-  const command = `<pre class="cmd"><code>${esc(r.command)}</code></pre>`;
+function bashCard(r, {
+  decide = false, busy = false, kept = [], earlier = 0, all = false,
+} = {}) {
+  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
     const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
-    const { text, hint } = bashState(r);
-    return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span title="${esc(hint)}">${esc(text)}</span>`)}${command}</div>`;
+    const {
+      text, rest = '', bad, hint,
+    } = bashState(r);
+    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest command that ended' : 'Show the commands that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
+    return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span class="st${bad ? ' bad' : ''}" title="${esc(hint)}">${esc(text)}</span>${esc(rest)}`)}<pre class="cmd"><code>${esc(r.command)}</code></pre>${more}</div>`;
   }
+  // To be read before it is run: highlighted as the shell command it is, once that has loaded.
+  const lit = highlightCode(r.command, 'bash');
+  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>`;
   const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
   const why = `<p class="why">${esc(r.reason)}</p>`;
   if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${why}${command}</div>`;
@@ -3817,13 +3788,27 @@ function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
     const has = kept.includes(v.name);
     const forget = has ? `<button type="button" class="forget" data-bash="forget" data-name="${esc(v.name)}" title="Forget the value of ${esc(v.name)} remembered on this device"${off}>Forget</button>` : '';
     return `<label class="var"><span class="nm"><code>$${esc(v.name)}</code>${has ? '<span class="kept">remembered</span>' : ''}${forget}</span>${v.description ? `<span class="ds">${esc(v.description)}</span>` : ''}
-      <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="Value"${off}></label>`;
+      <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"${off}></label>`;
   });
   const remember = vars.length ? `<label class="keep" title="Encrypted in this browser's storage, with a key that cannot be taken out of it. Filled in the next time a command asks for a variable of the same name."><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
   const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets what it prints, never what you fill in.' : 'The agent gets what it prints.'}`;
   const hint = vars.length ? 'What you fill in goes to this one run and is kept nowhere. Where the output has a value of 8 characters or more, the agent reads the variable\'s name instead. The command itself can still store a value or send it somewhere: read it before you run it.' : 'The agent is told what the command printed, or that it failed or timed out.';
   return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${why}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
+}
+
+/**
+ * The cards of a thread's requests (`list`, as the thread has them), as the bar shows them:
+ * those that ended first, in one box, a line each, only the latest unless `all`; then those
+ * that wait or run, each a card. `options(r)` is what bashCard is told about the viewer.
+ */
+function bashCards(list, { all = false, options = () => ({}) } = {}) {
+  const open = list.filter((r) => r.status === 'pending' || r.status === 'running');
+  const ended = (r) => String(r.finished_at || r.deadline);
+  const past = list.filter((r) => !open.includes(r)).sort((x, y) => ended(x).localeCompare(ended(y)));
+  const shown = all ? past : past.slice(-1);
+  const lines = shown.map((r, i) => bashCard(r, i === shown.length - 1 ? { earlier: past.length - 1, all } : {}));
+  return `${lines.length ? `<div class="hist">${lines.join('')}</div>` : ''}${open.map((r) => bashCard(r, options(r))).join('')}`;
 }
 
 /** The requests of the open thread, as cards; what was typed, or is remembered, is in the fields. */
@@ -3835,9 +3820,10 @@ function renderBashBar(key) {
   if (!el || !hit || state.open !== key) return;
   const list = hit.data?.bash_requests || [];
   const decide = !state.data?.me?.readonly;
-  const html = list.map((r) => bashCard(r, {
-    decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)),
-  })).join('');
+  const html = bashCards(list, {
+    all: bashEarlier.has(key),
+    options: (r) => ({ decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
+  });
   if (el.__html !== html) {
     el.__html = html;
     el.innerHTML = html;
@@ -3877,6 +3863,11 @@ function wireBashBar(el) {
     const b = e.target.closest('[data-bash]');
     if (!b || b.disabled) return;
     if (b.dataset.bash === 'deny') denyBash(el.__key, idOf(b));
+    if (b.dataset.bash === 'earlier') {
+      if (bashEarlier.has(el.__key)) bashEarlier.delete(el.__key); else bashEarlier.add(el.__key);
+      renderBashBar(el.__key);
+      el.querySelector('.more')?.focus();
+    }
     if (b.dataset.bash === 'forget') {
       vaultForget(b.dataset.name);
       // The field is emptied with it, unless something else was typed there.
@@ -3915,8 +3906,9 @@ async function runBash(key, id, form) {
     bashTyped.delete(id);
     if (remember && r.env.length) await vaultKeep(values).catch(() => toast('Could not remember the values on this device.'));
   }
+  // The card says that it runs: a note on top of it would only be in its way.
   setCachedBash(key, res.data.request);
-  toast(res.ok ? 'Running on the agent\'s computer. The agent is told what it prints.' : `Nothing ran: ${res.data.error || `the inbox answered ${res.status}`}.`);
+  if (!res.ok) toast(`Nothing ran: ${res.data.error || `the inbox answered ${res.status}`}.`);
 }
 
 /** Deny: the command does not run, and the agent is told who decided. */
@@ -3928,7 +3920,7 @@ async function denyBash(key, id) {
   bashBusy.delete(id);
   if (res.ok) bashTyped.delete(id);
   setCachedBash(key, res.data.request);
-  toast(res.ok ? 'Denied. The agent is told.' : `${res.data.error || `The inbox answered ${res.status}`}.`);
+  if (!res.ok) toast(`${res.data.error || `The inbox answered ${res.status}`}.`);
 }
 
 // Sending, as in iMessage: a reply shows at once, as it will look once sent, with a thin bar
@@ -4331,7 +4323,7 @@ function composeHead({ channel }) {
   const shut = '<button class="linkish cancel" data-close title="Close (Esc); what you wrote stays until you post it">Cancel</button>';
   const where = channel
     ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? ` · <span>${channelWhere(channel)}</span>` : ''} · <button class="linkish" data-rechannel>Change</button></div>`
-    : '<div class="chanpick"><input id="chan-q" type="search" role="combobox" aria-label="Channel to post in" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" placeholder="Pick a channel: search by name or customer" autocomplete="off" spellcheck="false"><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
+    : '<div class="chanpick"><label class="fld" for="chan-q"><span>Channel</span></label><input id="chan-q" type="search" role="combobox" aria-describedby="chan-hint" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" autocomplete="off" spellcheck="false"><span class="hint" id="chan-hint">Search by its name or its customer.</span><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
 
@@ -4346,8 +4338,7 @@ function composeBox({ channel, posting, unsure }) {
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${channel ? attachButton(channel) : ''}
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
-      placeholder="${channel ? `Write to ${esc(channel.name)}` : 'Write your message'}"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-label="${channel ? `Message to ${esc(channel.name)}` : 'Message'}" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : (unsure ? 'Post again' : 'Post')}</button></span></div>`;
 }
 
@@ -4526,7 +4517,7 @@ function renderStarted() {
   // Slack names the files of a post, not its message: replies wait for the thread in the inbox.
   const can = s.root !== null;
   const reply = `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
-    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false" placeholder="Reply in thread"></textarea>
+    <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-label="Reply in thread" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Send once the thread is in the inbox: what you write waits here"'}>Send</button></span></div>`;
   const scroller = pane.querySelector('.scroller');
   const top = scroller && pane.__started === s ? scroller.scrollTop : null;
@@ -5644,7 +5635,7 @@ function renderUser() {
   Header.user(state.me, personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '');
   const as = state.data?.me?.readonly ? state.data.me.name : null;
   $('viewing').hidden = !as;
-  $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
+  $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true"><span class="s2-cross"></span></span>` : '';
 }
 
 /**
@@ -5939,7 +5930,9 @@ function listen(team, live, { again = false } = {}) {
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     // The agent asked for a command, or one was run, denied or ended.
-    if (ev.type === 'bash') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // The open thread keeps what it shows until it is fetched again: its cards say what a
+    // click just did, and the fetch replaces them.
+    if (ev.type === 'bash') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     // Someone talked to the agent in the sidebar, or it answered there.
     if (ev.type === 'sidebar') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
@@ -6542,7 +6535,7 @@ function closeThread() {
   closeMentions();
   syncReading();
   renderThreads();
-  $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
   toUrl();
 }
 function setFiltering(on) {
@@ -6721,7 +6714,7 @@ async function switchView(slug) {
   syncReading();
   renderUser();
   render();
-  $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
   // The search goes on in the other view.
   if (searching()) { state.search.data = null; const q = state.search.q; state.search.q = ''; runSearch(q); }
@@ -6936,7 +6929,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
@@ -6975,7 +6968,7 @@ async function start() {
       state.prevKeys = null;
       Object.assign(state, { open: null, compose: null, awaiting: null });
       syncReading();
-      $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+      $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
       await loadWho();
       renderNotify();
       renderExpert();
@@ -7046,7 +7039,7 @@ const FILTER_ARGS = {
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
   status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord'], resolved: ['open', 'resolved'],
-  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_EMOJI),
+  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
 const cap = (v) => v[0].toUpperCase() + v.slice(1);

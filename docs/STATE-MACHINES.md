@@ -367,7 +367,13 @@ again with it. A failed import is not final: a code block a minute later tries a
 `ui/inbox.js`). What is typed into a request's fields stays with the request in the tab, so a card
 drawn again keeps it, and goes with Run. Remembered values are read once a page, the first time a
 card has a field: a value that no longer decrypts (its key is gone) is not there. While the room
-says a request changed and the thread is fetched again, the cards stay as they are.
+says a request changed and the thread is fetched again, the cards stay as they are: the open
+thread keeps its cached requests until the fetch replaces them, so a click shows on its card at
+once.
+
+**Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
+the requests that ended within the hour only the latest shows, until its button shows the rest;
+it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.

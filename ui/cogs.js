@@ -247,7 +247,7 @@ function renderBar() {
   $('to').max = today();
   $('allocate').checked = q.allocate;
   const services = state.data?.prices.services || [];
-  $('servicesBtn').textContent = `${q.service.length ? (q.service.length === 1 ? serviceName(q.service[0]) : `${q.service.length} services`) : 'All services'} ▾`;
+  $('servicesLabel').textContent = q.service.length ? (q.service.length === 1 ? serviceName(q.service[0]) : `${q.service.length} services`) : 'All services';
   $('servicesMenu').innerHTML = `${services.map((s) => `<label><input type="checkbox" value="${esc(s.id)}"${q.service.includes(s.id) ? ' checked' : ''}><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span>${esc(s.name)}</label>`).join('')}
     <div class="actions"><button type="button" class="link" data-services="all">All</button><button type="button" class="link" data-services="none">None picked</button></div>`;
   const orgs = (state.data?.orgs || []).filter((o) => o.org !== '');
@@ -674,7 +674,7 @@ function servicesTable(d) {
       <td class="n" colspan="3">${quantity(m.quantity, m.unit)}${m.stock ? ' <span class="sub">on average</span>' : ''}</td>
       <td class="n m">${price(m.price, m.per, m.unit)}${m.stock ? ' a month' : ''}</td>
       <td class="n">${m.stock ? '' : usd(m.usd)}</td><td class="n">${m.stock ? usd(m.usd) : ''}</td></tr>`).join('') : '';
-    return `<tr class="pick" data-open="${esc(s.id)}" aria-expanded="${open}"><td><span class="name"><span class="twist">${open ? '▾' : '▸'}</span><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><span>${esc(s.name)}</span></span></td>
+    return `<tr class="pick" data-open="${esc(s.id)}" aria-expanded="${open}"><td><span class="name"><span class="twist s2-chevron${open ? '' : ' right'}" aria-hidden="true"></span><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><span>${esc(s.name)}</span></span></td>
       <td class="n">${usd(s.perMessage)}</td><td class="n">${usd(s.perThread)}</td><td class="n">${usd(s.perAcceptedDraft)}</td><td></td>
       <td class="n">${usd(s.flow)}</td><td class="n">${usd(s.stock)}</td></tr>${metrics}`;
   }).join('');

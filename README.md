@@ -228,7 +228,33 @@ stylesheets set colors, sizes, spaces, radii and durations with tokens only
 sum, an odd pixel with the hairline border width), the layout's larger sizes on its 8px grid
 plus the rest (`calc(var(--spectrum-spacing-100) * n + …)`), text on the type ramp, radii,
 borders and durations on theirs. A zero length keeps its unit (`0px`): calc() cannot add a
-unitless 0 to a length. The browser's chrome (`theme-color`) is Spectrum 2's base background.
+unitless 0 to a length. Icons a stylesheet draws (a chevron, a checkmark, a cross) are
+Spectrum 2's workflow icons as masks, in the color of the text: an empty
+`<span class="s2-chevron" aria-hidden="true">` (`right` for a closed disclosure), `s2-check`,
+`s2-cross`, not a `▾`, `✓` or `✕` in the text. A checkbox is Spectrum 2's, drawn by
+`ui/spectrum.css`. Popovers and dialogs arrive as Spectrum 2's do (a popover over 190ms from
+4px away, a dialog over 250ms from 20px, both gone in 130ms), and nothing moves for someone
+who asked the browser for less motion.
+
+Every page is framed as Spectrum 2's [app frame](https://spectrum.adobe.com/foundations/app-frame)
+is: the header and what navigates (the inbox's filters, a list of teams or knowledge bases)
+sit on the frame's layer (`--frame`, background layer 1), and what is picked there is the
+content area, one container on the base (`--content`), extra-large rounded, with the
+emphasized drop shadow and no border. Inside it, parts that belong together are divided by a
+hairline (the thread list and the open thread), sections by space and their titles; COGS and
+Topics, which are dashboards, put their cards straight on the frame. Nothing else has a
+shadow unless it floats (a menu, a popover, the filters slid out over the list), nothing has
+a dashed edge but a drop zone and the agent's thought bubble, and a page has one
+high-attention action at most: what deletes or declines is a secondary (outline) button,
+red only where a dialog confirms it. Labels are in sentence case, also where they are stored
+values (`vendor` shows as "Vendor"). No field has a placeholder: it has a label above it
+(`<label class="fld">`, or a form's own), help text under it for a format or an example, and
+a field that filters or finds has the magnifier (`<label class="s2-search">`) and an
+`aria-label`. What a filter's value or a thread's kind and urgency is, the inbox shows with
+Spectrum 2's workflow icons (`wf('alert-diamond')` in `ui/inbox.js`, a mask in
+`ui/spectrum-inbox.css`); emoji are for what people put on messages. Deleting a team is
+asked about first, in an alert dialog. The browser's chrome (`theme-color`) is the frame's
+layer.
 Your menu's **Appearance** picks the color scheme per browser (localStorage `opspile.scheme`):
 the system's, as the browser prefers it (the default), light or dark. `ui/header.js` sets it as
 `data-scheme` on `<html>`, which the tokens and the browser's chrome follow.
