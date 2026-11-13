@@ -1316,6 +1316,35 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A thread that went on for more than a year: every header says its day, not only its time
+  // ("Sep 9, 2025 at 12:00 PM", "Nov 7 at 12:00 PM", "Yesterday at 12:00 PM"), the day's
+  // divider stays on top while its messages scroll by, and the divider of another year says
+  // which. A short reply under a long header, and Dana's own, which have the pen beside their
+  // quick reactions.
+  const noonBefore = (n) => {
+    const d = new Date(now);
+    const noon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 12);
+    return Math.round((now - noon.getTime()) / MIN);
+  };
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', noonBefore(430), 'Could the image CDN keep the original file names in its URLs? Our analytics group by them.'],
+      ['priya', noonBefore(430) - 25, 'Yes.'],
+      ['ola', noonBefore(6), 'It is back to hashed names since last week\'s release. Was that intended?'],
+      ['dana', noonBefore(6) - 40, 'It was not: the release dropped the setting. I am putting it back.'],
+      ['ola', noonBefore(1), 'Thanks. The names are right on preview, live still has the hashed ones.'],
+      ['dana', noonBefore(1) - 2, 'Live follows with tonight\'s publish.'],
+      ['dana', noonBefore(1) - 3, 'I will check it in the morning.'],
+      ['ola', 35, 'Live has the names now.'],
+      ['priya', 30, 'Good. I will close this one.'],
+    ],
+    reads: { dana: 'latest', priya: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.7, topics: ['publishing'],
+    },
+  });
+
   // A follow-up posted as a new root, folded into the thread it continues (re-threading): one
   // inbox entry, "2 posts folded into one thread". The live case, a root folded after it was
   // in the list, is `POST /__dev/rethread` (scripts/dev-ui.mjs).

@@ -96,11 +96,18 @@ describe('inbox page', () => {
     for (const iso of ['2024-03-01T07:05:00Z', '2023-12-31T23:59:00Z', '2024-06-15T13:30:00Z']) {
       const d = new Date(iso);
       assert.equal(clock(iso), d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
-      assert.equal(dayLabel(iso), d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
+      // The day of a message, in the year it is of, and looked at in a later one.
+      const then = new Date(d.getFullYear(), 11, 31, 23);
+      assert.equal(dayLabel(iso, then), d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
+      assert.equal(dayLabel(iso), d.toLocaleDateString(undefined, {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      }));
       assert.equal(ago(iso), d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
     }
     assert.equal(dayLabel(new Date().toISOString()), 'Today');
-    assert.equal(dayLabel(new Date(Date.now() - 86400000).toISOString()), 'Yesterday');
+    const today = new Date();
+    const noonBefore = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 12);
+    assert.equal(dayLabel(noonBefore.toISOString()), 'Yesterday');
     assert.equal(ago(new Date(Date.now() - 2 * 3600000).toISOString()), '2h');
     assert.equal(clock('not a date'), 'Invalid Date');
     assert.equal(dayLabel(undefined), 'Invalid Date');
@@ -377,7 +384,7 @@ describe('inbox page', () => {
       profileKey: () => 'k',
       avatar: () => '',
       esc: (x) => String(x ?? ''),
-      clock: () => '10:00',
+      timeTag: () => '10:00',
       md: (x) => x,
       canReact: () => false,
       canEdit: () => false,
@@ -406,7 +413,7 @@ describe('inbox page', () => {
       profileKey: () => 'k',
       avatar: () => '',
       esc: (x) => String(x ?? ''),
-      clock: () => '10:00',
+      timeTag: () => '10:00',
       md: (x) => x,
       canReact: () => true,
       canEdit: (m) => Boolean(m.editable),

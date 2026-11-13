@@ -92,7 +92,7 @@ describe('emoji names', () => {
       profileKey: () => 'k',
       avatar: () => '',
       esc: (x) => String(x ?? ''),
-      clock: () => '10:00',
+      timeTag: () => '10:00',
       md,
       canReact: () => false,
       canEdit: () => false,
