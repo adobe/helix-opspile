@@ -1191,12 +1191,15 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
     // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
-    // thread, between Dana's question and Sam's answer.
+    // thread, between Dana's question and Sam's answer. Dana asked it after that: a second
+    // conversation, under the thread. A wide screen shows both in the panel beside the thread.
     sidebar: [
       ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
       ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
       ['lena', 82, 'So it could be their rewrite?'],
       ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
+      ['dana', 64, 'Does the rewrite Sam sent explain it?'],
+      ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
     ],
   });
 

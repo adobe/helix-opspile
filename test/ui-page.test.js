@@ -16,7 +16,7 @@ import { transform } from 'esbuild';
 import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { CHANNEL_REF } from '../src/markdown.js';
-import { SCRIPTS } from './ui.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
 
@@ -858,6 +858,140 @@ describe('inbox page', () => {
     assert.equal(sidePeople(said(me)), 'You');
     assert.equal(sidePeople(said(me, lena)), 'Lena Berg and you');
     assert.equal(sidePeople(said(lena, { id: 3, name: 'Tom' }, me)), 'Lena Berg, Tom and you');
+  });
+
+  describe('the sidebar beside the thread, where there is room', () => {
+    const lena = { id: 2, name: 'Lena Berg' };
+    const run = [
+      {
+        id: 'sb1', role: 'person', by: lena, body: 'Seen before?', at: '2026-10-21T10:00:00.000Z',
+      },
+      {
+        id: 'sb1:answer', role: 'agent', body: 'Twice.', state: 'done', reply_to: 'sb1', at: '2026-10-21T10:00:30.000Z',
+      },
+    ];
+    /** The sidebar's markup with `side` as it stands, for who may talk to the agent, or not. */
+    const sidebar = (side, { may = true } = {}) => {
+      const globals = {
+        side: { open: new Set(), ...side },
+        state: { me: { id: 1 }, agents: new Map(), cache: new Map() },
+        canSide: () => may,
+        avatar: (name) => `<i>${name}</i>`,
+        AGENT_NAME: 'Thread Agent',
+        SIDE_ICON: '',
+        SIDE_HINT: '',
+        PLATFORM: { slack: 'Slack' },
+        esc: (x) => String(x),
+        md: (x) => x,
+        clock: () => '10:00 AM',
+        dayLabel: () => 'Today',
+      };
+      return {
+        ...piece('/** Whether thread `key` is in sidebar mode in the thread itself', '/** The reply box in sidebar mode', 'sideInline, sidePaneled, sideRun, sideGroup', globals),
+        ...piece('/** The panel\'s top:', '/** The panel goes, with what it showed.', 'sidePanelHead, sidePanelItems, sidePanelBox', {
+          ...globals, sideRun: (key, r) => r.map((m) => `<p>${m.body}</p>`),
+        }),
+      };
+    };
+
+    it('unfolds a conversation in the thread on a narrower screen, as before', () => {
+      const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: false, key: 't', open: new Set(['sb1']) });
+      assert.equal(sideInline('t'), true);
+      assert.equal(sidePaneled('t'), false);
+      const line = sideGroup('t', run, { last: true, trailing: false });
+      assert.match(line, /class="sidechat open /);
+      assert.match(line, /aria-expanded="true"/);
+      assert.doesNotMatch(line, /aria-controls/);
+      assert.match(line, /<div class="sc-body">.*Seen before\?.*Twice\./s);
+      // The one you are in stays open under the thread.
+      assert.match(sideGroup('t', run, { last: true, trailing: true }), /class="sidechat open live /);
+      // Nothing said yet: the place where it will show.
+      assert.match(sideGroup('t', [], { last: true, trailing: true }), /class="sidechat open live blank"/);
+    });
+
+    it('keeps one line per conversation in the thread on a wide screen, for everyone, and shows the rest in the panel', () => {
+      for (const may of [true, false]) {
+        // Not in the sidebar: the line is all there is, and it opens the panel.
+        const shut = sidebar({ wide: true, key: null, open: new Set(['sb1']) }, { may });
+        const line = shut.sideGroup('t', run, { last: true, trailing: true });
+        assert.match(line, /data-side-toggle="sb1" aria-expanded="false" aria-controls="side">/);
+        assert.match(line, /Lena Berg had a sidebar conversation with <b>Thread Agent<\/b>/);
+        assert.match(line, /2 messages · 10:00 AM · not posted/);
+        assert.doesNotMatch(line, /sc-body|Seen before\?| open | live /);
+        // In it: the same line, marked as shown beside the thread; never unfolded there too.
+        const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: true, key: 't' }, { may });
+        assert.equal(sideInline('t'), false);
+        assert.equal(sidePaneled('t'), true);
+        assert.equal(sidePaneled('u'), false);
+        const shown = sideGroup('t', run, { last: true, trailing: true });
+        assert.match(shown, /class="sidechat {3}paneled /);
+        assert.match(shown, /aria-expanded="true" aria-controls="side">/);
+        assert.doesNotMatch(shown, /sc-body|Seen before\?|aria-disabled/);
+      }
+      // No thread, no panel.
+      assert.equal(sidebar({ wide: true, key: null }).sidePaneled(null), false);
+    });
+
+    it('gives the panel every conversation, each under when it started, and a box of its own', () => {
+      const { sidePanelHead, sidePanelItems, sidePanelBox } = sidebar({ wide: true, key: 't' });
+      const later = [{
+        id: 'sb2', role: 'person', by: lena, body: 'And now?', at: '2026-10-21T11:00:00.000Z',
+      }];
+      const items = sidePanelItems('t', [{ run, last: false }, { run: later, last: true }]).map((i) => i.html);
+      assert.deepEqual(items.map((h) => (/^<div class="sp-when" data-run="(\w+)">/.exec(h) || [])[1] || h), [
+        'sb1', '<p>Seen before?</p>', '<p>Twice.</p>', 'sb2', '<p>And now?</p>',
+      ]);
+      assert.match(items[0], /Today · 10:00 AM/);
+      assert.match(sidePanelItems('t', [])[0].html, /class="sc-wait blank".*It is never posted\./);
+      // It says who sees it, and where nothing goes, as the box in the thread does.
+      assert.match(sidePanelHead({ source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(sidePanelHead({ source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
+      // The thread keeps its reply box, with the draft's and the commands' lines: the panel's
+      // box is the sidebar's only.
+      const box = sidePanelBox('t');
+      assert.equal(box.match(/id="side-reply"/g).length, 1);
+      assert.match(box, /id="side-send"/);
+      assert.doesNotMatch(box, /id="(draftbar|bashbar|reply|send)"|data-side-exit/);
+      // Someone who may not talk to the agent reads there.
+      assert.equal(sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t'), '');
+    });
+
+    it('shows the panel where the thread and it have room, measured from the thread\'s left edge', () => {
+      const room = (width, wideEnough = true) => {
+        const main = { getBoundingClientRect: () => ({ right: 1000 + width + 16 }) };
+        return piece('const SIDE_ROOM = ', '/** The room changed', 'sideRoom, SIDE_ROOM', {
+          WIDE: { matches: wideEnough },
+          document: { querySelector: () => main },
+          getComputedStyle: () => ({ paddingRight: '16px' }),
+          $: () => ({ getBoundingClientRect: () => ({ left: 1000 }) }),
+        });
+      };
+      const { SIDE_ROOM } = room(0);
+      assert.equal(room(SIDE_ROOM).sideRoom(), true);
+      assert.equal(room(SIDE_ROOM - 1).sideRoom(), false);
+      // Under 1100px the filters are a drawer and the thread may be off the screen: never there.
+      assert.equal(room(SIDE_ROOM, false).sideRoom(), false);
+      // The panel's least width leaves the thread more than a phone gives it.
+      const css = SCRIPTS['spectrum-inbox.css'];
+      assert.match(css, /main \{ --side-w: clamp\(calc\(var\(--spectrum-spacing-100\) \* 45\), 38%, calc\(var\(--spectrum-spacing-100\) \* 60\)\); \}/);
+      assert.ok(SIDE_ROOM - 360 >= 430, 'the thread beside the least panel');
+    });
+
+    it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
+      const css = SCRIPTS['spectrum-inbox.css'];
+      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n<\/main>/);
+      assert.match(css, /#side \{ grid-row: 1; grid-column: 3; justify-self: end; width: var\(--side-w\);/);
+      assert.match(css, /#side\[hidden\] \{ display: none; \}/);
+      assert.match(css, /main\.siding #pane \{ margin-right: var\(--side-w\); \}/);
+      // The thread's reply box is the sidebar's only in the thread itself.
+      assert.match(html, /const reply = sideInline\(key\) \? sideComposer\(key, thread\)\s*: composer\(/);
+      // The panel is the open thread's: gone with it, and with the room.
+      assert.match(html, /if \(!sidePaneled\(state\.open\)\) hideSidePanel\(\);/);
+      assert.match(html, /if \(!sidePaneled\(key\)\) \{ hideSidePanel\(\); return; \}/);
+      // A line in the thread opens the panel at its conversation, for anyone who sees it.
+      assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
+      assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
+    });
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {
