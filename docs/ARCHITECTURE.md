@@ -458,7 +458,11 @@ question: it is one channel, and switches back as easily). The switch is a row i
 `agent_channels` with who set it and when. A team's knowledge base also has the team's
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
-channels it gets later too. A channel nobody switched has an agent when its team's default or
+channels it gets later too. A new team starts with it on (the admin team's name for it in
+`changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
+the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
+`newTeams`); the teams from before that have them as they had them, and deleting a team
+deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
@@ -1544,8 +1548,8 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. They are off until
-the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. A new team starts
+with both on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
 and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
@@ -1623,7 +1627,8 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Four tools are off until they are turned on. Three by the admin team or a team's managers, as
+Four tools are off until they are turned on (a new team starts with `computer` and
+`extraction_rules` on for the team). Three by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
