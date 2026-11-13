@@ -20,7 +20,8 @@ import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 
 /**
- * Re-filing channels after a rule change. A channel's org and team are part of its pile-2
+ * Re-filing channels after a rule change, or a change of what the rules read of a channel (a
+ * rename: `followChange`). A channel's org and team are part of its pile-2
  * paths and of its thread rows, so when the rules classify a channel differently, its
  * thread folders move from `channels/<old org>/<old team>/…` to the new ones and its thread
  * rows follow. Without this, a rule change needs a full replay (scripts/replay.mjs --clear).
@@ -50,12 +51,16 @@ export function movedFolder(folder, org, team) {
  * What changes for each channel under `rules`: `{ channel, from: [{ org, team, kind,
  * threads }], to: { org, team, kind } }` for every channel whose threads are filed
  * differently. Channels without threads are left out; nothing of theirs is filed yet.
+ * `only` (`{ source, tenant, channelId }`) plans that one channel.
  */
-export async function plan(env, rules) {
-  const { results: channels } = await env.DB.prepare('SELECT * FROM channels').all();
+export async function plan(env, rules, only = null) {
+  const where = only ? ' WHERE source = ? AND tenant = ? AND channel_id = ?' : '';
+  const args = only ? [only.source, only.tenant, String(only.channelId)] : [];
+  const { results: channels } = await env.DB.prepare(`SELECT * FROM channels${where}`)
+    .bind(...args).all();
   const { results: filed } = await env.DB.prepare(`SELECT source, tenant, channel_id, org, team,
       kind, COUNT(*) AS threads, MAX(channel_name) AS channel_name
-    FROM threads GROUP BY source, tenant, channel_id, org, team, kind`).all();
+    FROM threads${where} GROUP BY source, tenant, channel_id, org, team, kind`).bind(...args).all();
   const byChannel = new Map();
   for (const f of filed || []) {
     const list = byChannel.get(channelKey(f)) || [];
@@ -114,6 +119,36 @@ export async function enqueueMoves(env, moves) {
       jobs += 1;
     }
   }
+  return jobs;
+}
+
+/**
+ * After a channel's metadata changed (src/lookup.js: a rename, by event or found by a lookup,
+ * another Teams team name, other Slack Connect teams), files its threads where the rules say
+ * now, as a rule change does: the same `refile` jobs. `before` and `after` are the channel as
+ * `toChannel` gives it. Nothing is queued unless the rules classify it differently than before
+ * (org, team or kind), nor for threads filed there already (`plan`). A manual assignment is a
+ * rule, so it still wins; the teams the channel is shared with (`channel_teams`) go with the
+ * channel, not with where it is filed, and stay. Call it before the message that came with the
+ * change is filed: the jobs carry where each thread was, which that message may move.
+ * Returns the number of jobs queued.
+ */
+export async function followChange(env, { tenant }, { before, after }, rules) {
+  if (!before || !after) {
+    return 0;
+  }
+  const was = classify(rules, before);
+  const now = classify(rules, after);
+  if (was.org === now.org && was.team === now.team && was.kind === now.kind) {
+    return 0;
+  }
+  const moves = await plan(env, rules, {
+    source: after.source, tenant, channelId: after.channelId,
+  });
+  const jobs = await enqueueMoves(env, moves);
+  console.log(JSON.stringify({
+    route: 'normalize', refile: 'channel changed', source: after.source, moves: moves.length, jobs,
+  }));
   return jobs;
 }
 
@@ -211,9 +246,10 @@ async function reexport(env, threads) {
  * the channel's threads where the rules say now. Runs again for the threads it did not get
  * to, so a large channel moves in several jobs.
  *
- * Each thread's folder is read from D1, not taken from the job: several rule changes in a
- * row queue several jobs for a channel, and an earlier one may have moved the folder since
- * this job was queued. The folder in the job is for a thread D1 no longer has.
+ * Each thread's folder is read from D1: several rule changes in a row queue several jobs for a
+ * channel, and an earlier one may have moved the folder since this job was queued. The folder
+ * in the job is moved too: a message filed since then, at the new place, moved the row but not
+ * the files before it. For a thread D1 no longer has, it is the only one.
  */
 export async function refile(env, job) {
   const row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')
@@ -237,22 +273,42 @@ export async function refile(env, job) {
   for (const [thread, queued] of job.threads || []) {
     const folder = pathOf.get(thread) || queued;
     if (budget <= 0) {
-      left.push([thread, folder]);
+      left.push([thread, queued || folder]);
       // eslint-disable-next-line no-continue
       continue;
     }
     const to = movedFolder(folder, cls.org, cls.team);
+    // A message filed after the job was queued, already where the rules say now, points the
+    // row there (src/threads.js), but the thread's earlier files are still where the job found
+    // them: both folders are moved.
+    const from = [...new Set([queued, folder])].filter((f) => f && to && f !== to);
     let done = true;
-    if (to && to !== folder) {
+    let stuck = null;
+    let filedElsewhere = false;
+    for (const f of from) {
+      if (budget <= 0) {
+        done = false;
+        stuck = f;
+        break;
+      }
       // eslint-disable-next-line no-await-in-loop
-      const r = await moveFolder(env.CHANNELS, folder, to, budget);
+      const r = await moveFolder(env.CHANNELS, f, to, budget);
       budget -= r.moved;
       objects += r.moved;
-      ({ done } = r);
+      if (r.moved) {
+        filedElsewhere = true;
+        fromTeams.add(String(f).split('/')[2]);
+      }
+      if (!r.done) {
+        done = false;
+        stuck = f;
+        break;
+      }
     }
     if (done) {
       const was = rowOf.get(thread);
-      const moved = was && (was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind);
+      const moved = was && (filedElsewhere
+        || was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind);
       if (moved) {
         // eslint-disable-next-line no-await-in-loop
         await clearDerived(env, thread, cls.kind);
@@ -266,7 +322,7 @@ export async function refile(env, job) {
         fromTeams.add(was.team);
       }
     } else {
-      left.push([thread, folder]);
+      left.push([thread, stuck]);
     }
   }
   await revectorize(env, refiled);

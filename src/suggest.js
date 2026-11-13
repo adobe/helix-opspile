@@ -16,6 +16,7 @@ import { CLEF } from './label.js';
 import {
   getChannel, isStaffDomain, loadRules, slackApi,
 } from './lookup.js';
+import { followChange } from './refile.js';
 import { ADMIN_TEAM } from './review.js';
 
 /**
@@ -424,9 +425,16 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
           // A week-old topic is fetched again too, through the usual lookup.
           if (!deps.slack && !deps.graph) {
             // eslint-disable-next-line no-await-in-loop
-            await getChannel(env, {
+            const found = await getChannel(env, {
               source: ch.source, tenant: ch.tenant, channelId: ch.channel_id, groupId: ch.group_id,
             }, now).catch(() => null);
+            if (found && found.before) {
+              // Renamed since its last lookup: its threads follow, as from the normalizer.
+              // eslint-disable-next-line no-await-in-loop
+              const rules = await loadRules(env);
+              // eslint-disable-next-line no-await-in-loop
+              await followChange(env, ch, { before: found.before, after: found }, rules);
+            }
           }
           // eslint-disable-next-line no-await-in-loop
           row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')

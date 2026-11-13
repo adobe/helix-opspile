@@ -213,17 +213,30 @@ async function relinkSlackChannel(env, tenant, channelId, domain) {
 }
 
 /**
+ * What the rules read of a channel (src/rules.js, besides its id): when one of these changes, a
+ * channel may be filed elsewhere (src/refile.js `followChange`).
+ */
+const CLASSIFIED = ['name', 'group_name', 'connected'];
+
+const classifiedChanged = (row, next) => CLASSIFIED
+  .some((f) => (row[f] ?? null) !== (next[f] ?? null));
+
+/**
  * The channel's metadata, from D1 or the platform. A failed lookup is not fatal: the
  * message is filed with what is known, and the next message retries the lookup.
+ *
+ * `refresh` asks the platform even when the row is fresh (a Teams notice of a rename). When
+ * the lookup changed what the rules read, the answer has `before`: the channel as it was, for
+ * `followChange` (src/refile.js) to re-file its threads if the rules file it elsewhere now.
  */
 export async function getChannel(env, {
-  source, tenant, channelId, groupId,
+  source, tenant, channelId, groupId, refresh,
 }, now = Date.now()) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
   // Slack channels looked up before links named their workspace are looked up again.
-  if (fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
+  if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
     return toChannel(row, source, channelId);
   }
   try {
@@ -261,7 +274,11 @@ export async function getChannel(env, {
         new Date(now).toISOString(),
       )
       .run();
-    return toChannel(f, source, channelId);
+    const channel = toChannel(f, source, channelId);
+    if (row && classifiedChanged(row, f)) {
+      channel.before = toChannel(row, source, channelId);
+    }
+    return channel;
   } catch (e) {
     console.warn(JSON.stringify({
       route: 'normalize', lookup: 'channel', source, error: e.message,
@@ -270,16 +287,34 @@ export async function getChannel(env, {
   }
 }
 
-/** Records a rename or creation that arrived as an event, without a lookup. */
+/**
+ * Records a rename or creation that arrived as an event, without a lookup, as of when it
+ * happened (`at`): one older than the row (out of order, or a replay of pile 1) is left out,
+ * since the row knows a later name. Returns `{ before, after }` (as `toChannel`) when it
+ * renamed a channel D1 knew, for `followChange` (src/refile.js); else null.
+ */
 export async function updateChannelName(env, {
-  source, tenant, channelId, name,
+  source, tenant, channelId, name, at,
 }, now = Date.now()) {
+  const row = await env.DB.prepare(
+    'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
+  ).bind(source, tenant, channelId).first();
+  if (row && at && row.fetched_at && Date.parse(row.fetched_at) > Date.parse(at)) {
+    return null;
+  }
   await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
       fetched_at = excluded.fetched_at`)
-    .bind(source, tenant, channelId, name, new Date(now).toISOString())
+    .bind(source, tenant, channelId, name, at || new Date(now).toISOString())
     .run();
+  if (!row || (row.name ?? null) === (name ?? null)) {
+    return null;
+  }
+  return {
+    before: toChannel(row, source, channelId),
+    after: toChannel({ ...row, name }, source, channelId),
+  };
 }
 
 /** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */

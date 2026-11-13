@@ -82,7 +82,15 @@ passed, the page looks again every minute while it is on screen.
 
 **Channel filing.** filed → moving → re-filed (`src/refile.js`). "Moving" is not stored: a job's
 payload and `threads.path` say where it stands. The watermarks of what has to be redone are cleared
-before the thread row moves, since a retry compares against that row.
+before the thread row moves, since a retry compares against that row. Two things start a move: a
+rule change in the admin pages (`plan`, `enqueueMoves`), and a change in what the rules read of one
+channel (`followChange`): its name, its Teams team's name or its Slack Connect teams, from a Slack
+rename event, a Teams notice of a rename (which looks the channel up again) or a lookup that finds
+them changed (a day after the last, also from the cron). That one queues jobs only when the rules
+classify the channel differently than before, and before the message that came with the change is
+filed: that message points its thread's row at the new folder, so a job moves both the folder it
+was queued with and the row's. A rename event older than the channel's row (`fetched_at`: out of
+order, or a replay of pile 1) changes nothing.
 
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel

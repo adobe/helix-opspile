@@ -28,12 +28,12 @@ import {
   discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
 } from './markdown.js';
 import {
-  normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+  isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
-import { refile } from './refile.js';
+import { followChange, refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
@@ -360,21 +360,32 @@ export async function processKey(env, key, cache = {}) {
     return processReaction(env, key, op.reaction);
   }
   if (op.op === 'channel') {
-    await updateChannelName(env, op.channel);
-    return { key, result: 'channel' };
+    const change = await updateChannelName(env, op.channel);
+    let jobs = 0;
+    if (change) {
+      // eslint-disable-next-line no-param-reassign
+      cache.rules = cache.rules || await loadRules(env);
+      jobs = await followChange(env, op.channel, change, cache.rules);
+    }
+    return { key, result: 'channel', ...(jobs ? { refile: jobs } : {}) };
   }
 
   const { message } = op;
   if (!message.channelId || !message.id) {
     return { key, result: 'skip', reason: 'no channel or id' };
   }
-  const channel = await getChannel(env, message);
+  const channel = await getChannel(env, { ...message, refresh: isRenameNotice(message) });
   if (message.source === 'slack') {
     // The link opens in the channel's workspace, not the one the browser used last.
     message.permalink = slackLinkIn(channel.domain, message.permalink);
   }
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
+  if (channel.before) {
+    // The lookup found the channel renamed: its threads follow, from where they are now, before
+    // this message is filed where the rules say now.
+    await followChange(env, message, { before: channel.before, after: channel }, cache.rules);
+  }
   const cls = classify(cache.rules, channel);
   env.meter?.attribute({ org: cls.org, team: cls.team });
   if (cls.kind === 'ignore') {
