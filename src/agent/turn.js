@@ -27,6 +27,7 @@ const DOING = {
   update_draft: 'Updating the draft',
   discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
+  request_bash: 'Asking the team to run a command',
 };
 
 /** What a tool call is doing, in a few words. */

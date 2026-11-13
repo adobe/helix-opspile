@@ -425,6 +425,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
   const appPosts = new Set();
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
+  // thread -> the commands its agent asked a person to run, as src/bashrequests.js shapes them
+  const bashRequests = new Map();
   // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
   const sourceViews = new Map([
     ['https://docs.example.com/purge', { view: 'frame', url: '/__dev/source-page' }],
@@ -601,9 +603,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
    * `draft`: the thread's shared draft, `{ by, ago, body, sources? }`; `by` is a person key or
    * 'agent'.
+   * `bash`: the commands the thread's agent asked a person to run, `[{ ago, command, reason,
+   * env?, timeout?, open?, status?, by?, exit? }]`: asked `ago` minutes ago, open for `open`
+   * more minutes; `status` (and `by`, a person key) for one that was decided 2 minutes ago.
    */
   function seed({
-    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft,
+    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -685,6 +690,28 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         updated_at: at,
       });
     }
+    if (bash.length) {
+      bashRequests.set(key, bash.map((b, i) => {
+        const who = b.by && byKey.get(b.by);
+        const decided = b.status ? new Date(now - 2 * MIN).toISOString() : null;
+        return {
+          id: `req${threads.size}${i}`,
+          thread: key,
+          command: b.command,
+          reason: b.reason,
+          env: b.env || [],
+          timeout: b.timeout || 60,
+          deadline: new Date(now + (b.open ?? 23 * 60) * MIN).toISOString(),
+          status: b.status || 'pending',
+          created_at: new Date(now - b.ago * MIN).toISOString(),
+          by: who ? { id: who.id, name: who.name } : null,
+          decided_at: decided,
+          finished_at: decided,
+          exit_code: b.status === 'done' ? b.exit ?? 0 : null,
+          error: null,
+        };
+      }));
+    }
     return key;
   }
 
@@ -763,6 +790,30 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         { url: 'https://status.example.com/incidents/42', title: 'Status page' },
       ],
     },
+    // The agent asks for two commands: one ran, one waits for the viewer's own token.
+    bash: [
+      {
+        ago: 14,
+        command: 'curl -sI https://main--acme-preview--acme.aem.page/en/index.html | head -n 12',
+        reason: 'Shows the response headers of the affected page, to see which cache answered.',
+        timeout: 30,
+        status: 'done',
+        by: 'priya',
+      },
+      {
+        ago: 9,
+        command: 'curl -sf -H "Authorization: Bearer $CDN_API_TOKEN" \\\n'
+          + '  "https://api.cdn.example.com/v1/services/$CDN_SERVICE_ID/versions?limit=3" \\\n'
+          + '  | jq \'.[] | {number, active, updated_at, comment}\'',
+        reason: 'Lists the last three versions of the CDN service, to compare the configuration '
+          + 'before and after the 14:00 flush. It only reads; it needs a token of yours.',
+        env: [
+          { name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' },
+          { name: 'CDN_SERVICE_ID', description: 'The id of ACME\'s CDN service' },
+        ],
+        timeout: 60,
+      },
+    ],
   });
   {
     // A message of this thread cited too, once its id is known: the source shows its card, not
@@ -1298,6 +1349,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     mentions,
     appPosts,
     drafts,
+    bashRequests,
     sourceViews,
     sourcePage,
     uploads,

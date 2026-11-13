@@ -13,12 +13,15 @@
 import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
-import { agentStatus, seedAgent, tellDiscarded } from './agent/stub.js';
+import {
+  agentStatus, decideBash, seedAgent, tellDiscarded,
+} from './agent/stub.js';
 import { agentEnabled } from './agent/enabled.js';
 import { keptTurn } from './agent/kept.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
+import { requestsFor } from './bashrequests.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
 import { expertEvents, recordExpertEvent } from './expertevents.js';
@@ -760,6 +763,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentTurn, { results: memberTech }, { results: rootLinks }, place,
+    bashRequests,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -819,6 +823,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     env.DB.prepare(`SELECT group_name FROM channels
       WHERE source = ? AND tenant = ? AND channel_id = ?`)
       .bind(row.source, row.tenant, row.channel_id).first(),
+    // The commands the agent asked a person to run (src/bashrequests.js): waiting, running,
+    // or ended within the hour.
+    requestsFor(env, entryKeys),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -918,6 +925,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
     draft: draftOf(drafts, entryKeys),
     agent_turn: agentTurn || null,
+    bash_requests: bashRequests,
   };
 }
 
@@ -1133,6 +1141,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/agent/seed' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return seedAgent(env, me, body, working);
+  }
+  // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
+  const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
+  if (bash && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return decideBash(env, me, body, working, { run: bash[1] === 'run' });
   }
   if (url.pathname === '/api/edit' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));

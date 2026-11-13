@@ -1,7 +1,7 @@
 # State machines
 
-opspile has one status column, `channel_requests.status`. Everything else that has a lifecycle
-keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
+opspile has two status columns, `channel_requests.status` and `bash_requests.status`. Everything
+else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
 
@@ -154,6 +154,22 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
+**Command request.** pending → running → done, timeout or failed; pending → denied or expired
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
+(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
+other is told who did. The deadline's schedule is armed before the request is stored (a deadline
+with no request does nothing), and a request past its deadline reads as expired before the schedule
+has written it, so it cannot be run in between. A run is claimed in the agent's own object, after
+its watchdog is armed: the values a person filled in live only in that object's memory, so a run
+whose object restarted is one nobody is running, which the watchdog (the timeout and 30 seconds
+later) settles as failed. It never runs again by itself: a command may not be safe to repeat. A
+nonzero exit is `done`, not failed: the command ran. Exit code 124 is `timeout` only when the run
+took its whole timeout: the shell says it stopped a run no other way, and a command can exit with
+124 by itself. `told_at` is written last, after the agent was
+told how the request ended; one that ended untold (the agent's storage failed) is told at its
+deadline, without what the command printed, which is kept nowhere.
+
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
 sessions and never an unpinned one.
@@ -291,6 +307,12 @@ not here, and opening one reads it by its path.
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
 text, and loaded is part of the key of what is rendered, so the list and the open thread render
 again with it. A failed import is not final: a code block a minute later tries again.
+
+**Command fields.** empty → typed → sent, or remembered → filled in (`bashTyped`, `vault` in
+`ui/inbox.js`). What is typed into a request's fields stays with the request in the tab, so a card
+drawn again keeps it, and goes with Run. Remembered values are read once a page, the first time a
+card has a field: a value that no longer decrypts (its key is gone) is not there. While the room
+says a request changed and the thread is fetched again, the cards stay as they are.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.

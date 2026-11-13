@@ -797,6 +797,49 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .src { max-width: calc(var(--spectrum-spacing-100) * 30); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
  text-decoration: none; }
 .draftbar .src:hover, .draftbar .src:focus-visible { border-color: var(--accent); }
+/* The commands the agent asks a person to run: cards between the reply box and the draft's
+   line. A card that waits: what it is and until when; the agent's reason; the command; a field
+   for each variable; what running it means, with Deny and Run. One that was decided: how it
+   stands, and the command on one line. The cards scroll up and down when they are taller than
+   their share of the pane, never sideways: what is too wide wraps or is cut. */
+.bashbar { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: var(--spectrum-spacing-100);
+  max-height: 45vh; overflow: hidden auto; container: bash / inline-size; }
+.bashbar[hidden] { display: none; }
+.bashbar .br { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.bashbar .head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+.bashbar .what { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.bashbar .what svg { flex: none; }
+.bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bashbar .why { margin: 0; overflow-wrap: anywhere; }
+.bashbar .cmd { margin: 0; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Decided: one line, how it stands and then the command, as far as it fits. */
+.bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
+.bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
+.bashbar .br:not(.pending) .cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), 1fr));
+  align-items: end; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.bashbar .var { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
+.bashbar .var .nm { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; }
+.bashbar .var input { width: 100%; min-width: 0; }
+.bashbar .keep { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); cursor: pointer; }
+.bashbar .keep input { margin: 0; }
+.bashbar .foot { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.bashbar .note { flex: 1; min-width: 0; cursor: help; }
+.bashbar .acts { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.bashbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+.bashbar button:disabled { cursor: default; }
+.bashbar .spin { display: inline-block; border-radius: 50%; margin-right: var(--spectrum-spacing-75);
+  animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
+@media (prefers-reduced-motion: reduce) { .bashbar .spin { animation: none; } }
+@container bash (max-width: 560px) {
+  .bashbar .foot { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-100); }
+  /* Stretched to the card's width, not as wide as the command: that is what cuts it. */
+  .bashbar .br:not(.pending) { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-75); }
+  .bashbar .br:not(.pending) .head { max-width: none; }
+  .bashbar .br:not(.pending) .cmd { flex: none; }
+  .bashbar .acts button { flex: 1; }
+}
 /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
 .composer.checking textarea { flex: 0 0 calc(50% - calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-400))); margin-right: auto; }
 .srcpop { position: fixed; z-index: 7; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
@@ -1813,6 +1856,75 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
 .spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
 .spectrum .draftbar button.ico:disabled { background: none; }
+/* A command the agent asks a person to run: a dashed card as the draft's, in the notice color
+   while it waits, since running it is a decision; a plain outline once that is made. The
+   command is a code block, the fields small TextFields, Run the accent Button and Deny an
+   outline one. */
+.spectrum .bashbar .br {
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-notice-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: color-mix(in srgb, var(--spectrum-notice-subtle-background-color-default) 50%, var(--pane));
+}
+.spectrum .bashbar .br:not(.pending) { border-style: solid; border-color: var(--spectrum-gray-300); background: none; }
+.spectrum .bashbar .what { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .bashbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .bashbar .br.failed .by { color: var(--spectrum-negative-content-color-default); }
+.spectrum .bashbar .why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .bashbar .cmd {
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  font-family: var(--s2-code);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-hover);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .bashbar .br:not(.pending) .cmd { padding: 0px; color: inherit; background: none; }
+.spectrum .bashbar code { padding: 0px; font: inherit; background: none; }
+.spectrum .bashbar .var .nm code { font-family: var(--s2-code); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .bashbar .kept { color: var(--spectrum-positive-visual-color); }
+.spectrum .bashbar .var input {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .bashbar button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .bashbar button.run { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); }
+.spectrum .bashbar button.run:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .bashbar button.run:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .bashbar button.deny { color: var(--spectrum-neutral-content-color-default); background: transparent; border-color: var(--spectrum-gray-400); }
+.spectrum .bashbar button.deny:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .bashbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
+/* Forget: a link, not a button of the card's. */
+.spectrum .bashbar button.forget, .spectrum .bashbar button.forget:disabled {
+  min-height: 0px;
+  padding: 0px;
+  border: 0;
+  border-radius: 0px;
+  font-weight: var(--spectrum-regular-font-weight);
+  color: var(--spectrum-accent-content-color-default);
+  background: none;
+  text-decoration: underline;
+}
+.spectrum .bashbar .spin {
+  width: var(--spectrum-progress-circle-size-small);
+  height: var(--spectrum-progress-circle-size-small);
+  border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);
+  border-top-color: var(--spectrum-accent-content-color-default);
+  vertical-align: text-bottom;
+}
+@media (hover: none) and (pointer: coarse) {
+  .spectrum .bashbar button:not(.forget) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
+  .spectrum .bashbar .var input { min-height: var(--spectrum-component-height-100); font-size: var(--spectrum-font-size-100); }
+}
 /* A finger needs more than the pointer: the line's buttons grow to the next control height. */
 @media (hover: none) and (pointer: coarse) {
   .spectrum .draftbar button { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }

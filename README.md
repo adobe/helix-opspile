@@ -82,6 +82,7 @@ still answer.
 | `/.well-known/oauth-*`, `/oauth/authorize`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, `GET /api/oauth/consent/…`, `POST /api/oauth/authorize` | OAuth for MCP clients. |
 | `GET /oauth/client.json` | opspile's client ID metadata document, as the OAuth client of the agents' MCP servers: its client id at authorization servers that take one (`client_id_metadata_document_supported`), which fetch it. Public. |
 | `GET /api/agent?thread=`, `POST /api/agent/seed` | Whether a thread has an agent and what it is doing (its watermark, pending runs, and its latest `turn`: `{ state: working \| done \| failed, text, startedAt, endedAt }`, which the inbox shows under the thread's last message); share knowledge with an agent: `{ thread, text }` for a thread's agent, `{ team, org, text }` for the knowledge-base agent of a team and customer. `kb` (`team` or `org`, on either form) chooses the knowledge base, and the agent cannot write the other; `{ team, kb: "team", text }` needs no customer. Without it the agent decides. Only in their teams. See "Thread agents". |
+| `POST /api/bash/run`, `POST /api/bash/deny` | A command the thread's agent asked a person to run on its computer (`request_bash`, docs/ARCHITECTURE.md, "Agent tools"): `{ thread, id, env }` runs it, with a value for each variable the request names (`env`: `{ NAME: value }`, kept nowhere), and answers `202` with the request once the command has started; `{ thread, id }` denies it. A request that is no longer pending answers `409` with who decided it, a missing value `400`. The thread carries its requests as `bash_requests` (`id`, `command`, `reason`, `env`: names and descriptions, `timeout`, `deadline`, `status`: `pending`, `running`, `done`, `timeout`, `failed`, `denied` or `expired`, `by`, `exit_code`, `error`), until an hour after they ended. Only who may work the thread. |
 | `GET`, `POST /diag/agent?name=` | One agent by name (an inbox entry key, `kb:<team>:<org>`, or `kb:<team>:` for no customer), guarded by `x-opspile-diag`: `GET` its status, `POST {}` delivers new messages, `POST { text }` seeds it. |
 | `GET`, `POST /diag/dead` | The queue jobs that used up their retries, guarded by `x-opspile-diag`: `GET` lists them and counts them by kind; `POST` sends them out again, the oldest 100 or those of `{ "ids": […] }` |
 | `GET`, `POST /diag/discord` | The Discord poller, guarded by `x-opspile-diag`: `GET` says when it polls next and how the last poll went (an error, e.g. a missing permission, included); `POST` polls now, and reads the last day again for edits, deletions and reactions. |
@@ -378,6 +379,12 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   shell has `$NAME` as a placeholder, and the Worker's `SecretGateway`, which every request of
   the shell goes through, puts the value in only in HTTPS requests to the hosts the secret lists
   (and takes it out of the answer). A request that names one for another host is refused.
+  With it the agent has **`request_bash`**: it asks a person on the team to run a command in
+  that shell (a command, a reason, a timeout, a deadline, and the variables the person fills
+  in, such as their own API token). The inbox shows the request under the thread, with **Run**
+  and **Deny**; the agent is told later how it ended. What the person fills in goes to that one
+  run and is kept nowhere, and is taken out of what the agent reads of the output; the page can
+  remember it on the device, encrypted.
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages. Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See

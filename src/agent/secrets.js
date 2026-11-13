@@ -292,6 +292,9 @@ const ESCAPE = {
   xml: (v) => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
 };
 
+/** `value` as it is and as it may come back escaped, each spelling once. */
+export const escapes = (value) => [...new Set(Object.values(ESCAPE).map((e) => e(value)))];
+
 /** Whether `text` is a JSON object or array. */
 const isJson = (text) => {
   try {
@@ -380,8 +383,8 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
   console.log(JSON.stringify({ route: 'gateway', secrets: [...named], sent: true }));
   const res = await send(new Request(put(request.url, 'url'), init));
   // The value, and how it may come back escaped: the longest first, as they may overlap.
-  const back = [...values].flatMap(([name, value]) => [...new Set(Object.values(ESCAPE)
-    .map((e) => e(value)))].map((v) => [v, placeholder(name)]))
+  const back = [...values].flatMap(([name, value]) => escapes(value)
+    .map((v) => [v, placeholder(name)]))
     .sort((x, y) => y[0].length - x[0].length);
   const scrub = (s) => back.reduce((out, [value, ph]) => out.split(value).join(ph), s);
   const out = new Headers();

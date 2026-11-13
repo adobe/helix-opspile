@@ -825,6 +825,8 @@ function thread(asked) {
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
+    // As src/api.js: the commands the agent asked a person to run (src/bashrequests.js).
+    bash_requests: store.bashRequests.get(key) || [],
     // As src/api.js: the agent's latest finished turn, kept when it ended.
     agent_turn: (() => {
       const t = agentTurn(entry);
@@ -1307,6 +1309,40 @@ async function api(req, res, url) {
       return json(res, { view: 'message', url: u, message: { source: 'slack', ...message } });
     }
     return json(res, store.sourceViews.get(u) || { view: 'none', url: u, reason: 'The site answered 403: it may need a sign-in.' });
+  }
+  const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
+  if (bash && req.method === 'POST') {
+    // As src/agent/bashrequest.js: run answers once the command has started; it ends a few
+    // seconds later, and the room says so each time. The values are not kept, or printed.
+    const { thread: key, id, env: values = {} } = await readJson(req);
+    const entry = store.threads.get(key);
+    const request = entry && inTeam(entry.row.team)
+      && (store.bashRequests.get(key) || []).find((r) => r.id === id);
+    if (!request) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const me = store.people.get(ME);
+    if (request.status !== 'pending') {
+      return json(res, { error: `${request.by?.name || 'Someone'} ran it already`, request }, 409);
+    }
+    const missing = request.env.find((v) => !values[v.name]);
+    if (bash[1] === 'run' && missing) {
+      return json(res, { error: `fill in ${missing.name}` }, 400);
+    }
+    const at = new Date().toISOString();
+    Object.assign(request, { by: { id: ME, name: me.name }, decided_at: at });
+    if (bash[1] === 'deny') {
+      Object.assign(request, { status: 'denied', finished_at: at });
+    } else {
+      request.status = 'running';
+      setTimeout(() => {
+        Object.assign(request, { status: 'done', exit_code: 0, finished_at: new Date().toISOString() });
+        broadcast(entry.row.team, { type: 'bash', thread: key });
+      }, 4000);
+    }
+    console.log(`command ${id} on ${key}: ${bash[1]}`);
+    broadcast(entry.row.team, { type: 'bash', thread: key });
+    return json(res, { ok: true, request }, bash[1] === 'run' ? 202 : 200);
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
