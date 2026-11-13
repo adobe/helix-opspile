@@ -1475,11 +1475,9 @@ async function api(req, res, url) {
     if (files.length) {
       console.log(`post with ${files.length} file(s): ${files.map((f) => `${f.name} (${f.size} bytes)`).join(', ')}`);
     }
-    if (!app) {
-      await new Promise((r) => {
-        setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
-      });
-    }
+    await new Promise((r) => {
+      setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
+    });
     // A channel that turns replies away (fixtures: `rejects`), as Slack does an archived one.
     if (entry.ch.rejects && !app) {
       return json(res, { error: `Slack: ${entry.ch.rejects}` }, 502);
@@ -1509,7 +1507,8 @@ async function api(req, res, url) {
     setTimeout(() => {
       store.post(key, app ? 'app' : 'dana', `${arrived}${listed}`.trim(), at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
-    }, app ? 1200 : ARRIVE_MS);
+    // As the bot, it comes back later still in production (now and then after a minute).
+    }, app ? ARRIVE_MS * 1.5 : ARRIVE_MS);
     return json(res, {
       ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
     });
@@ -1542,6 +1541,10 @@ async function api(req, res, url) {
       return json(res, { error: 'not found' }, 404);
     }
     const native = entry.row.source === 'teams' ? PICKER_TEAMS[emoji] || emoji : emoji;
+    // The platform takes a moment, as with a reply; the page shows the reaction meanwhile.
+    await new Promise((r) => {
+      setTimeout(r, SEND_MS);
+    });
     setReaction(entry, id, native, remove);
     console.log(`react ${remove ? '-' : '+'}${native}`);
     broadcast(entry.row.team, { type: 'thread', thread: key });

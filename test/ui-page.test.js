@@ -671,6 +671,48 @@ describe('inbox page', () => {
     });
   });
 
+  it('shows a reaction made here at once, and one taken off as gone', () => {
+    const glyphs = {
+      eyes: 'E', pray: 'P', thumbsup: 'U', '+1': 'U',
+    };
+    const { withReaction } = piece('function withReaction', 'async function react(', 'withReaction', {
+      emoji: (n) => glyphs[n] || `:${n}:`,
+    });
+    const list = [{
+      emoji: '+1', count: 1, names: ['Ann'], mine: false,
+    }];
+    // Added to someone else's, under the name the thread has it.
+    assert.deepEqual(withReaction(list, 'thumbsup', false, 'Me'), [{
+      emoji: '+1', count: 2, names: ['Ann', 'Me'], mine: true,
+    }]);
+    // A new one goes last; the thread's list is left as it was.
+    assert.deepEqual(withReaction(list, 'eyes', false, 'Me').map((r) => [r.emoji, r.count, r.mine]), [['+1', 1, false], ['eyes', 1, true]]);
+    assert.equal(list[0].count, 1);
+    // Taken off: one fewer, or gone when it was the only one; nothing to take off, no change.
+    const mine = withReaction(list, 'pray', false, 'Me');
+    assert.deepEqual(withReaction(mine, 'pray', true, 'Me'), list);
+    assert.deepEqual(withReaction(withReaction(list, '+1', false, 'Me'), '+1', true, 'Me'), list);
+    assert.deepEqual(withReaction(list, '+1', true, 'Me'), list);
+    // Twice is once.
+    assert.deepEqual(withReaction(mine, 'pray', false, 'Me'), mine);
+  });
+
+  it('sends a reply as the bot looking like the bot\'s replies in that workspace', () => {
+    const ours = (thread, name) => ({
+      thread, editable: 'app', author: { kind: 'bot', name }, avatar: `${name}.png`, authorKey: `k-${name}`,
+    });
+    const state = {
+      cache: new Map([
+        ['slack:T1:C1:1', { data: { messages: [ours('slack:T1:C1:1', 'Ops'), { thread: 'slack:T1:C1:1', author: { kind: 'bot', name: 'Other' } }] } }],
+        ['slack:T2:C2:1', { data: { messages: [ours('slack:T2:C2:1', 'Elsewhere')] } }],
+      ]),
+    };
+    const { appLook } = piece('function appLook', '/** Shows the thread', 'appLook', { state });
+    assert.deepEqual(appLook('slack:T1:C9:2'), { author: { kind: 'bot', name: 'Ops' }, avatar: 'Ops.png', authorKey: 'k-Ops' });
+    assert.equal(appLook('teams:T1:C1:1').unnamed, true);
+    assert.equal(appLook('teams:T1:C1:1').author.name, 'The bot');
+  });
+
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
     const {
       sendBar, sendDecides, sendOutcome, sendState,
