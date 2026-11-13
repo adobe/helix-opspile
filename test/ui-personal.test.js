@@ -12,9 +12,9 @@
 
 /*
  * The simple personal view (ui/inbox.js, `simple` and GROUPS): the customer column, the list
- * by customer, picking a customer and going back to all of them, the red badge as threads are
- * read, Mentions (the @ switch), and the switch to the expert view. The page's own code, in
- * two pieces, run in Node with what they need of the rest of the page stubbed.
+ * by customer, picking a customer and going back to all of them, excluding one (≠), the red
+ * badge as threads are read, Mentions (the @ switch), and the switch to the expert view. The
+ * page's own code, in pieces, run in Node with what they need of the rest of the page stubbed.
  */
 
 import assert from 'node:assert/strict';
@@ -79,16 +79,21 @@ const inbox = () => [
 let state;
 let views;
 let page;
+let bar;
 
-/** The two pieces, sharing `state`: which view is on screen, then the column and the list. */
+/**
+ * The pieces, sharing `state`: which view is on screen, then the column and the list, then the
+ * Customers button of narrower screens.
+ */
 function load() {
-  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter, mentionsOn', {
+  views = piece('const PERSONAL_FACETS', "/**\n * A facet row's bar", 'personal, expertOn, simple, viewFacets, passes, toggleFilter, mentionsOn, notButton', {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount, youBadge', {
     state,
     esc,
+    notButton: views.notButton,
     listed: () => state.data.threads,
     passes: views.passes,
     simple: views.simple,
@@ -116,6 +121,17 @@ function load() {
     KIND_EMOJI: { question: '❓' },
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
+    AT: '<svg/>',
+  });
+  bar = piece('function filtButton(on) {', '/*\n * The thread list stays put', 'filtButton', {
+    state,
+    listed: () => state.data.threads,
+    passes: views.passes,
+    simple: views.simple,
+    mentionsOn: views.mentionsOn,
+    youCount: page.youCount,
+    youBadge: page.youBadge,
+    SLIDERS: '<svg/>',
     AT: '<svg/>',
   });
 }
@@ -157,6 +173,8 @@ function read(key) {
 }
 /** A click on a customer's heading (or its row in the column): it picks it, or lets it go. */
 const pick = (v) => views.toggleFilter('customer', v, false);
+/** A click on a customer's ≠ in the column, or a Shift-click on its row. */
+const exclude = (v) => views.toggleFilter('customer', v, true);
 
 beforeEach(() => {
   state = {
@@ -376,6 +394,99 @@ describe('the simple personal view', () => {
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
       state.data.threads.find((t) => t.thread === 'g1').last_at = '2026-11-06T10:00Z';
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+    });
+  });
+
+  describe('excluding a customer', () => {
+    const column = () => [...page.simpleCustomers().matchAll(/data-v="([^"]+)"/g)].map((m) => m[1]);
+    const heads = () => outline().filter((x) => x.startsWith('#'));
+
+    it('has the ≠ of the expert view\'s cards on every customer, and not on All customers', () => {
+      for (const v of ['acme', 'globex', 'initech']) {
+        assert.match(columnRow(v), /<button class="not" type="button" data-not aria-pressed="false" title="Exclude \(or Shift-click the row\)" aria-label="Exclude">≠<\/button>/);
+      }
+      assert.doesNotMatch(columnRow(''), /data-not/);
+      // Between the name and the badge, which stays the row's last.
+      assert.match(columnRow('acme'), /<\/span><button class="not"[^>]*>≠<\/button><b class="men"/);
+    });
+
+    it('leaves the customer out of the list, and strikes it through at the end of the column', () => {
+      exclude('acme');
+      assert.deepEqual([...state.not.customer], ['acme']);
+      assert.equal(state.sel.customer, undefined);
+      assert.deepEqual(outline(), ['# globex', 'g1', 'g2', '# initech', 'i1']);
+      assert.deepEqual(column(), ['globex', 'initech', 'acme']);
+      assert.match(columnRow('acme'), /^<div class="fr off" data-f="customer" data-v="acme" title="ACME \(excluded\)">/);
+      assert.match(columnRow('acme'), /<button class="not" type="button" data-not aria-pressed="true" title="Stop excluding" aria-label="Stop excluding">≠<\/button>/);
+      assert.doesNotMatch(columnRow('globex'), /class="fr off"/);
+    });
+
+    it('counts nothing of an excluded customer: no badge, not bold, not in All customers', () => {
+      assert.equal(badge(columnRow('')), '3');
+      assert.equal(badge(bar.filtButton(0)), '3');
+      exclude('acme');
+      assert.equal(badge(columnRow('acme')), null);
+      assert.match(columnRow('acme'), /<span class="lab">ACME<\/span>/);
+      assert.equal(badge(columnRow('')), '1');
+      assert.equal(badge(bar.filtButton(0)), '1');
+      exclude('globex');
+      assert.equal(badge(columnRow('')), null);
+      assert.equal(badge(bar.filtButton(0)), null);
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+    });
+
+    it('keeps an excluded customer in the column with no thread, and a click brings it back', () => {
+      exclude('initech');
+      // Mentions: Initech has no such thread, and neither does a customer the inbox has none of.
+      state.mentions = true;
+      state.not.customer.add('umbrella');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech', 'umbrella']);
+      assert.match(columnRow('umbrella'), /^<div class="fr off"/);
+      state.mentions = false;
+      pick('umbrella');
+      pick('initech');
+      // A click on an excluded customer stops excluding it; it does not pick it.
+      assert.equal(state.not.customer, undefined);
+      assert.equal(state.sel.customer, undefined);
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.deepEqual(heads(), ['# acme', '# globex', '# initech']);
+      // And so does its ≠.
+      exclude('initech');
+      exclude('initech');
+      assert.equal(state.not.customer, undefined);
+    });
+
+    it('goes with a customer picked, still one at a time', () => {
+      exclude('initech');
+      pick('globex');
+      pick('acme');
+      assert.deepEqual([...state.sel.customer], ['acme']);
+      assert.deepEqual([...state.not.customer], ['initech']);
+      assert.deepEqual(heads(), ['# acme']);
+      assert.match(columnRow('acme'), /^<div class="fr on"/);
+      assert.match(columnRow('initech'), /^<div class="fr off"/);
+      // Back to all customers from the heading: Initech stays out.
+      pick('acme');
+      assert.deepEqual(heads(), ['# acme', '# globex']);
+      // Excluding the customer picked lets it go.
+      pick('acme');
+      exclude('acme');
+      assert.equal(state.sel.customer, undefined);
+      assert.deepEqual([...state.not.customer], ['initech', 'acme']);
+      assert.deepEqual(heads(), ['# globex']);
+    });
+
+    it('leaves All customers picked while no customer is; it drops what is excluded too', () => {
+      exclude('acme');
+      assert.match(columnRow(''), /^<div class="fr all on" data-clear="1">/);
+      pick('globex');
+      assert.match(columnRow(''), /^<div class="fr all" data-clear="1">/);
+      // All customers is the card's clear (data-clear), which drops the pick and what is excluded.
+      delete state.sel.customer;
+      delete state.not.customer;
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.deepEqual(heads(), ['# acme', '# globex', '# initech']);
+      assert.equal(badge(columnRow('')), '3');
     });
   });
 
