@@ -1316,11 +1316,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
-  // A thread that went on for more than a year: every header says its day, not only its time
-  // ("Sep 9, 2025 at 12:00 PM", "Nov 7 at 12:00 PM", "Yesterday at 12:00 PM"), the day's
-  // divider stays on top while its messages scroll by, and the divider of another year says
-  // which. A short reply under a long header, and Dana's own, which have the pen beside their
-  // quick reactions.
+  // A thread that went on for more than a year and was last heard of yesterday: its latest
+  // message says its day with its time ("Yesterday at 12:02 PM"), the others the time alone,
+  // as the day is in the divider, which stays on top while its messages scroll by (and says
+  // the year of another year). Pointing at any time shows the whole date. A short reply under
+  // a long header, and Dana's own, which have the pen beside their quick reactions.
   const noonBefore = (n) => {
     const d = new Date(now);
     const noon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 12);
@@ -1336,8 +1336,6 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['ola', noonBefore(1), 'Thanks. The names are right on preview, live still has the hashed ones.'],
       ['dana', noonBefore(1) - 2, 'Live follows with tonight\'s publish.'],
       ['dana', noonBefore(1) - 3, 'I will check it in the morning.'],
-      ['ola', 35, 'Live has the names now.'],
-      ['priya', 30, 'Good. I will close this one.'],
     ],
     reads: { dana: 'latest', priya: 'latest' },
     label: {

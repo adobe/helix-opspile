@@ -14,8 +14,10 @@
  * A message's header (ui/inbox.js, `message`): who and when, each with its own hover, and the
  * quick reactions, which are the bubble's.
  *
- * - The time says its day when that is not today ("Yesterday at 11:43 AM", "Nov 10 at
- *   11:43 AM"): the day's divider scrolls away. Pointing at it shows the whole date.
+ * - The time is the time of day: the day is in the day's divider, which stays on top of the
+ *   thread. Only the thread's latest message says its day too ("Yesterday at 11:43 AM",
+ *   "Nov 10 at 11:43 AM"): a date in every header was too much. Pointing at any shows the
+ *   whole date.
  * - The quick reactions show for the pointer on the bubble, not on the message: over the header
  *   they hid the name (whose hover is the profile card) and the time.
  */
@@ -46,7 +48,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 function DateTimeFormat(_, opts) {
   return new Intl.DateTimeFormat('en-US', opts);
 }
-const dates = () => piece('const formatter = ', 'const PLATFORM = ', 'timeLabel, timeTag, dayLabel, nearDay', {
+const dates = () => piece('const formatter = ', 'const PLATFORM = ', 'timeLabel, timeTag, dayLabel, nearDay, clock', {
   esc, Intl: { DateTimeFormat },
 });
 
@@ -57,7 +59,7 @@ const at = (...ymd) => new Date(...ymd).toISOString();
 describe('message time', () => {
   const { timeLabel, dayLabel, nearDay } = dates();
 
-  it('is the time alone today, and says its day before that, as Slack does', () => {
+  it('with its day, is the time alone today and says the day before that, as Slack does', () => {
     assert.equal(timeLabel(at(2026, 10, 13, 8, 5), NOW), '8:05 AM');
     assert.equal(timeLabel(at(2026, 10, 13, 0, 0), NOW), '12:00 AM');
     assert.equal(timeLabel(at(2026, 10, 12, 23, 59), NOW), 'Yesterday at 11:59 PM');
@@ -93,21 +95,36 @@ describe('message time', () => {
     assert.equal(dayLabel(at(2026, 10, 10, 11, 43), new Date(2027, 0, 5)), 'Tuesday, November 10, 2026');
   });
 
-  it('is a time element with the whole date for the pointer: weekday, date, time, zone', () => {
-    const { timeTag, timeLabel: label } = dates();
+  it('is a time element: the time of day, and the whole date for the pointer', () => {
+    const { timeTag, clock } = dates();
     const iso = at(2026, 10, 10, 11, 43, 7);
-    const html = timeTag(iso);
-    const [, datetime, title, text] = html.match(/^<time datetime="([^"]+)" title="([^"]+)">([^<]+)<\/time>$/);
+    const [, datetime, title, text] = timeTag(iso).match(/^<time datetime="([^"]+)" title="([^"]+)">([^<]+)<\/time>$/);
     assert.equal(datetime, iso);
+    // Weekday, date, time to the second, time zone.
     assert.match(title, /^Tuesday, November 10, 2026 at 11:43:07 AM \S+$/);
+    // No day in it: that is the divider's.
+    assert.equal(text, '11:43 AM');
+    assert.equal(text, clock(iso));
+  });
+
+  it('says its day too where asked to (the latest message), with the same whole date', () => {
+    const { timeTag, timeLabel: label } = dates();
+    const iso = at(2025, 10, 10, 11, 43, 7);
+    const [, title, text] = timeTag(iso, true).match(/^<time datetime="[^"]+" title="([^"]+)">([^<]+)<\/time>$/);
     assert.equal(text, label(iso));
-    assert.match(text, /^(\d|Yesterday|[A-Z][a-z]{2} \d)/);
+    assert.match(text, /^Nov 10, 2025 at 11:43 AM$/);
+    assert.match(title, /^Monday, November 10, 2025 at 11:43:07 AM \S+$/);
+    // Today's latest message is the time alone, as every other.
+    const now = new Date();
+    const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12).toISOString();
+    assert.match(timeTag(noon, true), />12:00 PM<\/time>$/);
   });
 
   it('does not throw on a date it cannot read', () => {
     const { timeTag } = dates();
     assert.equal(timeLabel('nonsense', NOW), 'Invalid Date');
     assert.match(timeTag('nonsense'), /^<time datetime="nonsense" title="Invalid Date">Invalid Date<\/time>$/);
+    assert.match(timeTag('nonsense', true), />Invalid Date<\/time>$/);
   });
 });
 
@@ -123,7 +140,7 @@ function page({ readonly = false } = {}) {
     emoji,
     md: (body) => `<p>${esc(body)}</p>`,
     dayLabel: (iso) => iso.slice(0, 10),
-    timeTag: (iso) => `<time datetime="${iso}" title="whole">when</time>`,
+    timeTag: (iso, dated) => `<time datetime="${iso}" title="whole">${dated ? 'day and time' : 'time'}</time>`,
     profileKey: (key, { name }) => key || `local:${name}`,
     avatar: (name) => `<span class="av">${esc(name[0])}</span>`,
     favicon: (d) => `/favicon/${d}`,
@@ -145,7 +162,18 @@ describe('message header', () => {
   it('has the name, with its profile card, and the time, with its date, in the header', () => {
     const html = page().message(msg({ authorKey: 'slack:U1' }), null, false);
     const [, who] = html.match(/<div class="who">(.*?)<\/div>/);
-    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> · <time datetime="2026-11-12T10:43:00.000Z" title="whole">when</time>');
+    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> · <time datetime="2026-11-12T10:43:00.000Z" title="whole">time</time>');
+  });
+
+  it('says the day in the header of the thread\'s latest message only', () => {
+    const { message } = page();
+    assert.match(message(msg(), null, false, false, true), /<div class="who">.*?title="whole">day and time<\/time><\/div>/);
+    assert.match(message(msg(), null, false, true), /<div class="who">.*?title="whole">time<\/time><\/div>/);
+    // The thread marks one message so, when its feed is built: the first of the last run of
+    // one author's messages, which is the last with a header. No other call asks for the day.
+    assert.match(js, /if \(m\.author\?\.kind !== 'system' && !continues\(prev, m\)\) headed = last;/);
+    assert.match(js, /if \(headed\) headed\.item\.html = message\(headed\.m, headed\.prev, false, Boolean\(headed\.followed\), true\);/);
+    assert.equal(js.match(/timeTag\([^()]*, (dated|true)\)/g).length, 1);
   });
 
   it('keeps the quick reactions out of the name and the time: beside them, in the header line', () => {
@@ -178,9 +206,9 @@ describe('message header', () => {
     assert.match(html, /<div class="head"><div class="who">.*?<\/div><div class="quick-at">/);
   });
 
-  it('dates system lines and the line between a group\'s posts the same way', () => {
+  it('gives system lines, the line between a group\'s posts and the sidebar the same time', () => {
     const html = page().message(msg({ author: { kind: 'system' }, body: 'Sam joined.' }), null, false);
-    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> · <time datetime="2026-11-12T10:43:00\.000Z" title="whole">when<\/time><\/div>$/);
+    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> · <time datetime="2026-11-12T10:43:00\.000Z" title="whole">time<\/time><\/div>$/);
     assert.match(js, /<div class="post"><span>new post · \$\{timeTag\(m\.at\)\}<\/span><\/div>/);
     // The sidebar's messages too.
     assert.equal(js.match(/<div class="who"><b>[^<]*<\/b> · \$\{(?:m\.pending \? 'sending…' : )?timeTag\(m\.at\)\}<\/div>/g).length, 2);

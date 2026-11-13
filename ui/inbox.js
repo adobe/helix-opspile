@@ -95,9 +95,9 @@ function dayLabel(iso, now = new Date()) {
   return days.get(day);
 }
 /**
- * When a message was posted, as its header says it: the time alone today, and with its day
- * before that ("Yesterday at 11:43", "Nov 10 at 11:43", "Nov 10, 2025 at 11:43"), as in Slack.
- * The day's divider scrolls away; this stays with the message.
+ * When a message was posted, with its day: the time alone today, and the day with it before
+ * that ("Yesterday at 11:43", "Nov 10 at 11:43", "Nov 10, 2025 at 11:43"), as in Slack. Only
+ * the thread's latest message says it so (`timeTag`).
  */
 function timeLabel(iso, now = new Date()) {
   const d = new Date(iso);
@@ -106,10 +106,13 @@ function timeLabel(iso, now = new Date()) {
   return `${near || (d.getFullYear() === now.getFullYear() ? SHORT_DATE : YEAR_DATE)(d)} at ${CLOCK(d)}`;
 }
 /**
- * A message's time in its header (`timeLabel`); pointing at it shows the whole of it: the
- * weekday, the date, the time to the second and its time zone.
+ * A message's time in its header: the time of day, as the day is in the divider above, which
+ * stays on top of the thread. `dated` is the thread's latest message, which says its day too
+ * (`timeLabel`): how long ago the thread was last heard of is what one opens it to see.
+ * Pointing at either shows the whole of it: the weekday, the date, the time to the second and
+ * its time zone.
  */
-const timeTag = (iso) => `<time datetime="${esc(iso)}" title="${esc(WHOLE_TIME(new Date(iso)))}">${esc(timeLabel(iso))}</time>`;
+const timeTag = (iso, dated = false) => `<time datetime="${esc(iso)}" title="${esc(WHOLE_TIME(new Date(iso)))}">${esc(dated ? timeLabel(iso) : clock(iso))}</time>`;
 const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord' };
 const platform = (t) => PLATFORM[t.source] || 'Teams';
 // The account a person connects for a platform.
@@ -2047,7 +2050,7 @@ const continues = (prev, m) => Boolean(prev) && m.author?.kind !== 'system' && p
 
 // A run of one author's messages: the name above the first, the avatar beside the last
 // (`followed`: the next message goes on from this one).
-function message(m, prev, fresh, followed = false) {
+function message(m, prev, fresh, followed = false, dated = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
   const enter = fresh ? 'enter' : '';
@@ -2060,7 +2063,7 @@ function message(m, prev, fresh, followed = false) {
   const key = profileKey(m.authorKey, {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
-  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at)}`;
+  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
@@ -2622,7 +2625,7 @@ function sideGroup(key, run, { last, trailing }) {
   const faces = `${people.map((p) => avatar(p?.name || '?', faceOf(p?.name))).join('')}${avatar(AGENT_NAME, '/icon-192.png')}`;
   const what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
     : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
-  const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${timeLabel(run.at(-1).at)} · not posted`;
+  const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
   const doing = working ? `<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
     <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(t.text)}…</div></div></div>` : '';
   const queued = waiting ? `<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>` : '';
@@ -3069,6 +3072,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   let day = null;
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
   let last = null;
+  let headed = null;
   // The sidebar's messages, each run of them where it happened, folded (sideGroup).
   const sidebar = sideList(key);
   let si = 0;
@@ -3087,12 +3091,16 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
     if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post"><span>new post · ${timeTag(m.at)}</span></div>` }); prev = null; }
     if (!group && i === 1 && thread.root_at && replies) { items.push({ html: `<div class="divider">${replies} ${replies === 1 ? 'reply' : 'replies'}</div>` }); prev = null; }
-    if (last && continues(prev, m)) last.item.html = message(last.m, last.prev, false, true);
+    if (last && continues(prev, m)) { last.followed = true; last.item.html = message(last.m, last.prev, false, true); }
     const item = { html: message(m, prev, false), enter: fresh(m) };
     items.push(item);
     last = { item, m, prev };
+    // The latest message with a header: the first of the last run of one author's.
+    if (m.author?.kind !== 'system' && !continues(prev, m)) headed = last;
     prev = m;
   });
+  // It says its day with its time (timeTag): the others have the day's divider.
+  if (headed) headed.item.html = message(headed.m, headed.prev, false, Boolean(headed.followed), true);
   if (gap) items.push({ html: `<div class="sys">${gap.toLocaleString()} later ${gap === 1 ? 'post is' : 'posts are'} not shown.</div>` });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
   const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
