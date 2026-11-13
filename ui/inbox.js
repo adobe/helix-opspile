@@ -31,6 +31,9 @@ const state = {
   editing: null,
   // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
   edits: new Map(),
+  // Reactions made here and not back from the platform yet, shown as made (`openThread`): by
+  // message and emoji, { id, name, remove, at, done }, `done` once the platform took them.
+  reacting: new Map(),
 };
 
 // The thread list's design explorations (`?design=a|b|c`) are over: A is the list. A choice one
@@ -2018,13 +2021,14 @@ function message(m, prev, fresh, followed = false) {
   const enter = fresh ? 'enter' : '';
   if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} · ${clock(m.at)}</div>`;
   const adobe = Boolean(a.staff);
-  // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage.
-  const own = Boolean(m.mine || m.pending);
+  // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage. A reply being
+  // sent as the bot looks like the bot's.
+  const own = Boolean(m.mine || (m.pending && !m.app));
   const cont = continues(prev, m);
   const key = profileKey(m.authorKey, {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
-  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' ? ' bot' : ''} · ${clock(m.at)}`;
+  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${clock(m.at)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
@@ -2947,11 +2951,12 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
   // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions). One still on its way,
   // or that failed, stays; one the platform took, for a minute at most. One nobody knows about
-  // stays until it arrives, which settles it, or the person decides.
+  // stays until it arrives, which settles it, or the person decides. A reply as the bot, which
+  // comes back more slowly (a minute or more), stays for up to `SEND_APP_ARRIVE_MS`.
   const settled = new Set();
   state.sending = state.sending.filter((p) => {
     if (p.status === 'sending' || p.status === 'failed') return true;
-    if (p.status !== 'unknown' && Date.now() - p.sentAt >= 60000) return false;
+    if (p.status !== 'unknown' && Date.now() - p.sentAt >= (p.app ? SEND_APP_ARRIVE_MS : 60000)) return false;
     if (p.thread !== key) return true;
     // An earlier message with the same words ("Thanks") is not this one.
     const since = p.status === 'unknown' ? Date.parse(p.at) - SEND_CLOCK_MS : 0;
@@ -2973,9 +2978,20 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (Date.now() - e.sentAt > 60000 || (!e.saving && (looseText(m.body) === looseText(e.body)
       || (m.editedAt && Date.parse(m.editedAt) >= e.sentAt - 2000)))) state.edits.delete(id);
   }
+  // Reactions made here show as made until the thread has them too (once the platform took
+  // them), the platform refused them, or a minute has passed.
+  for (const [k, r] of state.reacting) {
+    const m = messages.find((x) => `${x.thread}|${x.id}` === r.id);
+    const has = (m?.reactions || []).some((x) => x.mine && emoji(x.emoji) === emoji(r.name));
+    if (Date.now() - r.at > 60000 || (r.done && m && has === !r.remove)) state.reacting.delete(k);
+  }
   const withEdit = (m) => {
-    const e = state.edits.get(`${m.thread}|${m.id}`);
-    return e ? { ...m, body: e.body, editedAt: new Date(e.sentAt).toISOString(), saving: e.saving } : m;
+    const id = `${m.thread}|${m.id}`;
+    const e = state.edits.get(id);
+    const made = [...state.reacting.values()].filter((r) => r.id === id);
+    const reactions = made.reduce((list, r) => withReaction(list, r.name, r.remove, state.me?.name), m.reactions);
+    const n = made.length ? { ...m, reactions } : m;
+    return e ? { ...n, body: e.body, editedAt: new Date(e.sentAt).toISOString(), saving: e.saving } : n;
   };
   const sending = state.sending.filter((p) => p.thread === key);
   const shown = [...messages.map(withEdit), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
@@ -3929,6 +3945,9 @@ const SEND_FADE_MS = 300;
 const SEND_CLOCK_MS = 60 * 1000;
 // The Worker keeps a reply's key for a day (src/postkeys.js): after that, Retry could post twice.
 const SEND_KEY_MS = 23 * 60 * 60 * 1000;
+// How long a reply as the bot, which the platform took, waits to come back (its events take
+// longer than a person's, now and then over a minute).
+const SEND_APP_ARRIVE_MS = 3 * 60 * 1000;
 
 /**
  * The bar of reply `p` at `now`: how full it is (0 to 1), how visible, and whether it is
@@ -3998,6 +4017,27 @@ function ownLook(key, source) {
     }
   }
   return { author: { kind: 'person', name: state.me.name, staff: true }, avatar: null, authorKey: null };
+}
+
+/**
+ * How the bot's messages look where thread `key` is (its platform and workspace), from the
+ * latest one the viewer posted as the bot that opspile has, this thread's first: a reply being
+ * sent as the bot looks the same. Without one, it is "The bot" (`unnamed`).
+ */
+function appLook(key) {
+  const place = String(key).split(':').slice(0, 2).join(':');
+  const lists = [key, ...state.cache.keys()].map((k) => state.cache.get(k)?.data?.messages || []);
+  for (const list of lists) {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const m = list[i];
+      if (m.editable === 'app' && String(m.thread).startsWith(`${place}:`) && !m.deletedAt) {
+        return { author: m.author, avatar: m.avatar || null, authorKey: m.authorKey || null };
+      }
+    }
+  }
+  return {
+    author: { kind: 'bot', name: 'The bot', staff: false }, avatar: null, authorKey: null, unnamed: true,
+  };
 }
 
 /** Shows the thread's replies being sent as they are now, if it is open. */
@@ -4172,6 +4212,7 @@ const appKeys = new Map();
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
  * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
  * mentions, as when you send it. `again` sends it under a new key, knowing it may go out twice.
+ * It shows at once, as a reply you send does; if it did not go out, its bubble goes again.
  * Resolves to `{ invited, missed }` (what `invitedSaying` says, or '', and `missedMention`), or
  * to `{ error, unsure }`;
  * `unsure` when nobody knows whether it went out.
@@ -4182,11 +4223,32 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   const once = JSON.stringify([key, text, files.map((f) => [f.name, f.size])]);
   if (again) appKeys.delete(once);
   if (!appKeys.has(once)) appKeys.set(once, crypto.randomUUID());
+  sendSeq += 1;
+  const kinds = Object.fromEntries(mentions.map((m) => [m.name, mentionKindOf(m.name)]).filter(([, k]) => k));
+  // `base`: the draft it sends, whose line is not offered again while it goes (renderDraftBar).
+  const p = {
+    thread: key, body: text.trim(), mentions, kinds, base, files: [], at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: state.cache.get(key)?.data?.thread?.source || String(key).split(':')[0], status: 'sending', startedAt: Date.now(), doneAt: null, app: true, ...appLook(key),
+  };
+  state.sending.push(p);
+  showSending(key);
+  animateSending();
   const res = await postWith('/api/post/app', {
     thread: key, text, key: appKeys.get(once), ...(mentions.length ? { mentions } : {}), ...(base ? { draft: base } : {}),
-  }, files);
+  }, files).catch((e) => ({ ok: false, status: 0, data: { error: `could not send: ${e.message}` } }));
   if (res.ok || sendOutcome(res) === 'failed') appKeys.delete(once);
-  if (!res.ok) return { error: res.data.error || `could not send (${res.status})`, unsure: sendOutcome(res) === 'unknown' };
+  if (!res.ok) {
+    // Not sent, or nobody knows: the caller says so, and the bubble goes.
+    state.sending = state.sending.filter((x) => x !== p);
+    showSending(key);
+    return { error: res.data.error || `could not send (${res.status})`, unsure: sendOutcome(res) === 'unknown' };
+  }
+  const now = Date.now();
+  // As sent: emoji names as the platform knows them (src/shortcodes.js).
+  const reworded = typeof res.data.text === 'string' && res.data.text !== p.body;
+  Object.assign(p, {
+    body: reworded ? res.data.text : p.body, postedId: res.data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
+  });
+  if (p.status !== 'delivered') animateSending();
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
     state.composers.set(key, { text: '', from: '', base: null });
@@ -5381,10 +5443,41 @@ async function write(path, body) {
   return { error: data.error || `failed (${res.status})`, failed: true };
 }
 
+/**
+ * `reactions` (a message's, as the thread has them) with the viewer's `name` added, or taken
+ * off (`remove`); `who` is the viewer's name among those who reacted.
+ */
+function withReaction(reactions, name, remove, who) {
+  const glyph = emoji(name);
+  const list = (reactions || []).map((r) => ({ ...r, names: [...(r.names || [])] }));
+  const same = list.filter((r) => emoji(r.emoji) === glyph);
+  const r = same.find((x) => x.mine) || same[0];
+  if (remove) {
+    if (!r?.mine) return list;
+    Object.assign(r, { count: r.count - 1, mine: false, names: r.names.filter((n) => n !== who) });
+    return r.count > 0 ? list : list.filter((x) => x !== r);
+  }
+  if (r?.mine) return list;
+  if (r) Object.assign(r, { count: r.count + 1, mine: true, names: [...r.names, who].filter(Boolean) });
+  else list.push({ emoji: name, count: 1, names: who ? [who] : [], mine: true });
+  return list;
+}
+
 async function react(id, emojiName, remove) {
   const at = id.indexOf('|');
+  const key = state.open;
+  const k = `${id}\n${emoji(emojiName)}`;
+  const made = {
+    id, name: emojiName, remove: Boolean(remove), at: Date.now(), done: false,
+  };
+  state.reacting.set(k, made);
+  showSending(key);
   const res = await write('/api/react', { thread: id.slice(0, at), id: id.slice(at + 1), emoji: emojiName, remove });
-  if (!res.failed) reloadSoon(state.open);
+  const mine = state.reacting.get(k) === made;
+  if (mine && res.failed) state.reacting.delete(k);
+  else if (mine) made.done = true;
+  if (res.failed) showSending(key);
+  else reloadSoon(key);
   return res;
 }
 

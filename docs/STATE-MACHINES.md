@@ -118,7 +118,13 @@ event and the draft goes on with its `created_at` and `origin`, as if it had not
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
 makes a retry safe: `post_keys` goes claimed → answered, or is removed when the platform refused. A
 claim with no answer means nobody knows, and then only the person can decide to send it again. A key
-lasts a day, so after that Retry turns into Send again.
+lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
+way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
+and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+
+**Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
+shows on the message at once. It goes once the thread's reactions agree after the platform took it,
+when the platform refused it, or after a minute. A second click on the same emoji replaces it.
 
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
 `{ text, from, base }`). Only a box that holds the draft unchanged follows it.
