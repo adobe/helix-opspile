@@ -68,7 +68,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
 .fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
 .fr.off .lab { text-decoration: line-through; color: var(--mute); }
-.fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+.fr.off .ind, .fr.off .ico, .fr.off .bar, .fr.off .logo { opacity: 0.4; }
 @media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; } }
 .fr .ind { width: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); height: var(--spectrum-spacing-300); background: var(--faint); }
 .fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
@@ -2376,9 +2376,10 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    and name, and the list by customer until one is picked: each customer a heading over its
    threads. Its one mark is red: the badge counts the messages that mention you and that you
    have not read, beside a customer, and the threads it counts are marked in the same red.
-   Unread is bold; nothing else is red, nothing else has a count. */
+   Unread is bold; nothing else is red, nothing else has a count. A customer's \2260 excludes
+   it, as on the expert view's cards: over the end of its name, before the badge. */
 main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
-main.simple .fr .lab { grid-column: 2; }
+main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
 /* A logo: the icon over the customer's initial, which shows where there is none. */

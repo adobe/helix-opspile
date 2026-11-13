@@ -999,6 +999,8 @@ function toggleFilter(id, v, exclude) {
   }
   for (const sets of [state.sel, state.not]) if (!sets[id]?.size) delete sets[id];
 }
+/** A facet row's ≠ button: it excludes the row's value, or stops excluding it (`out`). */
+const notButton = (out) => `<button class="not" type="button" data-not aria-pressed="${out}" title="${out ? 'Stop excluding' : 'Exclude (or Shift-click the row)'}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>`;
 
 /**
  * A facet row's bar. Its length is the count; except on the status card itself, it is
@@ -1058,13 +1060,12 @@ function facetRows(f) {
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
     group = g;
     const out = off.has(v);
-    const not = out ? 'Stop excluding' : 'Exclude (or Shift-click the row)';
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
-      <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
+      ${notButton(out)}
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
@@ -1109,11 +1110,12 @@ function wireLogos() {
 }
 /**
  * The customers' order in the column: those with unread mentions of you first, most mentions
- * first, then those with unread threads, then the rest; by name within each. `c.name` is
- * looked up once per customer, not in every comparison.
+ * first, then those with unread threads, then the rest, then the excluded ones; by name within
+ * each. `c.name` is looked up once per customer, not in every comparison.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
 const columnPile = (c) => {
+  if (c.out) return 3;
   if (c.you > 0) return 0;
   return c.unread ? 1 : 2;
 };
@@ -1121,23 +1123,30 @@ const columnOrder = ([, a], [, b]) => columnPile(a) - columnPile(b) || b.you - a
   || byName.compare(a.name, b.name);
 /**
  * The simple personal view's only card: its customers, by logo and name, bold while they have
- * unread threads, with the red badge. "All customers" first, picked while no customer is. The
- * customers go by `columnOrder`.
+ * unread threads, with the red badge. "All customers" first, picked while no customer is; a
+ * click on it drops the pick and what is excluded. The customers go by `columnOrder`. A row's ≠
+ * (or a Shift-click) excludes its customer, as on the expert view's cards (see toggleFilter):
+ * it stays in the column, struck through, without its badge and whether or not it has threads,
+ * so a click brings it back, and "All customers" does not count it.
  */
 function simpleCustomers() {
   const all = listed().filter((t) => passes(t, 'customer'));
+  const on = state.sel.customer || new Set();
+  const off = state.not.customer || new Set();
   const by = new Map();
+  for (const v of off) by.set(v, { unread: false, you: 0, out: true });
   for (const t of all) {
     const c = by.get(t.org) || { unread: false, you: 0 };
-    c.unread ||= Boolean(t.unread);
-    c.you += youCount(t);
+    if (!c.out) {
+      c.unread ||= Boolean(t.unread);
+      c.you += youCount(t);
+    }
     by.set(t.org, c);
   }
-  const on = state.sel.customer || new Set();
   for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
   for (const [v, c] of by) c.name = customerName(v);
-  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${youBadge(c.you)}</div>`).join('');
+  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
@@ -1618,11 +1627,12 @@ function renderThreads() { inPass(threadRows); }
 
 /**
  * The Filters button of narrower screens, with how many filters are set. In the simple
- * personal view it opens the customers, and carries the red badge of them all.
+ * personal view it opens the customers, and carries the red badge of them all but the
+ * excluded ones.
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
+  const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
   return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
 }

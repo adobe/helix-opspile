@@ -589,7 +589,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Besides its cards it has one switch, **Mentions** (the @ at the top right of the
+  views. Unless the expert view is on (the user menu, the `expert` setting), it is the simple
+  one: a column of customers by logo and name instead of the cards, and the list by customer
+  until one is picked. A customer's ≠ in that column, or a Shift-click on it, excludes it as on
+  the cards (`not.customer=` in the URL, and in a bell on the view): its threads leave the list,
+  and it stays at the end of the column, struck through and out of the red badge of **All
+  customers**, with or without threads, until a click brings it back. **All customers** drops
+  the pick and what is excluded.
+  Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones the red badge counts. The
   customers without such a thread leave the column while it is on. Team views do not have it:
