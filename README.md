@@ -337,8 +337,9 @@ and connected by someone, it gives the agents what that person sees in the inbox
 posting tools: limit it with **Only these tools**, e.g. `list_threads, search_threads,
 get_thread, get_thread_trace`).
 
-**Global MCP servers.** Two servers are built in, set up once for every team, and off until
-the admin team or a team's managers turn them on, for the team (in the team's knowledge base,
+**Global MCP servers.** Two servers are built in, set up once for every team, and on for the
+teams created since they are on by default; otherwise off until the admin team or a team's
+managers turn them on, for the team (in the team's knowledge base,
 **MCP servers**) or for one channel (**Per channel**; a channel's switch wins over its team's):
 
 - **`browser`**, Cloudflare's hosted [Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering):
@@ -361,7 +362,7 @@ the admin team or a team's managers turn them on, for the team (in the team's kn
 See ARCHITECTURE, "Global MCP servers".
 
 **Agent tools.** Some of the agents' tools are off until the admin team or a team's managers
-turn them on, the same way and on the same page (**Tools and MCP servers**, group **Tools**):
+turn them on (a new team starts with **`computer`** and **`extraction_rules`** on), the same way and on the same page (**Tools and MCP servers**, group **Tools**):
 for the team, or for one channel (**Per channel**; a channel's switch wins over its team's):
 
 - **`post_message`**: the agent posts a reply in its thread right away, as the opspile bot of

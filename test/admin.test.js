@@ -104,6 +104,19 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, ADA, 'POST', '/api/admin/teams', { slug: 'helix', name: 'Again' })).status, 409);
     r = await call(e, ADA, 'POST', '/api/admin/teams', { slug: 'search', name: 'Search ops' });
     assert.equal(r.status, 200);
+    // A new team has thread agents on by default, and some tools and global servers on.
+    const rowsOf = (sql) => e.DB.sqlite.prepare(sql).all().map((t) => ({ ...t }));
+    assert.deepEqual(rowsOf('SELECT team, enabled, changed_by FROM agent_teams'), [
+      { team: 'search', enabled: 1, changed_by: 'Ada' },
+    ]);
+    assert.deepEqual(rowsOf(`SELECT tool, scope, target, enabled, changed_by
+      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules'].map((tool) => ({
+      tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
+    })));
+    assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by
+      FROM mcp_global_switches ORDER BY server`), ['browser', 'github'].map((server) => ({
+      server, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
+    })));
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'search', name: 'Search' })).status, 200);
 
     // Finding people to add: people in D1 and platform accounts not linked yet, staff first,
@@ -142,6 +155,9 @@ describe('admin: teams and members', () => {
     assert.match((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'helix' })).body.error, /1 rule\(s\) and 3 thread\(s\)/);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'admin' })).status, 400);
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'search' })).status, 200);
+    for (const table of ['agent_teams', 'agent_tool_switches', 'mcp_global_switches']) {
+      assert.equal(e.DB.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table);
+    }
   });
 });
 
