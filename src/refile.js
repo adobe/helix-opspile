@@ -98,9 +98,9 @@ export async function plan(env, rules, only = null) {
 
 /**
  * Queues one `refile` job per channel (and per few hundred threads). `options` go with each
- * (`delaySeconds`).
+ * (`delaySeconds`), and so does `was` (see `refile`).
  */
-export async function enqueueMoves(env, moves, options = undefined) {
+export async function enqueueMoves(env, moves, options = undefined, was = undefined) {
   if (!env.NORMALIZE) {
     return 0;
   }
@@ -120,6 +120,7 @@ export async function enqueueMoves(env, moves, options = undefined) {
           tenant: channel.tenant,
           channelId: channel.channelId,
           threads: all.slice(i, i + MAX_THREADS_PER_JOB),
+          ...(was ? { was } : {}),
         },
       }, options);
       jobs += 1;
@@ -153,7 +154,9 @@ export async function followChange(env, { tenant }, { before, after }, rules) {
     source: after.source, tenant, channelId: after.channelId, channel: after,
   });
   // The job classifies the channel by its row, written right after this: a little later.
-  const jobs = await enqueueMoves(env, moves, { delaySeconds: CHANGE_DELAY_SECONDS });
+  const jobs = await enqueueMoves(env, moves, { delaySeconds: CHANGE_DELAY_SECONDS }, {
+    org: was.org, team: was.team, kind: was.kind,
+  });
   console.log(JSON.stringify({
     route: 'normalize', refile: 'channel changed', source: after.source, moves: moves.length, jobs,
   }));
@@ -250,9 +253,12 @@ async function reexport(env, threads) {
 }
 
 /**
- * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]] } }`: files
- * the channel's threads where the rules say now. Runs again for the threads it did not get
- * to, so a large channel moves in several jobs.
+ * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]], was? } }`:
+ * files the channel's threads where the rules say now. `was` (`{ org, team, kind }`, from
+ * `followChange`) is how the channel was classified before it changed: a thread whose row a
+ * newer message already filed anew (src/threads.js) is still re-filed from there, with its
+ * vectors, search items and export, which carry the old team, org or kind. Runs again for the
+ * threads it did not get to, so a large channel moves in several jobs.
  *
  * Each thread's folder is read from D1: several rule changes in a row queue several jobs for a
  * channel, and an earlier one may have moved the folder since this job was queued. The folder
@@ -315,8 +321,8 @@ export async function refile(env, job) {
     }
     if (done) {
       const was = rowOf.get(thread);
-      const moved = was && (filedElsewhere
-        || was.team !== cls.team || was.org !== cls.org || was.kind !== cls.kind);
+      const differs = (w) => w.team !== cls.team || w.org !== cls.org || w.kind !== cls.kind;
+      const moved = was && (filedElsewhere || differs(was) || (job.was && differs(job.was)));
       if (moved) {
         // eslint-disable-next-line no-await-in-loop
         await clearDerived(env, thread, cls.kind);
@@ -328,6 +334,9 @@ export async function refile(env, job) {
       if (moved) {
         refiled.push(thread);
         fromTeams.add(was.team);
+        if (job.was) {
+          fromTeams.add(job.was.team);
+        }
       }
     } else {
       left.push([thread, stuck]);

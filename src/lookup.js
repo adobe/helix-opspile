@@ -315,13 +315,16 @@ export async function updateChannelName(env, {
     const after = toChannel({ ...row, name }, source, channelId);
     await onChange(toChannel(row, source, channelId), after);
   }
-  await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
-    VALUES (?, ?, ?, ?, ?)
+  // The check above, again in the write: of two events handled at once, the later one wins.
+  // Moves queued for the one that lost do no harm, since a job files by the row as it is then.
+  const written = await env.DB.prepare(`INSERT INTO channels
+      (source, tenant, channel_id, name, fetched_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
-      fetched_at = excluded.fetched_at`)
-    .bind(source, tenant, channelId, name, at || new Date(now).toISOString())
+      fetched_at = excluded.fetched_at
+    WHERE ?6 IS NULL OR channels.fetched_at IS NULL OR channels.fetched_at <= excluded.fetched_at`)
+    .bind(source, tenant, channelId, name, at || new Date(now).toISOString(), at || null)
     .run();
-  return renamed;
+  return renamed && Boolean(written.meta && written.meta.changes);
 }
 
 /** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */

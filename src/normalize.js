@@ -201,7 +201,7 @@ export function normalizeSlack(key, delivered) {
 
   if (event.type === 'channel_rename' || event.type === 'channel_created') {
     const ch = event.channel || {};
-    const when = payload.event_time || event.event_ts;
+    const when = event.event_ts || payload.event_time;
     return {
       op: 'channel',
       channel: {

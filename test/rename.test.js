@@ -336,4 +336,41 @@ describe('a renamed channel', () => {
     await assert.rejects(quiet(() => getChannel(e2, ref, Date.now(), { onChange })), /the queue is down/);
     assert.equal(e2.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'random-chat');
   });
+
+  it('re-files a thread a reply already moved to another kind, with its search items', async () => {
+    const e = env({
+      rules: [...RULES, {
+        id: 4, target: 'kind', priority: 100, source: null, field: 'name', pattern: '^alerts-', value: 'alert',
+      }],
+    });
+    const batches = [];
+    e.SEARCH = {};
+    e.NORMALIZE.sendBatch = async (list) => batches.push(...list.map((m) => m.body));
+    await ingest(e, { [KEY('1.1')]: message('1.1') });
+    e.queued.length = 0;
+    setName(e, 'random-chat', '2026-01-01T00:00:00Z');
+    channelName = 'alerts-feed';
+    // The reply that finds the new name files its thread as an alert, in the same folder.
+    await ingest(e, { [KEY('1.2')]: message('1.2', { thread_ts: '1.1' }) });
+    assert.equal(filed(e)[0].kind, 'alert');
+    const [job] = e.queued.filter((b) => b.refile);
+    assert.deepEqual(job.refile.was, { org: '_unassigned', team: '_unassigned', kind: 'channel' });
+    await drainRefiles(e);
+    // Re-filed all the same: its vectors and search items are taken away.
+    assert.deepEqual(batches, [{ vectorize: 'slack:E1:C0TEST1:1.1' }]);
+  });
+
+  it('keeps the later of two renames handled at once', async () => {
+    const e = env();
+    await ingest(e, { [KEY('1.1')]: message('1.1') });
+    const ref = { source: 'slack', tenant: 'E1', channelId: 'C0TEST1' };
+    const at = new Date(Date.now() + 60000).toISOString();
+    const later = new Date(Date.now() + 120000).toISOString();
+    const renamed = await updateChannelName(e, { ...ref, name: 'aem-acme', at }, undefined, {
+      // Meanwhile, another handler records a later rename.
+      onChange: async () => setName(e, 'aem-globex', later),
+    });
+    assert.equal(renamed, false);
+    assert.equal(e.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'aem-globex');
+  });
 });

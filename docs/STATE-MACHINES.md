@@ -92,7 +92,9 @@ the guard: a failure to queue fails the job with the old row, and its retry find
 again; the jobs wait 30 seconds, so they read the new row), and before the message that came
 with the change is filed: that message points its thread's row at the new folder, so a job moves both the folder it
 was queued with and the row's. A rename event older than the channel's row (`fetched_at`: out of
-order, or a replay of pile 1) changes nothing.
+order, or a replay of pile 1) changes nothing, and the write says so again, so of two handled at
+once the later wins. A job from `followChange` carries the classification it moved from (`was`):
+a thread a newer message already re-filed in its row still gets its derived data redone.
 
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
