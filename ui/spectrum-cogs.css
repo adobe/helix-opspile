@@ -199,6 +199,9 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 .spectrum .seg button + button { border-left-color: transparent; }
 /* The services: a Picker that takes several, so a field's look, as the team's Picker beside it. */
 .spectrum #servicesBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spectrum-text-to-visual-100);
   color: var(--spectrum-neutral-content-color-default);
   background: var(--spectrum-gray-25);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
