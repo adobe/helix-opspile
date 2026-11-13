@@ -36,8 +36,8 @@ import { secretAdmin, secretsOf } from './secretadmin.js';
  *
  * - `PUT { tool: 'computer', team, runtime }` chooses the shell of a team's computers
  *   (src/agent/kernel.js: `just-bash`, or `slicc-kernel`, which is experimental), and
- *   `PUT { tool: 'computer', team, image }` the image of its kernels (src/agent/image.js), one
- *   of those in the `IMAGES` bucket. For the admin team only.
+ *   `PUT { tool: 'computer', team, image }` the image of its kernels (src/agent/image.js: a
+ *   stack of layers), one of those in the `IMAGES` bucket. For the admin team only.
  *
  * Agents notice at their next message.
  *

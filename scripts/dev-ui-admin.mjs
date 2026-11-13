@@ -18,7 +18,7 @@ import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
-import { IMAGES } from './computer-images.mjs';
+import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
 import { fakeBucket } from '../test/fakes.js';
@@ -552,12 +552,17 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // preview's scripts are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
     // The images of the computers on the SLICC kernel, as the bucket lists them
-    // (scripts/computer-images.mjs): the real ones' names, with made-up sizes.
+    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes.
     IMAGES: fakeBucket({
       'images/index.json': JSON.stringify({
-        v: 1,
-        images: IMAGES.map(({ name, title, description }, i) => ({
-          name, title, description, digest: `dev-${name}`, bytes: (9 + 6 * i) * 1024 * 1024,
+        v: 2,
+        images: IMAGES.map((image, i) => ({
+          name: image.name,
+          title: image.title,
+          description: image.description,
+          digest: `dev-${image.name}`,
+          bytes: (10 + 6 * i) * 1024 * 1024,
+          layers: layerNames(image),
         })),
       }),
     }),

@@ -184,15 +184,13 @@ team's choice: the kernel does not boot, the command fails saying why, and nothi
 kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
 `/tmp`): nothing reads it until the team chooses the kernel again.
 
-**Kernel image.** absent → installed → another installed (`/node_modules/.opspile-image.json` in
-the kernel's root: the digest of the image there, and its packages; `installImage` in
-`src/agent/image.js`). A kernel's boot compares that digest with the manifest in the bucket and
-does nothing when they agree. Else it writes each package that is not there as the image has it,
-the package's manifest last, so one half written (the object stopped) is written again; then it
-removes the packages only the image before had; and it writes the state last, so a boot that
-failed half way (a blob missing from the bucket) starts over at the next command and finds what
-it finished. The bucket is written in the same order (`scripts/computer-images.mjs`): blobs,
-then manifests, then the index, so a manifest never names a blob that is not there.
+**Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
+every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the
+bucket (`scripts/computer-images.mjs`): blobs are written first, then the layers that name them,
+then the manifests that name the layers, then the index, so nothing ever names what is not there;
+and layers and blobs are named by their content and never deleted, so a kernel that booted on an
+older manifest goes on reading its layers after an upload. A running kernel keeps the image it
+booted with until it boots again.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
 (`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks

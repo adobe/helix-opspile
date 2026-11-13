@@ -24,8 +24,8 @@ import { DEFAULT_IMAGE, isImageName } from './image.js';
  * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
- * `IMAGES` bucket, installed from there when the kernel boots, and again when the team
- * chooses another or a deploy changes it.
+ * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageMount`).
+ * The agent's object keeps no copy of it.
  *
  * Its programs reach the network through the kernel's proxy, which hands every request to a
  * transport: here `gatewayFetch`, the same `forward` as just-bash's SecretGateway
@@ -48,8 +48,7 @@ export const RUNTIMES = [
     title: 'SLICC kernel (experimental)',
     description: 'GNU bash with real programs (WebAssembly), with processes, pipes and signals,'
       + ' on the same files, with curl and the secrets as in just-bash. Which programs is the'
-      + ' image\'s choice, below. A command takes about a tenth of a second longer, and each'
-      + ' thread keeps its own copy of the image.',
+      + ' image\'s choice, below. A command takes about a tenth of a second longer.',
   },
 ];
 export const DEFAULT_RUNTIME = 'just-bash';
@@ -141,6 +140,22 @@ export function gatewayFetch(send) {
     delete rest.mode;
     delete rest.credentials;
     return send(new Request(url, rest));
+  };
+}
+
+/**
+ * What a kernel's `mount` takes for `image` (a manifest) at `target`, served by `driver`
+ * (`imageDriver`, src/agent/image.js) in the agent's own object. It is the kernel's
+ * `inProcessMount`, which no release exports yet (slicc-kernel#1831): the key is the one
+ * its bundles share, and `served` is given because 1.185.0 starts no driver without it.
+ */
+export function imageMount(image, target, driver) {
+  return {
+    type: 'image',
+    source: `${image.name}@${image.digest.slice(0, 12)}`,
+    target,
+    options: { ro: '' },
+    [Symbol.for('slicc-kernel.mount.in-process')]: { ...driver, served: () => {} },
   };
 }
 

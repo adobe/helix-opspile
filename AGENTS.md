@@ -57,9 +57,11 @@ code and docs, is the decision model that labels threads and channels.
   test, and `npm run computer:dev` runs an agent's computer in local workerd, both shells and
   every image, to try the rest (README, "Try an agent's computer").
 - The programs of a computer on the SLICC kernel are an **image** in the `IMAGES` bucket, not
-  in the Worker: `scripts/computer-images.mjs` defines the images, from the
+  in the Worker: a stack of read-only layers, mounted at `/opt/image`.
+  `scripts/computer-images.mjs` defines the layers and the images, from the
   `@ai-ecoverse/wasm-*` devDependencies, and `npm run computer:images` uploads them. Add a
-  program there, with its package pinned, and name it in the image's `tools`.
+  program to a layer there, with its package pinned, and name it in the `tools` of the images
+  that have the layer.
 - `ui/rank.js` is the team order's model; its `MODEL` block is written by `npm run rank -- train`
   (README, "Train the team order"), not by hand. `.rank/` holds production threads: never commit it.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change

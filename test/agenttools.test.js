@@ -255,9 +255,14 @@ describe('agent tools', () => {
 
   it('have the kernel\'s image, one of those in the images bucket', async () => {
     const index = (...names) => JSON.stringify({
-      v: 1,
+      v: 2,
       images: names.map((name) => ({
-        name, title: name.toUpperCase(), description: `for ${name}`, digest: `d-${name}`, bytes: 9e6,
+        name,
+        title: name.toUpperCase(),
+        description: `for ${name}`,
+        digest: `d-${name}`,
+        bytes: 9e6,
+        layers: ['shell'],
       })),
     });
     const e = env({ IMAGES: fakeBucket({ 'images/index.json': index('base', 'data') }) });
@@ -265,14 +270,14 @@ describe('agent tools', () => {
       .body.tools.find((t) => t.tool === 'computer');
     let computer = await computerOf(manager);
     assert.deepEqual(computer.image, { image: 'base' });
-    assert.deepEqual(computer.images, [
-      {
-        name: 'base', title: 'BASE', description: 'for base', digest: 'd-base', bytes: 9e6,
-      },
-      {
-        name: 'data', title: 'DATA', description: 'for data', digest: 'd-data', bytes: 9e6,
-      },
-    ]);
+    assert.deepEqual(computer.images, ['base', 'data'].map((name) => ({
+      name,
+      title: name.toUpperCase(),
+      description: `for ${name}`,
+      digest: `d-${name}`,
+      bytes: 9e6,
+      layers: ['shell'],
+    })));
     assert.equal((await computerOf(admin, 'kb-org-acme')).images, undefined);
 
     const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', ...body });

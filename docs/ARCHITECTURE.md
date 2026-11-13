@@ -1738,40 +1738,54 @@ the default. An agent follows its team's choice before each delivery, as it foll
   thread are the same in either shell, the uploads too, and so are `request_bash`, the output
   limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
   143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
-- **Its files.** `/workspace` is the Workspace. Everything else (`/root`, `/tmp`, `/etc` and the
-  programs under `/node_modules`) is the kernel's own root, in the same SQLite, in tables of its
-  own (`slicc_*`). Output that was too long is saved under `/workspace/.computer/output`, not
-  the Workspace's `/.computer/output`, which this shell cannot see. A file is in the Workspace
-  when its program closes it (`writeBehind: false`), so writing into the read-only uploads
-  fails where it happens. The kernel's driver makes its mount point with `mkdir -p`, which the
-  Workspace refuses in a directory with a read-only mount: `patientFs` answers it when the
-  directory is there.
+- **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
+  Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
+  tables of its own (`slicc_*`). Output that was too long is saved under
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`), so
+  writing into the read-only uploads fails where it happens. The kernel's driver makes its
+  mount point with `mkdir -p`, which the Workspace refuses in a directory with a read-only
+  mount: `patientFs` answers it when the directory is there.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
-  by what a computer is for. The Worker carries none: they are in the `IMAGES` bucket, and the
-  admin team chooses one per team, next to the shell (`image`, another row of
+  by what a computer is for. An image is a stack of read-only layers, as a container image
+  is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
+  the admin team chooses one per team, next to the shell (`image`, another row of
   `agent_tool_options`; `base` without one).
-  - **What an image is.** `scripts/computer-images.mjs` defines them (`IMAGES`) and builds
-    them from the `@ai-ecoverse/wasm-*` packages ([homescoop](https://github.com/ai-ecoverse/homescoop))
-    this repository pins: `base` (bash, coreutils, grep, sed, gawk, jq, findutils, diff and
-    cmp, curl, gzip, tar, zip and unzip, tree, which, rev, column, hexdump) and `data` (base, with
-    ripgrep, sqlite3 and strings). An image names what the agent is told it has (`tools`), and
+  - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
+    top of those of the image it is `from`, and where two layers have a path, the upper one's
+    file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
+    defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
+    ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
+    and cmp, tree, which, rev, column, hexdump), `archive` (gzip, tar, zip and unzip), `net`
+    (curl) and `data` (ripgrep, sqlite3, strings). `base` is the first four, and `data` is
+    `from: 'base'` with the fifth. An image names what the agent is told it has (`tools`), and
     the build fails if that names a command the image lacks.
-  - **In the bucket.** `blobs/<sha256>` is one file by its content, so images share what they
-    have in common; `images/<name>.json` is an image's manifest (its packages, their files and
-    hashes, and a `digest` of them all); `images/index.json` lists the images for the editor.
-    An Emscripten program's JavaScript glue is there as an empty file: the kernel runs the
-    program without it in a Worker, but finds the command by it.
+  - **In the bucket**, everything but the images and their index is named by its content, and
+    never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
+    modes and hashes of its files, with small files (a package's manifest) in it;
+    `images/<name>.json` is an image's manifest, its layers by digest, its commands and a
+    `digest` of the stack; `images/index.json` lists the images for the editor. An Emscripten
+    program's JavaScript glue is an empty file: the kernel runs the program without it in a
+    Worker, but finds the command by it.
   - **Uploading.** `npm run computer:images -- --mode prod` (the deploy job runs it after
-    `cf deploy`, which makes the bucket) sends the blobs no manifest there names, then the
-    manifests, then the index, so a kernel that boots meanwhile finds an image whole. It
-    never deletes: a blob no image names any more stays.
-  - **Installing.** When a kernel boots, `installImage` reads the team's image and makes
-    `/node_modules` it: one read when it is the one installed (its digest is kept in
-    `/node_modules/.opspile-image.json`), else each package that is not there as the image has
-    it is written from the bucket, checked against its hash, and the packages only the image
-    before had are removed. So each thread that runs a command keeps its own copy (10 MB for
-    `base`, 15 MB for `data`) in its object's SQLite. A boot without the bucket, or without the
-    image, fails and says so: the command answers "the computer failed".
+    `cf deploy`, which makes the bucket) sends the blobs of the layers the bucket lacks, then
+    those layers, then the manifests, then the index, so a kernel that boots meanwhile finds
+    an image whole. It never deletes: a layer no image names any more stays, and a kernel
+    that runs an older image keeps reading it.
+  - **Mounting.** When a kernel boots, it reads the team's image, its layers (each checked
+    against its digest) and merges them into one tree (`imageTree`), which it mounts
+    read-only at `/opt/image`, as a file system the agent's object serves itself
+    (`imageDriver`, the kernel's in-process mount). `/opt/image/node_modules` is a command
+    root of the kernel (`commands.append`), so the image's programs are in `/usr/bin`. A
+    file's bytes come from the bucket when a program first reads it, checked against its
+    hash. Nothing of the image is written to the object's SQLite, so changing a team's image
+    costs a boot (some 50 ms), and every write to `/opt/image` fails (`EROFS`). A boot without
+    the bucket, the image or one of its layers fails and says so: the command answers "the
+    computer failed".
+  - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
+    read for every agent in its isolate: the trees of the last 8 images, and blobs up to
+    32 MB, the least recently used going first. A new isolate reads them again.
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands

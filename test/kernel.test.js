@@ -13,17 +13,19 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
-  commandsOf, DEFAULT_IMAGE, installImage, isImageName, listImages, readImage,
+  commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
+  isImageName, listImages, readImage,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, isRuntime, overWorkspace, patientFs, runtimeFor, RUNTIMES,
-  setTeamImage, setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
+  DEFAULT_RUNTIME, gatewayFetch, imageMount, isRuntime, overWorkspace, patientFs, runtimeFor,
+  RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
 } from '../src/agent/kernel.js';
 import {
-  bucketOf, build, IMAGES, imagePackage, indexOf, missingFrom, objectsOf, toolNames,
+  bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
+  objectsOf, toolNames,
 } from '../scripts/computer-images.mjs';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -32,69 +34,50 @@ import { fakeBucket } from './fakes.js';
 
 const fsError = (code, message) => Object.assign(new Error(`${code}: ${message}`), { code });
 
-/** A kernel's `readFile` and `writeFile` over a Map, with the order files were written in. */
-function fakeKernel(files = {}) {
-  const have = new Map(Object.entries(files));
-  const wrote = [];
-  return {
-    have,
-    wrote,
-    async readFile(path) {
-      if (!have.has(path)) {
-        throw fsError('ENOENT', path);
-      }
-      const data = have.get(path);
-      return typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    },
-    async writeFile(path, data) {
-      have.set(path, data);
-      wrote.push(path);
-    },
-    /** As the agent removes a package: the directory and what is in it. */
-    remove: async (path) => {
-      [...have.keys()].filter((k) => k.startsWith(`${path}/`)).forEach((k) => have.delete(k));
-    },
-  };
-}
-
 const sha = (text) => createHash('sha256').update(text).digest('hex');
+const put = (bucket, key, body) => bucket.objects.set(key, { body, options: {}, version: 'v' });
 
-/** A package of an image's manifest, with its files' blobs for the bucket. */
-function pkg(name, version, files) {
-  return {
-    name,
-    version,
-    manifest: JSON.stringify({ name, version }),
-    commands: Object.keys(files).map((path) => path.split('/').pop().replace('.wasm', '')),
-    files: Object.entries(files)
-      .map(([path, text]) => ({ path, sha256: sha(text), size: text.length })),
-    blobs: Object.fromEntries(Object.values(files).filter(Boolean)
-      .map((text) => [`blobs/${sha(text)}`, text])),
-  };
+/**
+ * Puts a layer of `files` (`{ path: text }`; a text of 40 characters or more is a blob, a
+ * shorter one is in the layer itself) into `bucket`: what an image's manifest says of it.
+ */
+function layer(bucket, name, files) {
+  const list = Object.entries(files).map(([path, text]) => {
+    const blob = text.length >= 40;
+    if (blob) {
+      put(bucket, `blobs/${sha(text)}`, text);
+    }
+    return {
+      path,
+      mode: path.endsWith('.json') ? 0o444 : 0o555,
+      size: text.length,
+      ...(blob ? { sha256: sha(text) } : { data: Buffer.from(text).toString('base64') }),
+    };
+  });
+  const body = `${JSON.stringify({ v: 1, name, files: list })}\n`;
+  put(bucket, `layers/${sha(body)}.json`, body);
+  return { name, digest: sha(body), bytes: list.reduce((n, f) => n + f.size, 0) };
 }
 
-/** An image's manifest of `packages` (pkg), and a bucket with it and its blobs. */
-function image(name, packages, bucket = fakeBucket()) {
+/** Puts an image of `layers` (from `layer`), bottom first, into `bucket`: its manifest. */
+function image(bucket, name, layers, commands = []) {
   const manifest = {
-    v: 1,
+    v: 2,
     name,
     title: name,
     description: `the ${name} image`,
-    tools: packages.flatMap((p) => p.commands).join(', '),
-    digest: sha(JSON.stringify(packages.map((p) => [p.name, p.version, p.files]))),
-    bytes: 1,
-    packages: packages.map((p) => ({
-      name: p.name, version: p.version, manifest: p.manifest, commands: p.commands, files: p.files,
-    })),
+    tools: commands.join(', '),
+    commands,
+    digest: sha(layers.map((l) => l.digest).join('\n')),
+    bytes: layers.reduce((n, l) => n + l.bytes, 0),
+    layers,
   };
-  for (const p of packages) {
-    for (const [key, text] of Object.entries(p.blobs)) {
-      bucket.objects.set(key, { body: text, options: {}, version: 'v' });
-    }
-  }
-  bucket.objects.set(`images/${name}.json`, { body: JSON.stringify(manifest), options: {}, version: 'v' });
-  return { manifest, bucket };
+  put(bucket, `images/${name}.json`, JSON.stringify(manifest));
+  return manifest;
 }
+
+const PROGRAM = 'a program of forty characters or more, a blob';
+const utf8 = (bytes) => new TextDecoder().decode(bytes);
 
 describe('the computer\'s shells', () => {
   it('are just-bash unless the team has another, and one this deployment knows', async () => {
@@ -191,115 +174,234 @@ describe('the computer\'s shells', () => {
 });
 
 describe('a kernel\'s image, from the bucket', () => {
-  const sed = pkg('@acme/sed', '1.0.0', { 'bin/sed': '', 'bin/sed.wasm': 'sed program' });
-  const awk = pkg('@acme/awk', '2.0.0', { 'bin/awk.wasm': 'awk program' });
-  const rg = pkg('@acme/rg', '3.0.0', { 'bin/rg.wasm': 'rg program' });
+  beforeEach(() => forgetImages());
 
-  it('is installed once, each package\'s manifest last, and what is there is left alone', async () => {
-    const { manifest, bucket } = image('base', [sed, awk]);
-    const kernel = fakeKernel();
-    const first = await installImage(kernel, bucket, manifest, kernel);
-    assert.deepEqual(first, { wrote: 2, removed: 0 });
-    assert.deepEqual(kernel.wrote, [
-      '/node_modules/@acme/sed/bin/sed',
-      '/node_modules/@acme/sed/bin/sed.wasm',
-      '/node_modules/@acme/sed/package.json',
-      '/node_modules/@acme/awk/bin/awk.wasm',
-      '/node_modules/@acme/awk/package.json',
-      '/node_modules/.opspile-image.json',
-    ]);
-    assert.equal(new TextDecoder().decode(kernel.have.get('/node_modules/@acme/sed/bin/sed.wasm')), 'sed program');
-    // A glue the image has as an empty file is written empty, and asks the bucket for nothing.
-    assert.equal(kernel.have.get('/node_modules/@acme/sed/bin/sed').length, 0);
-    assert.equal(kernel.have.get('/node_modules/@acme/sed/package.json'), sed.manifest);
-    assert.deepEqual(JSON.parse(kernel.have.get('/node_modules/.opspile-image.json')), {
-      digest: manifest.digest, packages: ['@acme/sed', '@acme/awk'],
-    });
-
-    // The same image again reads its state and nothing else.
-    kernel.wrote.length = 0;
-    const silent = { get: async () => assert.fail('asked the bucket') };
-    const again = await installImage(kernel, silent, manifest, kernel);
-    assert.deepEqual(again, { wrote: 0, removed: 0 });
-    assert.deepEqual(kernel.wrote, []);
-  });
-
-  it('follows a change: new packages come, new versions replace, others go', async () => {
+  /** A bucket with a shell layer, a text layer over it, and the images `base` and `data`. */
+  function stack() {
     const bucket = fakeBucket();
-    const base = image('base', [sed, awk], bucket).manifest;
-    const data = image('data', [sed, awk, rg], bucket).manifest;
-    const kernel = fakeKernel();
-    await installImage(kernel, bucket, base, kernel);
-    kernel.wrote.length = 0;
-    assert.deepEqual(await installImage(kernel, bucket, data, kernel), { wrote: 1, removed: 0 });
-    assert.deepEqual(kernel.wrote, [
-      '/node_modules/@acme/rg/bin/rg.wasm',
-      '/node_modules/@acme/rg/package.json',
-      '/node_modules/.opspile-image.json',
+    const shell = layer(bucket, 'shell', {
+      'node_modules/@acme/sh/package.json': '{"name":"@acme/sh"}',
+      'node_modules/@acme/sh/bin/sh': '',
+      'node_modules/@acme/sh/bin/sh.wasm': PROGRAM,
+      'etc/motd': 'from the shell layer',
+    });
+    const text = layer(bucket, 'text', {
+      'node_modules/@acme/sed/package.json': '{"name":"@acme/sed"}',
+      'node_modules/@acme/sed/bin/sed.wasm': `${PROGRAM}: sed`,
+      'etc/motd': 'from the text layer',
+    });
+    return {
+      bucket,
+      shell,
+      text,
+      base: image(bucket, 'base', [shell], ['sh']),
+      data: image(bucket, 'data', [shell, text], ['sed', 'sh']),
+    };
+  }
+
+  it('is its layers merged from the bottom up: the upper layer\'s file is the image\'s', async () => {
+    const { bucket, base, data } = stack();
+    const lower = await imageTree(bucket, base);
+    assert.deepEqual([...lower.files.keys()].sort(), [
+      '/etc/motd',
+      '/node_modules/@acme/sh/bin/sh',
+      '/node_modules/@acme/sh/bin/sh.wasm',
+      '/node_modules/@acme/sh/package.json',
     ]);
-    // Back to the smaller one: what only the other had goes, and nothing is written again.
-    kernel.wrote.length = 0;
-    assert.deepEqual(await installImage(kernel, bucket, base, kernel), { wrote: 0, removed: 1 });
-    assert.deepEqual(kernel.wrote, ['/node_modules/.opspile-image.json']);
-    assert.equal(kernel.have.has('/node_modules/@acme/rg/package.json'), false);
-    assert.equal(kernel.have.has('/node_modules/@acme/sed/package.json'), true);
-
-    // A deploy brings another version of one, and one stopped half way (no manifest yet).
-    const sed2 = pkg('@acme/sed', '1.0.1', { 'bin/sed': '', 'bin/sed.wasm': 'sed program 2' });
-    const next = image('base', [sed2, awk], bucket).manifest;
-    kernel.have.delete('/node_modules/@acme/awk/package.json');
-    assert.deepEqual(await installImage(kernel, bucket, next, kernel), { wrote: 2, removed: 0 });
-    assert.equal(kernel.have.get('/node_modules/@acme/sed/package.json'), sed2.manifest);
-    assert.equal(new TextDecoder().decode(kernel.have.get('/node_modules/@acme/sed/bin/sed.wasm')), 'sed program 2');
-
-    // Where nothing can be removed, what should go is remembered for the next change.
-    const lone = fakeKernel();
-    await installImage(lone, bucket, data);
-    assert.deepEqual(await installImage(lone, bucket, next), { wrote: 1, removed: 0 });
-    assert.deepEqual(JSON.parse(lone.have.get('/node_modules/.opspile-image.json')).packages, ['@acme/sed', '@acme/awk', '@acme/rg']);
-    assert.deepEqual(await installImage(lone, bucket, data, lone), { wrote: 1, removed: 0 });
+    assert.equal(utf8(lower.files.get('/etc/motd').bytes), 'from the shell layer');
+    const tree = await imageTree(bucket, data);
+    assert.equal(utf8(tree.files.get('/etc/motd').bytes), 'from the text layer');
+    assert.deepEqual([...tree.dirs.get('/')].sort(), ['etc', 'node_modules']);
+    assert.deepEqual([...tree.dirs.get('/node_modules/@acme')].sort(), ['sed', 'sh']);
+    // A small file is in its layer, a large one a blob by its hash, a glue an empty file.
+    assert.deepEqual(tree.files.get('/node_modules/@acme/sh/bin/sh.wasm'), {
+      size: PROGRAM.length, mode: 0o555, sha256: sha(PROGRAM),
+    });
+    assert.equal(tree.files.get('/node_modules/@acme/sh/bin/sh').bytes.length, 0);
+    assert.equal(tree.files.get('/node_modules/@acme/sh/package.json').mode, 0o444);
+    // The same image again is the tree this isolate kept, and asks the bucket for nothing.
+    const silent = { get: async () => assert.fail('asked the bucket') };
+    assert.equal(await imageTree(silent, data), tree);
+    assert.equal(await imageTree(silent, base), lower);
   });
 
-  it('fails, and leaves no state, on a blob that is missing or is not what its name says', async () => {
-    const { manifest, bucket } = image('base', [sed, awk]);
-    const kernel = fakeKernel({ '/node_modules/.opspile-image.json': 'not json' });
-    bucket.objects.delete(`blobs/${sha('awk program')}`);
-    await assert.rejects(installImage(kernel, bucket, manifest, kernel), /has no blobs\/[0-9a-f]{64} \(bin\/awk\.wasm\)/);
-    assert.equal(kernel.have.get('/node_modules/.opspile-image.json'), 'not json');
-    // The package before it is whole, and not written again by the next boot.
-    assert.equal(kernel.have.get('/node_modules/@acme/sed/package.json'), sed.manifest);
-    assert.equal(kernel.have.has('/node_modules/@acme/awk/package.json'), false);
-    bucket.objects.set(`blobs/${sha('awk program')}`, { body: 'another program', options: {}, version: 'v' });
-    await assert.rejects(installImage(kernel, bucket, manifest, kernel), /is not the file it names/);
-    bucket.objects.set(`blobs/${sha('awk program')}`, { body: 'awk program', options: {}, version: 'v' });
-    const mended = await installImage(kernel, bucket, manifest, kernel);
-    assert.deepEqual(mended, { wrote: 1, removed: 0 });
+  it('fails on a layer that is missing, or is not what its name says', async () => {
+    const { bucket, data, text } = stack();
+    const key = `layers/${text.digest}.json`;
+    const { body } = bucket.objects.get(key);
+    bucket.objects.delete(key);
+    await assert.rejects(imageTree(bucket, data), /has no layers\/[0-9a-f]{64}\.json \(text\)/);
+    put(bucket, key, body.replace('"mode":365', '"mode":511'));
+    await assert.rejects(imageTree(bucket, data), /is not the layer it names \(text\)/);
+    put(bucket, key, body);
+    assert.equal((await imageTree(bucket, data)).files.size, 6);
+  });
+
+  it('is a read-only file system: listings, attributes, and files read from the bucket', async () => {
+    const { bucket, data } = stack();
+    const gets = [];
+    const counting = {
+      get: (key) => {
+        gets.push(key);
+        return bucket.get(key);
+      },
+    };
+    const { handlers, capabilities } = imageDriver(counting, await imageTree(bucket, data));
+    assert.equal(capabilities.readonly, true);
+    assert.equal(capabilities.ranges, true);
+    assert.deepEqual(await handlers.getattr('/'), {
+      kind: 'directory', size: 0, mtime: 0, mode: 0o555,
+    });
+    assert.deepEqual(await handlers.getattr('/node_modules/@acme/sh/bin/sh.wasm'), {
+      kind: 'file', size: PROGRAM.length, mtime: 0, mode: 0o555,
+    });
+    await assert.rejects(handlers.getattr('/nope'), { code: 'ENOENT' });
+    assert.deepEqual(await handlers.readdir('/'), [
+      { name: 'etc', kind: 'directory' }, { name: 'node_modules', kind: 'directory' },
+    ]);
+    assert.deepEqual(await handlers.readdir('/node_modules/@acme/sh/bin'), [
+      { name: 'sh', kind: 'file' }, { name: 'sh.wasm', kind: 'file' },
+    ]);
+    await assert.rejects(handlers.readdir('/etc/motd'), { code: 'ENOTDIR' });
+    await assert.rejects(handlers.readdir('/nope'), { code: 'ENOENT' });
+
+    // Nothing was asked of the bucket yet: a file is read when a program reads it.
+    assert.deepEqual(gets, []);
+    const fh = await handlers.open('/node_modules/@acme/sh/bin/sh.wasm', {});
+    assert.equal(utf8(await handlers.read(fh, 0, 9)), 'a program');
+    assert.equal(utf8(await handlers.read(fh, 10, 1000)), PROGRAM.slice(10));
+    assert.equal((await handlers.read(fh, 5000, 10)).length, 0);
+    assert.deepEqual(gets, [`blobs/${sha(PROGRAM)}`]);
+    // What is read is a copy: the kernel may take its buffer.
+    const first = await handlers.read(fh, 0, 1000);
+    first.fill(0);
+    assert.equal(utf8(await handlers.read(fh, 0, 1000)), PROGRAM);
+    await handlers.release(fh);
+    await assert.rejects(handlers.read(fh, 0, 1), { code: 'EBADF' });
+    // A small file and a glue come from the layer itself.
+    const motd = await handlers.open('/etc/motd', {});
+    assert.equal(utf8(await handlers.read(motd, 0, 100)), 'from the text layer');
+    const glue = await handlers.open('/node_modules/@acme/sh/bin/sh', {});
+    assert.equal((await handlers.read(glue, 0, 100)).length, 0);
+    await assert.rejects(handlers.open('/etc', {}), { code: 'EISDIR' });
+    await assert.rejects(handlers.open('/nope', {}), { code: 'ENOENT' });
+    // Another agent's kernel in this isolate reads the blob from memory.
+    const other = imageDriver(counting, await imageTree(bucket, data)).handlers;
+    const again = await other.open('/node_modules/@acme/sh/bin/sh.wasm', {});
+    assert.equal(utf8(await other.read(again, 0, 1000)), PROGRAM);
+    assert.equal(gets.length, 1);
+    assert.deepEqual(await handlers.statfs(), { bsize: 4096, blocks: 5, bfree: 0 });
+  });
+
+  it('refuses every change', async () => {
+    const { bucket, data } = stack();
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, data));
+    const refused = { code: 'EROFS' };
+    for (const flags of [{ write: true }, { create: true }, { truncate: true }]) {
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(handlers.open('/etc/motd', flags), refused);
+    }
+    await assert.rejects(handlers.open('/etc/new', { create: true, write: true }), refused);
+    await assert.rejects(handlers.write(1, 0, new Uint8Array(1)), refused);
+    await assert.rejects(handlers.mkdir('/etc/d'), refused);
+    await assert.rejects(handlers.rmdir('/etc'), refused);
+    await assert.rejects(handlers.unlink('/etc/motd'), refused);
+    await assert.rejects(handlers.rename('/etc/motd', '/etc/motd2'), refused);
+    await assert.rejects(handlers.setattr('/etc/motd', { mode: 0o777 }), refused);
+  });
+
+  it('fails a read of a blob that is missing, or is not what its name says', async () => {
+    const { bucket, data } = stack();
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, data));
+    const key = `blobs/${sha(PROGRAM)}`;
+    const fh = await handlers.open('/node_modules/@acme/sh/bin/sh.wasm', {});
+    bucket.objects.delete(key);
+    await assert.rejects(handlers.read(fh, 0, 10), { code: 'EIO', message: /has no blobs\// });
+    put(bucket, key, `${PROGRAM} and more`);
+    await assert.rejects(handlers.read(fh, 0, 10), { code: 'EIO', message: /is not the file it names/ });
+    // Neither was kept: the read works once the bucket has the file.
+    put(bucket, key, PROGRAM);
+    assert.equal(utf8(await handlers.read(fh, 0, 9)), 'a program');
+  });
+
+  it('keeps the blobs it read up to a limit, the least recently used going first', async () => {
+    const bucket = fakeBucket();
+    const big = (c) => c.repeat(12 * 1024 * 1024);
+    const files = Object.fromEntries(['a', 'b', 'c'].map((c) => [`bin/${c}`, big(c)]));
+    const manifest = image(bucket, 'big', [layer(bucket, 'big', files)]);
+    const gets = [];
+    const counting = {
+      get: (key) => {
+        gets.push(key);
+        return bucket.get(key);
+      },
+    };
+    const { handlers } = imageDriver(counting, await imageTree(bucket, manifest));
+    const first = async (name) => {
+      const fh = await handlers.open(`/bin/${name}`, {});
+      const [byte] = await handlers.read(fh, 0, 1);
+      await handlers.release(fh);
+      return String.fromCharCode(byte);
+    };
+    assert.equal(await first('a'), 'a');
+    assert.equal(await first('b'), 'b');
+    // a is used again, so the third file pushes b out, not a.
+    assert.equal(await first('a'), 'a');
+    assert.equal(await first('c'), 'c');
+    assert.equal(gets.length, 3);
+    assert.equal(await first('a'), 'a');
+    assert.equal(gets.length, 3);
+    assert.equal(await first('b'), 'b');
+    assert.equal(gets.length, 4);
+  });
+
+  it('is mounted read-only, at the place the kernel looks for its commands', async () => {
+    const { bucket, data } = stack();
+    const driver = imageDriver(bucket, await imageTree(bucket, data));
+    const spec = imageMount(data, IMAGE_ROOT, driver);
+    assert.deepEqual([spec.type, spec.source, spec.target, spec.options], [
+      'image', `data@${data.digest.slice(0, 12)}`, '/opt/image', { ro: '' },
+    ]);
+    assert.equal(IMAGE_COMMANDS, '/opt/image/node_modules');
+    // The kernel finds the driver under the key its bundles share (its inProcessMount).
+    const inProcess = spec[Symbol.for('slicc-kernel.mount.in-process')];
+    assert.equal(inProcess.handlers, driver.handlers);
+    assert.equal(inProcess.capabilities, driver.capabilities);
+    assert.equal(typeof inProcess.served, 'function');
   });
 
   it('is read from the bucket by name, and listed by its index', async () => {
-    const { manifest, bucket } = image('base', [sed, awk]);
-    assert.deepEqual(await readImage(bucket, 'base'), manifest);
-    assert.deepEqual(commandsOf(manifest), ['awk', 'sed']);
-    assert.equal(await readImage(bucket, 'data'), null);
+    const { bucket, base } = stack();
+    assert.deepEqual(await readImage(bucket, 'base'), base);
+    assert.deepEqual(commandsOf(base), ['sh']);
+    assert.equal(await readImage(bucket, 'gpu'), null);
     assert.equal(await readImage(bucket, '../base'), null);
     assert.equal(await readImage(undefined, 'base'), null);
-    // A manifest of a later format is not one this Worker installs.
-    bucket.objects.set('images/next.json', { body: JSON.stringify({ ...manifest, v: 2 }), options: {}, version: 'v' });
-    assert.equal(await readImage(bucket, 'next'), null);
+    // A manifest of another format is not one this Worker mounts.
+    put(bucket, 'images/old.json', JSON.stringify({ ...base, v: 1 }));
+    assert.equal(await readImage(bucket, 'old'), null);
 
     assert.deepEqual(await listImages(bucket), []);
     assert.deepEqual(await listImages(undefined), []);
-    const index = indexOf([manifest, { ...manifest, name: 'Bad Name' }]);
-    bucket.objects.set('images/index.json', { body: JSON.stringify(index), options: {}, version: 'v' });
+    put(bucket, 'images/index.json', JSON.stringify(indexOf([base, { ...base, name: 'Bad Name' }])));
     assert.deepEqual(await listImages(bucket), [{
-      name: 'base', title: 'base', description: 'the base image', digest: manifest.digest, bytes: 1,
+      name: 'base',
+      title: 'base',
+      description: 'the base image',
+      digest: base.digest,
+      bytes: base.bytes,
+      layers: ['shell'],
     }]);
-    bucket.objects.set('images/index.json', { body: 'not json', options: {}, version: 'v' });
+    put(bucket, 'images/index.json', 'not json');
+    assert.deepEqual(await listImages(bucket), []);
+    put(bucket, 'images/index.json', JSON.stringify({ v: 1, images: [{ name: 'base' }] }));
     assert.deepEqual(await listImages(bucket), []);
   });
 });
 
 describe('the images this repository builds', () => {
+  beforeEach(() => forgetImages());
+
   it('keeps of a package the commands asked for, the files they need, and which are glue', () => {
     const manifest = {
       name: '@acme/utils',
@@ -336,60 +438,107 @@ describe('the images this repository builds', () => {
     assert.deepEqual([wasi.paths, wasi.glue], [['bin/rg.wasm'], []]);
   });
 
+  it('stack their layers on those of the image they are from', () => {
+    const images = [
+      { name: 'base', layers: ['shell', 'text'] },
+      { name: 'data', from: 'base', layers: ['data'] },
+      { name: 'more', from: 'data', layers: ['js', 'docs'] },
+      { name: 'lost', from: 'gone', layers: [] },
+      { name: 'loop', from: 'pool', layers: [] },
+      { name: 'pool', from: 'loop', layers: [] },
+    ];
+    assert.deepEqual(layerNames(images[0], images), ['shell', 'text']);
+    assert.deepEqual(layerNames(images[2], images), ['shell', 'text', 'data', 'js', 'docs']);
+    assert.throws(() => layerNames(images[3], images), /is from gone, which there is none of/);
+    assert.throws(() => layerNames(images[4], images), /is from itself/);
+    // The real ones: data is base and one layer more, and every package is in one layer.
+    const [base, data] = IMAGES;
+    assert.deepEqual(layerNames(data), [...layerNames(base), 'data']);
+    const packages = Object.values(LAYERS).flat().map((p) => p.name);
+    assert.equal(new Set(packages).size, packages.length);
+  });
+
   it('are built from the packages it pins, by content, with what the agent is told checked', async () => {
     const { devDependencies } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-    for (const { name } of IMAGES.flatMap((i) => i.packages)) {
+    for (const { name } of Object.values(LAYERS).flat()) {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
     assert.deepEqual(built.images.map((i) => i.name), ['base', 'data']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
-    assert.equal(base.v, 1);
-    assert.match(base.digest, /^[0-9a-f]{64}$/);
+    assert.equal(base.v, 2);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net']);
+    // The second image is the first one's layers, the same ones, and one more.
+    assert.deepEqual(data.layers.slice(0, 4), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(4), ['data']);
     assert.notEqual(base.digest, data.digest);
-    // The images share the files they both have, and each is in the bucket once.
-    const hashes = (i) => i.packages.flatMap((p) => p.files).filter((f) => f.size)
-      .map((f) => f.sha256);
-    assert.ok(hashes(base).every((h) => hashes(data).includes(h)));
-    assert.deepEqual([...built.blobs.keys()].sort(), [...new Set(hashes(data))].sort());
+    assert.equal(data.bytes, base.bytes + data.layers[4].bytes);
+    // A layer and a blob are named by what they are.
+    for (const l of built.layers.values()) {
+      assert.equal(sha(l.body), l.digest);
+      assert.deepEqual(JSON.parse(l.body), l.layer);
+    }
     for (const [hash, body] of built.blobs) {
       assert.equal(sha(body), hash);
     }
-    assert.equal(base.bytes, base.packages.flatMap((p) => p.files).reduce((n, f) => n + f.size, 0));
-    // An Emscripten program comes with its glue as an empty file, and its wasm whole.
-    const bash = base.packages.find((p) => p.name === '@ai-ecoverse/wasm-bash');
-    assert.deepEqual(bash.commands, ['bash']);
-    assert.deepEqual(bash.files.map((f) => [f.path, f.size > 0]), [['bin/bash', false], ['bin/bash.wasm', true]]);
-    assert.equal(JSON.parse(bash.manifest).slicc.commands.bash.wasm, 'bin/bash.wasm');
+    // An Emscripten program comes with its glue as an empty file, its wasm as a blob, and
+    // its manifest in the layer.
+    const shell = built.layers.get('shell').layer.files
+      .filter((f) => f.path.startsWith('node_modules/@ai-ecoverse/wasm-bash/'));
+    assert.deepEqual(shell.map((f) => [f.path.split('/').pop(), f.mode, Boolean(f.sha256), f.size > 0]), [
+      ['bash', 0o555, false, false], ['bash.wasm', 0o555, true, true], ['package.json', 0o444, false, true],
+    ]);
+    const manifest = JSON.parse(Buffer.from(shell[2].data, 'base64').toString());
+    assert.equal(manifest.slicc.commands.bash.wasm, 'bin/bash.wasm');
     // What the agent is told names commands the image has, and the second image more of them.
     for (const i of built.images) {
       assert.deepEqual(toolNames(i.tools).filter((w) => !commandsOf(i).includes(w)), []);
     }
     assert.ok(toolNames(base.tools).length > 20);
+    assert.ok(commandsOf(base).includes('jq'));
     assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    assert.ok(commandsOf(base).includes('jq'));
     await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
+    await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 
-    // A kernel installs what was built, from a bucket with its objects.
+    // A kernel's file system serves what was built, from a bucket with its objects.
     const objects = objectsOf(built);
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
     assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    const kernel = fakeKernel();
-    const installed = await installImage(kernel, bucket, await readImage(bucket, 'base'), kernel);
-    assert.deepEqual(installed, { wrote: base.packages.length, removed: 0 });
-    assert.ok(kernel.have.get('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm').length > 1e6);
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'data']);
+    const tree = await imageTree(bucket, await readImage(bucket, 'data'));
+    const { handlers } = imageDriver(bucket, tree);
+    const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
+    assert.equal(packages.length, Object.values(LAYERS).flat().length);
+    const fh = await handlers.open('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm', {});
+    assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
+    const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
+    assert.ok(size > 1e6);
   });
 
-  it('are uploaded as the objects the bucket lacks: blobs first, the index last', async () => {
+  it('are in one layer what they are in another: a layer\'s digest follows its files alone', async () => {
+    const modules = new URL('../node_modules', import.meta.url).pathname;
+    const one = await buildLayer('net', LAYERS.net, modules);
+    const same = await buildLayer('net', LAYERS.net, modules);
+    assert.equal(one.digest, same.digest);
+    assert.deepEqual(one.commands, ['curl']);
+    const other = await buildLayer('net', [...LAYERS.net, ...LAYERS.archive], modules);
+    assert.notEqual(one.digest, other.digest);
+    const paths = other.layer.files.map((f) => f.path);
+    assert.deepEqual(paths, [...paths].sort());
+  });
+
+  it('are uploaded as the objects the bucket lacks: blobs, layers, manifests, then the index', async () => {
     const built = await build();
     const objects = objectsOf(built);
     const keys = objects.map((o) => o.key);
+    const kinds = keys.map((k) => k.split('/')[0]);
+    assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
     assert.deepEqual(keys.slice(-3, -1), ['images/base.json', 'images/data.json']);
-    assert.ok(keys.slice(0, -3).every((k) => /^blobs\/[0-9a-f]{64}$/.test(k)));
+    assert.equal(kinds.filter((k) => k === 'layers').length, 5);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);
@@ -397,21 +546,22 @@ describe('the images this repository builds', () => {
       throw new Error('404');
     };
     assert.equal((await missingFrom(objects, failing)).length, objects.length);
-    // One that has them all lacks none.
+    // One that has them all lacks none, and is asked for no blob.
     const have = new Map(objects.map((o) => [o.key, String(o.body)]));
-    const read = async (key) => have.get(key) ?? null;
+    const asked = [];
+    const read = async (key) => {
+      asked.push(key);
+      return have.get(key) ?? null;
+    };
     assert.deepEqual(await missingFrom(objects, read), []);
-    // A change of one image: its manifest, the index, and the blobs no manifest there names.
-    const [base] = built.images;
-    const changed = { ...base, digest: 'x'.repeat(64), packages: base.packages.slice(1) };
-    have.set('images/base.json', `${JSON.stringify(changed)}\n`);
-    have.set('images/data.json', `${JSON.stringify({ ...built.images[1], packages: [] })}\n`);
+    assert.equal(asked.some((k) => k.startsWith('blobs/')), false);
+    // A bucket without one layer lacks it and its blobs, and no other layer's.
+    const data = objects.find((o) => o.key === `layers/${built.layers.get('data').digest}.json`);
+    have.delete(data.key);
+    have.set('images/data.json', 'an older manifest');
     const missing = (await missingFrom(objects, read)).map((o) => o.key);
-    const bash = base.packages[0].files.filter((f) => f.size).map((f) => `blobs/${f.sha256}`);
-    assert.ok(bash.length && bash.every((k) => missing.includes(k)));
-    assert.ok(missing.includes('images/base.json') && missing.includes('images/data.json'));
-    assert.equal(missing.includes('images/index.json'), false);
-    assert.equal(missing.includes(`blobs/${base.packages[1].files.find((f) => f.size).sha256}`), false);
+    assert.deepEqual(missing, [...[...data.blobs].sort(), data.key, 'images/data.json']);
+    assert.equal(data.blobs.length, 3);
     assert.equal(bucketOf('prod'), 'helix-opspile-images');
     assert.equal(bucketOf('stage'), 'helix-opspile-images-stage');
   });

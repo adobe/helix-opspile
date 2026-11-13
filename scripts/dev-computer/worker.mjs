@@ -12,8 +12,8 @@
 
 /**
  * An agent's computer by itself, in local workerd: the real ThreadAgent (src/agent/agent.js)
- * with its Workspace, its shells (just-bash, and the SLICC kernel with an image from its local
- * `IMAGES` bucket) and the gateway's `forward`, but no model, no inbox and no D1, so no
+ * with its Workspace, its shells (just-bash, and the SLICC kernel with an image mounted from its
+ * local `IMAGES` bucket) and the gateway's `forward`, but no model, no inbox and no D1, so no
  * secrets. For trying a shell, an image, and a new version of the kernel or of its programs,
  * which Node's tests cannot run. scripts/dev-computer/dev.mjs starts it and fills the bucket
  * with the images of scripts/computer-images.mjs.

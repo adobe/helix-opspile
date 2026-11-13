@@ -41,10 +41,10 @@ import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
 } from './computer.js';
 import {
-  commandsOf, DEFAULT_IMAGE, installImage, readImage,
+  commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, overWorkspace, shellFor,
+  DEFAULT_RUNTIME, gatewayFetch, imageMount, overWorkspace, shellFor,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -301,8 +301,8 @@ export class ThreadAgent extends Agent {
 
   /**
    * The computer gets another shell, or its kernel another image, with the next command: a new
-   * Workspace over the same files. A kernel that ran here is ended; its root stays in this
-   * object's SQLite (the image), for when the team chooses the kernel again.
+   * Workspace over the same files. A kernel that ran here is ended; its own root (/root,
+   * /tmp) stays in this object's SQLite, for when the team chooses the kernel again.
    */
   async changeShell(runtime, image = this.image) {
     const kernel = await (this.booting || Promise.resolve(null)).catch(() => null);
@@ -387,23 +387,30 @@ export class ThreadAgent extends Agent {
   /**
    * The SLICC kernel of the computer (src/agent/kernel.js), made with the first command: its
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
-   * own, the team's image installed from the `IMAGES` bucket (src/agent/image.js: a boot
-   * without the bucket or the image fails, and says so). What its programs ask of the network goes
+   * own, and the team's image from the `IMAGES` bucket mounted read-only at IMAGE_ROOT, where
+   * it finds its commands (src/agent/image.js: a boot without the bucket or the image fails,
+   * and says so). What its programs ask of the network goes
    * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
    * follow redirects themselves, through it again. For `https://` the kernel's proxy ends a
-   * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile the
-   * one in the image), and hands the request to the same transport. A Worker's clock stands
+   * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile
+   * one at run time), and hands the request to the same transport. A Worker's clock stands
    * still while it computes, so the kernel asks this object for the time before each timed wait.
    */
   kernel() {
     this.booting ??= (async () => {
       const { storage } = this.ctx;
       const started = Date.now();
+      const image = await readImage(this.env.IMAGES, this.image);
+      if (!image) {
+        throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
+      }
+      const tree = await imageTree(this.env.IMAGES, image);
       const kernel = await createCloudflareKernel({
         loader: this.env.LOADER,
         sql: storage.sql,
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
         clock: () => this.env.AGENTS.get(this.ctx.id).now(),
+        commands: { append: [IMAGE_COMMANDS] },
         network: {
           transport: fetchTransport({
             fetch: gatewayFetch((request) => forward(this.env, { agent: this.name }, request)),
@@ -413,37 +420,31 @@ export class ThreadAgent extends Agent {
         },
       });
       try {
-        const image = await readImage(this.env.IMAGES, this.image);
-        if (!image) {
-          throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
+        // The mount point, in the kernel's own root, as root.
+        const client = await attachKernel(await kernel.connect(), { locks: null });
+        try {
+          await client.fs.mkdir(IMAGE_ROOT);
+        } finally {
+          await client.close();
         }
-        const installed = await installImage(kernel, this.env.IMAGES, image, {
-          remove: (path) => this.removeFromKernel(kernel, path),
-        });
-        console.log(JSON.stringify({
-          route: 'agent', kernel: 'booted', image: image.name, ...installed, ms: Date.now() - started,
-        }));
+        await kernel.mount(imageMount(image, IMAGE_ROOT, imageDriver(this.env.IMAGES, tree)));
       } catch (e) {
         kernel.terminate();
         throw e;
       }
+      console.log(JSON.stringify({
+        route: 'agent',
+        kernel: 'booted',
+        image: image.name,
+        layers: image.layers.length,
+        ms: Date.now() - started,
+      }));
       return kernel;
     })().catch((e) => {
       this.booting = undefined;
       throw e;
     });
     return this.booting;
-  }
-
-  /** Removes `path` and what is in it from the kernel's own root, as root. */
-  // eslint-disable-next-line class-methods-use-this
-  async removeFromKernel(kernel, path) {
-    const client = await attachKernel(await kernel.connect(), { locks: null });
-    try {
-      await client.fs.rm(path, { force: true });
-    } finally {
-      await client.close();
-    }
   }
 
   /** The shell of the computer, as a backend of its Workspace: the one its team chose. */

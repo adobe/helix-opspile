@@ -810,7 +810,8 @@ function toolRow(t) {
 //
 // What runs the commands of a team's agents (src/agent/kernel.js): just-bash, or GNU bash and
 // real programs on the SLICC kernel, which is experimental, and with the kernel which image:
-// the programs it has (src/agent/image.js), one of those in the deployment's images bucket.
+// the programs it has (src/agent/image.js), a stack of layers, one of those in the
+// deployment's images bucket.
 // In a team's knowledge base, in the Computer tool's row, for the admin team to choose;
 // everyone else sees what it is.
 
@@ -827,7 +828,7 @@ function imageBlock(t) {
       <select data-image aria-label="The image of the computers of ${esc(b.name)}"
         title="${t.mayRuntime ? `The programs the agents of ${esc(b.name)} have` : 'Only the admin team chooses it.'}"${t.mayRuntime ? '' : ' disabled'}>${gone}${options}</select>
     </label>
-    <div class="sub${now ? '' : ' err'}">${esc(now ? `${now.description} ${megabytes(now.bytes)} in each thread that runs a command.` : `The bucket has no image ${t.image.image}: commands fail until another is chosen.`)}</div>
+    <div class="sub${now ? '' : ' err'}">${esc(now ? `${now.description} Layers: ${now.layers.join(', ')} (${megabytes(now.bytes)}), mounted read-only at /opt/image.` : `The bucket has no image ${t.image.image}: commands fail until another is chosen.`)}</div>
     ${by}`;
 }
 
