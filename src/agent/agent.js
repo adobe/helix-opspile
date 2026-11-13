@@ -35,6 +35,7 @@ import { COMPUTER_CWD, computerEnv, ensureCwd } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { seed, seedPin } from './seed.js';
+import { inSidebar, keepAnswers, talk } from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
@@ -54,8 +55,10 @@ import { latestTurn } from './turn.js';
  * It is told about new messages (`deliver`, poked by the NORMALIZE queue), about a day
  * without any (`idle`, a schedule), about knowledge staff share (`seed`, in a session of its own
  * when staff chose the knowledge base: src/agent/seed.js), about a draft of its that a person
- * discarded (`discarded`), and about how a command it asked a person to run ended (`runBash`,
- * `denyBash` and their schedules: src/agent/bashrequest.js).
+ * discarded (`discarded`), about how a command it asked a person to run ended (`runBash`,
+ * `denyBash` and their schedules: src/agent/bashrequest.js), and what a person on the team says
+ * to it in the inbox's sidebar (`sidebar`, src/agent/sidebar.js), which it answers there, and
+ * never in the channel.
  *
  * Code mode: the agent can write JavaScript that calls its tools (`codemode`, QuickJS), and
  * the MCP servers of its team and customer are reachable only that way (src/agent/mcp.js).
@@ -149,6 +152,8 @@ export class ThreadAgent extends Agent {
           target: () => this.target(),
           verdicts: (messages) => this.verdicts(messages),
           posted: (id) => this.posted(id),
+          // Whether the turn answers a sidebar message: then nothing goes to the channel.
+          inSidebar: () => inSidebar(this),
           pinned: (session) => seedPin(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
@@ -438,6 +443,11 @@ export class ThreadAgent extends Agent {
     return seed(this, note);
   }
 
+  /** A person on the team talks to the agent in the inbox's sidebar (src/agent/sidebar.js). */
+  async sidebar(note) {
+    return talk(this, note);
+  }
+
   /** A person discarded the agent's draft (src/agent/discard.js). */
   async discarded(note) {
     return discarded(this, note);
@@ -544,10 +554,17 @@ export class ThreadAgent extends Agent {
 
   /**
    * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
-   * storage, so a woken object does not write it again. A turn in progress keeps nothing.
+   * storage, so a woken object does not write it again. A turn in progress keeps nothing. One
+   * that answers a sidebar message is the sidebar's (src/agent/sidebar.js): the turn kept for
+   * the thread stays the one before it. Every finished sidebar answer in the transcript is kept
+   * first, also while a turn queued behind it works.
    */
   async keepTurn(turn) {
-    if (this.name.startsWith('kb:') || (turn && turn.state === 'working')) {
+    if (this.name.startsWith('kb:')) {
+      return;
+    }
+    await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
+    if (turn && turn.state === 'working') {
       return;
     }
     const sig = JSON.stringify(turn || null);
@@ -555,7 +572,9 @@ export class ThreadAgent extends Agent {
     if (this.keptSig === sig) {
       return;
     }
-    await keepTurn(this.env, this.name, turn);
+    if (!(turn && turn.sidebar)) {
+      await keepTurn(this.env, this.name, turn);
+    }
     await this.ctx.storage.put('kept-turn', sig);
     this.keptSig = sig;
   }
@@ -569,13 +588,11 @@ export class ThreadAgent extends Agent {
       this.keepTimer = null;
       try {
         const { turn } = await this.latestTurn();
-        if (turn && turn.state === 'working') {
-          if (tries > 1) {
-            this.keepTurnSoon(tries - 1);
-          }
-          return;
-        }
+        // The sidebar answers before it, even while the turn behind them works.
         await this.keepTurn(turn);
+        if (turn && turn.state === 'working' && tries > 1) {
+          this.keepTurnSoon(tries - 1);
+        }
       } catch (e) {
         console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
       }

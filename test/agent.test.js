@@ -34,8 +34,9 @@ import {
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
-  agentStatus, pokeAgent, seedAgent, tellDiscarded,
+  agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
 } from '../src/agent/stub.js';
+import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
@@ -320,6 +321,52 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('talk to the team in the inbox\'s sidebar, which the thread shows and the channel never sees', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const told = [];
+    let refuse = null;
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async __unsafe_ensureInitialized() {
+          return true;
+        },
+        async sidebar(note) {
+          told.push([id.name, note]);
+          return refuse ? { error: refuse } : { ok: true, accepted: true };
+        },
+      }),
+    };
+    const me = {
+      id: 7, name: 'Ada Staff', email: 'ada@staff.example', teams: [{ slug: 'helix', name: 'Helix' }],
+    };
+    const inTeam = (t) => [].concat(t).includes('helix');
+    const res = await talkToAgent(e, me, { thread: THREAD, text: '  Is it the CDN?  ' }, inTeam);
+    assert.equal(res.status, 202);
+    const { message } = await res.json();
+    assert.match(message.id, /^sb_/);
+    assert.deepEqual(told, [[THREAD, { id: message.id, by: 'Ada Staff', text: 'Is it the CDN?' }]]);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: ' ' }, inTeam)).status, 400);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'x'.repeat(8001) }, inTeam)).status, 400);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'x' }, () => false)).status, 404);
+    assert.equal((await talkToAgent(e, { ...me, readonly: true }, { thread: THREAD, text: 'x' }, inTeam)).status, 403);
+    assert.equal((await talkToAgent({ ...e, AGENT_CHANNELS: '' }, me, { thread: THREAD, text: 'x' }, inTeam)).status, 409);
+    // An agent that cannot take it: the message is not left in the sidebar, unanswered.
+    refuse = 'missing AGENT_MODEL';
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'Still there?' }, inTeam)).status, 503);
+    // The thread has it, and then the agent's answer, and whether it has an agent.
+    await keepSidebarAnswer(e, THREAD, {
+      state: 'done', sidebar: message.id, text: 'Yes: **the CDN**.', endedAt: new Date().toISOString(),
+    });
+    const data = await inboxThread(e, me, THREAD);
+    assert.equal(data.agent, true);
+    assert.deepEqual(data.sidebar.map((m) => [m.role, m.body, m.by && m.by.name]), [
+      ['person', 'Is it the CDN?', 'Ada Staff'], ['agent', 'Yes: **the CDN**.', null],
+    ]);
+    assert.equal((await inboxThread({ ...e, AGENT_CHANNELS: '' }, me, THREAD)).agent, false);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {

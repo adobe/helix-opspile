@@ -14,8 +14,11 @@
  * The agent's latest turn, as the inbox shows it under the thread: what it is doing while it
  * works, and its closing note for the team once it is done. Read from the transcript: a turn
  * starts with the last input (`pi.user`: new messages, the day-later wrap-up, a staff note)
- * and runs through the assistant entries and tool results after it.
+ * and runs through the assistant entries and tool results after it. A turn that answers a
+ * sidebar message (src/sidebar.js) says which (`sidebar`): its text is the answer, not a note.
  */
+
+import { inputText, MAX_ANSWER, sidebarOf } from '../sidebar.js';
 
 const MAX_TEXT = 1200;
 
@@ -56,8 +59,16 @@ const calls = (m) => (Array.isArray(m.content) ? m.content : []).filter((c) => c
 // Longer than a model request and its retries take.
 const STUCK_MS = 15 * 60 * 1000;
 
+/** The id of the sidebar message the latest turn of `entries` answers, or null. */
+export function turnSidebar(entries) {
+  const list = entries || [];
+  const start = list.map((e) => e.kind).lastIndexOf('pi.user');
+  return start < 0 ? null : sidebarOf(inputText((list[start].model || [])[0]));
+}
+
 /**
- * `{ state: 'working' | 'done' | 'failed', text, startedAt, endedAt }` for the latest turn of
+ * `{ state: 'working' | 'done' | 'failed', text, startedAt, endedAt, sidebar? }` for the latest
+ * turn of
  * `entries` (the transcript), or null before the first. `busy`: a run is pending. A turn that
  * stopped half way with no run pending counts as working for a while, as the run may be between
  * two steps, and then as failed: otherwise the inbox would ask about it for as long as it is open.
@@ -73,7 +84,8 @@ export function latestTurn(entries, { busy = false, now = Date.now() } = {}) {
   const assistant = list.slice(start + 1).filter((e) => e.kind === 'pi.assistant')
     .map((e) => (e.model || [])[0]).filter(Boolean);
   const last = assistant[assistant.length - 1];
-  const turn = { startedAt: at(input), endedAt: null };
+  const sidebar = sidebarOf(inputText(input));
+  const turn = { startedAt: at(input), endedAt: null, ...(sidebar ? { sidebar } : {}) };
   if (busy || !last || last.stopReason === 'toolUse') {
     // No run is pending, and the transcript stopped in the middle of the turn long ago: it died.
     const since = (last && last.timestamp) || (input && input.timestamp);
@@ -86,10 +98,11 @@ export function latestTurn(entries, { busy = false, now = Date.now() } = {}) {
       };
     }
     const call = last && calls(last).pop();
+    const reading = sidebar ? 'Reading your message' : 'Reading the new messages';
     return {
       ...turn,
       state: 'working',
-      text: call ? doing(call) : 'Reading the new messages',
+      text: call ? doing(call) : reading,
     };
   }
   if (last.stopReason === 'error' || last.stopReason === 'aborted') {
@@ -111,6 +124,37 @@ export function latestTurn(entries, { busy = false, now = Date.now() } = {}) {
     ...turn,
     state: 'done',
     endedAt: at(last),
-    text: (texts(last) || fallback).slice(0, MAX_TEXT),
+    text: (texts(last) || fallback).slice(0, sidebar ? MAX_ANSWER : MAX_TEXT),
   };
+}
+
+/**
+ * Every turn of `entries` that answers a sidebar message, oldest first, as `latestTurn` says it:
+ * not only the latest, since a follow-up queued behind one (another sidebar message, new messages)
+ * starts at the same boundary its answer is committed at. A turn that another input took over
+ * before it finished is failed.
+ */
+export function sidebarTurns(entries, { now = Date.now() } = {}) {
+  const list = entries || [];
+  const starts = list.map((e, i) => (e.kind === 'pi.user' ? i : -1)).filter((i) => i >= 0);
+  const out = [];
+  starts.forEach((start, n) => {
+    if (!sidebarOf(inputText((list[start].model || [])[0]))) {
+      return;
+    }
+    const end = n + 1 < starts.length ? starts[n + 1] : list.length;
+    const turn = latestTurn(list.slice(0, end), { now });
+    if (end < list.length && turn.state === 'working') {
+      const next = (list[end].model || [])[0];
+      out.push({
+        ...turn,
+        state: 'failed',
+        endedAt: next && next.timestamp ? new Date(next.timestamp).toISOString() : turn.startedAt,
+        text: 'The turn did not finish.',
+      });
+      return;
+    }
+    out.push(turn);
+  });
+  return out;
 }

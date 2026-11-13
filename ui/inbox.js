@@ -2066,7 +2066,8 @@ function message(m, prev, fresh, followed = false) {
 // (`agent_turn`, keptAgentTurn), so it shows with the messages. Asked when a thread opens or changes, and
 // every few seconds while it works, or while a new message waits for it to start. Not where
 // you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
-// avatar and name open the agent settings of the thread's team, at the thread's channel.
+// avatar opens the sidebar, a conversation with it (below); its name opens the agent settings
+// of the thread's team, at the thread's channel.
 const AGENT_NAME = 'Thread Agent';
 const AGENT_POLL_MS = 4000;
 const AGENT_WAIT_MS = 2 * 60 * 1000;
@@ -2103,8 +2104,7 @@ function agentItem(key) {
   const team = threadRow(key)?.team;
   const teamName = state.teams?.find((t) => t.slug === team)?.name || team;
   const tip = `${AGENT_NAME}'s settings${teamName ? ` in ${teamName}` : ''}`;
-  const face = href ? `<a class="face" href="${esc(href)}" title="${esc(tip)}" aria-label="${esc(tip)}">${avatar(AGENT_NAME, '/icon-192.png')}</a>`
-    : `<span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>`;
+  const face = sideFace(key);
   const name = href ? `<a href="${esc(href)}" title="${esc(tip)}" tabindex="-1"><b>${AGENT_NAME}</b></a>` : `<b>${AGENT_NAME}</b>`;
   return `<div class="msg adobe agent ${turn.state === 'done' ? '' : turn.state}" aria-label="${label}"${turn.state === 'working' ? ' aria-live="polite"' : ''}>
     ${face}
@@ -2123,7 +2123,9 @@ function placeAgent(key) {
   if (!html) { old.remove(); return; }
   const node = toNode(html);
   node.__html = html;
-  if (old) old.replaceWith(node); else feed.append(node);
+  // Above what was said in the sidebar since the thread's latest message (openThread).
+  const tail = feed.lastElementChild?.matches('.sidechat') ? feed.lastElementChild : null;
+  if (old) old.replaceWith(node); else feed.insertBefore(node, tail);
   if (near) scroller.scrollTop = scroller.scrollHeight;
 }
 
@@ -2175,15 +2177,26 @@ async function loadAgent(key, { latest = null } = {}) {
     else if (entry.turn?.state === 'working') { entry.turn = null; placeAgent(key); }
     return;
   }
-  const turn = res.enabled ? res.turn || null : null;
+  const said = res.enabled ? res.turn || null : null;
+  // A turn on a sidebar message is the sidebar's (sideGroup): the note under the thread stays
+  // the one before it.
+  const turn = said?.sidebar ? known?.turn || null : said;
+  const sidebar = said?.sidebar ? said : known?.side || null;
   const last = [latest, known?.latest].filter(Boolean).sort().pop() || null;
-  const entry = { turn, latest: last, timer: null };
+  const entry = {
+    turn, side: sidebar, asked: known?.asked || null, latest: last, timer: null,
+  };
   state.agents.set(key, entry);
   placeAgent(key);
+  if (JSON.stringify(sidebar) !== JSON.stringify(known?.side || null)) showSide(key);
   // Working, or a message newer than its turn that it has not picked up yet (it waits a few
-  // seconds for more): ask again, while the thread stays open.
-  const waiting = res.enabled && last && (!turn || turn.startedAt < last) && Date.now() - Date.parse(last) < AGENT_WAIT_MS;
-  if (turn?.state === 'working' || waiting) askAgain(entry);
+  // seconds for more), or a sidebar message it has not answered yet: ask again, while the
+  // thread stays open.
+  const fresh = (at) => at && Date.now() - Date.parse(at) < AGENT_WAIT_MS;
+  const waiting = res.enabled && last && (!turn || turn.startedAt < last) && fresh(last);
+  const answered = sidebar && sidebar.state !== 'working' && sidebar.sidebar === entry.asked?.id;
+  const asked = res.enabled && entry.asked && !answered && fresh(entry.asked.at);
+  if (said?.state === 'working' || waiting || asked) askAgain(entry);
 }
 
 // ---------------------------------------------------------------- the thread's header
@@ -2446,6 +2459,213 @@ function headWhat(title, chan) {
   return `<div class="what"><h2 title="${esc(text)}">${emojify(text)}</h2>${sub}</div>`;
 }
 
+// ---------------------------------------------------------------- the sidebar
+// A conversation with the thread's agent, in the inbox only (POST /api/agent/sidebar,
+// src/sidebar.js): what you say there goes into the agent's conversation and the thread's
+// history, and never to Slack, Teams or Discord; the agent answers there, and cannot post,
+// react or ask the admin bots while it does. You enter it by the agent's icon: its avatar on
+// its note, the button with it beside the reply box, Continue on an earlier sidebar
+// conversation, or `a`. The reply box then turns into the sidebar's, in purple, saying where
+// it goes, with ✕ Exit (and Esc, and opening another thread). Each run of sidebar messages
+// shows between the thread's messages where it happened, folded to one line ("Lena Berg had a
+// sidebar conversation with Thread Agent"), which unfolds it; the one you are in stays open.
+const side = {
+  // The thread in sidebar mode, or null.
+  key: null,
+  // Conversations unfolded, by their first message's id.
+  open: new Set(),
+  // Messages on their way: { thread, id, body, at, by, role, pending }.
+  sending: [],
+  // What was typed in each thread's sidebar box and not sent.
+  typed: new Map(),
+};
+const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
+const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
+
+/** Whether the open thread `key` has an agent to talk to, and you may. */
+const canSide = (key) => Boolean(state.cache.get(key)?.data?.agent) && !state.data?.me?.readonly;
+
+/** The agent's avatar on its note: it opens the sidebar, where you may talk to it. */
+function sideFace(key) {
+  const face = avatar(AGENT_NAME, '/icon-192.png');
+  if (!canSide(key) || side.key === key) return `<span class="face">${face}</span>`;
+  return `<button class="face" type="button" data-side-enter title="${esc(SIDE_HINT)}" aria-label="${esc(SIDE_HINT)}">${face}${SIDE_ICON}</button>`;
+}
+
+/** The button with the agent's icon beside the reply box. */
+const sideButton = (key) => (canSide(key)
+  ? `<button class="attach sidebtn" type="button" data-side-enter title="${esc(SIDE_HINT)}" aria-label="${esc(SIDE_HINT)}">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</button>` : '');
+
+/** Someone's avatar, as the thread's messages show it. */
+function faceOf(name) {
+  for (const hit of state.cache.values()) {
+    const m = (hit.data?.messages || []).find((x) => x.author?.name === name && x.avatar);
+    if (m) return m.avatar;
+  }
+  return null;
+}
+
+/**
+ * The sidebar messages of entry `key`, oldest first: the thread's, the ones on their way, and
+ * the agent's answer while only the agent has said it (the thread brings it when it is kept).
+ */
+function sideList(key) {
+  const data = state.cache.get(key)?.data;
+  const list = [...(data?.sidebar || [])];
+  const ids = new Set(list.map((m) => m.id));
+  for (const m of side.sending) if (m.thread === key && !ids.has(m.id)) list.push(m);
+  const t = state.agents.get(key)?.side;
+  if (t && t.state !== 'working' && list.some((m) => m.id === t.sidebar) && !list.some((m) => m.reply_to === t.sidebar)) {
+    list.push({
+      id: `${t.sidebar}:answer`, role: 'agent', body: t.text, state: t.state, reply_to: t.sidebar, at: t.endedAt || t.startedAt,
+    });
+  }
+  return list.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
+/** "Lena Berg", "You", "Lena Berg and you": who talked to the agent in `run`. */
+function sidePeople(run) {
+  const people = new Map();
+  for (const m of run) if (m.role === 'person') people.set(m.by?.id ?? m.by?.name, m.by);
+  const names = [...people.values()].map((p) => (p?.id === state.me.id ? 'you' : p?.name || 'Someone'));
+  names.sort((a, b) => (a === 'you') - (b === 'you'));
+  const text = names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** One message of a sidebar conversation: yours and colleagues' on the right, the agent's left. */
+function sideMessage(key, m) {
+  if (m.role === 'agent') {
+    return `<div class="sm agent ${m.state === 'failed' ? 'failed' : ''}"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
+      <div class="col"><div class="who"><b>${AGENT_NAME}</b> · ${clock(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+  }
+  const name = m.by?.name || 'Someone';
+  return `<div class="sm person ${m.by?.id === state.me.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}"><span class="face">${avatar(name, faceOf(name))}</span>
+    <div class="col"><div class="who"><b>${esc(name)}</b> · ${m.pending ? 'sending…' : clock(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+}
+
+/**
+ * A run of sidebar messages in the feed: one line that says who talked to the agent, which
+ * unfolds it. `last`: the thread's latest run, where the agent is seen working on an answer;
+ * `trailing`: after the thread's latest message too, so that the sidebar goes on with it.
+ */
+function sideGroup(key, run, { last, trailing }) {
+  if (!run.length) {
+    // Sidebar mode, with nothing said since the thread's latest message: where it will show.
+    return `<div class="sidechat open live blank"><div class="sc-body"><div class="sc-wait">${SIDE_ICON}What you and ${AGENT_NAME} say here shows in the thread, folded, for your team only. It is never posted.</div></div></div>`;
+  }
+  const id = run[0].id;
+  const live = trailing && side.key === key;
+  const open = live || side.open.has(id);
+  const t = state.agents.get(key)?.side;
+  const working = last && t?.state === 'working' && !run.some((m) => m.reply_to === t.sidebar);
+  const waiting = last && !working && run.at(-1).role === 'person' && !run.at(-1).failed;
+  const n = run.length;
+  const who = sidePeople(run);
+  const people = [...new Map(run.filter((m) => m.role === 'person').map((m) => [m.by?.name, m.by])).values()].slice(0, 2);
+  const faces = `${people.map((p) => avatar(p?.name || '?', faceOf(p?.name))).join('')}${avatar(AGENT_NAME, '/icon-192.png')}`;
+  const what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
+    : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
+  const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
+  const doing = working ? `<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
+    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(t.text)}…</div></div></div>` : '';
+  const queued = waiting ? `<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>` : '';
+  const more = !live && canSide(key) ? `<div class="sc-foot"><button type="button" class="sc-continue" data-side-enter>${SIDE_ICON}Continue in the sidebar</button></div>` : '';
+  const body = open ? `<div class="sc-body">${run.map((m) => sideMessage(key, m)).join('')}${doing}${queued}${more}</div>` : '';
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
+    <button type="button" class="sc-head" data-side-toggle="${esc(id)}" aria-expanded="${open}"${live ? ' aria-disabled="true"' : ''}>
+      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev" aria-hidden="true">▸</span>'}
+    </button>${body}</div>`;
+}
+
+/** The reply box in sidebar mode: to the agent, in purple, saying where it goes, with ✕ Exit. */
+function sideComposer(key, thread) {
+  const where = PLATFORM[thread.source] || 'the channel';
+  return `<div class="composer sidebar" role="group" aria-label="Sidebar with ${AGENT_NAME}">
+    <div class="side-bar"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
+      <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
+      <button type="button" class="side-exit" data-side-exit title="Back to replying in the thread (Esc)">✕ Exit sidebar</button></div>
+    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted" placeholder="Ask ${AGENT_NAME} about this thread…"></textarea>
+    <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
+}
+
+/** The open thread again, from what is known, with the sidebar as it stands now. */
+function showSide(key) {
+  return state.open === key && state.cache.get(key) ? openThread(key, { live: true, cached: true }) : null;
+}
+
+/** Sidebar mode on in the open thread `key`, its box focused. */
+async function enterSide(key = state.open) {
+  if (!key || !canSide(key)) return;
+  const was = side.key;
+  side.key = key;
+  if (was !== key) await showSide(key);
+  const box = $('side-reply');
+  box?.focus();
+  const scroller = $('pane').querySelector(':scope > .scroller');
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
+/** Back to replying in the thread; what was typed in the sidebar stays for next time. */
+function exitSide({ focus = true } = {}) {
+  const key = side.key;
+  if (!key) return;
+  side.key = null;
+  if (state.open === key) {
+    showSide(key);
+    if (focus) $('reply')?.focus();
+  }
+}
+
+/** Wires the sidebar's box: Enter asks, Shift+Enter is a new line, Esc exits. */
+function wireSide(key) {
+  const box = $('side-reply');
+  if (!box) return;
+  box.value = side.typed.get(key) || '';
+  growReply(box);
+  box.oninput = () => { side.typed.set(key, box.value); growReply(box); };
+  box.onkeydown = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitSide(); return; }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); askSide(key); }
+  };
+  $('side-send').onclick = (e) => { e.preventDefault(); askSide(key); };
+}
+
+/**
+ * Sends what is in the sidebar's box to the thread's agent: shown at once, and the agent asked
+ * how it is doing until it has answered. A message the inbox did not take goes back into the box.
+ */
+async function askSide(key) {
+  const box = $('side-reply');
+  const text = (box?.value || '').trim();
+  if (!text) return;
+  box.value = '';
+  growReply(box);
+  side.typed.delete(key);
+  const p = {
+    thread: key, id: `pending-${crypto.randomUUID()}`, role: 'person', by: { id: state.me.id, name: state.me.name }, body: text, at: new Date().toISOString(), pending: true,
+  };
+  side.sending.push(p);
+  showSide(key);
+  const res = await request('POST', '/api/agent/sidebar', { thread: key, text }).catch((e) => ({ ok: false, data: { error: e.message } }));
+  side.sending = side.sending.filter((x) => x !== p);
+  if (!res.ok) {
+    if (!side.typed.get(key)) side.typed.set(key, text);
+    if (state.open === key && side.key === key && !$('side-reply')?.value) { $('side-reply').value = text; growReply($('side-reply')); }
+    toast(`${AGENT_NAME} did not get it: ${res.data.error || `the inbox answered ${res.status}`}.`);
+    showSide(key);
+    return;
+  }
+  const sent = res.data.message;
+  const data = state.cache.get(key)?.data;
+  if (data && !(data.sidebar || []).some((m) => m.id === sent.id)) data.sidebar = [...(data.sidebar || []), sent];
+  const entry = state.agents.get(key) || { turn: null, latest: null, timer: null };
+  entry.asked = { id: sent.id, at: sent.at };
+  state.agents.set(key, entry);
+  showSide(key);
+  loadAgent(key);
+}
+
 // ---------------------------------------------------------------- the agent's suggestions
 // Bottom right of the thread's header: a colleague the thread agent suggested pulling in
 // (`suggest_expert`) and its reason (GET /api/experts?suggested=1, src/experts.js), with more in
@@ -2559,22 +2779,24 @@ const LINES = `${BASH_LINE}${DRAFT_LINE}`;
 // keyboard, so Enter starts a new line there and Send sends, as in the Slack and Teams apps.
 const TOUCH_ONLY = matchMedia('(any-hover: none)');
 
-function composer(thread, resolve = '') {
+function composer(thread, resolve = '', key = thread.thread) {
   if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span>${LINES}</div>`;
   const p = thread.source;
   const name = accountOf(p);
+  // The agent's icon: the sidebar, where you talk to it instead of the channel.
+  const agent = sideButton(key);
   if (p === 'discord') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
     const link = state.me.connectable?.discord && !state.me.connected?.discord
       ? ' <a href="/api/auth/discord/start">Connect your Discord account</a> so the inbox knows which posts are yours.' : '';
-    return `<div class="composer"><span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${LINES}</div>`;
+    return `<div class="composer">${agent}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${LINES}</div>`;
   }
   if (!state.me.connected?.[p]) {
-    return `<div class="composer"><span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${LINES}</div>`;
+    return `<div class="composer">${agent}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${LINES}</div>`;
   }
   return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
-    <div class="tray" id="tray" hidden></div>${attachButton(thread)}
+    <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"
       placeholder="Reply in thread"></textarea>
     <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
@@ -2645,6 +2867,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   syncReading();
   if (switching) prefetchAround(key);
   if (switching) toUrl(true, fromList ? { list: true } : null);
+  // The sidebar is the thread's you entered it in: another one opens to reply in.
+  if (switching && side.key !== key) side.key = null;
   renderThreads();
   const pane = $('pane');
   const prevScroller = pane.querySelector('.scroller');
@@ -2775,7 +2999,20 @@ async function openThread(key, { live = false, cached = false } = {}) {
   let day = null;
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
   let last = null;
+  // The sidebar's messages, each run of them where it happened, folded (sideGroup).
+  const sidebar = sideList(key);
+  let si = 0;
+  const sideUntil = (at) => {
+    const run = [];
+    while (si < sidebar.length && (at === null || sidebar[si].at < at)) { run.push(sidebar[si]); si += 1; }
+    // After the thread's latest message (and the agent's note), in sidebar mode with nothing
+    // said yet: the place where the conversation will show.
+    if (!run.length && (at !== null || side.key !== key || !canSide(key))) return;
+    items.push({ html: sideGroup(key, run, { last: si === sidebar.length, trailing: at === null }) });
+    prev = null;
+  };
   shown.forEach((m, i) => {
+    sideUntil(m.at);
     if (gaps.has(m.thread) && (!i || m.thread !== shown[i - 1].thread)) { items.push(leftOut(gaps.get(m.thread))); gaps.delete(m.thread); }
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
     if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post">new post · ${clock(m.at)}</div>` }); prev = null; }
@@ -2794,6 +3031,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (agent) agent.latest = latest;
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
+  // What was said in the sidebar since the thread's latest message: below the agent's note.
+  sideUntil(null);
   // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
   // suggests.
   const chan = thread.channel_name ? channelTitle(thread.source, thread.channel_name, thread.channel_group) : '';
@@ -2802,7 +3041,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
       <div class="l1">${lead}</div>
       <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
-  const reply = composer(thread, resolveButton(thread, resolution));
+  const reply = side.key === key && canSide(key) ? sideComposer(key, thread)
+    : composer(thread, resolveButton(thread, resolution), key);
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
@@ -2857,6 +3097,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     wireHoldMenu(key, thread);
     wireAttach(key, thread);
   }
+  wireSide(key);
   renderDraftBar(key);
   renderBashBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
@@ -5628,6 +5869,8 @@ function listen(team, live, { again = false } = {}) {
     // The open thread keeps what it shows until it is fetched again: its cards say what a
     // click just did, and the fetch replaces them.
     if (ev.type === 'bash') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // Someone talked to the agent in the sidebar, or it answered there.
+    if (ev.type === 'sidebar') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
@@ -6224,6 +6467,7 @@ function closeThread() {
   state.expertsOpen = null;
   if (history.state?.list) { history.back(); return; }
   Object.assign(state, { open: null, compose: null, awaiting: null });
+  side.key = null;
   closeMentions();
   syncReading();
   renderThreads();
@@ -6498,6 +6742,16 @@ async function start() {
   wireLogos();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
+    // The sidebar: entered by the agent's icon, left by ✕ Exit; its conversations unfold.
+    if (e.target.closest('[data-side-enter]')) { enterSide(); return; }
+    if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
+    const fold = e.target.closest('[data-side-toggle]');
+    if (fold && fold.getAttribute('aria-disabled') !== 'true') {
+      const id = fold.dataset.sideToggle;
+      if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
+      showSide(state.open);
+      return;
+    }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
     const hm = e.target.closest('[data-hm-toggle]');
     if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
@@ -6587,6 +6841,7 @@ async function start() {
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
+    if (e.key === 'a' && state.open && canSide(state.open)) { e.preventDefault(); enterSide(); }
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
   document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });

@@ -427,6 +427,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
   // thread -> the commands its agent asked a person to run, as src/bashrequests.js shapes them
   const bashRequests = new Map();
+  // thread -> what the team said to its agent in the sidebar, and its answers (src/sidebar.js)
+  const sidebars = new Map();
   // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
   const sourceViews = new Map([
     ['https://docs.example.com/purge', { view: 'frame', url: '/__dev/source-page' }],
@@ -607,9 +609,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
    * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
    * minutes ago (2, unless it says).
+   * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
+   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js).
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
+    sidebar = [],
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -690,6 +695,26 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         created_at: at,
         updated_at: at,
       });
+    }
+    if (sidebar.length) {
+      let asked = null;
+      sidebars.set(key, sidebar.map(([who, ago, body], i) => {
+        const p = who !== 'agent' && byKey.get(who);
+        const id = `sb_${String(threads.size).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`;
+        const m = {
+          id: p ? id : `${asked}:answer`,
+          role: p ? 'person' : 'agent',
+          by: p ? { id: p.id, name: p.name } : null,
+          body,
+          state: 'done',
+          reply_to: p ? null : asked,
+          at: new Date(now - ago * MIN).toISOString(),
+        };
+        if (p) {
+          asked = id;
+        }
+        return m;
+      }));
     }
     if (bash.length) {
       bashRequests.set(key, bash.map((b, i) => {
@@ -1165,6 +1190,14 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     label: {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
+    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
+    // thread, between Dana's question and Sam's answer.
+    sidebar: [
+      ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
+      ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
+      ['lena', 82, 'So it could be their rewrite?'],
+      ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
+    ],
   });
 
   seed({
@@ -1384,6 +1417,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     appPosts,
     drafts,
     bashRequests,
+    sidebars,
     sourceViews,
     sourcePage,
     uploads,
