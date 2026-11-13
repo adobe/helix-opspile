@@ -1400,8 +1400,10 @@ describe('seeds with a chosen knowledge base', () => {
         h.call('kb_write', write('kb-team-forms', 'playbooks/purge.md')),
         h.call('git_ls', { repo: 'kb-team-forms' }),
         h.call('kb_write', write('kb-team-helix', 'playbooks/purge.md')),
+        h.call('kb_write', write('kb-team-nope', 'playbooks/purge.md')),
       );
-      const [shared, refused, listed, own] = h.results;
+      const [shared, refused, listed, own, unknown] = h.results;
+      assert.match(unknown, /^unknown repository kb-team-nope; use one of: [^\n]*\. Nothing was written\.$/);
       assert.match(shared, /^committed [0-9a-f]{12} to kb-team-sites: playbooks\/purge\.md/);
       assert.match(refused, /kb-team-forms is read only for you[^\n]*Nothing was written\./);
       assert.equal(listed, '(the repository is empty)');

@@ -301,7 +301,12 @@ export function opspileExtension(ctx) {
         const pin = await pinnedTo(api.conversationId);
         const kb = String(args.kb || '');
         const name = { team: 'kb-team', org: 'kb-org' }[kb] || kb;
-        const r = await repo(name);
+        let r;
+        try {
+          r = await repo(name);
+        } catch (e) {
+          return fail(`${e.message}. Nothing was written.`);
+        }
         if (pin && r.id !== `kb-${pin}`) {
           return fail(`This note goes to kb-${pin} only: ${r.id} cannot be written here. Nothing was written.`);
         }
