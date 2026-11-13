@@ -2092,13 +2092,29 @@ function agentHref(key) {
   return `/inbox/kb?${q}`;
 }
 
+// The agent at work: a highlight going round its bubble's border and down its trail (the halo,
+// ui/spectrum-inbox.css).
+const HALO = '<span class="halo" aria-hidden="true"><i></i></span>';
+
+/**
+ * Keeps the halo turning where it was when its bubble is rebuilt (the agent says what it is
+ * doing next): the halo's way around it, down the trail and back counts from the page's start,
+ * not from the bubble's.
+ */
+function keepHaloTurning(root) {
+  root.querySelectorAll('.msg.agent .bubble').forEach((bubble) => {
+    // With the subtree, the trail's circles (its ::before and ::after) too.
+    bubble.getAnimations?.({ subtree: true }).forEach((a) => { a.startTime = 0; });
+  });
+}
+
 function agentItem(key) {
   const { turn, latest } = state.agents.get(key) || {};
   if (!turn) return '';
   if (!tracesShown(threadRow(key)?.channel_id)) return '';
   // A note is about the thread as it was: someone posted since (or is sending), it is gone.
   if (turn.state !== 'working' && latest && latest > (turn.endedAt || turn.startedAt)) return '';
-  const body = turn.state === 'working' ? `<span class="spin" aria-hidden="true"></span>${esc(turn.text)}…` : md(turn.text);
+  const body = turn.state === 'working' ? `${HALO}${esc(turn.text)}…` : md(turn.text);
   const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
   const href = agentHref(key);
   const team = threadRow(key)?.team;
@@ -2126,6 +2142,7 @@ function placeAgent(key) {
   // Above what was said in the sidebar since the thread's latest message (openThread).
   const tail = feed.lastElementChild?.matches('.sidechat') ? feed.lastElementChild : null;
   if (old) old.replaceWith(node); else feed.insertBefore(node, tail);
+  keepHaloTurning(node);
   if (near) scroller.scrollTop = scroller.scrollHeight;
 }
 
@@ -2832,6 +2849,7 @@ function renderPane(pane, key, {
     if (review) scroller.firstElementChild.__html = review;
     const nodes = [...scroller.lastElementChild.children];
     if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; enter(n, items[i]); });
+    keepHaloTurning(scroller);
     return;
   }
   const ph = pane.querySelector(':scope > .ph');
@@ -2851,6 +2869,7 @@ function renderPane(pane, key, {
   const keep = new Set(nodes);
   [...feed.children].forEach((n) => { if (!keep.has(n)) n.remove(); });
   nodes.forEach((n, i) => { if (feed.children[i] !== n) feed.insertBefore(n, feed.children[i] || null); });
+  keepHaloTurning(feed);
   const box = pane.querySelector(':scope > .composer');
   if (!box || box.__html !== reply) {
     const node = make(reply);
