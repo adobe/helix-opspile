@@ -1376,6 +1376,47 @@ describe('seeds with a chosen knowledge base', () => {
       await srv.close();
     }
   });
+
+  it('write the knowledge bases of the teams the channel is shared with, and only read the others', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const e = env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' });
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('sites', 'Sites'), ('forms', 'Forms');
+      INSERT INTO knowledge_bases (repo, kind, slug, created_at) VALUES
+        ('kb-team-helix', 'team', 'helix', '2026-10-01T00:00:00Z'),
+        ('kb-team-sites', 'team', 'sites', '2026-10-01T00:00:00Z'),
+        ('kb-team-forms', 'team', 'forms', '2026-10-01T00:00:00Z');
+      INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'sites', '2026-10-01T00:00:00Z')`);
+    const h = await pinnedHarness(e, {
+      key: null, team: 'helix', org: null, source: 'slack', channelId: 'C1', threads: [],
+    });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-team-sites');
+      srv.create('kb-team-forms');
+      await seed(h.agent, { by: 'Ada', text: 'Purge by tag.' });
+      await h.run(
+        h.call('kb_write', write('kb-team-sites', 'playbooks/purge.md')),
+        h.call('kb_write', write('kb-team-forms', 'playbooks/purge.md')),
+        h.call('git_ls', { repo: 'kb-team-forms' }),
+        h.call('kb_write', write('kb-team-helix', 'playbooks/purge.md')),
+      );
+      const [shared, refused, listed, own] = h.results;
+      assert.match(shared, /^committed [0-9a-f]{12} to kb-team-sites: playbooks\/purge\.md/);
+      assert.match(refused, /kb-team-forms is read only for you[^\n]*Nothing was written\./);
+      assert.equal(listed, '(the repository is empty)');
+      assert.match(own, /^committed [0-9a-f]{12} to kb-team: playbooks\/purge\.md/);
+      assert.ok(srv.files('kb-team-sites').includes('playbooks/purge.md'));
+      assert.equal(srv.head('kb-team-forms'), null);
+      assert.match(h.system[0], /- kb-team: [^\n]*\(you can write it\)\n- kb-team-sites: [^\n]*shared with \(you can write it\)\n- kb-team-forms: [^\n]*\(read only\)/);
+      // Only the ones it writes have their index in the prompt.
+      assert.match(h.system[0], /## kb-team-sites: /);
+      assert.doesNotMatch(h.system[0], /## kb-team-forms: /);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
 });
 
 describe('the ThreadAgent class', () => {

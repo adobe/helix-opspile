@@ -108,8 +108,8 @@ What you do:
 - Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Do it in your first turn when no Adobe staff have answered yet and the thread is more than you can settle with the draft (an incident, an error, a question about how the product works inside), alongside the draft rather than instead of it. Once you know what the thread is really about, pass that to list_experts as \`about\`, in a sentence with the product's own names ("the AI assistant panel of Experience Workspace is missing"): its title and first message often say it vaguely. list_topics shows the topics of the whole inbox and who works on each, for when the list does not convince you. Suggest only someone the evidence backs (similar threads they worked on, a topic they work on, what they know), say it in the reason, and leave it when Adobe staff are handling the thread.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
-- Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team.
-- Look things up: the knowledge bases first, then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
+- Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team. When your channel is shared with other ops teams, their knowledge bases (kb-team-<slug>, marked "you can write it" under repositories) are yours to write too: file there what that team's work needs. The other teams' knowledge bases are listed read only: look things up in them, never file into them.
+- Look things up: the knowledge bases first (the other teams' too, when the thread touches their work), then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
 - Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
 - When a lookup takes many calls or a lot of filtering, write a codemode script: it calls your tools as \`await tools.<name>(args)\`, and only what it outputs reaches you. MCP servers, if your team or customer has any, are listed under mcp-servers and are reachable only from scripts.
@@ -153,7 +153,8 @@ export function opspileExtension(ctx) {
   async function repo(id) {
     const t = await ctx.target();
     const all = await accessibleRepos(env, t);
-    const r = all.find((x) => x.id === id);
+    // A knowledge base by its own name too: kb-team-<slug> of the agent's team is kb-team.
+    const r = all.find((x) => x.id === id) || all.find((x) => x.kind === 'kb' && x.artifact === id);
     if (!r) {
       throw new Error(`unknown repository ${id}; use one of: ${all.map((x) => x.id).join(', ')}`);
     }
@@ -187,7 +188,8 @@ export function opspileExtension(ctx) {
     section('knowledge', async () => {
       const t = await ctx.target();
       const parts = [];
-      for (const r of (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb')) {
+      // The ones it writes: the other teams' it reads are listed under repositories.
+      for (const r of (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb' && x.writable)) {
         // eslint-disable-next-line no-await-in-loop
         const index = await readText(env, r.artifact, 'index.md').catch(() => ({ error: 'unreadable' }));
         const body = index.error ? '(empty so far)' : index.text.slice(0, MAX_INDEX);
@@ -206,7 +208,7 @@ export function opspileExtension(ctx) {
   const tools = [
     defineTool({
       name: 'git_ls',
-      description: 'List files and directories in a repository (kb-team, kb-org, or a GitHub owner/name from the repositories section).',
+      description: 'List files and directories in a repository (kb-team, kb-org, another team\'s kb-team-<slug>, or a GitHub owner/name from the repositories section).',
       parameters: Type.Object({
         repo: Type.String({ description: 'Repository id' }),
         path: Type.Optional(Type.String({ description: 'Directory, default the root' })),
@@ -285,7 +287,7 @@ export function opspileExtension(ctx) {
       name: 'kb_write',
       description: 'Write concepts to a knowledge base in one commit: create or replace files (whole content, with OKF frontmatter) or delete them. Give `base` (the hash from git_read) for every file you change or delete that already exists, so a colleague\'s newer version is not overwritten. index.md and log.md are updated for you.',
       parameters: Type.Object({
-        kb: Type.Union([Type.Literal('team'), Type.Literal('org')], { description: 'team: kb-team, org: kb-org' }),
+        kb: Type.String({ description: 'team: kb-team, org: kb-org, or the id of another knowledge base you can write (kb-team-<slug> of a team your channel is shared with)' }),
         message: Type.String({ description: 'What you changed and why, in one line' }),
         changes: Type.Array(Type.Object({
           path: Type.String({ description: 'e.g. issues/cdn-purge-delay.md' }),
@@ -297,10 +299,15 @@ export function opspileExtension(ctx) {
       executionMode: 'sequential',
       async execute(args, api) {
         const pin = await pinnedTo(api.conversationId);
-        if (pin && args.kb !== pin) {
-          return fail(`This note goes to kb-${pin} only: kb-${args.kb} cannot be written here. Nothing was written.`);
+        const kb = String(args.kb || '');
+        const name = { team: 'kb-team', org: 'kb-org' }[kb] || kb;
+        const r = await repo(name);
+        if (pin && r.id !== `kb-${pin}`) {
+          return fail(`This note goes to kb-${pin} only: ${r.id} cannot be written here. Nothing was written.`);
         }
-        const r = await repo(args.kb === 'team' ? 'kb-team' : 'kb-org');
+        if (!r.writable) {
+          return fail(`${r.id} is read only for you: only the knowledge bases of your team, your customer and the teams your channel is shared with can be written. Nothing was written.`);
+        }
         const t = await ctx.target();
         let from = 'knowledge shared by staff';
         if (t.key) {
@@ -1006,7 +1013,8 @@ export function staffExtension(ctx) {
     section('instructions-from-staff', async () => {
       const t = await ctx.target();
       const parts = [];
-      for (const r of (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb')) {
+      // Their own team's and customer's: the other teams' instructions are for their agents.
+      for (const r of (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb' && x.scope === 'own')) {
         // eslint-disable-next-line no-await-in-loop
         const file = await readText(env, r.artifact, SYSTEM_PROMPT).catch(() => ({ error: 'unreadable' }));
         const body = file.error ? '' : systemPromptBody(file.text);
