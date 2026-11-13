@@ -111,10 +111,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
  }
 
 /* Threads: fixed-height rows, two lines, as in Apple Mail. */
-#threads { background: var(--col); border-left: var(--spectrum-border-width-100) solid var(--line); border-right: var(--spectrum-border-width-100) solid var(--line);
-  scrollbar-width: none; }
-/* The open thread's lifted row (#lift) is drawn across the list's right edge: no scrollbar there. */
-#threads::-webkit-scrollbar { display: none; }
+#threads { background: var(--col); border-left: var(--spectrum-border-width-100) solid var(--line); border-right: var(--spectrum-border-width-100) solid var(--line); }
 #threads .count { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-bottom: var(--spectrum-border-width-100) solid var(--line);
   position: sticky; top: 0; z-index: 1; }
 .t { height: var(--row-h, var(--spectrum-spacing-800)); padding: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-200); border-bottom: var(--spectrum-border-width-100) solid var(--line); cursor: pointer;
@@ -220,14 +217,9 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .t .dot.ring:not([class*="c-"]) { background: transparent; }
 
 /*
- * Depth: the messages pane is lowest, the thread list above it, the filter cards on top.
- * The filter cards stick out of the page's left edge and hang over the thread list by a
- * third of their corner radius while one of their filters is on; pointing at one moves
- * nothing. They need room to do so (and to cast their shadow): the filter column reaches
- * into the thread list by --fg, and lets the pointer through where it has no card. The open thread's row is lifted out of its column, over the pane, by a copy
- * of it in #lift (see syncLift), since the list's scroller would clip it. It floats over
- * the list's heading and the open thread's header, and the list shows no scrollbar for it
- * to cover.
+ * The filters are a column of their own on the frame. Folded to a rail (below) they slide out
+ * over the thread list: the column reaches into the list by --fg for that, and lets the
+ * pointer through where it has no card.
  */
 :root { --fg: var(--spectrum-spacing-700); }
 main { position: relative; background: var(--col); }
@@ -237,11 +229,7 @@ main { position: relative; background: var(--col); }
 #filters::-webkit-scrollbar { display: none; }
 #filters .card { pointer-events: auto; margin-left: calc(-1 * var(--r)); padding-left: calc(var(--r) + calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)));
  border-radius: 0 var(--r) var(--r) 0; box-shadow: var(--card-shadow);
-  --out: 0px; margin-right: calc(-1 * var(--out)); padding-right: calc(var(--spectrum-spacing-200) + var(--out));
-  transition: margin-right var(--spectrum-animation-duration-300) ease-out, padding-right var(--spectrum-animation-duration-300) ease-out; }
-/* A card hangs further out by its right edge and padding alone: its contents stay put. */
-main:not(.rail) #filters .card.active { --out: calc(var(--r) / 3); }
-@media (prefers-reduced-motion: reduce) { #filters .card { transition: none; } }
+  padding-right: var(--spectrum-spacing-200); }
 /* Room for the filter cards' overhang, so they never cover a status dot. */
 .t { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
 #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); }
@@ -281,15 +269,9 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 @media (hover: none) {
   :is(main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .fr .not { opacity: 0.6; pointer-events: auto; }
 }
-main.rail #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
 @media (prefers-reduced-motion: reduce) {
   main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
 }
-#lift { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
-#lift .t { position: absolute;
-  content-visibility: visible;
- box-shadow: var(--lift-shadow);
-  padding: calc(calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)) + var(--lv) - var(--spectrum-border-width-100)) calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) + var(--lr) - var(--spectrum-border-width-100)) 0 calc(calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) + var(--ll) - var(--spectrum-border-width-100)); }
 
 .t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
 @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
@@ -1151,7 +1133,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   #pane { transform: translateX(100%); visibility: hidden; }
   main.reading #pane { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) ease-out; }
   main.reading #threads { transform: translateX(-25%); visibility: hidden; }
-  #lift { display: none !important; }
   .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
   .t .cust { max-width: 40%; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
@@ -1199,16 +1180,19 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   --brown: var(--spectrum-brown-visual-color);
   --crimson: var(--spectrum-red-visual-color);
   --teams: var(--spectrum-indigo-visual-color);
-  --row-read: var(--spectrum-background-layer-1-color);
-  --row-unread: var(--spectrum-background-layer-2-color);
+  /* The list and the thread are one content area, on the base: a row is told from the next by
+     its hairline, an unread one by its bold title, not by a second gray. */
+  --col: var(--content);
+  --row-read: var(--content);
+  --row-unread: var(--content);
   /* ListView's highlight selection: blue-900 mixed into the base, and outlined in it. */
   --s2-row-sel: color-mix(in srgb, var(--spectrum-blue-900) 10%, var(--spectrum-gray-25));
   --s2-row-sel-hover: color-mix(in srgb, var(--spectrum-blue-900) 15%, var(--spectrum-gray-25));
   --s2-row-hover: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-hover-opacity));
   --s2-row-down: rgb(var(--spectrum-gray-900-rgb), var(--spectrum-table-row-down-opacity));
   --sel: var(--s2-row-sel);
-  /* Floating layers: the filter cards hang over the list (elevated), the open row is lifted
-     out of it (dragged). */
+  /* Floating layers: the folded filters slid out over the list (elevated); the filters' drawer
+     and a lightbox's image (dragged). */
   --r: var(--spectrum-corner-radius-large-default);
   --card-shadow: var(--s2-elevated);
   --lift-shadow: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 6)
@@ -1343,13 +1327,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .tag.hot { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
 .spectrum .tag.us { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
 .spectrum .tag.tech { color: var(--spectrum-neutral-content-color-default); }
-/* The open thread's row, lifted out of the list (#lift): selected, and dragged above it. */
-.spectrum #lift .t {
-  border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900);
-  border-radius: var(--spectrum-corner-radius-large-default);
-  background: var(--s2-row-sel);
-}
-.spectrum #lift .t .faces .av { border-color: var(--s2-row-sel); }
 .spectrum mark { background: var(--spectrum-notice-subtle-background-color-default); border-radius: var(--spectrum-corner-radius-75); }
 
 /* The list's toolbar, sticky on layer 1. */
@@ -1616,17 +1593,17 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .msg.agent button.face:hover .av, .spectrum .msg.agent button.face:focus-visible .av { outline: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); outline-offset: var(--spectrum-focus-indicator-gap); }
 
 /* The sidebar: purple, Spectrum's color for what is neither the customer's nor posted. The folded
-   line a quiet, dashed card; unfolded, the agent's answers outlined as its notes are, in purple,
+   line a quiet card in the subtle purple (an InlineAlert's subtle fill, with no edge); unfolded, the agent's answers outlined as its notes are, in purple,
    yours and colleagues' filled. In sidebar mode the reply box is the sidebar's: tinted, with a
    purple field and an Ask button in purple, and a line that says where it goes. */
 .spectrum .bubble-ico { color: var(--spectrum-white); background: var(--spectrum-purple-background-color-default); }
 .spectrum .sidechat {
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-purple-visual-color);
+  border: var(--spectrum-border-width-200) solid transparent;
   border-radius: var(--spectrum-corner-radius-large-default);
   background: var(--spectrum-purple-subtle-background-color-default);
 }
-.spectrum .sidechat.open { border-style: solid; }
-.spectrum .sidechat.live { border-width: var(--spectrum-border-width-200); box-shadow: 0 0 0 var(--spectrum-spacing-50) color-mix(in srgb, var(--spectrum-purple-visual-color) 18%, transparent); }
+/* The one you are writing in has an edge, as a field with the focus has. */
+.spectrum .sidechat.live { border-color: var(--spectrum-purple-visual-color); }
 .spectrum .sidechat .sc-head {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
   border: 0;
@@ -1702,7 +1679,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .composer.sidebar .side-exit:hover { border-color: var(--spectrum-gray-800); }
 .spectrum .composer.sidebar .side-exit:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
-.spectrum .composer.sidebar textarea { border-color: var(--spectrum-purple-visual-color); border-style: dashed; background: var(--spectrum-background-layer-2-color); }
+.spectrum .composer.sidebar textarea { border-color: var(--spectrum-purple-visual-color); background: var(--spectrum-background-layer-2-color); }
 .spectrum .composer.sidebar textarea:focus { border-color: var(--spectrum-purple-1000); border-style: solid; }
 .spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
 .spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
@@ -2003,15 +1980,15 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .srcpop > blockquote { border-left-color: var(--spectrum-accent-visual-color); background: var(--spectrum-accent-subtle-background-color-default); border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; }
 .spectrum .srcpop .view .none { color: var(--spectrum-neutral-subdued-content-color-default); }
 
-/* The thread's shared draft under the reply box: a dashed card in the accent's subtle fill,
+/* The thread's shared draft under the reply box: a card in the accent's subtle fill, with no edge,
    "Send as me" the accent Button, "as the bot" an outline one, the rest small ActionButtons. */
 .spectrum .draftbar {
   gap: var(--spectrum-spacing-100);
   font-size: var(--spectrum-font-size-75);
   color: var(--spectrum-neutral-subdued-content-color-default);
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-accent-visual-color);
+  border: 0;
   border-radius: var(--spectrum-corner-radius-large-default);
-  background: color-mix(in srgb, var(--spectrum-accent-subtle-background-color-default) 50%, var(--pane));
+  background: var(--spectrum-accent-subtle-background-color-default);
 }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
@@ -2046,18 +2023,18 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .draftbar button.asbot:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: var(--s2-hover); }
 .spectrum .draftbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
 .spectrum .draftbar button.ico:disabled { background: none; }
-/* A command the agent asks a person to run: a dashed card as the draft's, in the notice color
-   while it waits, since running it is a decision; a plain outline once that is made. The
+/* A command the agent asks a person to run: a card as the draft's, in the notice color's subtle
+   fill while it waits, since running it is a decision; in gray once that is made. The
    command is a code block, the fields small TextFields, Run the accent Button and Deny an
    outline one. */
 .spectrum .bashbar .br {
   font-size: var(--spectrum-font-size-75);
   color: var(--spectrum-neutral-subdued-content-color-default);
-  border: var(--spectrum-border-width-100) dashed var(--spectrum-notice-visual-color);
+  border: 0;
   border-radius: var(--spectrum-corner-radius-large-default);
-  background: color-mix(in srgb, var(--spectrum-notice-subtle-background-color-default) 50%, var(--pane));
+  background: var(--spectrum-notice-subtle-background-color-default);
 }
-.spectrum .bashbar .br:not(.pending) { border-style: solid; border-color: var(--spectrum-gray-300); background: none; }
+.spectrum .bashbar .br:not(.pending) { background: var(--spectrum-gray-75); }
 .spectrum .bashbar .what { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .bashbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
 .spectrum .bashbar .br.failed .by { color: var(--spectrum-negative-content-color-default); }
@@ -2347,7 +2324,7 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum main.simple .t .cust { color: var(--spectrum-neutral-content-color-default); }
 .spectrum main.simple .t.unread .when { color: var(--spectrum-neutral-content-color-default); }
 .spectrum #threads .rows > .grp {
-  background: var(--spectrum-background-layer-1-color);
+  background: var(--content);
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-100);
@@ -2379,3 +2356,44 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum .card h3 .atme[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
 .spectrum .card h3 .clear + .atme { margin-left: var(--spectrum-spacing-75); }
 .spectrum #threads .count .filt .at { display: inline-grid; margin-left: var(--spectrum-spacing-75); }
+
+/* ==== The app frame ============================================================================
+   Spectrum 2's app frame (ui/spectrum.css): the header and the filters, which navigate, are on
+   the frame's layer; the thread list and the open thread are the content area, one container
+   (`main::before`, behind both) with a divider between the list and what is picked in it. On a
+   phone the content area is the page, under the header, its top corners rounded. */
+.spectrum main { background: transparent; }
+.spectrum #threads, .spectrum #pane { background: transparent; }
+.spectrum #threads { border: 0; }
+@media (min-width: 700px) {
+  .spectrum main { padding: 0 var(--frame-gap) var(--frame-gap) var(--frame-gap); }
+  .spectrum main::before { content: ""; grid-row: 1; grid-column: 1 / 3; background: var(--content);
+    border-radius: var(--content-radius); box-shadow: var(--content-shadow); }
+  .spectrum #threads { grid-row: 1; grid-column: 1; border-radius: var(--content-radius) 0px 0px var(--content-radius); }
+  .spectrum #pane { grid-row: 1; grid-column: 2; border-left: var(--spectrum-border-width-100) solid var(--line);
+    border-radius: 0px var(--content-radius) var(--content-radius) 0px; }
+}
+@media (min-width: 1100px) {
+  .spectrum main { padding-left: 0px; }
+  .spectrum main::before { grid-column: 2 / 4; }
+  .spectrum #filters { grid-row: 1; grid-column: 1; }
+  .spectrum #threads { grid-column: 2; }
+  .spectrum #pane { grid-column: 3; }
+  /* The filters: groups on the frame, each under its title, with no card, shadow or overhang.
+     Folded to the rail they are icons on the frame; slid out over the list they float, so
+     there they are Popovers: on layer 2, elevated. */
+  .spectrum #filters .card { background: transparent; box-shadow: none;
+    transition: background-color var(--s2-ease), box-shadow var(--s2-ease); }
+  .spectrum main:not(.rail) #filters { margin-right: 0px; padding: var(--spectrum-spacing-100) var(--frame-gap) var(--frame-gap) var(--spectrum-spacing-300); pointer-events: auto; }
+  .spectrum main:not(.rail) #filters .card { margin-left: 0px; padding: 0px; border-radius: 0px; }
+  .spectrum :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .card {
+    background: var(--s2-popover); box-shadow: var(--s2-elevated); }
+}
+@media (max-width: 699px) {
+  .spectrum main { background: var(--content); border-radius: var(--content-radius) var(--content-radius) 0px 0px; }
+}
+/* A group's title stands alone: no light before it, which said nothing. Its values are written
+   as they are stored (critical, high); here they start with a capital, as every label does. A
+   customer's name is its own. */
+.spectrum .card h3::before { display: none; }
+.spectrum .card:not([data-f="customer"]) .fr .lab::first-letter { text-transform: uppercase; }

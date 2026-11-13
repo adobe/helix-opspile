@@ -163,6 +163,8 @@ function press(b, fn) {
 }
 /** `once`, with the button `b` disabled meanwhile. */
 const hold = (b, key, fn) => press(b, () => once(key, fn));
+/** How many channels, in words: "1 channel", "48 channels". */
+const channelCount = (n) => `${n} ${n === 1 ? 'channel' : 'channels'}`;
 
 const orgLabel = (slug) => {
   const o = state.orgs.find((x) => x.slug === slug);
@@ -282,13 +284,13 @@ function drawList() {
       <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
         <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
         ${t.self_managed ? '<span class="tag manual" title="Every member is a team manager">self-managed</span>' : ''}
-        <span class="sub">${t.members} ${t.members === 1 ? 'person' : 'people'} · ${t.channels} ch${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
+        <span class="sub">${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
-        <span class="name"><i>Unassigned</i></span><span class="sub">${state.unassigned.channels} ch</span></div>` : '';
+        <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
       <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
       ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><input id="ntName" placeholder="Name" class="grow" required>
-        <input id="ntSlug" placeholder="slug" pattern="[a-z0-9][a-z0-9-]*" required><button class="primary">Create</button></form>` : ''}
+        <input id="ntSlug" placeholder="Slug" pattern="[a-z0-9][a-z0-9-]*" required><button class="primary">Create</button></form>` : ''}
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     if (!state.me.admin) {
       wireFilter();
@@ -338,7 +340,7 @@ function drawList() {
       <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
         ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
-        <span class="sub">${o.channels} ch</span></div>`).join('');
+        <span class="sub">${channelCount(o.channels)}</span></div>`).join('');
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter ${state.orgs.length} orgs" value="${esc(state.filter)}">
       <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
       ${rows || '<div class="empty">Nothing matches.</div>'}
@@ -636,9 +638,9 @@ function renderChannels() {
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
-        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">remove</button>` : ''}`
+        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}`
     : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
-        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>undo</button>` : ''}` : '<span class="sub">by rule</span>'}
+        ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>Undo</button>` : ''}` : '<span class="sub">by rule</span>'}
         ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin"${off(assignKey(target, c.channelId, 'admin'))} title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
@@ -837,14 +839,14 @@ function renderMembers() {
   const role = (m) => {
     if (team.self_managed) return '<span class="tag manual" title="Every member of a self-managed team is a team manager">manager</span>';
     return m.role === 'manager'
-      ? `<span class="tag manual">manager</span> <button class="link" data-role="member" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="Back to member">demote</button>`
-      : `<button class="link" data-role="manager" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="May add and remove members and edit the team's knowledge base">make manager</button>`;
+      ? `<span class="tag manual">manager</span> <button class="link" data-role="member" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="Back to member">Demote</button>`
+      : `<button class="link" data-role="manager" data-person="${m.id}"${off(`member:${team.slug}:${m.id}`)} title="May add and remove members and edit the team's knowledge base">Make manager</button>`;
   };
   $('membersTable').innerHTML = members.length
     ? `<table><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr>${members.map((m) => `<tr>
-      <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td class="mono">${esc(m.email)}</td>
+      <td>${esc(m.name || '')}${m.staff ? '' : ' <span class="tag vendor" title="Not marked as Adobe staff">not staff</span>'}</td><td>${esc(m.email)}</td>
       <td>${role(m)}</td>
-      <td><button class="link" data-remove="${m.id}"${off(`member:${team.slug}:${m.id}`)} style="color:var(--red)">remove</button></td></tr>`).join('')}</table>`
+      <td><button class="link" data-remove="${m.id}"${off(`member:${team.slug}:${m.id}`)}>Remove</button></td></tr>`).join('')}</table>`
     : '<div class="empty">Nobody yet.</div>';
   const v = state.view;
   // One change at a time per person: a role change and a removal in a row go out in order,
@@ -971,7 +973,7 @@ function ruleRow(r) {
   return `<tr data-rule="${r.id}"><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
     <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
-    <td><button class="link" data-edit="${r.id}">edit</button><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)} style="color:var(--red)">delete</button></td></tr>`;
+    <td><button class="link" data-edit="${r.id}">Edit</button><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)}>Delete</button></td></tr>`;
 }
 
 function ruleForm(r = {}) {
@@ -1243,8 +1245,8 @@ function renderRequests() {
     <td class="note">${esc(r.note || '')}</td>
     <td>${decisionText(r)}</td>
     <td class="nw">${r.status !== 'open' ? '' : state.me.admin
-    ? `<button class="link" data-review="${r.id}">review</button>`
-    : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} title="Take the request back">withdraw</button>`}</td></tr>`).join('');
+    ? `<button class="link" data-review="${r.id}">Review</button>`
+    : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} title="Take the request back">Withdraw</button>`}</td></tr>`).join('');
   $('requestsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>Asked by</th><th>Note</th><th>Answer</th><th></th></tr>${rows}</table>`
     : '<div class="empty">Nothing asked for yet. Search for a channel above to ask for it.</div>';

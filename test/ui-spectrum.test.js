@@ -37,21 +37,39 @@ describe('Spectrum 2', () => {
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);
-      // The browser's chrome: Spectrum 2's base background, light and dark.
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
+      // The browser's chrome: the app frame's layer, light and dark.
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-layer-1-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-layer-1-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
     }
   });
 
-  it('keeps zero lengths that calc() adds to lengths, and the filter cards\' overhang', () => {
+  it('keeps zero lengths that calc() adds to lengths', () => {
     for (const file of STYLESHEETS) {
       // A custom property set to a unitless 0 breaks every calc() that adds it to a length.
       assert.doesNotMatch(SCRIPTS[file], /--[a-z0-9-]+:\s*0\s*[;}]/, file);
     }
-    // The filter cards hang out to the right as they are picked (--out), padded as much, so
-    // their contents stay where they are; pointing at one moves nothing.
-    assert.match(SCRIPTS['spectrum-inbox.css'], /#filters \.card \{[^}]*--out: 0px; margin-right: calc\(-1 \* var\(--out\)\); padding-right: calc\([^;]*\+ var\(--out\)\)/);
-    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /#filters \.card(\.active)?:hover \{[^}]*--out/);
+  });
+
+  it('frames every page as Spectrum 2\'s app frame does: a content area on the frame\'s layer', () => {
+    const shared = SCRIPTS['spectrum.css'];
+    assert.match(shared, /--frame: var\(--spectrum-background-layer-1-color\);\s*--content: var\(--spectrum-background-base-color\);/);
+    assert.match(shared, /:where\(\.spectrum\) body \{ background: var\(--frame\);/);
+    // The header is part of the frame: no fill of its own, and no line under it.
+    assert.match(shared, /\.spectrum header \{[^}]*background: transparent;\s*border-bottom: 0;/);
+    // The inbox's list and thread, and a knowledge base's files and editor, are one container.
+    for (const file of ['spectrum-inbox.css', 'spectrum-kb.css']) {
+      assert.match(SCRIPTS[file], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/, file);
+    }
+    assert.match(SCRIPTS['spectrum-admin.css'], /\.spectrum #detail \{[^}]*background: var\(--content\);\s*border-radius: var\(--content-radius\);\s*box-shadow: var\(--content-shadow\);/);
+    // Nothing on a page hangs over another part of it at rest: the open thread's row is
+    // selected where it is, and a filter group has no card or shadow until it slides out.
+    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /#lift|--out\b/);
+    assert.doesNotMatch(PAGES['inbox.html'], /id="lift"/);
+    // Dashes are a DropZone's, and the agent's thought bubble's: not a card's edge.
+    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /\.spectrum \.(draftbar|bashbar \.br|sidechat) \{[^}]*dashed/);
+    // What deletes is a secondary Button on a page; the red fill confirms it in a dialog.
+    assert.match(shared, /\.spectrum button\.danger \{[^}]*background: transparent;/);
+    assert.match(shared, /\.spectrum dialog button\.danger \{[^}]*background: var\(--spectrum-negative-background-color-default\);/);
   });
 
   it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {

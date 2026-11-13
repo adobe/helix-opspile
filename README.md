@@ -234,8 +234,21 @@ Spectrum 2's workflow icons as masks, in the color of the text: an empty
 `s2-cross`, not a `▾`, `✓` or `✕` in the text. A checkbox is Spectrum 2's, drawn by
 `ui/spectrum.css`. Popovers and dialogs arrive as Spectrum 2's do (a popover over 190ms from
 4px away, a dialog over 250ms from 20px, both gone in 130ms), and nothing moves for someone
-who asked the browser for less motion. The browser's chrome (`theme-color`) is Spectrum 2's
-base background.
+who asked the browser for less motion.
+
+Every page is framed as Spectrum 2's [app frame](https://spectrum.adobe.com/foundations/app-frame)
+is: the header and what navigates (the inbox's filters, a list of teams or knowledge bases)
+sit on the frame's layer (`--frame`, background layer 1), and what is picked there is the
+content area, one container on the base (`--content`), extra-large rounded, with the
+emphasized drop shadow and no border. Inside it, parts that belong together are divided by a
+hairline (the thread list and the open thread), sections by space and their titles; COGS and
+Topics, which are dashboards, put their cards straight on the frame. Nothing else has a
+shadow unless it floats (a menu, a popover, the filters slid out over the list), nothing has
+a dashed edge but a drop zone and the agent's thought bubble, and a page has one
+high-attention action at most: what deletes or declines is a secondary (outline) button,
+red only where a dialog confirms it. Labels are in sentence case, also where they are stored
+values (`vendor` shows as "Vendor"). The browser's chrome (`theme-color`) is the frame's
+layer.
 Your menu's **Appearance** picks the color scheme per browser (localStorage `opspile.scheme`):
 the system's, as the browser prefers it (the default), light or dark. `ui/header.js` sets it as
 `data-scheme` on `<html>`, which the tokens and the browser's chrome follow.

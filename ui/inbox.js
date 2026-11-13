@@ -1136,7 +1136,7 @@ function filterCards() {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
     const at = personal() && f.id === 'customer' ? atButton() : '';
-    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">clear</span>' : ''}${at}</h3>
+    return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">Clear</span>' : ''}${at}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
   // Only the cards whose counts or selection changed are rebuilt.
@@ -1896,72 +1896,6 @@ function threadRows() {
   noteSeen();
 }
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
-
-// The open thread's row, lifted out of its column: a copy of it over the real one, wider by
-// LIFT on each side and over the pane, in #lift, which spans the list. It floats over the
-// list's heading while its row is below it, and slides under it with its row: above the
-// heading's lower edge #lift fades out, over its top LIFT.v and shadow (LIFT.shade) at rest,
-// over less and less of it as the row goes under, to a hard edge once it has.
-const LIFT = { left: 10, right: 16, v: 3, room: 48, shade: 16 };
-let liftOf = null;
-function syncLift(copy) {
-  const list = $('threads');
-  const lift = $('lift');
-  const sel = list.querySelector('.t.sel');
-  lift.hidden = !sel;
-  if (!sel) { liftOf = null; return; }
-  if (copy || liftOf !== sel) {
-    liftOf = sel;
-    lift.innerHTML = sel.outerHTML;
-    lift.firstElementChild.classList.remove('enter');
-  }
-  const main = lift.parentElement.getBoundingClientRect();
-  const box = list.getBoundingClientRect();
-  const head = list.querySelector('.count')?.offsetHeight || 0;
-  const r = sel.getBoundingClientRect();
-  const over = LIFT.v + LIFT.shade;
-  const f = over - Math.min(Math.max(box.top + head - r.top, 0), over);
-  const mask = `linear-gradient(transparent ${head - f}px, #000 ${head - (LIFT.v * f) / over}px)`;
-  Object.assign(lift.style, {
-    left: `${box.left - main.left - LIFT.room}px`,
-    top: `${box.top - main.top}px`,
-    width: `${box.width + 2 * LIFT.room}px`,
-    height: `${box.height}px`,
-    maskImage: mask,
-    webkitMaskImage: mask,
-  });
-  const { style } = lift.firstElementChild;
-  // With the filters in a drawer the list starts at the page's left edge: the copy stops there.
-  const ll = Math.min(LIFT.left, Math.max(0, box.left - main.left));
-  // Moved with a transform: the copy follows the row as the list scrolls, and a move by
-  // `top` would count as a layout shift (CLS) on every scroll.
-  Object.assign(style, {
-    left: '0px',
-    top: '0px',
-    transform: `translate(${r.left - box.left + LIFT.room - ll}px, ${r.top - box.top - LIFT.v}px)`,
-    width: `${r.width + ll + LIFT.right}px`,
-    height: `${r.height + 2 * LIFT.v}px`,
-  });
-  style.setProperty('--ll', `${ll}px`);
-  style.setProperty('--lr', `${LIFT.right}px`);
-  style.setProperty('--lv', `${LIFT.v}px`);
-}
-{
-  let frame = 0;
-  let copy = false;
-  const later = (again) => {
-    copy ||= again;
-    if (!frame) {
-      frame = requestAnimationFrame(() => { frame = 0; syncLift(copy); copy = false; });
-    }
-  };
-  new MutationObserver(() => later(true)).observe($('threads'), {
-    childList: true, subtree: true, attributes: true, characterData: true,
-  });
-  $('threads').addEventListener('scroll', () => later(false), { passive: true });
-  $('threads').addEventListener('animationend', () => later(false));
-  new ResizeObserver(() => later(false)).observe(document.querySelector('main'));
-}
 
 // ---------------------------------------------------------------- messages
 const QUESTION_LABEL = { next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved' };

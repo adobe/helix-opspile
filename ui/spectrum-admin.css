@@ -162,20 +162,28 @@ tr.left td { opacity: .55; }
 
 /* ---- the frame --------------------------------------------------------------------------- */
 
+/* Spectrum 2's app frame (ui/spectrum.css): the list navigates, on the frame's layer; what is
+   picked in it is the content area, one container on the base. Its content keeps to a width a
+   table still reads at, however wide the window is. */
 .spectrum #list {
-  padding: var(--spectrum-spacing-200);
-  background: var(--spectrum-background-base-color);
+  padding: var(--spectrum-spacing-100) var(--frame-gap) var(--frame-gap) var(--spectrum-spacing-300);
+  background: transparent;
   border-right: 0;
 }
 .spectrum #detail {
-  padding: var(--spectrum-spacing-300) var(--spectrum-spacing-400) var(--spectrum-spacing-600);
-  background: var(--spectrum-background-layer-1-color);
+  margin: 0 var(--frame-gap) var(--frame-gap) 0;
+  padding: var(--spectrum-spacing-400) var(--spectrum-spacing-500) var(--spectrum-spacing-600);
+  background: var(--content);
+  border-radius: var(--content-radius);
+  box-shadow: var(--content-shadow);
 }
+.spectrum #detail > * { max-width: calc(var(--spectrum-spacing-1000) * 12); }
 
 /* Text: two tiers, the content and what is said about it (subdued). */
 .spectrum .sub, .spectrum .row .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .hint { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); margin-top: var(--spectrum-spacing-100); }
+/* Help text keeps to a line a paragraph reads at (some 110 characters), however wide its section. */
+.spectrum .hint { max-width: calc(var(--spectrum-spacing-1000) * 7); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); margin-top: var(--spectrum-spacing-100); }
 .spectrum code, .spectrum .mono { font-size: var(--spectrum-code-size-xs); }
 .spectrum .hint code { color: var(--spectrum-neutral-content-color-default); }
 
@@ -184,8 +192,8 @@ tr.left td { opacity: .55; }
 .spectrum h2 {
   margin: var(--spectrum-spacing-400) 0 var(--spectrum-spacing-200);
   color: var(--spectrum-heading-color);
-  font-size: var(--spectrum-heading-size-xs);
-  font-weight: var(--spectrum-heading-sans-serif-font-weight);
+  font-size: var(--spectrum-font-size-300);
+  font-weight: var(--spectrum-bold-font-weight);
   line-height: var(--spectrum-heading-line-height);
   letter-spacing: normal;
   text-transform: none;
@@ -250,7 +258,7 @@ tr.left td { opacity: .55; }
 
 /* ---- the detail: title, cards ------------------------------------------------------------ */
 
-.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-400); }
 .spectrum .title h1 {
   color: var(--spectrum-heading-color);
   font-size: var(--spectrum-heading-size-m);
@@ -260,6 +268,8 @@ tr.left td { opacity: .55; }
 /* The name, edited in place: a heading until the pointer or the focus is on it, then a field. */
 .spectrum .title input.big {
   min-height: var(--spectrum-component-height-200);
+  /* Its text starts at the content's left edge, the field's own edge outside it. */
+  margin-inline-start: calc(-1 * (var(--spectrum-component-edge-to-text-100) + var(--spectrum-border-width-200)));
   padding: 0 var(--spectrum-component-edge-to-text-100);
   color: var(--spectrum-heading-color);
   font-size: var(--spectrum-heading-size-m);
@@ -274,14 +284,16 @@ tr.left td { opacity: .55; }
 .spectrum .title a:hover { text-decoration: underline; }
 .spectrum .title .ico { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
 
-/* A card: a panel on layer 2, no border, rounded and inset as its default-size controls want. */
+/* A section of the content area: its title, then what it holds, set apart from the next by
+   space alone (the widest gap on the page), with no card around it. */
 .spectrum .card {
-  margin-bottom: var(--spectrum-spacing-300);
-  padding: var(--spectrum-spacing-300);
-  background: var(--spectrum-background-layer-2-color);
+  margin-bottom: var(--spectrum-spacing-600);
+  padding: 0;
+  background: transparent;
   border: 0;
-  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  border-radius: 0;
 }
+.spectrum .card:last-child { margin-bottom: 0; }
 .spectrum .card > label b { font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .card > label input[type="checkbox"] { margin: 0; }
 
@@ -306,6 +318,12 @@ tr.left td { opacity: .55; }
   line-height: var(--spectrum-line-height-100);
   border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
 }
+/* A table starts and ends at its section's edges: the first column's text under the section's
+   title, what a row does at the far end. */
+.spectrum #detail :is(th, td):first-child { padding-inline-start: 0; }
+.spectrum #detail :is(th, td):last-child { padding-inline-end: 0; }
+.spectrum #detail td:last-child:has(> button.link) { text-align: end; white-space: nowrap; }
+.spectrum #detail td:last-child > button.link:last-child { margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75)); }
 .spectrum td div.sub { display: block; margin-top: var(--spectrum-spacing-50); }
 .spectrum .person .sub { margin: 0; }
 .spectrum tr:last-child td { border-bottom: 0; }
@@ -321,18 +339,29 @@ tr.left td { opacity: .55; }
 /* Wide tables scroll sideways in their card, never the page (the suggestions too). */
 .spectrum #suggestTable { overflow-x: auto; }
 .spectrum .person { margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-50) 0; }
-/* What a row does: quiet standalone Links, repeated on every row (underlined under the
-   pointer); in a sentence they keep the underline. */
-.spectrum td button.link, .spectrum .picks button.link { text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
-.spectrum td button.link:hover:not(:disabled) { text-decoration: underline; }
+/* What a row does: quiet ActionButtons, size S, repeated on every row, the one that takes
+   something away as quiet as the others. In a sentence an action stays a Link. */
+.spectrum td button.link {
+  min-height: var(--spectrum-component-height-75);
+  margin-inline-start: calc(-1 * var(--spectrum-component-edge-to-text-75));
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  text-decoration: none;
+  border-radius: var(--s2-radius);
+  transition: background-color var(--s2-ease);
+}
+.spectrum td button.link + button.link { margin-inline-start: var(--spectrum-spacing-50); }
+.spectrum td button.link:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
+.spectrum td button.link:active:not(:disabled) { background: var(--spectrum-gray-200); }
+.spectrum .picks button.link { text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
 .spectrum button.link:disabled { color: var(--spectrum-disabled-content-color); background: none; }
 
 /* ---- Badge: what a row or a list item is ----------------------------------------------- */
 
 .spectrum .tag {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--spectrum-component-height-50);
+  display: inline-block;
   padding: 0 var(--spectrum-component-edge-to-text-50);
   color: var(--spectrum-neutral-content-color-default);
   background: var(--spectrum-neutral-subtle-background-color-default);
@@ -340,7 +369,7 @@ tr.left td { opacity: .55; }
   border-radius: var(--spectrum-corner-radius-75);
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-medium-font-weight);
-  line-height: var(--spectrum-line-height-100);
+  line-height: var(--spectrum-component-height-50);
   vertical-align: middle;
 }
 /* Set by hand (manual, manager, self-managed, shared by): indigo, so the one blue on screen
@@ -443,7 +472,9 @@ tr.left td { opacity: .55; }
 }
 
 /* Nothing picked yet: the same heading as on every page (ui/spectrum.css), in the pane's middle. */
-.spectrum #detail:has(> .empty.pick) { display: flex; flex-direction: column; }
+@media (min-width: 700px) {
+  .spectrum #detail:has(> .empty.pick) { display: flex; flex-direction: column; }
+}
 .spectrum #detail > .empty.pick { padding: var(--spectrum-spacing-400); }
 
 /* The phone's back button: a quiet icon-only ActionButton. */
@@ -466,4 +497,10 @@ tr.left td { opacity: .55; }
   .spectrum .title input.big { font-size: var(--spectrum-heading-size-s); }
   .spectrum .title h1 { font-size: var(--spectrum-heading-size-s); }
   .spectrum .field > label { margin-top: var(--spectrum-spacing-100); }
+}
+
+/* On a phone the content area is the page, under the header, its top corners rounded. */
+@media (max-width: 699px) {
+  .spectrum #list { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
+  .spectrum #detail { margin: 0; border-radius: var(--content-radius) var(--content-radius) 0px 0px; box-shadow: none; }
 }

@@ -168,6 +168,15 @@ header .note { white-space: nowrap; }
   color-scheme: light dark;
   --s2-font: adobe-clean-spectrum-vf, var(--spectrum-sans-font-family-stack);
   --s2-code: source-code-pro, var(--spectrum-code-font-family), ui-monospace, monospace;
+  /* The app frame (https://spectrum.adobe.com/foundations/app-frame): the header and what
+     navigates sit on layer 1; the content area is a container on it, on the base, extra-large
+     rounded, set apart by the emphasized drop shadow and a gap as wide as the frame's edge. */
+  --frame: var(--spectrum-background-layer-1-color);
+  --content: var(--spectrum-background-base-color);
+  --frame-gap: var(--spectrum-spacing-200);
+  --content-radius: var(--spectrum-corner-radius-extra-large-default);
+  --content-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur)
+    var(--spectrum-drop-shadow-emphasized-default-color);
   /* Layers: the app's base, the panels on it, what sits on a panel. */
   --bg: var(--spectrum-background-base-color);
   --col: var(--spectrum-background-layer-1-color);
@@ -229,7 +238,7 @@ header .note { white-space: nowrap; }
 /* The scheme picked in your menu (ui/header.js), over the browser's; the tokens follow it too. */
 :root.spectrum[data-scheme="light"] { color-scheme: light; }
 :root.spectrum[data-scheme="dark"] { color-scheme: dark; }
-:where(.spectrum) body { background: var(--bg); color: var(--ink); }
+:where(.spectrum) body { background: var(--frame); color: var(--ink); }
 :where(.spectrum) code, :where(.spectrum) kbd, :where(.spectrum) pre, :where(.spectrum) .mono { font-family: var(--s2-code); }
 :where(.spectrum) a { color: var(--link); }
 :where(.spectrum) a:where(:hover) { color: var(--spectrum-accent-content-color-hover); }
@@ -281,16 +290,23 @@ header .note { white-space: nowrap; }
   background: var(--spectrum-accent-background-color-hover);
 }
 .spectrum button.primary:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+/* What deletes or declines, on a page: the secondary Button, an outline. A page has one
+   high-attention action at most, and it is never the one that takes something away; the red
+   fill is for the Button that confirms it in a dialog. */
 .spectrum button.danger {
-  color: var(--spectrum-white);
-  background: var(--spectrum-negative-background-color-default);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  border-color: var(--spectrum-gray-300);
 }
-.spectrum button.danger:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-hover); }
-.spectrum button.danger:active:not(:disabled) { background: var(--spectrum-negative-background-color-down); }
-.spectrum button.primary:disabled, .spectrum button.danger:disabled {
+.spectrum button.danger:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+.spectrum button.danger:active:not(:disabled) { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+.spectrum dialog button.danger { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-default); border-color: transparent; }
+.spectrum dialog button.danger:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-negative-background-color-hover); border-color: transparent; }
+.spectrum button.primary:disabled {
   color: var(--spectrum-disabled-content-color);
   background: var(--spectrum-disabled-background-color);
 }
+.spectrum button.danger:disabled { color: var(--spectrum-disabled-content-color); border-color: var(--spectrum-disabled-border-color); }
 /* Link: an action in running text. */
 .spectrum button.link {
   min-height: 0;
@@ -375,6 +391,7 @@ header .note { white-space: nowrap; }
   border: 0;
   border-radius: var(--s2-radius);
 }
+.spectrum .seg button::first-letter { text-transform: uppercase; }
 .spectrum .seg button {
   color: var(--spectrum-neutral-subdued-content-color-default);
   background: transparent;
@@ -397,6 +414,9 @@ header .note { white-space: nowrap; }
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-medium-font-weight);
 }
+
+/* A label is written in sentence case, also where it is a stored value (vendor, declined). */
+.spectrum .tag::first-letter { text-transform: uppercase; }
 
 /* The keyboard's keys. */
 :where(.spectrum) kbd {
@@ -506,8 +526,8 @@ header .note { white-space: nowrap; }
   --ctl: var(--s2-ctl);
   gap: var(--spectrum-spacing-200);
   padding: 0 var(--spectrum-spacing-300);
-  background: var(--spectrum-background-base-color);
-  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  background: transparent;
+  border-bottom: 0;
   font-size: var(--spectrum-font-size-100);
 }
 .spectrum header h1 {
@@ -536,7 +556,7 @@ header .note { white-space: nowrap; }
 .spectrum nav.pages a:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
 .spectrum nav.pages a[aria-current="page"] {
   color: var(--spectrum-neutral-content-color-default);
-  background: var(--spectrum-gray-100);
+  background: var(--spectrum-gray-200);
   font-weight: var(--spectrum-bold-font-weight);
 }
 /* Counts: Spectrum 2's notification Badge, in the accent color. */
