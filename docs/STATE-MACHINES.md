@@ -343,7 +343,9 @@ reply box, sending it, and nothing left in it close it, and another thread's dra
 open. What the tab says is worked out from the thread's requests and the draft its line shows
 (`lineDraft`: not one on its way), each time either line is drawn. While the thread is fetched
 again the drawer stays as it is, open or closed. Only the stylesheet knows whether it is a
-drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows.
+drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows, and a screen that
+grows past the phone's breakpoint closes it. Open, the sheet is a modal dialog: Tab goes round in
+it.
 
 **Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
 the requests that ended within the hour only the latest shows, until its button shows the rest;

@@ -3884,6 +3884,11 @@ function renderBashBar(key) {
 // The stylesheet decides where this is a drawer (ui/spectrum-inbox.css, at the phone's
 // breakpoint): on a wider screen the tab is not shown, and the lines are where they were.
 
+// Where the stylesheet makes it a drawer. A screen that grows past that (a phone turned, a
+// window widened) has no drawer left to be open.
+const LINES_DRAWER = matchMedia('(max-width: 699px)');
+LINES_DRAWER.addEventListener('change', () => { if (!LINES_DRAWER.matches && linesDrawer.key) setLines(linesDrawer.key, false); });
+
 // The thread whose drawer is open, or null.
 const linesDrawer = { key: null };
 
@@ -3931,9 +3936,10 @@ function renderLines(key) {
   }
   tab.setAttribute('aria-expanded', String(open));
   el.classList.toggle('open', open);
-  // A dialog only while it is one: on a wider screen the drawer is no box.
+  // A modal dialog only while it is one: on a wider screen the drawer is no box.
   const sheet = el.firstElementChild;
-  if (open) { sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-labelledby', 'lines-title'); } else { sheet.removeAttribute('role'); sheet.removeAttribute('aria-labelledby'); }
+  const dialog = { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' };
+  for (const [name, value] of Object.entries(dialog)) if (open) sheet.setAttribute(name, value); else sheet.removeAttribute(name);
   el.__key = key;
   if (!el.__wired) wireLines(tab, el);
 }
@@ -3957,8 +3963,17 @@ function wireLines(tab, el) {
     if (e.target.closest('[data-draft="edit"], [data-draft="me"], [data-draft="bot"]')) setLines(el.__key, false);
   });
   el.addEventListener('keydown', (e) => {
+    if (linesDrawer.key !== el.__key) return;
+    if (e.key === 'Tab') {
+      // The open sheet is modal: Tab goes round in it, not on into the thread behind it.
+      const stops = [...el.querySelectorAll('button, input, a[href]')].filter((n) => !n.disabled && n.offsetParent);
+      const at = document.activeElement;
+      const to = e.shiftKey ? (at === stops[0] || !stops.includes(at)) && stops.at(-1) : at === stops.at(-1) && stops[0];
+      if (to) { e.preventDefault(); to.focus(); }
+      return;
+    }
     // The draft's line takes Escape first, for what it has open.
-    if (e.key !== 'Escape' || e.defaultPrevented || linesDrawer.key !== el.__key) return;
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
     e.preventDefault();
     setLines(el.__key, false, { back: true });
   });

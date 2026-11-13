@@ -112,15 +112,19 @@ describe('the drawer', () => {
     // From what the thread has, not from what the lines happen to show: a draft on its way is
     // not on its line, and so not in the tab.
     assert.match(render, /linesChips\(hit\.data\?\.bash_requests, lineDraft\(key\)\)/);
-    // A dialog only while it is open.
-    assert.match(render, /sheet\.setAttribute\('role', 'dialog'\)/);
-    assert.match(render, /sheet\.removeAttribute\('role'\)/);
+    // A modal dialog only while it is open.
+    assert.match(render, /const dialog = \{ role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' \};/);
+    assert.match(render, /if \(open\) sheet\.setAttribute\(name, value\); else sheet\.removeAttribute\(name\);/);
+    // A screen that grows past the phone's breakpoint has no drawer left to be open.
+    assert.match(js, /const LINES_DRAWER = matchMedia\('\(max-width: 699px\)'\);\nLINES_DRAWER\.addEventListener\('change', \(\) => \{ if \(!LINES_DRAWER\.matches && linesDrawer\.key\) setLines\(linesDrawer\.key, false\); \}\);/);
   });
 
   it('opens on its tab, and closes on ✕, a tap beside the sheet, Escape, and the draft going to the thread', () => {
+    const document = { activeElement: null };
     const { wireLines } = piece('function wireLines(tab, el)', '// Sending, as in iMessage', 'wireLines', {
       linesDrawer: { key: 'k' },
       setLines: (...args) => wireLines.calls.push(args),
+      document,
     });
     wireLines.calls = [];
     const on = {};
@@ -129,7 +133,14 @@ describe('the drawer', () => {
         on[`${name}.${type}`] = f;
       },
     });
-    const el = { ...listen('sheet'), __key: 'k' };
+    // What Tab stops at in the sheet: a hidden line's button and a disabled one are left out.
+    const focused = [];
+    const stop = (name, more = {}) => ({
+      name, offsetParent: {}, focus: () => focused.push(name), ...more,
+    });
+    const stops = [stop('close'), stop('hidden', { offsetParent: null }), stop('field'),
+      stop('busy', { disabled: true }), stop('send')];
+    const el = { ...listen('sheet'), __key: 'k', querySelectorAll: () => stops };
     wireLines(listen('tab'), el);
     assert.deepEqual(Object.keys(on).sort(), ['sheet.click', 'sheet.keydown', 'tab.click']);
     const target = (matches) => ({ closest: (sel) => (sel.includes(matches) ? {} : null) });
@@ -150,6 +161,26 @@ describe('the drawer', () => {
     // Anything else in the sheet leaves it open: Run, Deny, View draft, Discard.
     on['sheet.click']({ target: target('[data-bash="run"]') });
     assert.equal(wireLines.calls.length, 0);
+    // Tab goes round in the open sheet, not on into the thread behind it.
+    const tab = (at, shiftKey = false) => {
+      document.activeElement = stops.find((x) => x.name === at) || {};
+      let stayed = false;
+      on['sheet.keydown']({
+        key: 'Tab',
+        shiftKey,
+        preventDefault: () => {
+          stayed = true;
+        },
+      });
+      return stayed ? focused.pop() : 'on';
+    };
+    assert.equal(tab('send'), 'close');
+    assert.equal(tab('field'), 'on');
+    assert.equal(tab('close', true), 'send');
+    assert.equal(tab('field', true), 'on');
+    // From the sheet itself, which has the focus as it opens: back to its last stop.
+    assert.equal(tab('the sheet', true), 'send');
+    assert.equal(tab('the sheet'), 'on');
     // Escape, unless the draft's line took it for what it had open.
     on['sheet.keydown']({ key: 'Escape', defaultPrevented: true, preventDefault: () => {} });
     on['sheet.keydown']({ key: 'Enter', defaultPrevented: false, preventDefault: () => {} });
