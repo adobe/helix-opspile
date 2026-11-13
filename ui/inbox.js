@@ -999,6 +999,8 @@ function toggleFilter(id, v, exclude) {
   }
   for (const sets of [state.sel, state.not]) if (!sets[id]?.size) delete sets[id];
 }
+/** A facet row's ≠ button: it excludes the row's value, or stops excluding it (`out`). */
+const notButton = (out) => `<button class="not" type="button" data-not aria-pressed="${out}" title="${out ? 'Stop excluding' : 'Exclude (or Shift-click the row)'}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>`;
 
 /**
  * A facet row's bar. Its length is the count; except on the status card itself, it is
@@ -1058,13 +1060,12 @@ function facetRows(f) {
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
     group = g;
     const out = off.has(v);
-    const not = out ? 'Stop excluding' : 'Exclude (or Shift-click the row)';
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
-      <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
+      ${notButton(out)}
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
@@ -1109,11 +1110,12 @@ function wireLogos() {
 }
 /**
  * The customers' order in the column: those with unread mentions of you first, most mentions
- * first, then those with unread threads, then the rest; by name within each. `c.name` is
- * looked up once per customer, not in every comparison.
+ * first, then those with unread threads, then the rest, then the excluded ones; by name within
+ * each. `c.name` is looked up once per customer, not in every comparison.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
 const columnPile = (c) => {
+  if (c.out) return 3;
   if (c.you > 0) return 0;
   return c.unread ? 1 : 2;
 };
@@ -1121,23 +1123,30 @@ const columnOrder = ([, a], [, b]) => columnPile(a) - columnPile(b) || b.you - a
   || byName.compare(a.name, b.name);
 /**
  * The simple personal view's only card: its customers, by logo and name, bold while they have
- * unread threads, with the red badge. "All customers" first, picked while no customer is. The
- * customers go by `columnOrder`.
+ * unread threads, with the red badge. "All customers" first, picked while no customer is; a
+ * click on it drops the pick and what is excluded. The customers go by `columnOrder`. A row's ≠
+ * (or a Shift-click) excludes its customer, as on the expert view's cards (see toggleFilter):
+ * it stays in the column, struck through, without its badge and whether or not it has threads,
+ * so a click brings it back, and "All customers" does not count it.
  */
 function simpleCustomers() {
   const all = listed().filter((t) => passes(t, 'customer'));
+  const on = state.sel.customer || new Set();
+  const off = state.not.customer || new Set();
   const by = new Map();
+  for (const v of off) by.set(v, { unread: false, you: 0, out: true });
   for (const t of all) {
     const c = by.get(t.org) || { unread: false, you: 0 };
-    c.unread ||= Boolean(t.unread);
-    c.you += youCount(t);
+    if (!c.out) {
+      c.unread ||= Boolean(t.unread);
+      c.you += youCount(t);
+    }
     by.set(t.org, c);
   }
-  const on = state.sel.customer || new Set();
   for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
   for (const [v, c] of by) c.name = customerName(v);
-  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${youBadge(c.you)}</div>`).join('');
+  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
@@ -1618,11 +1627,12 @@ function renderThreads() { inPass(threadRows); }
 
 /**
  * The Filters button of narrower screens, with how many filters are set. In the simple
- * personal view it opens the customers, and carries the red badge of them all.
+ * personal view it opens the customers, and carries the red badge of them all but the
+ * excluded ones.
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
+  const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
   return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
 }
@@ -2870,7 +2880,15 @@ const DRAFT_LINE = '<div class="draftbar" id="draftbar" hidden></div>';
  * reply box and the draft's line, which stays at the pane's bottom edge.
  */
 const BASH_LINE = '<div class="bashbar" id="bashbar" hidden></div>';
-const LINES = `${BASH_LINE}${DRAFT_LINE}`;
+/**
+ * Both, under the reply box. On a phone they would leave the thread a few lines of the screen,
+ * so there they are in a drawer (filled and opened by renderLines, below): its tab, one line
+ * under the reply box that says what is in it, and the sheet it opens from the bottom edge.
+ * On a wider screen the tab is not shown and the drawer is no box at all: the lines are the
+ * reply box's own, as before.
+ */
+const LINES = `<button type="button" class="linestab" id="linestab" aria-controls="linesdrawer" aria-expanded="false" hidden></button>
+  <div class="linesdrawer" id="linesdrawer"><div class="sheet" tabindex="-1"><div class="lineshead"><b id="lines-title"></b><button type="button" class="linesclose" data-lines="close" aria-label="Close" title="Close">✕</button></div>${BASH_LINE}${DRAFT_LINE}</div></div>`;
 
 // Only a touch screen, no pointer that hovers (phones): no Shift+Enter on the on-screen
 // keyboard, so Enter starts a new line there and Send sends, as in the Slack and Teams apps.
@@ -3563,6 +3581,16 @@ function draftLine(d, {
       <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}</div>`;
 }
 
+/**
+ * The thread's draft as its line shows it. A draft on its way (its reply shows in the feed,
+ * sending) is not offered again; it comes back if the reply fails.
+ */
+function lineDraft(key) {
+  const d = state.cache.get(key)?.data?.draft;
+  const going = d && state.sending.some((p) => p.thread === key && p.base === d.updated_at && p.status !== 'failed');
+  return going ? null : d;
+}
+
 /** The draft line: who saved the draft, when, how it starts (or all of it), and what to do. */
 function renderDraftBar(key, force = false) {
   const el = $('draftbar');
@@ -3573,10 +3601,7 @@ function renderDraftBar(key, force = false) {
     draftPeek.key = null;
   }
   const data = state.cache.get(key)?.data;
-  // A draft on its way (its reply shows in the feed, sending) is not offered again; it comes
-  // back if the reply fails.
-  const going = (x) => x && state.sending.some((p) => p.thread === key && p.base === x.updated_at && p.status !== 'failed');
-  const d = going(data?.draft) ? null : data?.draft;
+  const d = lineDraft(key);
   const box = $('reply');
   const readonly = state.data?.me?.readonly;
   const c = state.composers.get(key);
@@ -3606,6 +3631,7 @@ function renderDraftBar(key, force = false) {
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
+  renderLines(key);
 }
 
 /**
@@ -3986,6 +4012,113 @@ function renderBashBar(key) {
   if (decide && !vault.loaded && list.some((r) => r.status === 'pending' && r.env.length)) {
     vaultLoad().then(() => { if (vault.values.size) renderBashBar(el.__key); });
   }
+  renderLines(key);
+}
+
+// ---------------------------------------------------------------- the lines' drawer (phones)
+// Not the filter drawer (DRAWER, below), which holds the filter rail on a narrow screen.
+// On a phone the draft's line and the command cards are in a drawer of their own: under the reply box only
+// its tab shows, one line that says what waits there (a command to decide on first, in the
+// notice color), and a tap opens them as a sheet from the screen's bottom edge, over the
+// thread. ✕, a tap beside the sheet and Escape close it; so does taking the draft into the
+// reply box or sending it, which happen in the thread; and so does opening another thread.
+// The stylesheet decides where this is a drawer (ui/spectrum-inbox.css, at the phone's
+// breakpoint): on a wider screen the tab is not shown, and the lines are where they were.
+
+// Where the stylesheet makes it a drawer. A screen that grows past that (a phone turned, a
+// window widened) has no drawer left to be open.
+const LINES_DRAWER = matchMedia('(max-width: 699px)');
+LINES_DRAWER.addEventListener('change', () => { if (!LINES_DRAWER.matches && linesDrawer.key) setLines(linesDrawer.key, false); });
+
+// The thread whose drawer is open, or null.
+const linesDrawer = { key: null };
+
+/**
+ * The tab's chips, for the requests and the draft the lines show: `[{ kind, icon, text }]`.
+ * Of the commands it says what matters most: those to decide on (`ask`), else that one runs,
+ * else how many ended.
+ */
+function linesChips(requests = [], draft = null) {
+  const count = (status) => requests.filter((r) => r.status === status).length;
+  const n = (k, what) => `${k} ${what}${k === 1 ? '' : 's'}`;
+  const chips = [];
+  if (count('pending')) chips.push({ kind: 'cmd ask', icon: BASH_ICON, text: `${n(count('pending'), 'command')} to decide` });
+  else if (count('running')) chips.push({ kind: 'cmd', icon: BASH_ICON, text: `${n(count('running'), 'command')} running` });
+  else if (requests.length) chips.push({ kind: 'cmd', icon: BASH_ICON, text: n(requests.length, 'past command') });
+  if (draft) chips.push({ kind: 'draft', icon: DRAFT_ICONS.draft, text: `Draft by ${draftBy(draft)}` });
+  return chips;
+}
+const LINES_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4"/></svg>';
+const linesTab = (chips) => `${chips.map((c) => `<span class="chip ${c.kind}">${c.icon}<span>${esc(c.text)}</span></span>`).join('')}${LINES_CHEVRON}`;
+/** What the sheet is called: what is in it. */
+const linesTitle = (chips) => {
+  const has = (kind) => chips.some((c) => c.kind.startsWith(kind));
+  if (has('cmd') && has('draft')) return 'Commands and draft';
+  return has('draft') ? 'Draft' : 'Commands';
+};
+
+/** The drawer's tab and whether it is open, from what the two lines show now. */
+function renderLines(key) {
+  const tab = $('linestab');
+  const el = $('linesdrawer');
+  const hit = state.cache.get(key);
+  // Not cached: the thread is being fetched again, and the drawer stays as it is until then.
+  if (!tab || !el || !hit || state.open !== key) return;
+  const chips = linesChips(hit.data?.bash_requests, lineDraft(key));
+  // Another thread's, or nothing left in it: closed.
+  if (linesDrawer.key !== key || !chips.length) linesDrawer.key = null;
+  const open = linesDrawer.key === key;
+  const html = linesTab(chips);
+  if (tab.__html !== html) {
+    tab.__html = html;
+    tab.innerHTML = html;
+    tab.hidden = !chips.length;
+    $('lines-title').textContent = linesTitle(chips);
+  }
+  tab.setAttribute('aria-expanded', String(open));
+  el.classList.toggle('open', open);
+  // A modal dialog only while it is one: on a wider screen the drawer is no box.
+  const sheet = el.firstElementChild;
+  const dialog = { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' };
+  for (const [name, value] of Object.entries(dialog)) if (open) sheet.setAttribute(name, value); else sheet.removeAttribute(name);
+  el.__key = key;
+  if (!el.__wired) wireLines(tab, el);
+}
+
+/** Opens or closes the drawer of thread `key`; `back` puts the focus back on its tab. */
+function setLines(key, open, { back = false } = {}) {
+  linesDrawer.key = open ? key : null;
+  renderLines(key);
+  if (open) $('linesdrawer')?.firstElementChild.focus({ preventScroll: true });
+  else if (back) $('linestab')?.focus({ preventScroll: true });
+}
+
+function wireLines(tab, el) {
+  el.__wired = true;
+  tab.addEventListener('click', () => setLines(el.__key, linesDrawer.key !== el.__key));
+  el.addEventListener('click', (e) => {
+    if (linesDrawer.key !== el.__key) return;
+    // ✕, or a tap beside the sheet.
+    if (e.target === el || e.target.closest('[data-lines="close"]')) { setLines(el.__key, false, { back: true }); return; }
+    // Taking the draft into the reply box and sending it happen in the thread.
+    if (e.target.closest('[data-draft="edit"], [data-draft="me"], [data-draft="bot"]')) setLines(el.__key, false);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (linesDrawer.key !== el.__key) return;
+    if (e.key === 'Tab') {
+      // The open sheet is modal: Tab goes round in it, not on into the thread behind it.
+      // What Tab stops at: also a person's chip in the draft, which is a `tabindex="0"`.
+      const stops = [...el.querySelectorAll('button, input, textarea, select, a[href], [tabindex]:not([tabindex="-1"])')].filter((n) => !n.disabled && n.offsetParent);
+      const at = document.activeElement;
+      const to = e.shiftKey ? (at === stops[0] || !stops.includes(at)) && stops.at(-1) : at === stops.at(-1) && stops[0];
+      if (to) { e.preventDefault(); to.focus(); }
+      return;
+    }
+    // The draft's line takes Escape first, for what it has open.
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.preventDefault();
+    setLines(el.__key, false, { back: true });
+  });
 }
 
 function wireBashBar(el) {

@@ -360,6 +360,16 @@ says a request changed and the thread is fetched again, the cards stay as they a
 thread keeps its cached requests until the fetch replaces them, so a click shows on its card at
 once.
 
+**Drawer (phones).** closed → open → closed (`linesDrawer.key`, the thread whose drawer is open,
+`ui/inbox.js`). The tab opens it; ✕, a tap beside the sheet, Escape, taking the draft into the
+reply box, sending it, and nothing left in it close it, and another thread's drawer is never
+open. What the tab says is worked out from the thread's requests and the draft its line shows
+(`lineDraft`: not one on its way), each time either line is drawn. While the thread is fetched
+again the drawer stays as it is, open or closed. Only the stylesheet knows whether it is a
+drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows, and a screen that
+grows past the phone's breakpoint closes it. Open, the sheet is a modal dialog: Tab goes round in
+it.
+
 **Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
 the requests that ended within the hour only the latest shows, until its button shows the rest;
 it stays so for the thread in the tab. Those that wait or run always show.

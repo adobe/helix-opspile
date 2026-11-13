@@ -68,7 +68,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
 .fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
 .fr.off .lab { text-decoration: line-through; color: var(--mute); }
-.fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+.fr.off .ind, .fr.off .ico, .fr.off .bar, .fr.off .logo { opacity: 0.4; }
 @media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; } }
 .fr .ind { width: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); height: var(--spectrum-spacing-300); background: var(--faint); }
 .fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
@@ -908,6 +908,37 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .bashbar .br:not(.pending) .head { grid-column: 1; max-width: none; }
   .bashbar .br:not(.pending) .more { grid-column: 2; grid-row: 1; }
   .bashbar .br:not(.pending) .cmd { grid-column: 1 / -1; grid-row: 2; }
+}
+/* The drawer of the draft's line and the command cards. On a phone they would leave the thread
+   a few lines of the screen, so under the reply box there is only the drawer's tab: one line of
+   chips that say what waits in it. A tap opens the drawer over the thread: a sheet from the
+   screen's bottom edge, as tall as what it holds, up to most of the screen, the rest dimmed.
+   On a wider screen there is no tab, and the drawer and its sheet are no boxes: the lines are
+   the reply box's own. */
+.linestab, .lineshead { display: none; }
+.linesdrawer, .linesdrawer .sheet { display: contents; }
+@media (max-width: 699px) {
+  .linestab { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; cursor: pointer; text-align: left; }
+  .linestab[hidden] { display: none; }
+  .linestab .chip { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+  .linestab .chip.cmd { flex: none; }
+  .linestab .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .linestab svg { flex: none; }
+  .linestab .chev { margin-left: auto; }
+  .linesdrawer { display: none; }
+  /* Over the thread and what floats in it, under a toast: Undo of a discard is in one. */
+  .linesdrawer.open { position: fixed; inset: 0; z-index: 9; display: flex; flex-direction: column; justify-content: flex-end; }
+  .linesdrawer .sheet { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); max-height: 85dvh; overflow: hidden auto; overscroll-behavior: contain;
+    padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); }
+  .lineshead { position: sticky; top: 0; z-index: 1; flex: none; display: flex; align-items: center; justify-content: space-between;
+    margin: 0 calc(-1 * var(--spectrum-spacing-200)); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
+  .linesclose { cursor: pointer; }
+  /* In the sheet the cards are as tall as they are: the sheet scrolls, not the cards in it,
+     and Deny and Run are where their card ends. */
+  .linesdrawer .bashbar { flex: none; max-height: none; overflow: visible; }
+  .linesdrawer .bashbar .br.pending .cmd { max-height: none; }
+  .linesdrawer .bashbar .acts { position: static; }
+  .linesdrawer .draftbar { flex: none; }
 }
 /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
 .composer.checking textarea { flex: 0 0 calc(50% - calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-400))); margin-right: auto; }
@@ -2173,6 +2204,44 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   .spectrum .bashbar button:not(.forget, .more) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
   .spectrum .bashbar .var input { min-height: var(--spectrum-component-height-100); font-size: var(--spectrum-font-size-100); }
 }
+/* The drawer's tab (phones): a quiet row under the reply box; with a command to decide on, the
+   dashed outline and fill of that command's card. The sheet: the pane's surface, raised, its
+   top corners round. */
+.spectrum .linestab {
+  min-height: var(--spectrum-component-height-100);
+  padding: 0 var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-regular-font-weight);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  background: var(--spectrum-gray-100);
+  border: var(--spectrum-border-width-100) solid transparent;
+  border-radius: var(--spectrum-corner-radius-large-default);
+}
+.spectrum .linestab:has(.chip.ask) {
+  border: var(--spectrum-border-width-100) dashed var(--spectrum-notice-visual-color);
+  background: color-mix(in srgb, var(--spectrum-notice-subtle-background-color-default) 50%, var(--pane));
+}
+.spectrum .linestab svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .linestab .chip.ask { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .linestab .chip.draft { color: var(--spectrum-accent-content-color-default); }
+.spectrum .linesdrawer.open { background: var(--spectrum-transparent-black-500); }
+.spectrum .linesdrawer.open .sheet {
+  background: var(--pane);
+  border-radius: var(--spectrum-corner-radius-large-default) var(--spectrum-corner-radius-large-default) 0 0;
+  box-shadow: var(--s2-elevated);
+  outline: none;
+}
+.spectrum .lineshead { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); background: var(--pane); }
+.spectrum .linesclose {
+  width: var(--spectrum-component-height-100);
+  min-height: var(--spectrum-component-height-100);
+  padding: 0;
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: none;
+  border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+}
 /* A finger needs more than the pointer: the line's buttons grow to the next control height. */
 @media (hover: none) and (pointer: coarse) {
   .spectrum .draftbar button { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
@@ -2360,9 +2429,10 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    and name, and the list by customer until one is picked: each customer a heading over its
    threads. Its one mark is red: the badge counts the messages that mention you and that you
    have not read, beside a customer, and the threads it counts are marked in the same red.
-   Unread is bold; nothing else is red, nothing else has a count. */
+   Unread is bold; nothing else is red, nothing else has a count. A customer's \2260 excludes
+   it, as on the expert view's cards: over the end of its name, before the badge. */
 main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
-main.simple .fr .lab { grid-column: 2; }
+main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
 /* A logo: the icon over the customer's initial, which shows where there is none. */
