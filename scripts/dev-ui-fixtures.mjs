@@ -606,8 +606,9 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `draft`: the thread's shared draft, `{ by, ago, body, sources? }`; `by` is a person key or
    * 'agent'.
    * `bash`: the commands the thread's agent asked a person to run, `[{ ago, command, reason,
-   * env?, timeout?, open?, status?, by?, exit? }]`: asked `ago` minutes ago, open for `open`
-   * more minutes; `status` (and `by`, a person key) for one that was decided 2 minutes ago.
+   * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
+   * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
+   * minutes ago (2, unless it says).
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
    * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js).
    */
@@ -718,9 +719,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (bash.length) {
       bashRequests.set(key, bash.map((b, i) => {
         const who = b.by && byKey.get(b.by);
-        const decided = b.status ? new Date(now - 2 * MIN).toISOString() : null;
+        const decided = b.status ? new Date(now - (b.ended ?? 2) * MIN).toISOString() : null;
         return {
-          id: `req${threads.size}${i}`,
+          // Twelve hex digits, as src/agent/bashrequest.js makes them: the agent names them.
+          id: (0x375f59640760 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
           thread: key,
           command: b.command,
           reason: b.reason,
@@ -815,27 +817,59 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         { url: 'https://status.example.com/incidents/42', title: 'Status page' },
       ],
     },
-    // The agent asks for two commands: one ran, one waits for the viewer's own token.
+    // The agent tried three times, as the viewer ran each, and asks for a fourth: one long line,
+    // with one variable whose description says where to find the value.
     bash: [
       {
-        ago: 14,
-        command: 'curl -sI https://main--acme-preview--acme.aem.page/en/index.html | head -n 12',
-        reason: 'Shows the response headers of the affected page, to see which cache answered.',
-        timeout: 30,
+        ago: 9,
+        command: 'curl -sf -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'Reads version 41 of the CDN service, the one from before the 14:00 flush.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
         status: 'done',
-        by: 'priya',
+        exit: 22,
+        by: 'dana',
+        ended: 7,
       },
       {
-        ago: 9,
-        command: 'curl -sf -H "Authorization: Bearer $CDN_API_TOKEN" \\\n'
-          + '  "https://api.cdn.example.com/v1/services/$CDN_SERVICE_ID/versions?limit=3" \\\n'
-          + '  | jq \'.[] | {number, active, updated_at, comment}\'',
-        reason: 'Lists the last three versions of the CDN service, to compare the configuration '
-          + 'before and after the 14:00 flush. It only reads; it needs a token of yours.',
-        env: [
-          { name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' },
-          { name: 'CDN_SERVICE_ID', description: 'The id of ACME\'s CDN service' },
-        ],
+        ago: 6,
+        command: 'curl -s -D headers.txt -o body.json -w "HTTP %{http_code}\\n" '
+          + '-H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'The same call, printing the status and keeping the headers, to see why it failed.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
+        status: 'done',
+        exit: 2,
+        by: 'dana',
+        ended: 5,
+      },
+      {
+        ago: 4,
+        command: 'curl -s -i -A "opspile-agent" -w "\\nHTTP %{http_code}\\n" '
+          + '-H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'The same call with a User-Agent, which the API wants.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
+        status: 'done',
+        by: 'dana',
+        ended: 3,
+      },
+      {
+        ago: 1,
+        command: 'curl -sf -A "opspile-agent" -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41 -o version-41.json && '
+          + 'curl -sf -A "opspile-agent" -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + '"https://api.cdn.example.com/v1/services/acme-preview/versions/42?include=backends" -o version-42.json && '
+          + 'jq \'{number, active, updated_at, comment, backends: [.backends[].name]}\' version-41.json && '
+          + 'jq \'{number, active, updated_at, comment, backends: [.backends[].name]}\' version-42.json',
+        reason: 'Reads versions 41 and 42 of the CDN service with your token, saves them to my '
+          + 'workspace, and prints what changed with the 14:00 flush. Nothing gets written to '
+          + 'the CDN.',
+        env: [{
+          name: 'CDN_API_TOKEN',
+          description: 'A CDN API token with read access to the acme-preview service (a '
+            + 'read-only token is enough). cdn.example.com → Account → API tokens.',
+        }],
         timeout: 60,
       },
     ],
