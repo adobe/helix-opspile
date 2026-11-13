@@ -48,11 +48,16 @@ code and docs, is the decision model that labels threads and channels.
   highlighter the Worker serves at `/inbox/highlight.js`; all from `scripts/ui-markdown.mjs`,
   not committed), and
   `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
-  way). `npm run build` builds the bundles, and so do `npm test`, `npm run lint`,
+  way), and `src/computer-image/` (the programs of the agents' computers on the SLICC kernel,
+  from the `@ai-ecoverse/wasm-*` packages; `scripts/computer-image.mjs`, not committed).
+  `npm run build` builds them all, and so do `npm test`, `npm run lint`,
   `npm run ui:dev`, `cf deploy` and `cf dev`. Run `npm ci` first in a fresh checkout.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
-  `src/agent/agent.js`.
+  `src/agent/agent.js`. The same goes for `@ai-ecoverse/slicc-kernel` (it imports
+  `cloudflare:workers`) and `src/computer-image/`: `src/agent/kernel.js` has what Node can
+  test, and `npm run computer:dev` runs an agent's computer in local workerd, both shells, to
+  try the rest (README, "Try an agent's computer").
 - `ui/rank.js` is the team order's model; its `MODEL` block is written by `npm run rank -- train`
   (README, "Train the team order"), not by hand. `.rank/` holds production threads: never commit it.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change

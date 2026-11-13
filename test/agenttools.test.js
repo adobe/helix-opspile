@@ -21,6 +21,7 @@ import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durab
 import { Bash, InMemoryFs } from 'just-bash';
 import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
+import { runtimeFor } from '../src/agent/kernel.js';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
@@ -203,6 +204,51 @@ describe('agent tools', () => {
     res = await call(e, admin, 'GET', '/api/kb/tools?repo=kb-org-acme');
     assert.equal(res.body.tools[0].team, null);
     assert.equal(res.body.tools[0].channels.C1.enabled, true);
+  });
+
+  it('have the computer\'s shell, which the admin team chooses for a team', async () => {
+    const e = env();
+    const computerOf = async (me, repo = 'kb-team-helix') => (await call(e, me, 'GET', `/api/kb/tools?repo=${repo}`))
+      .body.tools.find((t) => t.tool === 'computer');
+    let computer = await computerOf(manager);
+    assert.deepEqual(computer.runtime, { runtime: 'just-bash' });
+    assert.deepEqual(computer.runtimes.map((r) => r.runtime), ['just-bash', 'slicc-kernel']);
+    assert.ok(computer.runtimes.every((r) => r.title && r.description));
+    assert.equal(computer.mayRuntime, false);
+    assert.equal((await computerOf(admin)).mayRuntime, true);
+    // Only the Computer tool has one, and only a team: a customer's knowledge base shows none.
+    const { tools } = (await call(e, admin, 'GET', '/api/kb/tools?repo=kb-team-helix')).body;
+    assert.deepEqual(tools.filter((t) => t.runtime).map((t) => t.tool), ['computer']);
+    assert.equal((await computerOf(admin, 'kb-org-acme')).runtime, undefined);
+
+    // The team's managers switch the tool, not its shell.
+    const put = (me, body) => call(e, me, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', ...body });
+    let res = await put(manager, { runtime: 'slicc-kernel' });
+    assert.equal(res.status, 403);
+    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'just-bash');
+    res = await put(admin, { runtime: 'docker' });
+    assert.equal(res.status, 400);
+    res = await put(admin, { runtime: 'slicc-kernel', tool: 'post_message' });
+    assert.equal(res.status, 400);
+    res = await put(admin, { runtime: 'slicc-kernel', team: 'nobody' });
+    assert.equal(res.status, 404);
+    assert.equal(e.DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 0);
+
+    res = await put(admin, { runtime: 'slicc-kernel' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.runtime.runtime, 'slicc-kernel');
+    assert.equal(res.body.runtime.by, 'Ada');
+    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'slicc-kernel');
+    computer = await computerOf(manager);
+    assert.equal(computer.runtime.runtime, 'slicc-kernel');
+    assert.equal(computer.runtime.by, 'Ada');
+    // Choosing a shell turns nothing on.
+    assert.deepEqual(await toolsFor(e, target(SLACK, 'slack', 'C1')), []);
+    assert.deepEqual(computer.team, { enabled: false });
+
+    res = await put(admin, { runtime: 'just-bash' });
+    assert.equal(res.body.runtime.runtime, 'just-bash');
+    assert.equal(await runtimeFor(e, target(SLACK, 'slack', 'C1')), 'just-bash');
   });
 });
 
@@ -525,6 +571,29 @@ describe('the agent\'s switchable tools', () => {
     assert.equal(r.error.code, 'timeout');
     assert.equal(out, 'stopped after 1000 ms\n');
     assert.equal((await stopped.exec(['ls'], {})).error.code, 'spawn_error');
+  });
+
+  it('are told what the shell of their computer has, by the shell their team chose', async () => {
+    const ctx = { env: env(), hasThread: true, target: async () => target(SLACK, 'slack', 'C1') };
+    const guide = (options) => agentToolsExtension(ctx, ['computer'], options).sections
+      .find((s) => s.key === 'computer').render({});
+    const justBash = await guide();
+    assert.equal(await guide({ runtime: 'just-bash' }), justBash);
+    assert.match(justBash, /The shell is just-bash: cat, grep, sed, awk, jq,/);
+    assert.match(justBash, /use its \.requests\.ndjson file with jq:/);
+    const kernel = await guide({ runtime: 'slicc-kernel' });
+    assert.match(kernel, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
+    assert.match(kernel, /The shell is GNU bash with real programs: coreutils/);
+    assert.doesNotMatch(kernel, /just-bash/);
+    // What it cannot do yet is said, so that it does not try around it.
+    assert.match(kernel, /plain http:\/\/ only/);
+    assert.match(kernel, /There is no jq yet/);
+    assert.match(kernel, /use its \.requests\.ndjson file with grep and awk:/);
+    // The rest is the same computer: its uploads, and the commands a person runs.
+    assert.match(kernel, /uploads\/ in that directory is read-only/);
+    assert.match(kernel, /request_bash asks a person on the team/);
+    // A shell this deployment does not know is the default.
+    assert.equal(await guide({ runtime: 'docker' }), justBash);
   });
 
   it('are absent while off', async () => {

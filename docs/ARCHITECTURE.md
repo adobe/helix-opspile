@@ -1712,6 +1712,56 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
+**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
+does not run. The admin team can give a team's agents another shell (`runtime`, a row of
+`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the picker in the
+Computer tool's row of the team's knowledge base): GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
+`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
+the default. An agent follows its team's choice before each delivery, as it follows its tools
+(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+
+- **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
+  process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
+  network of its own and asks the kernel for every system call over Workers RPC. It is a
+  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
+  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
+  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
+- **Its files.** `/workspace` is the Workspace. Everything else (`/root`, `/tmp`, `/etc` and the
+  programs under `/node_modules`) is the kernel's own root, in the same SQLite, in tables of its
+  own (`slicc_*`). Output that was too long is saved under `/workspace/.computer/output`, not
+  the Workspace's `/.computer/output`, which this shell cannot see. A file is in the Workspace
+  when its program closes it (`writeBehind: false`), so writing into the read-only uploads
+  fails where it happens. The kernel's driver makes its mount point with `mkdir -p`, which the
+  Workspace refuses in a directory with a read-only mount: `patientFs` answers it when the
+  directory is there.
+- **Its programs** are the image, `src/computer-image/`, which `scripts/computer-image.mjs`
+  builds from the `@ai-ecoverse/wasm-*` packages ([homescoop](https://github.com/ai-ecoverse/homescoop))
+  this repository pins: bash, coreutils, grep, sed, gawk, findutils, diff and cmp, curl, gzip,
+  tar, unzip, tree, which, rev, column and hexdump. Every file is copied as `<n>.bin`, because
+  wrangler imports `*.bin` as bytes and would compile a `.wasm` import, and the Worker carries
+  them (about 4.5 MB of its 10 MB, compressed). `installImage` writes them under
+  `/node_modules` with a thread's first command (about 12 MB of the object's SQLite, for each
+  thread that runs one), and again when a deploy brings another version.
+- **Its network.** The kernel's programs reach the network through its proxy, which hands
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
+  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
+  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
+  again.
+- **What it cannot do yet**, and the agent is told so (`SHELLS` in `src/agent/tools.js`):
+  - **No `https://`.** curl speaks TLS to the kernel's proxy, which ends it with
+    `@ai-ecoverse/wasm-tls-engine`, loaded by `import()` of a `data:` URL and compiled at run
+    time. Workers allow neither, so `CONNECT` answers 501. Plain `http://` works. With it go the
+    secrets, which are only sent over HTTPS.
+  - **No `jq`.** `@ai-ecoverse/wasm-jq` is built with threads (it imports a shared memory and
+    Emscripten's pthread functions), which the kernel has none of in a Worker: it does not
+    start, so it is not in the image.
+  - **No `rg`, `strings`, `yq` or `clear`**, which just-bash has: the first two exist as
+    packages and were left out for the Worker's size, `yq` is 28 MB.
+  - No JavaScript runtime: the kernel's `node` (slicc-jsh) is a JS program, which it does not
+    run in a Worker.
+
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
 it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and never shown

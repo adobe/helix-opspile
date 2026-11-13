@@ -590,6 +590,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // The admin team gave platform ops' computers the SLICC kernel as their shell.
+  DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
+    VALUES ('computer', 'platform', 'runtime', 'slicc-kernel', 'Dana', '2026-10-26T09:00:00Z')`);
   // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
   // technology of its own, and one of the admin team's turned off for its channels.
   DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,

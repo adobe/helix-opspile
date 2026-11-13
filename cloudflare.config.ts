@@ -30,6 +30,9 @@ if (existsSync('.env')) process.loadEnvFile('.env');
 // (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages match
 // src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights and tokens.
 execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
+// The programs of the agents' computers on the SLICC kernel (src/computer-image/, not
+// committed), from the pinned @ai-ecoverse/wasm-* packages, the same way.
+execFileSync(process.execPath, ['scripts/computer-image.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {
   prod: 'helix-opspile-prod',

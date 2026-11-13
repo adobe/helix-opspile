@@ -801,9 +801,60 @@ function toolRow(t) {
       ${t.problem ? `<div class="sub err">${esc(t.problem)}</div>` : ''}
       ${by ? `<div class="sub by">${by}</div>` : ''}
     </div>
-    ${t.tool === 'computer' ? secretsBlock(t) : ''}
+    ${t.tool === 'computer' ? shellBlock(t) + secretsBlock(t) : ''}
     ${toolPerChannel(t)}
   </div>`;
+}
+
+// ---- the computer's shell -------------------------------------------------------------------
+//
+// What runs the commands of a team's agents (src/agent/kernel.js): just-bash, or GNU bash and
+// real programs on the SLICC kernel, which is experimental. In a team's knowledge base, in the
+// Computer tool's row, for the admin team to choose; everyone else sees which it is.
+
+/** The shell of the team's computers: a picker, what the chosen one is, and who chose it. */
+function shellBlock(t) {
+  if (!t.runtime) return '';
+  const b = base();
+  const now = t.runtimes.find((r) => r.runtime === t.runtime.runtime) || t.runtimes[0];
+  const options = t.runtimes.map((r) => `<option value="${esc(r.runtime)}"${r === now ? ' selected' : ''}>${esc(r.title)}</option>`).join('');
+  const by = t.runtime.by ? `<div class="sub by">Chosen by ${esc(t.runtime.by)}, ${esc(ago(t.runtime.at))}</div>` : '';
+  return `<div class="shell">
+    <label class="sub mine">Shell
+      <select data-runtime aria-label="The shell of the computers of ${esc(b.name)}"
+        title="${t.mayRuntime ? `What runs the commands of the agents of ${esc(b.name)}` : 'Only the admin team chooses it.'}"${t.mayRuntime ? '' : ' disabled'}>${options}</select>
+    </label>
+    <div class="sub">${esc(now.description)}</div>
+    ${by}
+  </div>`;
+}
+
+const SHELL_CONFIRM = {
+  'just-bash': (where) => `From their next message, the agents of ${where} run their commands in just-bash again, on the same files.`,
+  'slicc-kernel': (where) => `From their next message, the agents of ${where} run their commands in GNU bash on the SLICC kernel, on the same files. It is experimental: for now its curl reaches plain http:// only, so nothing over https:// and none of the secrets, and it has no jq.`,
+};
+
+/** The handler of the computer's shell picker. */
+function bindShell(computer, stale) {
+  const b = base();
+  const el = $('editor').querySelector('[data-runtime]');
+  if (!el) return;
+  el.onchange = async () => {
+    const chosen = computer.runtimes.find((r) => r.runtime === el.value);
+    if (!(await ask(`Use ${chosen.title} for ${b.name}?`, SHELL_CONFIRM[chosen.runtime](b.name), 'Use it'))) {
+      el.value = computer.runtime.runtime;
+      return;
+    }
+    const { ok, body } = await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: 'computer', team: b.slug, runtime: chosen.runtime }) });
+    if (stale()) return;
+    if (!ok) {
+      el.value = computer.runtime.runtime;
+      showNote({ kind: 'err', text: body.error || 'Choosing the shell failed.' });
+      return;
+    }
+    computer.runtime = body.runtime;
+    renderMcp({ kind: 'ok', text: `The agents of ${b.name} use ${chosen.title}, from their next message.` });
+  };
 }
 
 // ---- the computer's secrets -----------------------------------------------------------------
@@ -927,6 +978,7 @@ function bindTools() {
   const find = (tool) => state.tools.find((t) => t.tool === tool);
   const stale = () => state.repo !== repo || state.view !== 'mcp';
   if (find('computer')) bindSecrets(find('computer'), stale);
+  if (find('computer')) bindShell(find('computer'), stale);
   for (const el of $('editor').querySelectorAll('[data-tteam]')) {
     el.onclick = async () => {
       const t = find(el.dataset.tteam);

@@ -1,0 +1,10 @@
+{
+  "name": "opspile-dev-computer",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "AGENTS", "class_name": "ComputerAgent" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ComputerAgent"] }],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "opspile-dev-computer-files" }]
+}

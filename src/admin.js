@@ -752,6 +752,7 @@ async function deleteTeam(env, body) {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM agent_teams WHERE team = ?').bind(slug),
     env.DB.prepare('DELETE FROM agent_tool_switches WHERE scope = \'team\' AND target = ?').bind(slug),
+    env.DB.prepare('DELETE FROM agent_tool_options WHERE team = ?').bind(slug),
     env.DB.prepare('DELETE FROM mcp_global_switches WHERE scope = \'team\' AND target = ?').bind(slug),
   ]);
   const { meta } = await env.DB.prepare('DELETE FROM teams WHERE slug = ?').bind(slug).run();

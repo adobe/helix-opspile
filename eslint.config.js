@@ -14,7 +14,9 @@ import { recommended } from '@adobe/eslint-config-helix';
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**'],
+    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**',
+      // The computer's programs and their generated list (scripts/computer-image.mjs).
+      'src/computer-image/**'],
   },
   {
     ...recommended,
@@ -33,7 +35,7 @@ export default [
       ...recommended.rules,
       // Workers runtime modules, and packages that only declare `exports` (the resolver does
       // not read them).
-      'import/no-unresolved': ['error', { ignore: ['^cloudflare:', '^agents(/|$)', '^@earendil-works/', '^@modelcontextprotocol/', '^@cloudflare/computer/'] }],
+      'import/no-unresolved': ['error', { ignore: ['^cloudflare:', '^agents(/|$)', '^@earendil-works/', '^@modelcontextprotocol/', '^@cloudflare/computer/', '^@ai-ecoverse/slicc-kernel(/|$)'] }],
       // console is how a Worker writes to Workers Logs.
       'no-console': 'off',
       'max-len': ['error', 100, 2, {

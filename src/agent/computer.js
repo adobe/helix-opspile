@@ -13,6 +13,7 @@
 import {
   err, ExecutionError, FileError, ok,
 } from '@earendil-works/pi-durable/env';
+import { DEFAULT_RUNTIME, timedOut } from './kernel.js';
 
 /**
  * The agent's computer (its `computer` tool): pi's own `bash` tool, run on Cloudflare
@@ -23,12 +24,22 @@ import {
  * the team's and the customer's secrets go in where a request names them, src/agent/secrets.js).
  * Each thread keeps its files from one turn to the next, under COMPUTER_CWD.
  *
+ * A team can choose another shell for its agents, on the same Workspace: GNU bash and real
+ * programs on the SLICC kernel (src/agent/kernel.js, `runtime` below).
+ *
  * This file is the bridge: an ExecutionEnv for pi-durable whose `exec` runs a command on the
  * workspace. pi's file tools (read, write, edit) are not installed, so the rest of the
  * environment says `not_supported`; the agent works on its files with the shell.
  */
 
 export const COMPUTER_CWD = '/workspace';
+
+/**
+ * Where a Workspace saves output that was too long, for the kernel's shell: it sees the
+ * Workspace's files under COMPUTER_CWD only, and the agent is told to read the file there.
+ * just-bash sees all of them, and keeps the Workspace's own `/.computer/output`.
+ */
+export const KERNEL_OUTPUT_DIR = `${COMPUTER_CWD}/.computer/output`;
 
 /**
  * Makes COMPUTER_CWD when it is not there yet. Only then: the uploads mount (src/threadfiles.js)
@@ -51,8 +62,9 @@ const unsupported = async (path) => err(new FileError('not_supported', 'only the
 /**
  * An ExecutionEnv over `workspace()`, which resolves to a Workspace (or anything with
  * `runtime.exec(source, options)` as @cloudflare/computer's): created on first use.
+ * `runtime()` names the shell the Workspace runs (src/agent/kernel.js), asked for each command.
  */
-export function computerEnv(workspace, { id = 'computer' } = {}) {
+export function computerEnv(workspace, { id = 'computer', runtime = () => DEFAULT_RUNTIME } = {}) {
   return {
     id,
     cwd: COMPUTER_CWD,
@@ -64,6 +76,7 @@ export function computerEnv(workspace, { id = 'computer' } = {}) {
         return err(new ExecutionError('aborted', 'aborted'));
       }
       let result;
+      const started = Date.now();
       try {
         const ws = await workspace();
         const run = await ws.runtime.exec(command, {
@@ -82,7 +95,7 @@ export function computerEnv(workspace, { id = 'computer' } = {}) {
       } catch (e) {
         return err(new ExecutionError('unknown', `the computer failed: ${e.message}`));
       }
-      // just-bash answers at the end of a run, stdout first; the window is the tool's.
+      // The whole output at the end of a run, stdout first; the window is the tool's.
       const info = (stream) => ({ stream });
       if (result.stdout && options.onOutput) {
         options.onOutput(result.stdout, context, info('stdout'));
@@ -91,13 +104,14 @@ export function computerEnv(workspace, { id = 'computer' } = {}) {
         options.onOutput(result.stderr, context, info('stderr'));
       }
       // The shell's answer to a run it stopped at `timeoutMs`.
-      if (options.timeout && result.exitCode === 124) {
+      const seconds = (Date.now() - started) / 1000;
+      if (options.timeout && timedOut(runtime(), result.exitCode, seconds, options.timeout)) {
         return err(new ExecutionError('timeout', 'timed out'));
       }
       const saved = result.truncated && (result.truncated.stdout || result.truncated.stderr);
       return ok({ exitCode: result.exitCode, ...(saved ? { spillPath: saved.path } : {}) });
     },
-    // Nothing runs after a command: just-bash answers at the end of each.
+    // Nothing runs after a command: the shell answers at the end of each.
     cleanup: async () => undefined,
     absolutePath: async (path) => ok(path.startsWith('/') ? path : `${COMPUTER_CWD}/${path}`),
     joinPath: async (parts) => ok(parts.join('/').replace(/\/+/g, '/')),
