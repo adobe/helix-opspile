@@ -16,9 +16,6 @@ import { keepSidebarAnswer, sidebarNote } from '../sidebar.js';
 import { modelProblem } from './model.js';
 import { sidebarTurns, turnSidebar } from './turn.js';
 
-// The sidebar answers last kept, by message, in the agent's storage: at most this many.
-const MAX_KEPT = 100;
-
 /**
  * The agent's side of the sidebar (src/sidebar.js). `agent` is the ThreadAgent (its `env`,
  * `name`, `syncTools`, `syncMcp` and `harness`); these functions are its `sidebar`, `inSidebar`
@@ -85,19 +82,24 @@ export async function keepAnswers(agent) {
   if (!turns.length) {
     return 0;
   }
-  const kept = new Map((await storage.get('sidebar-kept')) || []);
+  const before = new Map((await storage.get('sidebar-kept')) || []);
+  // Only the transcript's: what a reset or compaction let go of is not asked about again.
+  const kept = new Map();
   let written = 0;
+  let changed = before.size !== turns.length;
   for (const turn of turns) {
     const sig = `${turn.state}:${turn.endedAt}:${turn.text}`;
-    if (kept.get(turn.sidebar) !== sig) {
+    if (before.get(turn.sidebar) !== sig) {
       // eslint-disable-next-line no-await-in-loop
       if (await keepAnswer(agent, turn)) {
         written += 1;
       }
-      kept.delete(turn.sidebar);
-      kept.set(turn.sidebar, sig);
+      changed = true;
     }
+    kept.set(turn.sidebar, sig);
   }
-  await storage.put('sidebar-kept', [...kept].slice(-MAX_KEPT));
+  if (changed) {
+    await storage.put('sidebar-kept', [...kept]);
+  }
   return written;
 }

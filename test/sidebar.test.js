@@ -164,7 +164,13 @@ describe('the sidebar', () => {
       harness: { messages: async () => working },
     };
     assert.equal(await keepAnswers(agent), 2);
+    const puts = [];
+    agent.ctx.storage.put = async (k, v) => {
+      puts.push(k);
+      storage.set(k, v);
+    };
     assert.equal(await keepAnswers(agent), 0, 'once');
+    assert.deepEqual(puts, [], 'nothing written when nothing changed');
     assert.deepEqual((await sidebarFor(e, [SLACK])).filter((m) => m.role === 'agent')
       .map((m) => [m.reply_to, m.body]), [[first.id, 'The CDN.'], [second.id, 'The origin is fine.']]);
   });

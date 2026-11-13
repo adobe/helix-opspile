@@ -181,7 +181,7 @@ before its message. Whether a turn is the sidebar's is not stored: it is read fr
 while it is, and when the transcript cannot be read. A delivery follows a pending sidebar message
 instead of steering into it (`whenBusy`), so no other input becomes its turn's; one that did anyway
 ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of the transcript, each
-once per state and text (`sidebar-kept` in the agent's storage, written after them), so a turn
+once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
 queued right behind one does not hide it.
 
 **Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕ Exit,
