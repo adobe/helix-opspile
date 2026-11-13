@@ -1412,9 +1412,13 @@ Agents does too, a select on each channel with an agent. Hidden, the page does n
 thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`). Each
 message goes into the agent's own conversation as an input of its own (`ThreadAgent.sidebar`,
 `src/agent/sidebar.js`), after the run it is in, never steered into one; so the agent remembers
-it in later turns. It goes into the thread's history too: `sidebar_messages` in D1, the person's
-message when it is sent, the agent's answer when the turn ends (the turn's closing text, up to
-8000 characters, kept by `keepTurn` instead of the thread's note, which stays the turn before).
+it in later turns. New messages of the thread do not steer into it either: while a sidebar
+message is pending, a delivery follows it as a run of its own. It goes into the thread's history
+too: `sidebar_messages` in D1, the person's message when it is sent, the agent's answer when the
+turn ends (the turn's closing text, up to 8000 characters, kept by `keepTurn` instead of the
+thread's note, which stays the turn before). Every finished sidebar turn in the transcript is
+kept, not only the latest: an input queued behind one starts at the boundary its answer is
+committed at.
 Nothing of it is posted: while the agent's latest input is a sidebar message, `post_message`,
 `add_reaction` and `request_membership` refuse (the admin bots answer in the channel), and so do
 they when the transcript cannot be read. The input starts with a line that names the message,

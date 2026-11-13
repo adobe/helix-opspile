@@ -127,3 +127,34 @@ export function latestTurn(entries, { busy = false, now = Date.now() } = {}) {
     text: (texts(last) || fallback).slice(0, sidebar ? MAX_ANSWER : MAX_TEXT),
   };
 }
+
+/**
+ * Every turn of `entries` that answers a sidebar message, oldest first, as `latestTurn` says it:
+ * not only the latest, since a follow-up queued behind one (another sidebar message, new messages)
+ * starts at the same boundary its answer is committed at. A turn that another input took over
+ * before it finished is failed.
+ */
+export function sidebarTurns(entries, { now = Date.now() } = {}) {
+  const list = entries || [];
+  const starts = list.map((e, i) => (e.kind === 'pi.user' ? i : -1)).filter((i) => i >= 0);
+  const out = [];
+  starts.forEach((start, n) => {
+    if (!sidebarOf(inputText((list[start].model || [])[0]))) {
+      return;
+    }
+    const end = n + 1 < starts.length ? starts[n + 1] : list.length;
+    const turn = latestTurn(list.slice(0, end), { now });
+    if (end < list.length && turn.state === 'working') {
+      const next = (list[end].model || [])[0];
+      out.push({
+        ...turn,
+        state: 'failed',
+        endedAt: next && next.timestamp ? new Date(next.timestamp).toISOString() : turn.startedAt,
+        text: 'The turn did not finish.',
+      });
+      return;
+    }
+    out.push(turn);
+  });
+  return out;
+}

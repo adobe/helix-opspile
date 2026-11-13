@@ -35,7 +35,7 @@ import { COMPUTER_CWD, computerEnv, ensureCwd } from './computer.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { seed, seedPin } from './seed.js';
-import { inSidebar, keepAnswer, talk } from './sidebar.js';
+import { inSidebar, keepAnswers, talk } from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
@@ -556,10 +556,15 @@ export class ThreadAgent extends Agent {
    * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
    * storage, so a woken object does not write it again. A turn in progress keeps nothing. One
    * that answers a sidebar message is the sidebar's (src/agent/sidebar.js): the turn kept for
-   * the thread stays the one before it.
+   * the thread stays the one before it. Every finished sidebar answer in the transcript is kept
+   * first, also while a turn queued behind it works.
    */
   async keepTurn(turn) {
-    if (this.name.startsWith('kb:') || (turn && turn.state === 'working')) {
+    if (this.name.startsWith('kb:')) {
+      return;
+    }
+    await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
+    if (turn && turn.state === 'working') {
       return;
     }
     const sig = JSON.stringify(turn || null);
@@ -567,9 +572,7 @@ export class ThreadAgent extends Agent {
     if (this.keptSig === sig) {
       return;
     }
-    if (turn && turn.sidebar) {
-      await keepAnswer(this, turn);
-    } else {
+    if (!(turn && turn.sidebar)) {
       await keepTurn(this.env, this.name, turn);
     }
     await this.ctx.storage.put('kept-turn', sig);
@@ -585,13 +588,11 @@ export class ThreadAgent extends Agent {
       this.keepTimer = null;
       try {
         const { turn } = await this.latestTurn();
-        if (turn && turn.state === 'working') {
-          if (tries > 1) {
-            this.keepTurnSoon(tries - 1);
-          }
-          return;
-        }
+        // The sidebar answers before it, even while the turn behind them works.
         await this.keepTurn(turn);
+        if (turn && turn.state === 'working' && tries > 1) {
+          this.keepTurnSoon(tries - 1);
+        }
       } catch (e) {
         console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
       }

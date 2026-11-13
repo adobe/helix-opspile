@@ -16,9 +16,12 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable';
-import { inSidebar, keepAnswer, talk } from '../src/agent/sidebar.js';
+import { whenBusy } from '../src/agent/delivery.js';
+import {
+  inSidebar, keepAnswer, keepAnswers, talk,
+} from '../src/agent/sidebar.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
-import { latestTurn, turnSidebar } from '../src/agent/turn.js';
+import { latestTurn, sidebarTurns, turnSidebar } from '../src/agent/turn.js';
 import {
   addSidebarMessage, inputText, keepSidebarAnswer, MAX_ANSWER, sidebarFor, sidebarId,
   sidebarNote, sidebarOf,
@@ -130,6 +133,64 @@ describe('the sidebar', () => {
     const before = entries.slice(0, entries.map((e) => e.kind).lastIndexOf('pi.user'));
     assert.equal(turnSidebar(before), null);
     assert.equal(latestTurn(before).sidebar, undefined);
+  });
+
+  it('keeps the answer to each of two queued questions, also while the next turn works', async () => {
+    const e = env();
+    const ask = (text) => addSidebarMessage(e, SLACK, {
+      id: sidebarId(), person: ADA.id, name: ADA.name, text,
+    });
+    const first = await ask('CDN?');
+    const second = await ask('And the origin?');
+    const entries = await run([
+      sidebarNote({ id: first.id, by: 'Ada', text: 'CDN?' }),
+      sidebarNote({ id: second.id, by: 'Ada', text: 'And the origin?' }),
+      'New messages in your thread: …',
+    ], [
+      () => fauxAssistantMessage('The CDN.'),
+      () => fauxAssistantMessage('The origin is fine.'),
+      () => fauxAssistantMessage('Nothing to change.'),
+    ]);
+    // Cut where the delivery behind them has just started: the latest turn is not the sidebar's.
+    const working = entries.slice(0, entries.map((x) => x.kind).lastIndexOf('pi.user') + 1);
+    assert.equal(latestTurn(working).sidebar, undefined);
+    const storage = new Map();
+    const agent = {
+      env: e,
+      name: SLACK,
+      ctx: {
+        storage: { get: async (k) => storage.get(k), put: async (k, v) => storage.set(k, v) },
+      },
+      harness: { messages: async () => working },
+    };
+    assert.equal(await keepAnswers(agent), 2);
+    assert.equal(await keepAnswers(agent), 0, 'once');
+    assert.deepEqual((await sidebarFor(e, [SLACK])).filter((m) => m.role === 'agent')
+      .map((m) => [m.reply_to, m.body]), [[first.id, 'The CDN.'], [second.id, 'The origin is fine.']]);
+  });
+
+  it('counts a sidebar turn another input took over as failed, and keeps deliveries out of it', async () => {
+    const id = sidebarId();
+    const entries = await run([sidebarNote({ id, by: 'Ada', text: 'CDN?' }), 'New messages …'], [
+      () => fauxAssistantMessage(fauxToolCall('get_draft', {}), { stopReason: 'toolUse' }),
+      () => fauxAssistantMessage('Nothing to change.'),
+      () => fauxAssistantMessage('Nothing to change.'),
+    ]);
+    // As a steer would leave it: the sidebar's input, a tool call, then the next input.
+    const users = entries.map((x, i) => (x.kind === 'pi.user' ? i : -1)).filter((i) => i >= 0);
+    const call = entries.findIndex((x) => x.kind === 'pi.assistant');
+    const steered = [...entries.slice(0, call + 1), ...entries.slice(users[1])];
+    const [turn] = sidebarTurns(steered);
+    assert.deepEqual([turn.sidebar, turn.state, turn.text], [id, 'failed', 'The turn did not finish.']);
+    // So new messages follow a pending sidebar message instead of steering into it.
+    const pending = (list) => ({ harness: { pending: async () => list } });
+    assert.equal(await whenBusy(pending([{ operationId: `sidebar:${id}`, status: 'running' }])), 'followUp');
+    assert.equal(await whenBusy(pending([{ operationId: 'messages:1', status: 'running' }])), 'steer');
+    assert.equal(await whenBusy(pending([])), 'steer');
+    const unreadable = async () => {
+      throw new Error('gone');
+    };
+    assert.equal(await whenBusy({ harness: { pending: unreadable } }), 'followUp');
   });
 
   it('counts a transcript it cannot read as the sidebar\'s, so nothing is posted', async () => {
