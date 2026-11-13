@@ -419,8 +419,9 @@ every write is trusted and lands on `main`; staff review comes later, against th
 history and the trust tiers OKF derives from `verified`.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
-concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
-to it, the team's first and then the customer's, to the end of its system prompt, read again
+concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
+to it, its team's first, then those of the teams its channel is shared with, then the customer's,
+to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
 whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.

@@ -108,6 +108,7 @@ export async function accessibleRepos(env, {
     repos.push({
       id: artifact,
       artifact,
+      team: t.slug,
       writable: t.shared,
       kind: 'kb',
       scope: t.shared ? 'shared' : 'other',

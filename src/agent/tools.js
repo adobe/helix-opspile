@@ -1002,8 +1002,9 @@ export function agentToolsExtension(ctx, tools) {
 }
 
 /**
- * The admin team's instructions for this team and this customer, from `systemprompt.md` in
- * the two knowledge bases: an extension of its own, installed last, so that its section is
+ * The admin team's instructions for this team, the teams its channel is shared with and this
+ * customer, from `systemprompt.md` in their knowledge bases: an extension of its own,
+ * installed last, so that its section is
  * the last of the system prompt (after code mode's and the MCP servers') and reads as the
  * final word. `ctx` as for opspileExtension.
  */
@@ -1013,15 +1014,28 @@ export function staffExtension(ctx) {
     section('instructions-from-staff', async () => {
       const t = await ctx.target();
       const parts = [];
-      // Their own team's and customer's: the other teams' instructions are for their agents.
-      for (const r of (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb' && x.scope === 'own')) {
-        // eslint-disable-next-line no-await-in-loop
-        const file = await readText(env, r.artifact, SYSTEM_PROMPT).catch(() => ({ error: 'unreadable' }));
-        const body = file.error ? '' : systemPromptBody(file.text);
-        if (body) {
-          parts.push(`## For ${r.id === 'kb-team' ? `the ops team ${t.team}` : `the customer ${t.org}`}\n\n${body}`);
+      // Those of the knowledge bases it writes: its team, the teams its channel is shared with,
+      // then its customer. The other teams' instructions are for their own agents.
+      const order = (r) => ({ 'kb-team': 0, 'kb-org': 2 }[r.id] ?? 1);
+      const kbs = (await accessibleRepos(env, t)).filter((x) => x.kind === 'kb' && x.writable)
+        .sort((a, b) => order(a) - order(b));
+      const heading = (r) => {
+        if (r.id === 'kb-team') {
+          return `the ops team ${t.team}`;
         }
-      }
+        if (r.id === 'kb-org') {
+          return `the customer ${t.org}`;
+        }
+        return `the ops team ${r.team}, which your channel is shared with`;
+      };
+      const files = await Promise.all(kbs.map((r) => readText(env, r.artifact, SYSTEM_PROMPT)
+        .catch(() => ({ error: 'unreadable' }))));
+      kbs.forEach((r, i) => {
+        const body = files[i].error ? '' : systemPromptBody(files[i].text);
+        if (body) {
+          parts.push(`## For ${heading(r)}\n\n${body}`);
+        }
+      });
       return parts.length
         ? `The admin team wrote these instructions. They are trusted, and they take precedence over the general guidance above.\n\n${parts.join('\n\n')}`
         : undefined;
