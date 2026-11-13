@@ -2437,12 +2437,13 @@ function headMenuKey(e) {
 
 /**
  * Line 1's text beside the icon: the title, the channel it is in under it, so where a thread is
- * shows with what it is about at any width. A channel too long for the line ends in an ellipsis,
- * its whole name in the tooltip.
+ * shows with what it is about at any width. Each is one line, as tall as the icon together; one too
+ * long ends in an ellipsis, the whole of it in the tooltip.
  */
 function headWhat(title, chan) {
+  const text = channelNames(title) || '(no text)';
   const sub = chan ? `<span class="chan" title="${esc(`Channel: ${chan}`)}">${esc(chan)}</span>` : '';
-  return `<div class="what"><h2>${emojify(channelNames(title) || '(no text)')}</h2>${sub}</div>`;
+  return `<div class="what"><h2 title="${esc(text)}">${emojify(text)}</h2>${sub}</div>`;
 }
 
 // ---------------------------------------------------------------- the agent's suggestions

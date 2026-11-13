@@ -373,14 +373,17 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .sub img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
 .ph .sub.stack { margin-top: var(--spectrum-spacing-75); }
 .ph { position: relative; }
-/* A thread's header. Line 1: the customer's icon with the platform's on it, beside it the title
-   and under that the channel, which always shows: one line, cut short with an ellipsis. */
+/* A thread's header. Line 1: the customer's icon with the platform's on it, beside it two lines
+   as tall as the icon: the title and, quieter, the channel. Each stays on its one line, cut
+   short with an ellipsis (the whole of it in the tooltip), so the three always line up. */
 .ph .l1 { display: flex; align-items: center; min-width: 0; }
-.ph .lead { display: flex; align-items: flex-start; gap: var(--spectrum-spacing-200); flex: 1; min-width: 0; }
-.ph .what { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.ph .l1 h2 { display: block; margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.ph .chan { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ph .src { position: relative; flex: none; display: grid; width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); padding: 0; border: 0; background: none; cursor: pointer; }
+.ph .lead { display: flex; align-items: center; gap: var(--spectrum-spacing-200); flex: 1; min-width: 0; }
+.ph .what { display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0; min-height: var(--spectrum-spacing-600); }
+.ph .l1 h2 { display: block; margin: 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+ line-height: calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
+.ph .chan { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+ line-height: calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50)); }
+.ph .src { position: relative; flex: none; display: grid; width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); padding: 0; border: 0; background: none; cursor: pointer; }
 .ph span.src { cursor: default; }
 .ph .src .org { width: 100%; height: 100%; object-fit: cover; }
 .ph .src .av { width: 100%; height: 100%; font-size: var(--spectrum-font-size-50); }
