@@ -33,6 +33,8 @@ import { teamsOf } from './shares.js';
 
 const MAX_OBJECTS = 300;
 const MAX_THREADS_PER_JOB = 400;
+/** How long the jobs of a renamed channel wait: its row is written after they are queued. */
+const CHANGE_DELAY_SECONDS = 30;
 
 const channelKey = (c) => `${c.source}:${c.tenant}:${c.channel_id}`;
 
@@ -51,7 +53,8 @@ export function movedFolder(folder, org, team) {
  * What changes for each channel under `rules`: `{ channel, from: [{ org, team, kind,
  * threads }], to: { org, team, kind } }` for every channel whose threads are filed
  * differently. Channels without threads are left out; nothing of theirs is filed yet.
- * `only` (`{ source, tenant, channelId }`) plans that one channel.
+ * `only` (`{ source, tenant, channelId, channel? }`) plans that one channel, classified as
+ * `channel` (as `toChannel` gives it) when given, not as its row says.
  */
 export async function plan(env, rules, only = null) {
   const where = only ? ' WHERE source = ? AND tenant = ? AND channel_id = ?' : '';
@@ -71,7 +74,7 @@ export async function plan(env, rules, only = null) {
   for (const c of channels || []) {
     const now = byChannel.get(channelKey(c));
     if (now) {
-      const to = classify(rules, toChannel(c, c.source, c.channel_id));
+      const to = classify(rules, (only && only.channel) || toChannel(c, c.source, c.channel_id));
       const differs = now.some((f) => f.org !== to.org || f.team !== to.team || f.kind !== to.kind);
       if (differs) {
         moves.push({
@@ -93,8 +96,11 @@ export async function plan(env, rules, only = null) {
   return moves.sort((a, b) => String(a.channel.name).localeCompare(String(b.channel.name)));
 }
 
-/** Queues one `refile` job per channel (and per few hundred threads). */
-export async function enqueueMoves(env, moves) {
+/**
+ * Queues one `refile` job per channel (and per few hundred threads). `options` go with each
+ * (`delaySeconds`).
+ */
+export async function enqueueMoves(env, moves, options = undefined) {
   if (!env.NORMALIZE) {
     return 0;
   }
@@ -115,7 +121,7 @@ export async function enqueueMoves(env, moves) {
           channelId: channel.channelId,
           threads: all.slice(i, i + MAX_THREADS_PER_JOB),
         },
-      });
+      }, options);
       jobs += 1;
     }
   }
@@ -129,9 +135,10 @@ export async function enqueueMoves(env, moves) {
  * `toChannel` gives it. Nothing is queued unless the rules classify it differently than before
  * (org, team or kind), nor for threads filed there already (`plan`). A manual assignment is a
  * rule, so it still wins; the teams the channel is shared with (`channel_teams`) go with the
- * channel, not with where it is filed, and stay. Call it before the message that came with the
- * change is filed: the jobs carry where each thread was, which that message may move.
- * Returns the number of jobs queued.
+ * channel, not with where it is filed, and stay. Call it before the channel's row is written
+ * (the row is the guard: a retry after a failure here finds the change again) and before the
+ * message that came with the change is filed (the jobs carry where each thread was, which that
+ * message may move). Returns the number of jobs queued.
  */
 export async function followChange(env, { tenant }, { before, after }, rules) {
   if (!before || !after) {
@@ -143,9 +150,10 @@ export async function followChange(env, { tenant }, { before, after }, rules) {
     return 0;
   }
   const moves = await plan(env, rules, {
-    source: after.source, tenant, channelId: after.channelId,
+    source: after.source, tenant, channelId: after.channelId, channel: after,
   });
-  const jobs = await enqueueMoves(env, moves);
+  // The job classifies the channel by its row, written right after this: a little later.
+  const jobs = await enqueueMoves(env, moves, { delaySeconds: CHANGE_DELAY_SECONDS });
   console.log(JSON.stringify({
     route: 'normalize', refile: 'channel changed', source: after.source, moves: moves.length, jobs,
   }));

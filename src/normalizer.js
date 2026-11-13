@@ -360,13 +360,14 @@ export async function processKey(env, key, cache = {}) {
     return processReaction(env, key, op.reaction);
   }
   if (op.op === 'channel') {
-    const change = await updateChannelName(env, op.channel);
     let jobs = 0;
-    if (change) {
-      // eslint-disable-next-line no-param-reassign
-      cache.rules = cache.rules || await loadRules(env);
-      jobs = await followChange(env, op.channel, change, cache.rules);
-    }
+    await updateChannelName(env, op.channel, undefined, {
+      onChange: async (before, after) => {
+        // eslint-disable-next-line no-param-reassign
+        cache.rules = cache.rules || await loadRules(env);
+        jobs = await followChange(env, op.channel, { before, after }, cache.rules);
+      },
+    });
     return { key, result: 'channel', ...(jobs ? { refile: jobs } : {}) };
   }
 
@@ -374,17 +375,17 @@ export async function processKey(env, key, cache = {}) {
   if (!message.channelId || !message.id) {
     return { key, result: 'skip', reason: 'no channel or id' };
   }
-  const channel = await getChannel(env, { ...message, refresh: isRenameNotice(message) });
+  // eslint-disable-next-line no-param-reassign
+  cache.rules = cache.rules || await loadRules(env);
+  const lookup = { ...message, refresh: isRenameNotice(message) };
+  const channel = await getChannel(env, lookup, undefined, {
+    // The lookup found the channel renamed: its threads follow, from where they are now, before
+    // this message is filed where the rules say now.
+    onChange: (before, after) => followChange(env, message, { before, after }, cache.rules),
+  });
   if (message.source === 'slack') {
     // The link opens in the channel's workspace, not the one the browser used last.
     message.permalink = slackLinkIn(channel.domain, message.permalink);
-  }
-  // eslint-disable-next-line no-param-reassign
-  cache.rules = cache.rules || await loadRules(env);
-  if (channel.before) {
-    // The lookup found the channel renamed: its threads follow, from where they are now, before
-    // this message is filed where the rules say now.
-    await followChange(env, message, { before: channel.before, after: channel }, cache.rules);
   }
   const cls = classify(cache.rules, channel);
   env.meter?.attribute({ org: cls.org, team: cls.team });

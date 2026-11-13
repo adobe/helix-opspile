@@ -226,12 +226,14 @@ const classifiedChanged = (row, next) => CLASSIFIED
  * message is filed with what is known, and the next message retries the lookup.
  *
  * `refresh` asks the platform even when the row is fresh (a Teams notice of a rename). When
- * the lookup changed what the rules read, the answer has `before`: the channel as it was, for
- * `followChange` (src/refile.js) to re-file its threads if the rules file it elsewhere now.
+ * the lookup changed what the rules read, `onChange(before, after)` (the channel as `toChannel`
+ * gives it) runs before the row is written: `followChange` (src/refile.js) queues its threads'
+ * moves there. The row is the guard, so it comes last; when `onChange` fails, so does this, with
+ * the row as it was, and a retry finds the change again.
  */
 export async function getChannel(env, {
   source, tenant, channelId, groupId, refresh,
-}, now = Date.now()) {
+}, now = Date.now(), { onChange } = {}) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
@@ -239,8 +241,8 @@ export async function getChannel(env, {
   if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
     return toChannel(row, source, channelId);
   }
+  let f;
   try {
-    let f;
     if (source === 'slack') {
       f = await fetchSlackChannel(env, tenant, channelId, now);
     } else if (source === 'discord') {
@@ -248,6 +250,16 @@ export async function getChannel(env, {
     } else {
       f = await fetchTeamsChannel(env, groupId || (row && row.group_id), channelId);
     }
+  } catch (e) {
+    console.warn(JSON.stringify({
+      route: 'normalize', lookup: 'channel', source, error: e.message,
+    }));
+    return toChannel(row, source, channelId);
+  }
+  if (onChange && row && classifiedChanged(row, f)) {
+    await onChange(toChannel(row, source, channelId), toChannel(f, source, channelId));
+  }
+  try {
     // Before the row, so that a failed update is tried again with the next lookup.
     if (f.domain && f.domain !== (row && row.domain)) {
       await relinkSlackChannel(env, tenant, channelId, f.domain);
@@ -274,11 +286,7 @@ export async function getChannel(env, {
         new Date(now).toISOString(),
       )
       .run();
-    const channel = toChannel(f, source, channelId);
-    if (row && classifiedChanged(row, f)) {
-      channel.before = toChannel(row, source, channelId);
-    }
-    return channel;
+    return toChannel(f, source, channelId);
   } catch (e) {
     console.warn(JSON.stringify({
       route: 'normalize', lookup: 'channel', source, error: e.message,
@@ -290,17 +298,22 @@ export async function getChannel(env, {
 /**
  * Records a rename or creation that arrived as an event, without a lookup, as of when it
  * happened (`at`): one older than the row (out of order, or a replay of pile 1) is left out,
- * since the row knows a later name. Returns `{ before, after }` (as `toChannel`) when it
- * renamed a channel D1 knew, for `followChange` (src/refile.js); else null.
+ * since the row knows a later name. A rename of a channel D1 knew runs `onChange(before,
+ * after)` first, as `getChannel` does. Returns whether it renamed one.
  */
 export async function updateChannelName(env, {
   source, tenant, channelId, name, at,
-}, now = Date.now()) {
+}, now = Date.now(), { onChange } = {}) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
   if (row && at && row.fetched_at && Date.parse(row.fetched_at) > Date.parse(at)) {
-    return null;
+    return false;
+  }
+  const renamed = Boolean(row) && (row.name ?? null) !== (name ?? null);
+  if (renamed && onChange) {
+    const after = toChannel({ ...row, name }, source, channelId);
+    await onChange(toChannel(row, source, channelId), after);
   }
   await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
     VALUES (?, ?, ?, ?, ?)
@@ -308,13 +321,7 @@ export async function updateChannelName(env, {
       fetched_at = excluded.fetched_at`)
     .bind(source, tenant, channelId, name, at || new Date(now).toISOString())
     .run();
-  if (!row || (row.name ?? null) === (name ?? null)) {
-    return null;
-  }
-  return {
-    before: toChannel(row, source, channelId),
-    after: toChannel({ ...row, name }, source, channelId),
-  };
+  return renamed;
 }
 
 /** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */

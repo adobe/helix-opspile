@@ -87,8 +87,10 @@ rule change in the admin pages (`plan`, `enqueueMoves`), and a change in what th
 channel (`followChange`): its name, its Teams team's name or its Slack Connect teams, from a Slack
 rename event, a Teams notice of a rename (which looks the channel up again) or a lookup that finds
 them changed (a day after the last, also from the cron). That one queues jobs only when the rules
-classify the channel differently than before, and before the message that came with the change is
-filed: that message points its thread's row at the new folder, so a job moves both the folder it
+classify the channel differently than before, before the channel's row is written (the row is
+the guard: a failure to queue fails the job with the old row, and its retry finds the change
+again; the jobs wait 30 seconds, so they read the new row), and before the message that came
+with the change is filed: that message points its thread's row at the new folder, so a job moves both the folder it
 was queued with and the row's. A rename event older than the channel's row (`fetched_at`: out of
 order, or a replay of pile 1) changes nothing.
 

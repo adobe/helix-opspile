@@ -17,7 +17,7 @@ import {
 import { getChannel, resetSlackDomains, updateChannelName } from '../src/lookup.js';
 import { isRenameNotice } from '../src/normalize.js';
 import { consume } from '../src/normalizer.js';
-import { refile } from '../src/refile.js';
+import { followChange, refile } from '../src/refile.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
 
@@ -193,9 +193,9 @@ describe('a renamed channel', () => {
     assert.equal(e.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'aem-Acme');
     // Nor for one that is not a rename (the same name again, or a channel D1 does not know yet).
     await ingest(e, { [KEY('9.1', 'rename')]: rename('aem-Acme', later + 1) });
-    await updateChannelName(e, {
+    assert.equal(await updateChannelName(e, {
       source: 'slack', tenant: 'E1', channelId: 'C0TEST9', name: 'aem-globex',
-    });
+    }, undefined, { onChange: () => assert.fail('not a rename') }), false);
     assert.deepEqual(e.queued.filter((b) => b.refile), []);
   });
 
@@ -278,20 +278,62 @@ describe('a renamed channel', () => {
     const e = env();
     const ref = { source: 'slack', tenant: 'E1', channelId: 'C0TEST1' };
     const now = Date.parse('2026-10-21T12:00:00Z');
-    assert.equal((await getChannel(e, ref, now)).before, undefined);
+    const changes = [];
+    const onChange = async (before, after) => changes.push([before.name, after.name]);
+    await getChannel(e, ref, now, { onChange });
+    assert.deepEqual(changes, []);
     channelName = 'aem-acme';
     // Fresh: not asked again, unless something says it changed.
-    assert.equal((await getChannel(e, ref, now)).name, 'random-chat');
-    const found = await getChannel(e, { ...ref, refresh: true }, now);
-    assert.equal(found.name, 'aem-acme');
-    assert.equal(found.before.name, 'random-chat');
+    assert.equal((await getChannel(e, ref, now, { onChange })).name, 'random-chat');
+    assert.equal((await getChannel(e, { ...ref, refresh: true }, now, { onChange })).name, 'aem-acme');
+    assert.deepEqual(changes, [['random-chat', 'aem-acme']]);
     // Asked again with nothing new: nothing changed.
-    assert.equal((await getChannel(e, { ...ref, refresh: true }, now)).before, undefined);
+    await getChannel(e, { ...ref, refresh: true }, now, { onChange });
+    assert.equal(changes.length, 1);
 
     const notice = (type) => ({ event: { '@odata.type': `#microsoft.graph.${type}EventMessageDetail` } });
     assert.equal(isRenameNotice(notice('channelRenamed')), true);
     assert.equal(isRenameNotice(notice('teamRenamed')), true);
     assert.equal(isRenameNotice(notice('membersAdded')), false);
     assert.equal(isRenameNotice({}), false);
+  });
+
+  it('keeps the old name when the moves cannot be queued, so a retry queues them', async () => {
+    const e = env();
+    await ingest(e, { [KEY('1.1')]: message('1.1') });
+    e.queued.length = 0;
+    const { send } = e.NORMALIZE;
+    const down = async () => {
+      throw new Error('the queue is down');
+    };
+    e.NORMALIZE.send = down;
+    const later = Date.now() / 1000 + 60;
+    const failed = [];
+    const key = KEY('9.0', 'rename');
+    e.RAW.objects.set(key, { body: JSON.stringify(rename('aem-acme', later)), options: {} });
+    await quiet(() => consume({
+      messages: [{ body: { key }, ack() {}, retry() { failed.push(key); } }],
+    }, e));
+    assert.deepEqual(failed, [key]);
+    assert.equal(e.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'random-chat');
+
+    // The queue retries the event: the change is still there to find.
+    e.NORMALIZE.send = send;
+    await ingest(e, { [key]: rename('aem-acme', later) });
+    assert.equal(e.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'aem-acme');
+    await drainRefiles(e);
+    assert.deepEqual(filed(e).map((t) => [t.org, t.team]), [['acme', 'helix']]);
+
+    // Found by a lookup, the same: the lookup fails with the row as it was.
+    const e2 = env();
+    channelName = 'random-chat';
+    await ingest(e2, { [KEY('1.1')]: message('1.1') });
+    setName(e2, 'random-chat', '2026-01-01T00:00:00Z');
+    channelName = 'aem-acme';
+    e2.NORMALIZE.send = down;
+    const ref = { source: 'slack', tenant: 'E1', channelId: 'C0TEST1' };
+    const onChange = (before, after) => followChange(e2, ref, { before, after }, RULES);
+    await assert.rejects(quiet(() => getChannel(e2, ref, Date.now(), { onChange })), /the queue is down/);
+    assert.equal(e2.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'random-chat');
   });
 });

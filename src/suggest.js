@@ -425,16 +425,15 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
           // A week-old topic is fetched again too, through the usual lookup.
           if (!deps.slack && !deps.graph) {
             // eslint-disable-next-line no-await-in-loop
-            const found = await getChannel(env, {
+            await getChannel(env, {
               source: ch.source, tenant: ch.tenant, channelId: ch.channel_id, groupId: ch.group_id,
-            }, now).catch(() => null);
-            if (found && found.before) {
-              // Renamed since its last lookup: its threads follow, as from the normalizer.
-              // eslint-disable-next-line no-await-in-loop
-              const rules = await loadRules(env);
-              // eslint-disable-next-line no-await-in-loop
-              await followChange(env, ch, { before: found.before, after: found }, rules);
-            }
+            }, now, {
+              // Renamed since its last lookup: its threads follow, as from the normalizer. A
+              // failure leaves the row as it was, so the next lookup finds the change again.
+              onChange: async (before, after) => followChange(env, ch, {
+                before, after,
+              }, await loadRules(env)),
+            }).catch(() => null);
           }
           // eslint-disable-next-line no-await-in-loop
           row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')
