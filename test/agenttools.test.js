@@ -179,8 +179,9 @@ describe('agent tools', () => {
     assert.equal(res.status, 400);
     res = await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: null });
     assert.equal(res.status, 400);
+    // Another team's members see a team's tools (as they read its knowledge base), not switch them.
     res = await call(e, outsider, 'GET', '/api/kb/tools?repo=kb-team-helix');
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
     // helix owns acme: its managers see acme's tools too.
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-org-acme');
     assert.equal(res.status, 200);

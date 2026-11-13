@@ -2051,8 +2051,8 @@ window.addEventListener('popstate', async () => {
   // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
   state.settings = state.me.readonly ? null : state.me.settings || null;
   Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
-  // Team managers see their teams' knowledge bases only, and the other members of a team see
-  // its knowledge base read-only (the API lists no others, and says which they change).
+  // The members of an ops team see every team's knowledge base, and those of the customers
+  // their teams own; managers change their teams' (the API says which, `may`).
   if (!state.me.admin && !state.me.teams?.length) {
     $('bases').innerHTML = '<div class="empty">The agents are for the members of an ops team.</div>';
     $('editor').innerHTML = `<div class="empty"><a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;

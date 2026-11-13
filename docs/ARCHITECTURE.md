@@ -424,24 +424,27 @@ frontmatter with a required `type`, links between concepts, an `index.md` per di
 to them; `generated` says which agent wrote it and when, and `verified` will record staff
 review. Every change is a commit, so a bad memory is a `git revert`.
 
-[Thread agents](#thread-agents) are the writers. Code, not the agent, writes `index.md` and `log.md`
+[Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
+customer's knowledge base, and those of the teams its channel is shared with (`channel_teams`);
+every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
 and stamps `generated`, and a write that is not a well-formed concept is refused. For now
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
-concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
-to it, the team's first and then the customer's, to the end of its system prompt, read again
+concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
+to it, its team's first, then those of the teams its channel is shared with, then the customer's,
+to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
 whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The other members of a team see its knowledge base there read-only (its
+and the concepts. The members of every ops team see every team's knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), and the customers' it owns the
-same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`), as every thread agent reads them,
+and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -1493,8 +1496,8 @@ written by people outside its control.
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
-| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
-| `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
+| `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone
