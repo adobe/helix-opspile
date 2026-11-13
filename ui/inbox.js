@@ -2435,14 +2435,15 @@ function headMenuKey(e) {
   return true;
 }
 
-/** The channel's name shows on line 1 only where it fits beside the title. */
-function fitHead() {
-  const line = document.querySelector('#pane > .ph > .l1');
-  const chan = line?.querySelector(':scope > .chan');
-  if (!chan) return;
-  chan.hidden = false;
-  const lead = line.firstElementChild;
-  chan.hidden = chan.offsetTop >= lead.offsetTop + lead.offsetHeight;
+/**
+ * Line 1's text beside the icon: the title, the channel it is in under it, so where a thread is
+ * shows with what it is about at any width. Each is one line, as tall as the icon together; one too
+ * long ends in an ellipsis, the whole of it in the tooltip.
+ */
+function headWhat(title, chan) {
+  const text = channelNames(title) || '(no text)';
+  const sub = chan ? `<span class="chan" title="${esc(`Channel: ${chan}`)}">${esc(chan)}</span>` : '';
+  return `<div class="what"><h2 title="${esc(text)}">${emojify(text)}</h2>${sub}</div>`;
 }
 
 // ---------------------------------------------------------------- the agent's suggestions
@@ -2795,10 +2796,10 @@ async function openThread(key, { live = false, cached = false } = {}) {
   if (agentHtml) items.push({ html: agentHtml });
   // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
   // suggests.
-  const lead = `<div class="lead">${headSource(thread, members, t)}<h2>${emojify(channelNames(thread.title) || '(no text)')}</h2></div>`;
-  const chan = thread.channel_name ? `<span class="chan" title="Channel">${esc(channelTitle(thread.source, thread.channel_name, thread.channel_group))}</span>` : '';
+  const chan = thread.channel_name ? channelTitle(thread.source, thread.channel_name, thread.channel_group) : '';
+  const lead = `<div class="lead">${headSource(thread, members, t)}${headWhat(thread.title, chan)}</div>`;
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
-      <div class="l1">${lead}${chan}</div>
+      <div class="l1">${lead}</div>
       <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = composer(thread, resolveButton(thread, resolution));
@@ -2806,7 +2807,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
     head, review, items, reply, patch: !switching,
   });
   syncHeadMenus();
-  fitHead();
   restorePreviews(pane);
   state.shownIds = ids;
   cardGone();
@@ -4186,7 +4186,7 @@ function renderStarted() {
     ...like, org: channel.org, org_name: channel.orgName, source: channel.source, permalink: null,
   }, [], like);
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
-    <div class="l1"><div class="lead">${source}<h2>${emojify(channelNames(firstLine(p.body)) || '(no text)')}</h2></div><span class="chan" title="Channel">${esc(channelTitle(channel.source, channel.name, channel.group))}</span></div></div>`;
+    <div class="l1"><div class="lead">${source}${headWhat(firstLine(p.body), channelTitle(channel.source, channel.name, channel.group))}</div></div></div>`;
   // As openThread lays a thread out: a run of one author's messages has the avatar by its last.
   const items = [`<div class="day"><span>${esc(dayLabel(p.at))}</span></div>`];
   let last = null;
@@ -4211,7 +4211,6 @@ function renderStarted() {
   pane.innerHTML = `${head}${feed}${reply}`;
   pane.__key = null;
   pane.__started = s;
-  fitHead();
   const now = pane.querySelector('.scroller');
   now.scrollTop = top === null || top + now.clientHeight >= now.scrollHeight - 80 ? now.scrollHeight : top;
   const box2 = $('reply');
@@ -6551,8 +6550,6 @@ async function start() {
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
   document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
   document.addEventListener('click', (e) => { if (state.headOpen && !e.target.closest('[data-hm]')) closeHeadMenus(); });
-  // The header's line 1 shows the channel where it fits: again as the pane changes width.
-  if (window.ResizeObserver) new ResizeObserver(() => fitHead()).observe($('pane'));
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
