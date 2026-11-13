@@ -2345,8 +2345,8 @@ const pct = (p) => `${Math.round(p * 100)}%`;
 /** A dropdown of the header: its button (or `main`, a link with the button beside it) and list. */
 function headMenu(name, { button, main = '', label, list }) {
   const toggle = main
-    ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}">▾</button>`
-    : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev" aria-hidden="true">▾</span></button>`;
+    ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}"><span class="s2-chevron" aria-hidden="true"></span></button>`
+    : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev s2-chevron" aria-hidden="true"></span></button>`;
   return `<div class="hm${main ? ' split' : ''}" data-hm="${name}">${toggle}<div class="hmpop" role="group" aria-label="${esc(label)}" hidden>${list}</div></div>`;
 }
 
@@ -2595,7 +2595,7 @@ function sideGroup(key, run, { last, trailing }) {
   const body = open ? `<div class="sc-body">${run.map((m) => sideMessage(key, m)).join('')}${doing}${queued}${more}</div>` : '';
   return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" aria-expanded="${open}"${live ? ' aria-disabled="true"' : ''}>
-      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev" aria-hidden="true">▸</span>'}
+      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}
     </button>${body}</div>`;
 }
 
@@ -2699,7 +2699,7 @@ function expertsHtml(key) {
   if (!list?.length) return '<div class="experts" id="experts" hidden></div>';
   const open = state.expertsOpen === key;
   const top = list[0];
-  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests">▾</button>` : '';
+  const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests"><span class="s2-chevron" aria-hidden="true"></span></button>` : '';
   const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
   return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
 }
@@ -5644,7 +5644,7 @@ function renderUser() {
   Header.user(state.me, personal() ? 'Personal' : state.teams?.find((t) => t.slug === state.team)?.name || '');
   const as = state.data?.me?.readonly ? state.data.me.name : null;
   $('viewing').hidden = !as;
-  $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true">✕</span>` : '';
+  $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true"><span class="s2-cross"></span></span>` : '';
 }
 
 /**
@@ -6542,7 +6542,7 @@ function closeThread() {
   closeMentions();
   syncReading();
   renderThreads();
-  $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
   toUrl();
 }
 function setFiltering(on) {
@@ -6721,7 +6721,7 @@ async function switchView(slug) {
   syncReading();
   renderUser();
   render();
-  $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
   toUrl(); await loadInbox(); connect();
   // The search goes on in the other view.
   if (searching()) { state.search.data = null; const q = state.search.q; state.search.q = ''; runSearch(q); }
@@ -6936,7 +6936,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>'; }
     syncReading();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
@@ -6975,7 +6975,7 @@ async function start() {
       state.prevKeys = null;
       Object.assign(state, { open: null, compose: null, awaiting: null });
       syncReading();
-      $('pane').innerHTML = '<div class="empty">Pick a thread.</div>';
+      $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
       await loadWho();
       renderNotify();
       renderExpert();

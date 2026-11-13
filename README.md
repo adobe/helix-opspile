@@ -228,7 +228,14 @@ stylesheets set colors, sizes, spaces, radii and durations with tokens only
 sum, an odd pixel with the hairline border width), the layout's larger sizes on its 8px grid
 plus the rest (`calc(var(--spectrum-spacing-100) * n + …)`), text on the type ramp, radii,
 borders and durations on theirs. A zero length keeps its unit (`0px`): calc() cannot add a
-unitless 0 to a length. The browser's chrome (`theme-color`) is Spectrum 2's base background.
+unitless 0 to a length. Icons a stylesheet draws (a chevron, a checkmark, a cross) are
+Spectrum 2's workflow icons as masks, in the color of the text: an empty
+`<span class="s2-chevron" aria-hidden="true">` (`right` for a closed disclosure), `s2-check`,
+`s2-cross`, not a `▾`, `✓` or `✕` in the text. A checkbox is Spectrum 2's, drawn by
+`ui/spectrum.css`. Popovers and dialogs arrive as Spectrum 2's do (a popover over 190ms from
+4px away, a dialog over 250ms from 20px, both gone in 130ms), and nothing moves for someone
+who asked the browser for less motion. The browser's chrome (`theme-color`) is Spectrum 2's
+base background.
 Your menu's **Appearance** picks the color scheme per browser (localStorage `opspile.scheme`):
 the system's, as the browser prefers it (the default), light or dark. `ui/header.js` sets it as
 `data-scheme` on `<html>`, which the tokens and the browser's chrome follow.

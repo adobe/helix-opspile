@@ -116,4 +116,30 @@ describe('Spectrum 2', () => {
       assert.deepEqual(raw, [], file);
     }
   });
+
+  it('draws its icons and checkboxes itself, and its overlays arrive', () => {
+    const shared = SCRIPTS['spectrum.css'];
+    // A chevron or a menu's checkmark is Spectrum 2's icon, a mask in the text's color, on an
+    // empty span: not a triangle or a check mark of the typeface, which a screen reader reads.
+    for (const icon of ['chevron', 'checkmark', 'close']) {
+      assert.match(shared, new RegExp(`--s2-icon-${icon}: url\\("data:image/svg\\+xml;base64,`));
+    }
+    const written = [...Object.entries(PAGES), ...Object.entries(SCRIPTS)].filter(([name]) => /\.(html|js)$/.test(name));
+    for (const [name, text] of written) {
+      assert.doesNotMatch(text.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, ''), /[▾▸▴◂]/, name);
+      assert.doesNotMatch(text, /class="ck">|class="ck[^"]*"[^>]*>✓/, name);
+    }
+    assert.match(PAGES['inbox.html'], /<span class="ck s2-check" aria-hidden="true"><\/span>When someone mentions me/);
+    // The header's mode (reviewing labels, viewing as someone) is one row: icon, label, cross.
+    assert.match(shared, /header \.mode \{ display: inline-flex; align-items: center;/);
+    // The checkbox is drawn here, in tokens, in place of the browser's.
+    assert.match(shared, /input:where\(\[type="checkbox"\]\) \{\s*appearance: none;/);
+    // Popovers and dialogs fade in from where they come from, and out; not for reduced motion,
+    // which sets every transition's duration to none.
+    assert.match(shared, /@starting-style \{\s*\.spectrum \[popover\]:popover-open \{ opacity: 0;/);
+    assert.match(shared, /@starting-style \{\s*\.spectrum dialog:not\(\.lightbox\)\[open\] \{ opacity: 0;/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum \*, [^{]*\{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    // New rows and messages do not slide in for reduced motion either.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /prefers-reduced-motion: reduce\) \{ \.t\.enter, \.msg\.enter, \.sys\.enter \{ animation: none; \} \}/);
+  });
 });

@@ -282,7 +282,7 @@ function drawList() {
       <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
         <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
         ${t.self_managed ? '<span class="tag manual" title="Every member is a team manager">self-managed</span>' : ''}
-        <span class="sub">${t.members} people · ${t.channels} ch${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
+        <span class="sub">${t.members} ${t.members === 1 ? 'person' : 'people'} · ${t.channels} ch${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${state.unassigned.channels} ch</span></div>` : '';
     $('list').innerHTML = `<input class="search" id="filter" placeholder="Filter teams" value="${esc(state.filter)}">
@@ -383,7 +383,7 @@ function unselect() {
   state.sel = null;
   toUrl();
   renderList();
-  $('detail').innerHTML = `<div class="empty">Pick ${PICK[state.tab]}.</div>`;
+  $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[state.tab]}.</div>`;
 }
 const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
 
@@ -393,7 +393,7 @@ function switchTab(tab) {
   state.filter = '';
   toUrl();
   renderList();
-  $('detail').innerHTML = `<div class="empty">Pick ${PICK[tab]}.</div>`;
+  $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[tab]}.</div>`;
 }
 
 // ---- view state ---------------------------------------------------------------------------

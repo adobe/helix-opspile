@@ -287,6 +287,8 @@ tr.left td { opacity: .55; }
 
 /* Side-aligned field labels (a Form with labelPosition="side"): small and subdued. */
 .spectrum .field { gap: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+/* A SegmentedControl hugs its segments; it does not stretch across the field's column. */
+.spectrum .field > .seg { justify-self: start; }
 .spectrum .field > label { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight); }
 
 /* ---- TableView, compact ------------------------------------------------------------------ */
@@ -431,14 +433,18 @@ tr.left td { opacity: .55; }
 
 .spectrum .empty { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-100); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .card .empty { padding: var(--spectrum-spacing-200) 0; }
-/* Nothing picked yet: IllustratedMessage's heading, centered in the pane. */
-.spectrum #detail > .empty {
+/* Loading, or what went wrong: IllustratedMessage's heading, at the top of the pane. */
+.spectrum #detail > .empty:not(.pick) {
   padding: var(--spectrum-spacing-1000) var(--spectrum-spacing-400);
   text-align: center;
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-size: var(--spectrum-heading-size-xs);
   font-weight: var(--spectrum-heading-sans-serif-font-weight);
 }
+
+/* Nothing picked yet: the same heading as on every page (ui/spectrum.css), in the pane's middle. */
+.spectrum #detail:has(> .empty.pick) { display: flex; flex-direction: column; }
+.spectrum #detail > .empty.pick { padding: var(--spectrum-spacing-400); }
 
 /* The phone's back button: a quiet icon-only ActionButton. */
 .spectrum .title .back { color: var(--spectrum-neutral-content-color-default); border-radius: var(--s2-radius); }

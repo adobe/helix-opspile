@@ -37,7 +37,7 @@ header h1 a { display: flex; align-items: center; color: inherit; text-decoratio
 header h1 img { flex: none; }
 header h1 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 header .spacer { flex: 1; }
-header a:focus-visible, header button:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
+header a:focus-visible, header button:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 
 /* The pages, by who you are (ui/header.js); each opens where you left it. */
 nav.pages { display: inline-flex; height: var(--ctl); flex: none;
@@ -79,7 +79,7 @@ header .tool svg, header .mode svg { flex: none; }
 
 /* The modes a page is in (reviewing labels, viewing as someone): a pill each, on the right,
    with the ✕ that leaves it. */
-header .mode { align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); height: var(--ctl);
+header .mode { display: inline-flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); height: var(--ctl);
   flex: none; white-space: nowrap; }
 header .mode[hidden] { display: none; }
 header .mode .x { display: grid; place-items: center; flex: none;
@@ -202,6 +202,15 @@ header .note { white-space: nowrap; }
   --s2-elevated: var(--spectrum-drop-shadow-x) calc(var(--spectrum-drop-shadow-y) * 4)
     calc(var(--spectrum-drop-shadow-blur) * 4) var(--spectrum-drop-shadow-elevated-color);
   --s2-ease: var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-in-out);
+  /* Overlays arrive as S2's do (@react-spectrum/s2): a Popover over 200ms (the nearest step,
+     190ms) from 4px away, a Dialog over 250ms from 20px, and both leave in 130ms. */
+  --s2-pop-in: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out);
+  --s2-dialog-in: var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out);
+  --s2-out: var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-in);
+  /* Workflow icons (@react-spectrum/s2, S2_Icon_*_20_N), as masks: they take currentColor. */
+  --s2-icon-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTMuNzU0ODgsNy4yNDMxNmMuMjg3MTEtLjI5ODgzLjc2MTcyLS4zMDg2LDEuMDU5NTctLjAyMDUxbDUuMTgzNTksNC45ODYzMyw1LjE5NzI3LTQuOTk5MDJjLjI5Nzg1LS4yODgwOC43NzI0Ni0uMjc4MzIsMS4wNTk1Ny4wMjA1MS4yODcxMS4yOTY4Ny4yNzgzMi43NzI0Ni0uMDIwNTEsMS4wNTk1N2wtNS43MTY4LDUuNWMtLjI5MDA0LjI4MDI3LS43NDkwMi4yODAyNy0xLjAzOTA2LDBsLTUuNzAzMTItNS40ODczYy0uMTUzMzItLjE0NjQ5LS4yMzA0Ny0uMzQzNzUtLjIzMDQ3LS41NDAwNCwwLS4xODc1MS4wNjkzNC0uMzc1MDEuMjA5OTYtLjUxOTU0WiIvPjwvc3ZnPg==");
+  --s2-icon-checkmark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuODY0MjYsMTUuNzM0MzhjLS4yMjI2NiwwLS40MzM1OS0uMDk4NjMtLjU3NjE3LS4yNjk1M2wtMy43NDcwNy00LjQ5ODA1Yy0uMjY1NjItLjMxODM2LS4yMjE2OC0uNzkxOTkuMDk1Ny0xLjA1NjY0LjMxNzM4LS4yNjU2Mi43OTAwNC0uMjIzNjMsMS4wNTY2NC4wOTU3bDMuMTUzMzIsMy43ODYxMyw3LjQzOTQ1LTkuNDY4NzVjLjI1NTg2LS4zMjYxNy43Mjg1Mi0uMzgxODQsMS4wNTI3My0uMTI2OTUuMzI2MTcuMjU1ODYuMzgyODEuNzI3NTQuMTI2OTUsMS4wNTI3M2wtOC4wMTE3MiwxMC4xOTgyNGMtLjEzOTY1LjE3ODcxLS4zNTI1NC4yODQxOC0uNTc5MS4yODcxMWgtLjAxMDc0WiIvPjwvc3ZnPg==");
+  --s2-icon-close: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTExLjA2MDYxLDEwbDUuMjA2NDgtNS4yMDYwNWMuMjkyOTctLjI5Mjk3LjI5Mjk3LS43Njc1OCwwLTEuMDYwNTVzLS43Njc1OC0uMjkyOTctMS4wNjA1NSwwbC01LjIwNjU0LDUuMjA2MDVMNC43OTM0NiwzLjczMzRjLS4yOTI5Ny0uMjkyOTctLjc2NzU4LS4yOTI5Ny0xLjA2MDU1LDBzLS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVsNS4yMDY0OCw1LjIwNjA1LTUuMjA2NDgsNS4yMDYwNWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTUuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNsNS4yMDY1NC01LjIwNjA1LDUuMjA2NTQsNS4yMDYwNWMuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1bC01LjIwNjQ4LTUuMjA2MDVaIi8+PC9zdmc+");
   /* Overlays in the content color, so they show on light and dark alike: faint for a selected
      or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
      CSS Menu's item hover). */
@@ -322,8 +331,41 @@ header .note { white-space: nowrap; }
 }
 :where(.spectrum) select { cursor: pointer; }
 :where(.spectrum) select:where(:hover:not(:disabled)) { background-color: var(--spectrum-gray-25); }
-/* Checkbox and Radio in the browser's own drawing, in the accent color. */
-:where(.spectrum) input:where([type="checkbox"], [type="radio"], [type="range"]) { accent-color: var(--spectrum-accent-background-color-default); }
+/* Radio and Slider in the browser's own drawing, in the accent color. */
+:where(.spectrum) input:where([type="radio"], [type="range"]) { accent-color: var(--spectrum-accent-background-color-default); }
+/* Checkbox: S2's. A 2px gray-800 edge on the base, small-rounded; checked, the neutral fill
+   with the checkmark on it (the accent is for an emphasized one, which the pages have none of).
+   The browser's margins stay, so the labels beside it stay where they were. */
+:where(.spectrum) input:where([type="checkbox"]) {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: var(--spectrum-checkbox-control-size-medium);
+  height: var(--spectrum-checkbox-control-size-medium);
+  padding: 0;
+  vertical-align: middle;
+  background: var(--spectrum-gray-25);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-800);
+  border-radius: var(--spectrum-corner-radius-75);
+  cursor: pointer;
+  transition: background-color var(--s2-ease), border-color var(--s2-ease);
+}
+:where(.spectrum) input:where([type="checkbox"])::before {
+  content: "";
+  width: var(--spectrum-checkbox-control-size-medium);
+  height: var(--spectrum-checkbox-control-size-medium);
+  background: var(--spectrum-gray-25);
+  mask: var(--s2-icon-checkmark) center / contain no-repeat;
+  opacity: 0;
+  transition: opacity var(--s2-ease);
+}
+:where(.spectrum) input:where([type="checkbox"]:hover:not(:disabled)) { border-color: var(--spectrum-gray-900); }
+:where(.spectrum) input:where([type="checkbox"]:checked) { background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+:where(.spectrum) input:where([type="checkbox"]:checked)::before { opacity: 1; }
+:where(.spectrum) input:where([type="checkbox"]:checked:hover:not(:disabled)) { background: var(--spectrum-neutral-background-color-selected-hover); border-color: transparent; }
+:where(.spectrum) input:where([type="checkbox"]:disabled) { border-color: var(--spectrum-gray-400); cursor: default; }
+:where(.spectrum) input:where([type="checkbox"]:checked:disabled) { background: var(--spectrum-gray-400); border-color: transparent; }
 
 /* SegmentedControl (the pages' `.seg`): a gray track, the picked segment raised on it. */
 .spectrum .seg {
@@ -378,6 +420,45 @@ header .note { white-space: nowrap; }
   background: var(--spectrum-overlay-color);
   opacity: var(--spectrum-overlay-opacity);
 }
+/* Overlays arrive and leave as S2's do, so the eye sees where they come from: a Popover (your
+   menu, the pages' menu, a page's pickers) fades in as it settles 4px down from its trigger, a
+   Dialog as it rises 20px, its underlay fading in with it; both leave faster than they came.
+   `allow-discrete` keeps them in the top layer, displayed, until they have left. */
+.spectrum [popover] {
+  opacity: 0;
+  translate: 0px calc(-1 * var(--spectrum-spacing-75));
+  transition: opacity var(--s2-out), translate var(--s2-out), overlay var(--s2-out) allow-discrete, display var(--s2-out) allow-discrete;
+}
+.spectrum [popover]:popover-open {
+  opacity: 1;
+  translate: 0px 0px;
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in), overlay var(--s2-pop-in) allow-discrete, display var(--s2-pop-in) allow-discrete;
+}
+@starting-style {
+  .spectrum [popover]:popover-open { opacity: 0; translate: 0px calc(-1 * var(--spectrum-spacing-75)); }
+}
+.spectrum dialog:not(.lightbox) {
+  opacity: 0;
+  translate: 0px calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-75));
+  transition: opacity var(--s2-out), translate var(--s2-out), overlay var(--s2-out) allow-discrete, display var(--s2-out) allow-discrete;
+}
+.spectrum dialog:not(.lightbox)[open] {
+  opacity: 1;
+  translate: 0px 0px;
+  transition: opacity var(--s2-dialog-in), translate var(--s2-dialog-in), overlay var(--s2-dialog-in) allow-discrete, display var(--s2-dialog-in) allow-discrete;
+}
+.spectrum dialog:not(.lightbox)::backdrop {
+  opacity: 0;
+  transition: opacity var(--s2-out), overlay var(--s2-out) allow-discrete, display var(--s2-out) allow-discrete;
+}
+.spectrum dialog:not(.lightbox)[open]::backdrop {
+  opacity: var(--spectrum-overlay-opacity);
+  transition: opacity var(--s2-dialog-in), overlay var(--s2-dialog-in) allow-discrete, display var(--s2-dialog-in) allow-discrete;
+}
+@starting-style {
+  .spectrum dialog:not(.lightbox)[open] { opacity: 0; translate: 0px calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-75)); }
+  .spectrum dialog:not(.lightbox)[open]::backdrop { opacity: 0; }
+}
 
 /* Popover and Menu: every page's floating panels (your menu, the page menu, pickers). */
 .spectrum .menu, .spectrum .pagemenu {
@@ -397,6 +478,7 @@ header .note { white-space: nowrap; }
   text-transform: none;
 }
 .spectrum .menu .item, .spectrum .pagemenu a {
+  transition: background-color var(--s2-ease), color var(--s2-ease);
   min-height: var(--s2-ctl);
   padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
   border-radius: var(--spectrum-corner-radius-100);
@@ -468,7 +550,8 @@ header .note { white-space: nowrap; }
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
 }
-.spectrum header .divider { height: var(--spectrum-component-height-75); background: var(--spectrum-gray-200); }
+/* The page's tools stand apart from the pages by the space alone: S2's app chrome has no Divider. */
+.spectrum header .divider { height: var(--spectrum-component-height-75); }
 /* The page's tools: quiet ActionButtons. */
 .spectrum header .tool {
   gap: var(--spectrum-text-to-visual-100);
@@ -567,6 +650,46 @@ header .note { white-space: nowrap; }
   font-weight: var(--spectrum-bold-font-weight);
 }
 .spectrum .signedout button:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-transparent-white-200); }
+
+/* Nothing picked yet (a thread, a team, a knowledge base): S2's IllustratedMessage, its heading
+   alone, in the middle of its pane, the same on every page. */
+.spectrum .empty.pick {
+  margin: auto;
+  padding: var(--spectrum-spacing-400);
+  text-align: center;
+  color: var(--spectrum-heading-color);
+  font-size: var(--spectrum-heading-size-s);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-heading-line-height);
+}
+
+/* Icons: S2's workflow icons, drawn by an empty <span aria-hidden="true"> in the color of the
+   text around it. The chevron points down (what opens below: a Picker, a Menu's button); `right`
+   is a Disclosure's, closed, and it turns as its content opens. */
+.spectrum :is(.s2-chevron, .s2-check, .s2-cross) {
+  display: inline-block;
+  flex: none;
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  vertical-align: middle;
+  background: currentColor;
+  mask: var(--s2-icon-chevron) center / contain no-repeat;
+}
+.spectrum .s2-check { mask-image: var(--s2-icon-checkmark); }
+.spectrum .s2-cross { mask-image: var(--s2-icon-close); }
+.spectrum .s2-chevron { transition: rotate var(--s2-ease); }
+.spectrum .s2-chevron.right { rotate: -90deg; }
+.spectrum .s2-chevron.right:dir(rtl) { rotate: 90deg; }
+
+/* Windows High Contrast: the focus ring and the drawn controls in the system's colors. */
+@media (forced-colors: active) {
+  .spectrum :focus-visible { outline-color: Highlight; }
+  .spectrum :is(.s2-chevron, .s2-check, .s2-cross) { background: CanvasText; }
+  .spectrum input[type="checkbox"] { background: Canvas; border-color: ButtonBorder; forced-color-adjust: none; }
+  .spectrum input[type="checkbox"]::before { background: HighlightText; }
+  .spectrum input[type="checkbox"]:checked { background: Highlight; border-color: Highlight; }
+  .spectrum input[type="checkbox"]:disabled { border-color: GrayText; }
+}
 
 /* Motion: none for those who ask the browser for less. */
 @media (prefers-reduced-motion: reduce) {

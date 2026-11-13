@@ -260,7 +260,7 @@ async function openRepo(repo, { path, view, nav = 'push' } = {}) {
   state.view = view || 'file';
   renderBases();
   $('files').innerHTML = '<div class="empty">Loading…</div>';
-  $('editor').innerHTML = '<div class="empty">Pick a file.</div>';
+  $('editor').innerHTML = '<div class="empty pick">Pick a file.</div>';
   state.channels = null;
   state.mcp = null;
   state.globals = null;
@@ -2016,7 +2016,7 @@ window.addEventListener('popstate', async () => {
       showPane('bases');
       renderBases();
       $('files').innerHTML = '';
-      $('editor').innerHTML = '<div class="empty">Pick a knowledge base.</div>';
+      $('editor').innerHTML = '<div class="empty pick">Pick a knowledge base.</div>';
       toUrl('replace');
     }
   } else if (repo !== state.repo) {

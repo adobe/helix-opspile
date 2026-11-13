@@ -295,6 +295,8 @@ main.rail #filters .card.active { transform: translateX(calc(var(--r) / 3)); }
 @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
 .msg.enter, .sys.enter { animation: rise var(--spectrum-animation-duration-700) ease-out; }
 @keyframes rise { from { transform: translateY(calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50))); opacity: 0; } to { transform: none; opacity: 1; } }
+/* For those who ask the browser for less motion, a new row or message is simply there. */
+@media (prefers-reduced-motion: reduce) { .t.enter, .msg.enter, .sys.enter { animation: none; } }
 .post { display: flex; align-items: center; gap: var(--spectrum-spacing-100); color: var(--mute); font-size: var(--spectrum-font-size-75); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-75); }
 .post::before, .post::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) dashed var(--line); }
 .composer { flex: none; border-top: var(--spectrum-border-width-100) solid var(--line); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); display: flex; align-items: flex-end; }

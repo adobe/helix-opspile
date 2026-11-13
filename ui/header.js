@@ -86,7 +86,7 @@ window.Header = (() => {
     if (!menu || $('schemes')) return;
     const box = document.createElement('section');
     box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
-      SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck">✓</span>${o.label}</button>`).join('')}</div>`;
+      SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck s2-check" aria-hidden="true"></span>${o.label}</button>`).join('')}</div>`;
     const sections = [...menu.querySelectorAll(':scope > section')];
     const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
     menu.insertBefore(box, before || null);
