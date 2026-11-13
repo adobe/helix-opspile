@@ -602,6 +602,7 @@ describe('inbox page', () => {
         }),
         reloadSoon: (k) => reloads.push(k),
         noteEvent: () => {},
+        stalePools: () => {},
         screenTeams: () => ['helix'],
         foldInto,
         splitFrom,

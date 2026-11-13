@@ -691,8 +691,11 @@ export async function knownMentions(env, t, ids) {
 }
 
 // Channel members are listed again when that is a week old (as for the channel suggestions),
-// and up to this many members opspile has never seen are looked up each time.
+// and up to this many members opspile has never seen are looked up each time. A name that
+// matches nobody lists them again once this old: someone may have just been added (by the admin
+// bots, say), who has never posted and is not in D1 yet.
 const MEMBERS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const MEMBERS_MISS_AGE_MS = 30 * 1000;
 const MAX_MEMBER_LOOKUPS = 60;
 const MEMBER_LOOKUPS_AT_ONCE = 4;
 // Accounts of one workspace or tenant considered for a suggestion; far more than there are.
@@ -702,16 +705,19 @@ const MAX_ACCOUNTS = 5000;
  * Lists the members of the thread's channel when that is a week old or was never done, and
  * looks up the members opspile has never seen (Slack lists ids only), so people who are in
  * the channel but never posted can be mentioned too. One request claims the listing (it
- * moves `members_at` first), so typing does not list the channel once per letter.
+ * moves `members_at` first), so typing does not list the channel once per letter. `maxAge`
+ * is how old the listing may be (a week; `MEMBERS_MISS_AGE_MS` for a name nobody matched).
  */
-export async function learnMembers(env, t, { now = Date.now(), ...deps } = {}) {
+export async function learnMembers(env, t, {
+  now = Date.now(), maxAge = MEMBERS_MAX_AGE_MS, ...deps
+} = {}) {
   if (t.source !== 'slack' && t.source !== 'teams') {
     return { skipped: 'members are not listed here' };
   }
   const at = new Date(now).toISOString();
   const claim = await env.DB.prepare(`UPDATE channels SET members_at = ?
     WHERE source = ? AND tenant = ? AND channel_id = ? AND (members_at IS NULL OR members_at < ?)`)
-    .bind(at, t.source, t.tenant, t.channel_id, new Date(now - MEMBERS_MAX_AGE_MS).toISOString())
+    .bind(at, t.source, t.tenant, t.channel_id, new Date(now - maxAge).toISOString())
     .run();
   if (!claim.meta || !claim.meta.changes) {
     return { skipped: 'listed recently' };
@@ -867,11 +873,16 @@ const poolAccount = (r) => ({
  *
  * `waitUntil`, where given, lists the channel's members in the background (`learnMembers`)
  * when the suggestions open (an empty `q`: the @ was just typed), so they show up from then on.
+ * A `q` that matches nobody lists them again, and waits for it, when that is more than
+ * `MEMBERS_MISS_AGE_MS` old: someone just added to the channel (by the admin bots, say) may not
+ * be in D1 yet. When it found members D1 did not know, the answer is asked again with them.
+ * `learn` is what `learnMembers` is given besides (tests).
  * `me`, the viewer, is never anyone's expert: their own messages do not count.
  */
-export async function mentionable(env, key, q, inTeam, {
-  waitUntil, me, channel, pool = false,
-} = {}) {
+export async function mentionable(env, key, q, inTeam, opts = {}) {
+  const {
+    waitUntil, me, channel, pool = false, learn = {}, relisted = false,
+  } = opts;
   const t = key ? await target(env, key) : await channelPlace(env, channel);
   if (!t) {
     return json({ error: 'not found' }, 404);
@@ -947,9 +958,20 @@ export async function mentionable(env, key, q, inTeam, {
       ...(r.avatar ? { avatar: r.avatar } : {}),
     })),
   };
+  const people = suggestMentions(all, q);
+  if (!people.length && String(q || '').trim() && !relisted) {
+    const learned = await learnMembers(env, t, { ...learn, maxAge: MEMBERS_MISS_AGE_MS })
+      .catch((e) => ({ error: e.message }));
+    if (learned.error) {
+      console.warn(JSON.stringify({ route: 'mentionable', members: t.source, error: learned.error }));
+    }
+    if (learned.looked_up) {
+      return mentionable(env, key, q, inTeam, { ...opts, waitUntil: null, relisted: true });
+    }
+  }
   return json({
     platform: t.source,
-    people: suggestMentions(all, q),
+    people,
     ...(pool ? { pool: all } : {}),
   });
 }

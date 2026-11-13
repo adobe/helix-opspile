@@ -252,7 +252,10 @@ fails on its own.
 `src/autojoin.js`). Transient errors are not recorded, and a join removes the row.
 
 **Channel member list.** unknown → complete, stale or failed (`members_at`, `members_error`). What
-reads it says nothing when it cannot be sure: a failed listing is not an empty channel.
+reads it says nothing when it cannot be sure: a failed listing is not an empty channel. Stale after
+a week; for a mention suggestion that matches nobody (`src/post.js` `mentionable`), after 30
+seconds, so someone just added is found. Whoever moves `members_at` lists it: one listing at a
+time.
 
 **Channel label.** unlabeled → labeled → stale (`channel_labels`, `src/suggest.js`). Due when the
 channel has activity, the ops teams change, or the label is a week old.
