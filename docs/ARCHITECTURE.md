@@ -428,10 +428,10 @@ prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The other members of a team see its knowledge base there read-only (its
+and the concepts. The members of every ops team see every team's knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), and the customers' it owns the
-same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`), as every thread agent reads them,
+and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
