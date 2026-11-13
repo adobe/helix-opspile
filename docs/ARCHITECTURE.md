@@ -1701,8 +1701,10 @@ thread wait or run at a time. A thread's agent only: a knowledge-base agent has 
 the request under.
 
 The inbox shows each request as a card between the reply box and the draft's line
-(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): the command, the reason, a
-password field per variable, **Run** and **Deny**, for whoever may work the thread. A person can
+(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): its id, which is how the
+agent names it in its notes, the command (highlighted as shell, to be read before it is run),
+the reason, a password field per variable, **Run** and **Deny**, for whoever may work the
+thread; Deny and Run stay in sight at the cards' bottom edge while a tall card scrolls. A person can
 have the page **remember** what they fill in, by variable name, on that device: encrypted
 (AES-GCM) in localStorage, with a key made in the browser that cannot be exported and is kept in
 IndexedDB; the next request with a variable of that name has it filled in, and **Forget** removes
@@ -1712,8 +1714,11 @@ second is told who was first), the computer still on, every variable filled in. 
 agent's computer's, as its own `bash`: the same Workspace, working directory and team secrets
 (as placeholders), with the person's values as variables of that one run. `run` answers 202 once
 the command has started; the page hears how it ended through the team's room, as it hears of
-every change of a request (`{ type: 'bash' }`), and keeps the card for an hour, saying how it
-ended and who decided.
+every change of a request (`{ type: 'bash' }`), and keeps the request for an hour, on one line,
+saying how it ended (a nonzero exit, a timeout and a failure marked) and who decided. An agent
+often asks a few times until a command works, so of the requests that ended only the latest
+shows (`bashCards`), with a button for the earlier ones (**2 earlier**), all in one box. The
+card itself says that a command runs or was denied; a toast only says what went wrong.
 
 How a request ended comes back to the agent **as an input of its own**, as a discarded draft
 does (`harness.submit`, with the request's id as the operation, so once): what the command

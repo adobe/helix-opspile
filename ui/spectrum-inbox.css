@@ -812,6 +812,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .br { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
+.bashbar .id { flex: none; }
 .bashbar .what { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .bashbar .what svg { flex: none; }
 .bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -821,14 +822,22 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
 .bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
 .bashbar .br:not(.pending) .cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), 1fr));
+/* Those that ended: one box, a line each. Only the latest shows, until its button shows the rest. */
+.bashbar .hist { flex: none; display: flex; flex-direction: column; min-width: 0; }
+.bashbar .more { cursor: pointer; }
+/* A field is as wide as a line of text reads well, so that what it is for fits in a line or
+   two; several sit side by side where there is room. Never wider than a narrow card. */
+.bashbar .vars { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--spectrum-spacing-100) * 30)), calc(var(--spectrum-spacing-100) * 70)));
   align-items: end; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .var { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
 .bashbar .var .nm { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); min-width: 0; }
 .bashbar .var input { width: 100%; min-width: 0; }
 .bashbar .keep { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); cursor: pointer; }
 .bashbar .keep input { margin: 0; }
-.bashbar .foot { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+/* Deny and Run stay in sight at the bar's bottom edge while a tall card scrolls under them. */
+.bashbar .foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: var(--spectrum-spacing-200);
+  margin: 0 calc(-1 * var(--spectrum-spacing-100)) calc(-1 * var(--spectrum-spacing-100)) calc(-1 * var(--spectrum-spacing-200));
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .bashbar .note { flex: 1; min-width: 0; cursor: help; }
 .bashbar .acts { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
 .bashbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
@@ -837,12 +846,19 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   animation: spin var(--spectrum-animation-duration-2000) linear infinite; }
 @media (prefers-reduced-motion: reduce) { .bashbar .spin { animation: none; } }
 @container bash (max-width: 560px) {
-  .bashbar .foot { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-100); }
-  /* Stretched to the card's width, not as wide as the command: that is what cuts it. */
-  .bashbar .br:not(.pending) { flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-75); }
-  .bashbar .br:not(.pending) .head { max-width: none; }
-  .bashbar .br:not(.pending) .cmd { flex: none; }
+  /* The note runs with the card: only Deny and Run stay at the bar's bottom edge, side by side. */
+  .bashbar .foot { display: contents; }
+  .bashbar .acts { position: sticky; bottom: 0; padding-top: var(--spectrum-spacing-75); }
   .bashbar .acts button { flex: 1; }
+  /* What a card's first line cannot hold goes on to a second. */
+  .bashbar .head { flex-wrap: wrap; row-gap: 0px; }
+  /* Decided: how it stands, with the earlier ones' button beside it, over the command. Its
+     lines are as wide as the card, not as the command: that is what cuts the command, and what
+     keeps the bar from scrolling sideways. */
+  .bashbar .br:not(.pending) { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+  .bashbar .br:not(.pending) .head { grid-column: 1; max-width: none; }
+  .bashbar .br:not(.pending) .more { grid-column: 2; grid-row: 1; }
+  .bashbar .br:not(.pending) .cmd { grid-column: 1 / -1; grid-row: 2; }
 }
 /* A source beside the draft: the box keeps the left of the pane, the page takes the right. */
 .composer.checking textarea { flex: 0 0 calc(50% - calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-400))); margin-right: auto; }
@@ -1483,20 +1499,20 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* Highlighted code (src/ui-highlight.js): the token groups, in the 1200 shades, which keep
    4.5:1 on a code block in either color scheme (test/ui-highlight.test.js). On your own
    bubble's accent the code stays its white. */
-.spectrum .bubble pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
-.spectrum .bubble pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
-.spectrum .bubble pre.hl .hl-string,
-.spectrum .bubble pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
-.spectrum .bubble pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
-.spectrum .bubble pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
-.spectrum .bubble pre.hl .hl-function,
-.spectrum .bubble pre.hl .hl-link { color: var(--spectrum-blue-1200); }
-.spectrum .bubble pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
-.spectrum .bubble pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
-.spectrum .bubble pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
-.spectrum .bubble pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
-.spectrum .bubble pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .bubble pre.hl .hl-emphasis { font-style: italic; }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-comment { color: var(--spectrum-gray-700); font-style: italic; }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-keyword { color: var(--spectrum-purple-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-string,
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-inserted { color: var(--spectrum-green-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-regex { color: var(--spectrum-cinnamon-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-constant { color: var(--spectrum-orange-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-function,
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-link { color: var(--spectrum-blue-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-type { color: var(--spectrum-seafoam-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-property { color: var(--spectrum-indigo-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-tag { color: var(--spectrum-magenta-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-deleted { color: var(--spectrum-red-1200); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-strong { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum :is(.bubble, .bashbar) pre.hl .hl-emphasis { font-style: italic; }
 .spectrum .msg.mine .bubble pre.hl [class^="hl-"] { color: inherit; }
 .spectrum .bubble blockquote.quote { border-radius: var(--spectrum-corner-radius-75) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-75); }
 .spectrum .bubble blockquote.quote > p.quote-by { font-size: var(--spectrum-font-size-75); }
@@ -1878,7 +1894,16 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bashbar .br:not(.pending) { border-style: solid; border-color: var(--spectrum-gray-300); background: none; }
 .spectrum .bashbar .what { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .bashbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.spectrum .bashbar .br.failed .by { color: var(--spectrum-negative-content-color-default); }
+.spectrum .bashbar .id { font-family: var(--s2-code); font-size: var(--spectrum-font-size-50); color: var(--spectrum-gray-600); }
+/* Not as it was meant to go: a nonzero exit, a timeout, a run that failed. */
+.spectrum .bashbar .st.bad { color: var(--spectrum-negative-content-color-default); }
+/* Those that ended share one outline, a hairline between them. */
+.spectrum .bashbar .hist { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .bashbar .hist .br { border: 0; border-radius: 0px; }
+.spectrum .bashbar .hist .br + .br { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+/* The card's own fill, so that what scrolls under Deny and Run does not show through. */
+.spectrum .bashbar .acts { background: inherit; }
+.spectrum .bashbar .foot { background: inherit; border-radius: 0 0 var(--spectrum-corner-radius-large-default) var(--spectrum-corner-radius-large-default); }
 .spectrum .bashbar .why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .bashbar .cmd {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
@@ -1911,8 +1936,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bashbar button.deny { color: var(--spectrum-neutral-content-color-default); background: transparent; border-color: var(--spectrum-gray-400); }
 .spectrum .bashbar button.deny:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
 .spectrum .bashbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
-/* Forget: a link, not a button of the card's. */
-.spectrum .bashbar button.forget, .spectrum .bashbar button.forget:disabled {
+/* Forget, and the earlier requests: links, not buttons of the card's. */
+.spectrum .bashbar button:is(.forget, .more), .spectrum .bashbar button.forget:disabled {
   min-height: 0px;
   padding: 0px;
   border: 0;
@@ -1930,7 +1955,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   vertical-align: text-bottom;
 }
 @media (hover: none) and (pointer: coarse) {
-  .spectrum .bashbar button:not(.forget) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
+  .spectrum .bashbar button:not(.forget, .more) { min-height: var(--spectrum-component-height-100); border-radius: calc(var(--spectrum-component-height-100) / 2); }
   .spectrum .bashbar .var input { min-height: var(--spectrum-component-height-100); font-size: var(--spectrum-font-size-100); }
 }
 /* A finger needs more than the pointer: the line's buttons grow to the next control height. */

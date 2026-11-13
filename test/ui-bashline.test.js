@@ -37,8 +37,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
-const { bashCard, timeLeft } = piece('const BASH_ICON', '/** The requests of the open thread', 'bashCard, timeLeft', {
-  esc, ago: () => '9m', clock: () => '14:00', viewerId: () => 1,
+// The page's highlighter, as a stub: it marks the first word, once it has loaded.
+const lit = { loaded: false };
+const highlightCode = (code, lang) => (lit.loaded
+  ? esc(code).replace(/^\w+/, (word) => `<span class="hl-function" data-lang="${lang}">${word}</span>`) : null);
+const { bashCard, bashCards, timeLeft } = piece('const BASH_ICON', '/** The requests of the open thread', 'bashCard, bashCards, timeLeft', {
+  esc, ago: (at) => (at ? '9m' : ''), clock: () => '14:00', viewerId: () => 1, highlightCode,
 });
 
 const request = {
@@ -58,6 +62,8 @@ describe('a command request\'s card', () => {
     const html = bashCard(request, { decide: true });
     assert.match(html, /^<form class="br pending" data-id="r1" autocomplete="off">/);
     assert.match(html, /the agent asks · 9m · <span title="Until [^"]+: after that, nobody can run it">open for 23h<\/span>/);
+    // Its id, as the agent names it in its notes.
+    assert.match(html, /Command<\/span><code class="id" title="[^"]+">r1<\/code><span class="by">/);
     // What the agent wrote is text, never markup.
     assert.ok(html.includes('<p class="why">Lists the tickets &amp; needs &lt;your&gt; token.</p>'));
     assert.ok(html.includes('<pre class="cmd"><code>curl -H &quot;Authorization: Bearer $API_TOKEN&quot; https://api.example.com/&lt;x&gt;</code></pre>'));
@@ -104,22 +110,84 @@ describe('a command request\'s card', () => {
   it('says how a decided request stands, on one line with its command', () => {
     const at = '2026-11-05T10:05:00Z';
     const ada = { id: 2, name: 'Ada' };
+    // `[!]`: what did not go as it was meant to, which the card marks.
     const line = (r) => {
       const html = bashCard({ ...request, finished_at: at, ...r }, { decide: true });
       assert.doesNotMatch(html, /<form|<input|<button|class="why"/);
       assert.ok(html.includes('<pre class="cmd"><code>curl -H'));
-      return html.match(/<span class="by">(.*?)<\/span><\/div>/)[1].replace(/<span title="[^"]*">|<\/span>/g, '');
+      assert.ok(html.includes('<code class="id" title="This request\'s id: the agent names it in its notes">r1</code>'));
+      return html.match(/<span class="by">(.*?)<\/span><\/div>/)[1]
+        .replace(/<span class="st bad" title="[^"]*">/, '[!]').replace(/<span class="st" title="[^"]*">|<\/span>/g, '');
     };
     assert.equal(line({ status: 'running', by: { id: 1, name: 'Dana' } }), '<i class="spin"></i>Running, started by you');
-    assert.equal(line({ status: 'done', exit_code: 3, by: ada }), 'Ran, exit code 3 · by Ada · 9m');
-    assert.equal(line({ status: 'timeout', by: ada }), 'Stopped after 60 s, its timeout · by Ada · 9m');
-    assert.equal(line({ status: 'failed', error: 'the computer <failed>', by: ada }), 'Did not run to its end: the computer &lt;failed&gt; · by Ada · 9m');
+    assert.equal(line({ status: 'done', exit_code: 0, by: ada }), 'Ran, exit code 0 · by Ada · 9m');
+    assert.equal(line({ status: 'done', exit_code: 3, by: ada }), '[!]Ran, exit code 3 · by Ada · 9m');
+    assert.equal(line({ status: 'timeout', by: ada }), '[!]Stopped after 60 s, its timeout · by Ada · 9m');
+    assert.equal(line({ status: 'failed', error: 'the computer <failed>', by: ada }), '[!]Did not run to its end: the computer &lt;failed&gt; · by Ada · 9m');
     assert.equal(line({ status: 'denied', by: ada }), 'Denied by Ada · 9m');
     assert.equal(line({ status: 'expired' }), 'Expired at 14:00: nobody ran it');
     const done = {
       ...request, status: 'done', exit_code: 0, by: ada,
     };
     assert.match(bashCard(done), /^<div class="br done" data-id="r1">/);
+  });
+
+  it('shows only the latest request that ended, with the earlier ones a click away', () => {
+    const ended = (id, minute, more = {}) => ({
+      ...request, id, status: 'done', exit_code: 0, by: { id: 1, name: 'Dana' }, finished_at: `2026-11-05T10:0${minute}:00Z`, ...more,
+    });
+    const ids = (html) => [...html.matchAll(/data-id="(\w+)"/g)].map((m) => m[1]);
+    // As the thread has them: by when they were asked for, not by when they ended.
+    const running = {
+      ...request, id: 'x', status: 'running', by: { id: 1, name: 'Dana' },
+    };
+    const list = [ended('a', 4, { exit_code: 22 }), ended('b', 2), { ...request, id: 'p' },
+      ended('c', 6), running];
+    const closed = bashCards(list, { options: () => ({ decide: true }) });
+    // One line for the three that ended, the latest; then those that wait or run, as they came.
+    assert.deepEqual(ids(closed), ['c', 'p', 'x']);
+    assert.match(closed, /^<div class="hist"><div class="br done" data-id="c">.*<\/pre><button type="button" class="more" data-bash="earlier" aria-expanded="false" title="[^"]+">2 earlier<\/button><\/div><\/div><form class="br pending" data-id="p"/s);
+    assert.match(closed, /<div class="br running" data-id="x">/);
+    // Shown: all of them, oldest first, in the one box, and the button takes them away again.
+    const open = bashCards(list, { all: true, options: () => ({ decide: true }) });
+    assert.deepEqual(ids(open), ['b', 'a', 'c', 'p', 'x']);
+    assert.equal(open.match(/data-bash="earlier"/g).length, 1);
+    assert.match(open, /data-id="c">.*aria-expanded="true" title="[^"]+">Hide earlier<\/button><\/div><\/div><form/s);
+    assert.equal(open.match(/class="hist"/g).length, 1);
+    // A single one that ended has no button; none, no box.
+    assert.doesNotMatch(bashCards([ended('a', 1), { ...request, id: 'p' }]), /data-bash="earlier"/);
+    assert.doesNotMatch(bashCards([{ ...request, id: 'p' }]), /class="hist"/);
+    assert.equal(bashCards([]), '');
+    // The page keeps which threads show theirs, and the button switches it.
+    assert.match(js, /if \(b\.dataset\.bash === 'earlier'\) \{\n\s+if \(bashEarlier\.has\(el\.__key\)\) bashEarlier\.delete\(el\.__key\); else bashEarlier\.add\(el\.__key\);/);
+  });
+
+  it('highlights a waiting command as shell, once the highlighter has loaded', () => {
+    assert.ok(bashCard(request, { decide: true }).includes('<pre class="cmd"><code>curl -H &quot;'));
+    lit.loaded = true;
+    try {
+      const html = bashCard(request, { decide: true });
+      assert.ok(html.includes('<pre class="cmd hl"><code><span class="hl-function" data-lang="bash">curl</span> -H &quot;Authorization'));
+      // One that was decided is a line of plain text.
+      assert.ok(bashCard({ ...request, status: 'denied' }).includes('<pre class="cmd"><code>curl -H'));
+    } finally {
+      lit.loaded = false;
+    }
+    // In the colors of a message's code block.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /\.spectrum :is\(\.bubble, \.bashbar\) pre\.hl \.hl-function,/);
+  });
+
+  it('says that it runs on the card, not in a note on top of it', () => {
+    const run = js.slice(js.indexOf('async function runBash('), js.indexOf('async function denyBash('));
+    const deny = js.slice(js.indexOf('async function denyBash('), js.indexOf('// Sending, as in iMessage'));
+    // Only what went wrong is a toast.
+    assert.equal(run.match(/toast\(/g).length, 3);
+    assert.doesNotMatch(run, /toast\([^)]*Running on/);
+    assert.match(run, /if \(!res\.ok\) toast\(`Nothing ran: /);
+    assert.match(deny, /if \(!res\.ok\) toast\(/);
+    assert.equal(deny.match(/toast\(/g).length, 1);
+    // The open thread's cards stay until it is fetched again, so the click shows at once.
+    assert.match(js, /if \(ev\.type === 'bash'\) \{ if \(ev\.thread !== state\.open\) state\.cache\.delete\(ev\.thread\); reloadSoon\(ev\.thread\); \}/);
   });
 
   it('says how long a request stays open', () => {
@@ -148,13 +216,25 @@ describe('a command request\'s card', () => {
     assert.match(css, /\.bashbar \{[^}]*overflow: hidden auto;/);
     assert.match(css, /\.bashbar \.br:not\(\.pending\) \.cmd \{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
     const narrow = css.slice(css.indexOf('@container bash (max-width: 560px)'));
-    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \{ flex-direction: column; align-items: stretch;/);
-    // Its height is its line's, not what is left over (none, in a column).
-    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \.cmd \{ flex: none; \}/);
-    // A field is never wider than a narrow card.
-    assert.match(css, /\.bashbar \.vars \{[^}]*minmax\(min\(100%, calc\(var\(--spectrum-spacing-100\) \* 30\)\), 1fr\)/);
+    // A grid whose first column can shrink: the command, on its own row, is cut at the card's
+    // width.
+    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/);
+    assert.match(narrow, /\.bashbar \.br:not\(\.pending\) \.cmd \{ grid-column: 1 \/ -1; grid-row: 2; \}/);
+    // A field is never wider than a narrow card, and no wider than a line of text reads well.
+    assert.match(css, /\.bashbar \.vars \{[^}]*repeat\(auto-fit, minmax\(min\(100%, calc\(var\(--spectrum-spacing-100\) \* 30\)\), calc\(var\(--spectrum-spacing-100\) \* 70\)\)\)/);
     // A waiting card's command wraps, also inside a word.
     assert.match(css, /\.bashbar \.cmd \{[^}]*white-space: pre-wrap; overflow-wrap: anywhere;/);
+  });
+
+  it('keeps Deny and Run in sight while a tall card scrolls', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\.bashbar \.foot \{ position: sticky; bottom: 0;/);
+    // With the card's own fill, or what scrolls under them shows through.
+    assert.match(css, /\.spectrum \.bashbar \.foot \{ background: inherit;/);
+    // On a phone only the buttons stay: the note runs with the card.
+    const narrow = css.slice(css.indexOf('@container bash (max-width: 560px)'));
+    assert.match(narrow, /\.bashbar \.foot \{ display: contents; \}\n\s+\.bashbar \.acts \{ position: sticky; bottom: 0;/);
+    assert.match(css, /\.spectrum \.bashbar \.acts \{ background: inherit; \}/);
   });
 });
 

@@ -3424,7 +3424,9 @@ async function discardDraft(key) {
 // Each request is a card between the reply box and the draft's line: the command, the agent's
 // reason, a field for every variable it asked for, and Run and Deny. What is filled in goes to
 // the Worker with Run, for that one run; the agent is told what the command printed, never a
-// value. The card stays for an hour after the request ended, saying how.
+// value. A request that ended stays for an hour, on one line, saying how; of several, only the
+// latest shows, with the earlier ones a click away, so that an agent that tries a few times does
+// not fill the pane with what it tried.
 
 // What a person fills in can be remembered on this device, by variable name: encrypted
 // (AES-GCM) in localStorage, with a key made here that cannot be exported, kept in IndexedDB.
@@ -3499,6 +3501,8 @@ function vaultForget(name) {
 // `remember`): in this tab only, so a card drawn again keeps it. The requests being sent.
 const bashTyped = new Map();
 const bashBusy = new Set();
+// The threads whose earlier requests, those that ended before the latest one, are shown.
+const bashEarlier = new Set();
 
 const BASH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M4.6 6.3l2 1.7-2 1.7M8.4 9.9h3"/></svg>';
 /** How long from now until `iso`: "under a minute", "25m", "23h", "3d". */
@@ -3509,30 +3513,44 @@ function timeLeft(iso, now = Date.now()) {
   if (s < 48 * 3600) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
-/** How a request that is no longer waiting stands, in a few words; `hint` says the rest. */
+/**
+ * How a request that is no longer waiting stands: `text` in a few words (`bad`: not as it was
+ * meant to go: a nonzero exit, a timeout, a failure), `rest` who decided and when, `hint` the
+ * tooltip.
+ */
 function bashState(r) {
   const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
+  const by = ` · by ${who} · ${ago(r.finished_at)}`;
   const told = 'The agent was told what the command printed.';
   if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
-  if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code} · by ${who} · ${ago(r.finished_at)}`, hint: told };
-  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout · by ${who} · ${ago(r.finished_at)}`, hint: told };
-  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'} · by ${who} · ${ago(r.finished_at)}`, hint: 'The agent was told.' };
-  if (r.status === 'denied') return { text: `Denied by ${who} · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code}`, rest: by, bad: r.exit_code !== 0, hint: told };
+  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
   return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
 }
 /**
  * A request's card. Waiting, and `decide` (the viewer may run it): a form with a field for each
  * variable (`kept`: the names a remembered value fills), Run and Deny, disabled while `busy`.
- * Otherwise how it stands, with the command on one line.
+ * Otherwise how it stands, with the command on one line; `earlier`, on the latest request that
+ * ended: how many ended before it, behind a button that shows them (`all`: they are shown).
+ * Every card has the request's id, which is how the agent names it in its notes.
  */
-function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
-  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><span class="by">${line}</span></div>`;
-  const command = `<pre class="cmd"><code>${esc(r.command)}</code></pre>`;
+function bashCard(r, {
+  decide = false, busy = false, kept = [], earlier = 0, all = false,
+} = {}) {
+  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
     const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
-    const { text, hint } = bashState(r);
-    return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span title="${esc(hint)}">${esc(text)}</span>`)}${command}</div>`;
+    const {
+      text, rest = '', bad, hint,
+    } = bashState(r);
+    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest command that ended' : 'Show the commands that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
+    return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span class="st${bad ? ' bad' : ''}" title="${esc(hint)}">${esc(text)}</span>${esc(rest)}`)}<pre class="cmd"><code>${esc(r.command)}</code></pre>${more}</div>`;
   }
+  // To be read before it is run: highlighted as the shell command it is, once that has loaded.
+  const lit = highlightCode(r.command, 'bash');
+  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>`;
   const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
   const why = `<p class="why">${esc(r.reason)}</p>`;
   if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${why}${command}</div>`;
@@ -3550,6 +3568,20 @@ function bashCard(r, { decide = false, busy = false, kept = [] } = {}) {
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
 }
 
+/**
+ * The cards of a thread's requests (`list`, as the thread has them), as the bar shows them:
+ * those that ended first, in one box, a line each, only the latest unless `all`; then those
+ * that wait or run, each a card. `options(r)` is what bashCard is told about the viewer.
+ */
+function bashCards(list, { all = false, options = () => ({}) } = {}) {
+  const open = list.filter((r) => r.status === 'pending' || r.status === 'running');
+  const ended = (r) => String(r.finished_at || r.deadline);
+  const past = list.filter((r) => !open.includes(r)).sort((x, y) => ended(x).localeCompare(ended(y)));
+  const shown = all ? past : past.slice(-1);
+  const lines = shown.map((r, i) => bashCard(r, i === shown.length - 1 ? { earlier: past.length - 1, all } : {}));
+  return `${lines.length ? `<div class="hist">${lines.join('')}</div>` : ''}${open.map((r) => bashCard(r, options(r))).join('')}`;
+}
+
 /** The requests of the open thread, as cards; what was typed, or is remembered, is in the fields. */
 function renderBashBar(key) {
   const el = $('bashbar');
@@ -3559,9 +3591,10 @@ function renderBashBar(key) {
   if (!el || !hit || state.open !== key) return;
   const list = hit.data?.bash_requests || [];
   const decide = !state.data?.me?.readonly;
-  const html = list.map((r) => bashCard(r, {
-    decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)),
-  })).join('');
+  const html = bashCards(list, {
+    all: bashEarlier.has(key),
+    options: (r) => ({ decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
+  });
   if (el.__html !== html) {
     el.__html = html;
     el.innerHTML = html;
@@ -3601,6 +3634,11 @@ function wireBashBar(el) {
     const b = e.target.closest('[data-bash]');
     if (!b || b.disabled) return;
     if (b.dataset.bash === 'deny') denyBash(el.__key, idOf(b));
+    if (b.dataset.bash === 'earlier') {
+      if (bashEarlier.has(el.__key)) bashEarlier.delete(el.__key); else bashEarlier.add(el.__key);
+      renderBashBar(el.__key);
+      el.querySelector('.more')?.focus();
+    }
     if (b.dataset.bash === 'forget') {
       vaultForget(b.dataset.name);
       // The field is emptied with it, unless something else was typed there.
@@ -3639,8 +3677,9 @@ async function runBash(key, id, form) {
     bashTyped.delete(id);
     if (remember && r.env.length) await vaultKeep(values).catch(() => toast('Could not remember the values on this device.'));
   }
+  // The card says that it runs: a note on top of it would only be in its way.
   setCachedBash(key, res.data.request);
-  toast(res.ok ? 'Running on the agent\'s computer. The agent is told what it prints.' : `Nothing ran: ${res.data.error || `the inbox answered ${res.status}`}.`);
+  if (!res.ok) toast(`Nothing ran: ${res.data.error || `the inbox answered ${res.status}`}.`);
 }
 
 /** Deny: the command does not run, and the agent is told who decided. */
@@ -3652,7 +3691,7 @@ async function denyBash(key, id) {
   bashBusy.delete(id);
   if (res.ok) bashTyped.delete(id);
   setCachedBash(key, res.data.request);
-  toast(res.ok ? 'Denied. The agent is told.' : `${res.data.error || `The inbox answered ${res.status}`}.`);
+  if (!res.ok) toast(`${res.data.error || `The inbox answered ${res.status}`}.`);
 }
 
 // Sending, as in iMessage: a reply shows at once, as it will look once sent, with a thin bar
@@ -5586,7 +5625,9 @@ function listen(team, live, { again = false } = {}) {
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     // The agent asked for a command, or one was run, denied or ended.
-    if (ev.type === 'bash') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // The open thread keeps what it shows until it is fetched again: its cards say what a
+    // click just did, and the fetch replaces them.
+    if (ev.type === 'bash') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
