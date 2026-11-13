@@ -657,7 +657,7 @@ function kernelShell(shell) {
     : 'The shell is GNU bash with real programs: ls /usr/bin lists them.';
   const jq = !shell.commands || shell.commands.includes('jq') ? ''
     : ' There is no jq here: read JSON with grep, sed and awk.';
-  return `${has} curl reaches the internet.${jq} There is no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${jq} There is no npm, node or python, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**

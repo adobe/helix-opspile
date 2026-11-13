@@ -653,10 +653,11 @@ describe('the agent\'s switchable tools', () => {
     });
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet. There is no npm`));
+    assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet; a site whose certificate`));
+    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. There is no npm/);
     assert.doesNotMatch(base, /just-bash|sqlite3/);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, rg, sqlite3, strings\. curl reaches the internet\./);
+    assert.match(data, /curl, rg, sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
       // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
       assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);
