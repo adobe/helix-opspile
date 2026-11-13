@@ -3965,8 +3965,9 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   if (!appKeys.has(once)) appKeys.set(once, crypto.randomUUID());
   sendSeq += 1;
   const kinds = Object.fromEntries(mentions.map((m) => [m.name, mentionKindOf(m.name)]).filter(([, k]) => k));
+  // `base`: the draft it sends, whose line is not offered again while it goes (renderDraftBar).
   const p = {
-    thread: key, body: text.trim(), mentions, kinds, files: [], at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: state.cache.get(key)?.data?.thread?.source || String(key).split(':')[0], status: 'sending', startedAt: Date.now(), doneAt: null, app: true, ...appLook(key),
+    thread: key, body: text.trim(), mentions, kinds, base, files: [], at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: state.cache.get(key)?.data?.thread?.source || String(key).split(':')[0], status: 'sending', startedAt: Date.now(), doneAt: null, app: true, ...appLook(key),
   };
   state.sending.push(p);
   showSending(key);
