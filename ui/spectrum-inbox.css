@@ -478,10 +478,17 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
 /* The sidebar beside the thread (placeSidePanel): a panel at the right edge of the thread's
-   column, which makes room for it. It shows where the two have room together (syncSideRoom in
-   ui/inbox.js, which this width is part of): 360px wide at least, 38% of that room, 480px at
-   most. Its top, its conversations, which scroll, and its box, as the thread's are. */
-main { --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 38%, calc(var(--spectrum-spacing-100) * 60)); }
+   column, which makes room for it. While it shows, the content area is shared 3 : 5 : 3 between
+   the list, the thread and the panel: the thread, which has the code and the logs, stays the
+   widest by far, and what flanks it is as wide on either side. So the list gives up room too
+   (its rows keep their height, and end in an ellipsis sooner), down to its least width; the
+   panel is 3 of the thread's column's 8, 360px at least, and 560px at most, where its lines get
+   too long to read. It shows where the three have room (syncSideRoom in ui/inbox.js, which
+   these widths are part of). Its top, its conversations, which scroll, and its box, as the
+   thread's are. */
+main { --nav-w: var(--filters-w); --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 70)); }
+main.rail { --nav-w: var(--rail); }
+main.siding { grid-template-columns: var(--nav-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), calc((100% - var(--nav-w)) * 3 / 11)) 1fr; }
 #side { grid-row: 1; grid-column: 3; justify-self: end; width: var(--side-w); display: flex; flex-direction: column; overflow: hidden; }
 #side[hidden] { display: none; }
 main.siding #pane { margin-right: var(--side-w); }

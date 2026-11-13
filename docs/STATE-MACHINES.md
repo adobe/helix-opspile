@@ -205,8 +205,8 @@ queued right behind one does not hide it.
 **Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕,
 Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
 a message the inbox did not take goes back into it. Where it shows is not a state of its own: it
-is worked out from the room beside the thread (`side.wide`, `syncSideRoom`), whenever the
-thread's column changes its width. With room, the mode is the panel beside the thread
+is worked out from the content area's width (`side.wide`, `syncSideRoom`), whenever the
+thread's column changes its width; not from the thread's own, which the panel changes. With room, the mode is the panel beside the thread
 (`sidePaneled`), which someone who may not talk to the agent can open too, to read; without, it is
 the thread's reply box turned into the sidebar's (`sideInline`), only for who may talk to it. The
 panel is the open thread's: it goes whenever `side.key` is not the open thread (`syncReading`).

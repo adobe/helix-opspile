@@ -1477,9 +1477,12 @@ a sidebar conversation with Thread Agent · 4 messages · not posted"), for ever
 thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
 "the sidebar"):
 
-- **Beside the thread**, where the thread's column and a panel fit side by side (800px from the
-  thread's left edge to the content area's right, measured: the filters fold to a rail on some
-  screens, and the thread list takes its share). The panel (`#side`) has every sidebar
+- **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from
+  the list's left edge to the content area's right (the list's least 380, 440 for the thread,
+  the panel's least 360), measured, because the filters fold to a rail on some screens. While
+  the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
+  panel, so the thread stays the widest by far and the list gives up room too, down to its
+  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
   conversation of the thread, each under when it started, the agent working on its answer, and
   a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
   A line in the thread opens the panel at its conversation, also for someone who may not talk

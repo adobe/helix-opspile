@@ -6880,17 +6880,18 @@ function wireRail() {
 }
 
 // ---------------------------------------------------------------- the sidebar's room
-// The sidebar's panel shows where the thread and it have this much room together (px), from the
-// thread's left edge to the content area's right: the panel takes 360 of it at least (`--side-w`
-// in ui/spectrum-inbox.css), which leaves the thread 440, more than a phone gives it. Measured,
-// not asked of the screen's width: the filters fold to a rail on some screens, and the thread
-// list takes its share. Under that the conversation is in the thread (sideGroup).
-const SIDE_ROOM = 800;
+// The sidebar's panel shows where the content area, from the list's left edge to its right, is
+// this wide (px): the list at its least (380), 440 for the thread, more than a phone gives it,
+// and the panel's least (360, `--side-w` in ui/spectrum-inbox.css, which shares the room out).
+// Measured, not asked of the screen's width: the filters fold to a rail on some screens. From
+// the list's edge, not the thread's, which moves as the panel shows. Under that the
+// conversation is in the thread (sideGroup).
+const SIDE_ROOM = 1180;
 function sideRoom() {
   if (!WIDE.matches) return false;
   const main = document.querySelector('main');
   const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight);
-  return right - $('pane').getBoundingClientRect().left >= SIDE_ROOM;
+  return right - $('threads').getBoundingClientRect().left >= SIDE_ROOM;
 }
 /** The room changed (the window, the filter rail): the sidebar you are in moves to where it shows now. */
 function syncSideRoom() {

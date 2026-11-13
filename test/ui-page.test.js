@@ -956,14 +956,15 @@ describe('inbox page', () => {
       assert.equal(sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t'), '');
     });
 
-    it('shows the panel where the thread and it have room, measured from the thread\'s left edge', () => {
+    it('shows the panel where the list, the thread and it have room, measured from the list\'s left edge', () => {
       const room = (width, wideEnough = true) => {
         const main = { getBoundingClientRect: () => ({ right: 1000 + width + 16 }) };
         return piece('const SIDE_ROOM = ', '/** The room changed', 'sideRoom, SIDE_ROOM', {
           WIDE: { matches: wideEnough },
           document: { querySelector: () => main },
           getComputedStyle: () => ({ paddingRight: '16px' }),
-          $: () => ({ getBoundingClientRect: () => ({ left: 1000 }) }),
+          // The list's edge: the thread's moves as the panel shows, which must not matter.
+          $: (id) => ({ getBoundingClientRect: () => ({ left: id === 'threads' ? 1000 : 0 }) }),
         });
       };
       const { SIDE_ROOM } = room(0);
@@ -971,10 +972,21 @@ describe('inbox page', () => {
       assert.equal(room(SIDE_ROOM - 1).sideRoom(), false);
       // Under 1100px the filters are a drawer and the thread may be off the screen: never there.
       assert.equal(room(SIDE_ROOM, false).sideRoom(), false);
-      // The panel's least width leaves the thread more than a phone gives it.
+      // The list's and the panel's least widths leave the thread more than a phone gives it.
+      assert.ok(SIDE_ROOM - 380 - 360 >= 440, 'the thread between the least list and panel');
+    });
+
+    it('shares the content area 3 : 5 : 3 between the list, the thread and the panel', () => {
       const css = SCRIPTS['spectrum-inbox.css'];
-      assert.match(css, /main \{ --side-w: clamp\(calc\(var\(--spectrum-spacing-100\) \* 45\), 38%, calc\(var\(--spectrum-spacing-100\) \* 60\)\); \}/);
-      assert.ok(SIDE_ROOM - 360 >= 430, 'the thread beside the least panel');
+      // The list: 3 of the 11, of what the filters (or their rail) leave, not under its least.
+      const least = 'calc\\(var\\(--spectrum-spacing-100\\) \\* 47 \\+ var\\(--spectrum-spacing-75\\)\\)';
+      assert.match(css, new RegExp(`main\\.siding \\{ grid-template-columns: var\\(--nav-w\\) minmax\\(${least}, calc\\(\\(100% - var\\(--nav-w\\)\\) \\* 3 / 11\\)\\) 1fr; \\}`));
+      assert.match(css, new RegExp(`\\nmain \\{ flex: 1; display: grid; grid-template-columns: var\\(--filters-w\\) minmax\\(${least}, 34%\\) 1fr;`));
+      assert.match(css, /main \{ --nav-w: var\(--filters-w\); --side-w: /);
+      assert.match(css, /main\.rail \{ --nav-w: var\(--rail\); \}/);
+      // The panel: 3 of the 8 that are left, 360px to 560px.
+      assert.match(css, /--side-w: clamp\(calc\(var\(--spectrum-spacing-100\) \* 45\), 37\.5%, calc\(var\(--spectrum-spacing-100\) \* 70\)\); \}/);
+      assert.equal(3 / 8, 0.375);
     });
 
     it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
