@@ -57,8 +57,15 @@ const formatter = (opts) => {
   };
 };
 const SHORT_DATE = formatter({ day: 'numeric', month: 'short' });
+const YEAR_DATE = formatter({ day: 'numeric', month: 'short', year: 'numeric' });
 const CLOCK = formatter({ hour: 'numeric', minute: '2-digit' });
 const LONG_DAY = formatter({ weekday: 'long', month: 'long', day: 'numeric' });
+const LONG_YEAR_DAY = formatter({
+  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+});
+const WHOLE_TIME = formatter({
+  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+});
 const days = new Map();
 function ago(iso) {
   if (!iso) return '';
@@ -70,14 +77,42 @@ function ago(iso) {
   return SHORT_DATE(new Date(iso));
 }
 const clock = (iso) => CLOCK(new Date(iso));
-function dayLabel(iso) {
-  const d = new Date(iso);
+/** The name of `d`'s day, where it has one: 'Today', 'Yesterday', or ''. */
+function nearDay(d, now = new Date()) {
   const day = d.toDateString();
-  if (day === new Date().toDateString()) return 'Today';
-  if (day === new Date(Date.now() - 86400000).toDateString()) return 'Yesterday';
-  if (!days.has(day)) days.set(day, LONG_DAY(d));
+  if (day === now.toDateString()) return 'Today';
+  // The day before on the calendar, which is not always 24 hours ago.
+  const before = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return day === before.toDateString() ? 'Yesterday' : '';
+}
+/** The day a message is of, as the feed's divider says it: with its year when that is another. */
+function dayLabel(iso, now = new Date()) {
+  const d = new Date(iso);
+  const near = nearDay(d, now);
+  if (near) return near;
+  const day = `${d.toDateString()} in ${now.getFullYear()}`;
+  if (!days.has(day)) days.set(day, (d.getFullYear() === now.getFullYear() ? LONG_DAY : LONG_YEAR_DAY)(d));
   return days.get(day);
 }
+/**
+ * When a message was posted, with its day: the time alone today, and the day with it before
+ * that ("Yesterday at 11:43", "Nov 10 at 11:43", "Nov 10, 2025 at 11:43"), as in Slack. Only
+ * the thread's latest message says it so (`timeTag`).
+ */
+function timeLabel(iso, now = new Date()) {
+  const d = new Date(iso);
+  const near = nearDay(d, now);
+  if (near === 'Today' || Number.isNaN(d.getTime())) return CLOCK(d);
+  return `${near || (d.getFullYear() === now.getFullYear() ? SHORT_DATE : YEAR_DATE)(d)} at ${CLOCK(d)}`;
+}
+/**
+ * A message's time in its header: the time of day, as the day is in the divider above, which
+ * stays on top of the thread. `dated` is the thread's latest message, which says its day too
+ * (`timeLabel`): how long ago the thread was last heard of is what one opens it to see.
+ * Pointing at either shows the whole of it: the weekday, the date, the time to the second and
+ * its time zone.
+ */
+const timeTag = (iso, dated = false) => `<time datetime="${esc(iso)}" title="${esc(WHOLE_TIME(new Date(iso)))}">${esc(dated ? timeLabel(iso) : clock(iso))}</time>`;
 const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord' };
 const platform = (t) => PLATFORM[t.source] || 'Teams';
 // The account a person connects for a platform.
@@ -999,6 +1034,8 @@ function toggleFilter(id, v, exclude) {
   }
   for (const sets of [state.sel, state.not]) if (!sets[id]?.size) delete sets[id];
 }
+/** A facet row's ≠ button: it excludes the row's value, or stops excluding it (`out`). */
+const notButton = (out) => `<button class="not" type="button" data-not aria-pressed="${out}" title="${out ? 'Stop excluding' : 'Exclude (or Shift-click the row)'}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>`;
 
 /**
  * A facet row's bar. Its length is the count; except on the status card itself, it is
@@ -1058,13 +1095,12 @@ function facetRows(f) {
     const head = g && g !== group ? `<div class="fg">${esc(f.groupLabel[g])}</div>` : '';
     group = g;
     const out = off.has(v);
-    const not = out ? 'Stop excluding' : 'Exclude (or Shift-click the row)';
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
-      <button class="not" type="button" data-not aria-pressed="${out}" title="${not}" aria-label="${out ? 'Stop excluding' : 'Exclude'}">≠</button>
+      ${notButton(out)}
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
@@ -1109,11 +1145,12 @@ function wireLogos() {
 }
 /**
  * The customers' order in the column: those with unread mentions of you first, most mentions
- * first, then those with unread threads, then the rest; by name within each. `c.name` is
- * looked up once per customer, not in every comparison.
+ * first, then those with unread threads, then the rest, then the excluded ones; by name within
+ * each. `c.name` is looked up once per customer, not in every comparison.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
 const columnPile = (c) => {
+  if (c.out) return 3;
   if (c.you > 0) return 0;
   return c.unread ? 1 : 2;
 };
@@ -1121,23 +1158,30 @@ const columnOrder = ([, a], [, b]) => columnPile(a) - columnPile(b) || b.you - a
   || byName.compare(a.name, b.name);
 /**
  * The simple personal view's only card: its customers, by logo and name, bold while they have
- * unread threads, with the red badge. "All customers" first, picked while no customer is. The
- * customers go by `columnOrder`.
+ * unread threads, with the red badge. "All customers" first, picked while no customer is; a
+ * click on it drops the pick and what is excluded. The customers go by `columnOrder`. A row's ≠
+ * (or a Shift-click) excludes its customer, as on the expert view's cards (see toggleFilter):
+ * it stays in the column, struck through, without its badge and whether or not it has threads,
+ * so a click brings it back, and "All customers" does not count it.
  */
 function simpleCustomers() {
   const all = listed().filter((t) => passes(t, 'customer'));
+  const on = state.sel.customer || new Set();
+  const off = state.not.customer || new Set();
   const by = new Map();
+  for (const v of off) by.set(v, { unread: false, you: 0, out: true });
   for (const t of all) {
     const c = by.get(t.org) || { unread: false, you: 0 };
-    c.unread ||= Boolean(t.unread);
-    c.you += youCount(t);
+    if (!c.out) {
+      c.unread ||= Boolean(t.unread);
+      c.you += youCount(t);
+    }
     by.set(t.org, c);
   }
-  const on = state.sel.customer || new Set();
   for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
   for (const [v, c] of by) c.name = customerName(v);
-  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${youBadge(c.you)}</div>`).join('');
+  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
@@ -1618,11 +1662,12 @@ function renderThreads() { inPass(threadRows); }
 
 /**
  * The Filters button of narrower screens, with how many filters are set. In the simple
- * personal view it opens the customers, and carries the red badge of them all.
+ * personal view it opens the customers, and carries the red badge of them all but the
+ * excluded ones.
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const you = listed().filter((t) => passes(t, 'customer')).reduce((n, t) => n + youCount(t), 0);
+  const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
   return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
 }
@@ -1969,11 +2014,11 @@ const continues = (prev, m) => Boolean(prev) && m.author?.kind !== 'system' && p
 
 // A run of one author's messages: the name above the first, the avatar beside the last
 // (`followed`: the next message goes on from this one).
-function message(m, prev, fresh, followed = false) {
+function message(m, prev, fresh, followed = false, dated = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
   const enter = fresh ? 'enter' : '';
-  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} · ${clock(m.at)}</div>`;
+  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} · ${timeTag(m.at)}</div>`;
   const adobe = Boolean(a.staff);
   // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage. A reply being
   // sent as the bot looks like the bot's.
@@ -1982,7 +2027,7 @@ function message(m, prev, fresh, followed = false) {
   const key = profileKey(m.authorKey, {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
-  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${clock(m.at)}`;
+  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
@@ -2002,7 +2047,10 @@ function message(m, prev, fresh, followed = false) {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button>` : '';
-  const quick = (can && !editing) || pen ? `<div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${editing ? '' : picks}</div>` : '';
+  // The quick reactions are the bubble's: pointing at the bubble shows them, beside the header
+  // (or above it, where the line has no room), never over the name or the time, which have
+  // their own (the profile card, the whole date).
+  const quick = (can && !editing) || pen ? `<div class="quick-at"><div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${editing ? '' : picks}</div></div>` : '';
   // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
@@ -2011,7 +2059,7 @@ function message(m, prev, fresh, followed = false) {
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
-    <div class="col">${quick}<div class="who">${who}</div>
+    <div class="col"><div class="head"><div class="who">${who}</div>${quick}</div>
       ${bubble}
       ${rx ? `<div class="rx">${rx}</div>` : ''}
       ${notes ? `<div class="meta"${m.editedAt ? ` title="Edited ${esc(new Date(m.editedAt).toLocaleString())}"` : ''}>${notes}</div>` : ''}${m.pending ? sendState(m) : ''}
@@ -2440,25 +2488,41 @@ function headWhat(title, chan) {
 // history, and never to Slack, Teams or Discord; the agent answers there, and cannot post,
 // react or ask the admin bots while it does. You enter it by the agent's icon: its avatar on
 // its note, the button with it beside the reply box, Continue on an earlier sidebar
-// conversation, or `a`. The reply box then turns into the sidebar's, in purple, saying where
-// it goes, with ✕ Exit (and Esc, and opening another thread). Each run of sidebar messages
-// shows between the thread's messages where it happened, folded to one line ("Lena Berg had a
-// sidebar conversation with Thread Agent"), which unfolds it; the one you are in stays open.
+// conversation, or `a`. Each run of sidebar messages is one line between the thread's messages
+// where it happened ("Lena Berg had a sidebar conversation with Thread Agent"), for everyone who
+// sees the thread in the inbox. Where the conversation itself shows depends on the room:
+// - beside the thread, where the screen is wide enough (`side.wide`, syncSideRoom): a panel
+//   (`#side`, placeSidePanel) with every conversation of the thread and a box of its own, so
+//   the thread keeps its reply box. A line in the thread opens the panel at its conversation.
+// - in the thread, on a narrower one: a line unfolds its conversation where it is, and the
+//   reply box turns into the sidebar's, in purple, saying where it goes; the conversation you
+//   are in stays open under the thread.
+// Both are left by ✕ (and Esc, and opening another thread).
 const side = {
-  // The thread in sidebar mode, or null.
+  // The thread whose sidebar you are in, or null.
   key: null,
-  // Conversations unfolded, by their first message's id.
+  // Conversations unfolded in the thread, by their first message's id.
   open: new Set(),
   // Messages on their way: { thread, id, body, at, by, role, pending }.
   sending: [],
   // What was typed in each thread's sidebar box and not sent.
   typed: new Map(),
+  // Whether the conversation has room beside the thread (syncSideRoom).
+  wide: false,
+  // The conversation the panel shows next, by its first message's id: the line that was picked.
+  at: null,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
 
 /** Whether the open thread `key` has an agent to talk to, and you may. */
 const canSide = (key) => Boolean(state.cache.get(key)?.data?.agent) && !state.data?.me?.readonly;
+
+/** Whether thread `key` is in sidebar mode in the thread itself: its reply box is the sidebar's. */
+const sideInline = (key) => !side.wide && side.key === key && canSide(key);
+
+/** Whether the sidebar of thread `key` shows in the panel beside it. */
+const sidePaneled = (key) => Boolean(key) && side.wide && side.key === key;
 
 /** The agent's avatar on its note: it opens the sidebar, where you may talk to it. */
 function sideFace(key) {
@@ -2512,17 +2576,37 @@ function sidePeople(run) {
 function sideMessage(key, m) {
   if (m.role === 'agent') {
     return `<div class="sm agent ${m.state === 'failed' ? 'failed' : ''}"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
-      <div class="col"><div class="who"><b>${AGENT_NAME}</b> · ${clock(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+      <div class="col"><div class="who"><b>${AGENT_NAME}</b> · ${timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
   }
   const name = m.by?.name || 'Someone';
   return `<div class="sm person ${m.by?.id === state.me.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}"><span class="face">${avatar(name, faceOf(name))}</span>
-    <div class="col"><div class="who"><b>${esc(name)}</b> · ${m.pending ? 'sending…' : clock(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+    <div class="col"><div class="who"><b>${esc(name)}</b> · ${m.pending ? 'sending…' : timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+}
+
+/** Whether the agent is seen working on its answer in `run` (`last`: the thread's latest run). */
+function sideWorking(key, run, last) {
+  const t = state.agents.get(key)?.side;
+  return Boolean(last && t?.state === 'working' && !run.some((m) => m.reply_to === t.sidebar));
 }
 
 /**
- * A run of sidebar messages in the feed: one line that says who talked to the agent, which
- * unfolds it. `last`: the thread's latest run, where the agent is seen working on an answer;
- * `trailing`: after the thread's latest message too, so that the sidebar goes on with it.
+ * What a run of sidebar messages shows, one element each: its messages, then the agent working
+ * on its answer, or that it answers once it is done (`last`: the thread's latest run).
+ */
+function sideRun(key, run, last) {
+  const working = sideWorking(key, run, last);
+  const waiting = last && !working && run.at(-1).role === 'person' && !run.at(-1).failed;
+  const doing = working ? [`<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
+    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.agents.get(key).side.text)}…</div></div></div>`] : [];
+  const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>`] : [];
+  return [...run.map((m) => sideMessage(key, m)), ...doing, ...queued];
+}
+
+/**
+ * A run of sidebar messages in the feed: one line that says who talked to the agent. It
+ * unfolds the run where it is, or, on a wide screen, shows it in the panel beside the thread.
+ * `last`: the thread's latest run, where the agent is seen working on an answer; `trailing`:
+ * after the thread's latest message too, so that the sidebar goes on with it.
  */
 function sideGroup(key, run, { last, trailing }) {
   if (!run.length) {
@@ -2530,11 +2614,10 @@ function sideGroup(key, run, { last, trailing }) {
     return `<div class="sidechat open live blank"><div class="sc-body"><div class="sc-wait">${SIDE_ICON}What you and ${AGENT_NAME} say here shows in the thread, folded, for your team only. It is never posted.</div></div></div>`;
   }
   const id = run[0].id;
-  const live = trailing && side.key === key;
-  const open = live || side.open.has(id);
-  const t = state.agents.get(key)?.side;
-  const working = last && t?.state === 'working' && !run.some((m) => m.reply_to === t.sidebar);
-  const waiting = last && !working && run.at(-1).role === 'person' && !run.at(-1).failed;
+  const paneled = sidePaneled(key);
+  const live = trailing && sideInline(key);
+  const open = !side.wide && (live || side.open.has(id));
+  const working = sideWorking(key, run, last);
   const n = run.length;
   const who = sidePeople(run);
   const people = [...new Map(run.filter((m) => m.role === 'person').map((m) => [m.by?.name, m.by])).values()].slice(0, 2);
@@ -2542,14 +2625,13 @@ function sideGroup(key, run, { last, trailing }) {
   const what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
     : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
   const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
-  const doing = working ? `<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
-    <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(t.text)}…</div></div></div>` : '';
-  const queued = waiting ? `<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>` : '';
   const more = !live && canSide(key) ? `<div class="sc-foot"><button type="button" class="sc-continue" data-side-enter>${SIDE_ICON}Continue in the sidebar</button></div>` : '';
-  const body = open ? `<div class="sc-body">${run.map((m) => sideMessage(key, m)).join('')}${doing}${queued}${more}</div>` : '';
-  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
-    <button type="button" class="sc-head" data-side-toggle="${esc(id)}" aria-expanded="${open}"${live ? ' aria-disabled="true"' : ''}>
-      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}</span>${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}
+  const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
+  // What the line opens: its run under it, or the panel, which has every run.
+  const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
+    <button type="button" class="sc-head" data-side-toggle="${esc(id)}" ${shows}${live ? ' aria-disabled="true"' : ''}>
+      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
     </button>${body}</div>`;
 }
 
@@ -2564,18 +2646,103 @@ function sideComposer(key, thread) {
     <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
 }
 
+/** The panel's top: whom you talk to and who sees it, with ✕ to close it. */
+function sidePanelHead(thread) {
+  const where = PLATFORM[thread.source] || 'the channel';
+  return `<div class="sp-head"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
+    <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
+    <button type="button" class="sp-close" data-side-exit title="Close the sidebar (Esc)" aria-label="Close the sidebar"><span class="s2-cross" aria-hidden="true"></span></button></div>`;
+}
+
+/**
+ * The panel's feed, one element each: every sidebar conversation of the thread, oldest first,
+ * each under when it started (`runs`: `{ run, last }`, as openThread found them between the
+ * thread's messages).
+ */
+function sidePanelItems(key, runs) {
+  if (!runs.length) {
+    return [{ html: `<div class="sc-wait blank">${SIDE_ICON}What you and ${AGENT_NAME} say here stays with the thread, for your team only. It is never posted.</div>` }];
+  }
+  return runs.flatMap(({ run, last }) => [
+    `<div class="sp-when" data-run="${esc(run[0].id)}"><span>${esc(`${dayLabel(run[0].at)} · ${clock(run[0].at)}`)}</span></div>`,
+    ...sideRun(key, run, last),
+  ]).map((html) => ({ html }));
+}
+
+/** The panel's own box, to the agent: the thread keeps its reply box. */
+function sidePanelBox(key) {
+  if (!canSide(key)) return '';
+  return `<div class="composer sidebar" role="group" aria-label="Message to ${AGENT_NAME}">
+    <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
+    <button class="send ask" id="side-send" type="button">Ask</button></div>`;
+}
+
+/** The panel goes, with what it showed. */
+function hideSidePanel() {
+  const panel = $('side');
+  if (!panel || panel.hidden) return;
+  panel.hidden = true;
+  panel.replaceChildren();
+  panel.__key = null;
+  panel.parentElement.classList.remove('siding');
+}
+
+/**
+ * The panel beside the open thread `key` while you are in its sidebar on a wide screen: its
+ * top, the thread's sidebar conversations and its box. Shown again, it is patched as the thread
+ * is (renderPane), so the box keeps what is typed in it and the focus. It stays at its latest
+ * message, or goes to the conversation whose line was picked in the thread (`side.at`).
+ */
+function placeSidePanel(key, thread, runs) {
+  const panel = $('side');
+  if (!sidePaneled(key)) { hideSidePanel(); return; }
+  if (panel.__key !== key) {
+    panel.innerHTML = '<div class="scroller"><div class="sc-body"></div></div>';
+    panel.__key = key;
+  }
+  panel.hidden = false;
+  panel.parentElement.classList.add('siding');
+  const scroller = panel.querySelector(':scope > .scroller');
+  const atEnd = !scroller.firstElementChild.childElementCount || nearBottom(scroller);
+  const part = (el, html, put) => {
+    if ((el ? el.__html : '') === html) return;
+    if (html) put(htmlNode(html)); else el.remove();
+  };
+  const head = panel.querySelector(':scope > .sp-head');
+  part(head, sidePanelHead(thread), (node) => (head ? head.replaceWith(node) : panel.prepend(node)));
+  patchItems(scroller.firstElementChild, sidePanelItems(key, runs));
+  const box = panel.querySelector(':scope > .composer');
+  part(box, sidePanelBox(key), (node) => (box ? box.replaceWith(node) : panel.append(node)));
+  const picked = side.at && scroller.querySelector(`[data-run="${CSS.escape(side.at)}"]`);
+  side.at = null;
+  if (picked) {
+    scroller.scrollTop += picked.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    markFound(picked);
+  } else if (atEnd) scroller.scrollTop = scroller.scrollHeight;
+}
+
 /** The open thread again, from what is known, with the sidebar as it stands now. */
 function showSide(key) {
   return state.open === key && state.cache.get(key) ? openThread(key, { live: true, cached: true }) : null;
 }
 
-/** Sidebar mode on in the open thread `key`, its box focused. */
-async function enterSide(key = state.open) {
-  if (!key || !canSide(key)) return;
+/**
+ * Into the sidebar of the open thread `key`, its box focused. On a wide screen that is the
+ * panel, at the conversation `at` (its first message's id) if one was picked, and anyone who
+ * sees the thread may read there what was said, also where they cannot talk to the agent.
+ */
+async function enterSide(key = state.open, { at = null } = {}) {
+  if (!key || !(canSide(key) || (side.wide && sideList(key).length))) return;
   const was = side.key;
   side.key = key;
-  if (was !== key) await showSide(key);
+  side.at = at;
+  if (was !== key || at) await showSide(key);
   const box = $('side-reply');
+  if (side.wide) {
+    // The thread stays where it is: the conversation is beside it.
+    (box || $('side').querySelector('[data-side-exit]'))?.focus({ preventScroll: true });
+    return;
+  }
   box?.focus();
   const scroller = $('pane').querySelector(':scope > .scroller');
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -2622,6 +2789,9 @@ async function askSide(key) {
   };
   side.sending.push(p);
   showSide(key);
+  // What you just said, in the panel too, wherever it was scrolled to.
+  const scroller = sidePaneled(key) && $('side').querySelector(':scope > .scroller');
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
   const res = await request('POST', '/api/agent/sidebar', { thread: key, text }).catch((e) => ({ ok: false, data: { error: e.message } }));
   side.sending = side.sending.filter((x) => x !== p);
   if (!res.ok) {
@@ -2793,6 +2963,33 @@ const afterPaint = () => new Promise((resolve) => {
   setTimeout(resolve, 100);
 });
 
+/** An element made from `html`, which it remembers: it is made again only once that changes. */
+function htmlNode(html) {
+  const node = toNode(html);
+  node.__html = html;
+  return node;
+}
+
+/**
+ * The children of `feed` become `items` (`{ html, enter }`), by their HTML: unchanged ones stay
+ * as they are, new and changed ones are built, and marked as arriving where `enter` says so.
+ */
+function patchItems(feed, items) {
+  const spare = new Map();
+  for (const n of feed.children) {
+    if (!spare.has(n.__html)) spare.set(n.__html, []);
+    spare.get(n.__html).push(n);
+  }
+  const nodes = items.map((item) => {
+    const node = spare.get(item.html)?.shift() || htmlNode(item.html);
+    if (item.enter && !node.isConnected) node.classList.add('enter');
+    return node;
+  });
+  const keep = new Set(nodes);
+  [...feed.children].forEach((n) => { if (!keep.has(n)) n.remove(); });
+  nodes.forEach((n, i) => { if (feed.children[i] !== n) feed.insertBefore(n, feed.children[i] || null); });
+}
+
 /**
  * Shows a thread in the pane: header, review panel, feed, reply box. Showing the same thread
  * again (a live update, a reaction, a refresh) patches it: only the parts and messages whose
@@ -2803,8 +3000,6 @@ function renderPane(pane, key, {
   head, review, items, reply, patch,
 }) {
   const feed = patch && pane.__key === key && pane.querySelector(':scope > .scroller > .feed');
-  const enter = (node, item) => { if (item.enter) node.classList.add('enter'); return node; };
-  const make = (html) => { const node = toNode(html); node.__html = html; return node; };
   if (!feed) {
     pane.innerHTML = `${head}<div class="scroller">${review}<div class="feed">${items.map((i) => i.html).join('')}</div></div>${reply}`;
     pane.__key = key;
@@ -2813,31 +3008,22 @@ function renderPane(pane, key, {
     box.__html = reply;
     if (review) scroller.firstElementChild.__html = review;
     const nodes = [...scroller.lastElementChild.children];
-    if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; enter(n, items[i]); });
+    if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; if (items[i].enter) n.classList.add('enter'); });
     keepHaloTurning(scroller);
     return;
   }
   const ph = pane.querySelector(':scope > .ph');
-  if (ph.__html !== head) ph.replaceWith(make(head));
+  if (ph.__html !== head) ph.replaceWith(htmlNode(head));
   const rv = feed.parentElement.querySelector(':scope > .rv');
   if ((rv ? rv.__html : '') !== review) {
     rv?.remove();
-    if (review) feed.before(make(review));
+    if (review) feed.before(htmlNode(review));
   }
-  // Feed items by their HTML: unchanged ones stay, new and changed ones are built.
-  const spare = new Map();
-  for (const n of feed.children) {
-    if (!spare.has(n.__html)) spare.set(n.__html, []);
-    spare.get(n.__html).push(n);
-  }
-  const nodes = items.map((item) => spare.get(item.html)?.shift() || enter(make(item.html), item));
-  const keep = new Set(nodes);
-  [...feed.children].forEach((n) => { if (!keep.has(n)) n.remove(); });
-  nodes.forEach((n, i) => { if (feed.children[i] !== n) feed.insertBefore(n, feed.children[i] || null); });
+  patchItems(feed, items);
   keepHaloTurning(feed);
   const box = pane.querySelector(':scope > .composer');
   if (!box || box.__html !== reply) {
-    const node = make(reply);
+    const node = htmlNode(reply);
     if (box) box.replaceWith(node); else pane.append(node);
   }
 }
@@ -2848,11 +3034,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const fromList = !state.open;
   state.open = key;
   Object.assign(state, { compose: null, awaiting: null });
+  // The sidebar is the thread's you entered it in: another one opens to reply in.
+  if (switching && side.key !== key) side.key = null;
   syncReading();
   if (switching) prefetchAround(key);
   if (switching) toUrl(true, fromList ? { list: true } : null);
-  // The sidebar is the thread's you entered it in: another one opens to reply in.
-  if (switching && side.key !== key) side.key = null;
   renderThreads();
   const pane = $('pane');
   const prevScroller = pane.querySelector('.scroller');
@@ -2995,30 +3181,39 @@ async function openThread(key, { live = false, cached = false } = {}) {
   let day = null;
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
   let last = null;
-  // The sidebar's messages, each run of them where it happened, folded (sideGroup).
+  let headed = null;
+  // The sidebar's messages, each run of them where it happened, folded (sideGroup); the panel
+  // beside the thread has them all (placeSidePanel).
   const sidebar = sideList(key);
+  const runs = [];
   let si = 0;
   const sideUntil = (at) => {
     const run = [];
     while (si < sidebar.length && (at === null || sidebar[si].at < at)) { run.push(sidebar[si]); si += 1; }
-    // After the thread's latest message (and the agent's note), in sidebar mode with nothing
-    // said yet: the place where the conversation will show.
-    if (!run.length && (at !== null || side.key !== key || !canSide(key))) return;
-    items.push({ html: sideGroup(key, run, { last: si === sidebar.length, trailing: at === null }) });
+    const where = { run, last: si === sidebar.length, trailing: at === null };
+    if (run.length) runs.push(where);
+    // After the thread's latest message (and the agent's note), in sidebar mode in the thread
+    // with nothing said yet: the place where the conversation will show.
+    if (!run.length && (at !== null || !sideInline(key))) return;
+    items.push({ html: sideGroup(key, run, where) });
     prev = null;
   };
   shown.forEach((m, i) => {
     sideUntil(m.at);
     if (gaps.has(m.thread) && (!i || m.thread !== shown[i - 1].thread)) { items.push(leftOut(gaps.get(m.thread))); gaps.delete(m.thread); }
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
-    if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post">new post · ${clock(m.at)}</div>` }); prev = null; }
+    if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post"><span>new post · ${timeTag(m.at)}</span></div>` }); prev = null; }
     if (!group && i === 1 && thread.root_at && replies) { items.push({ html: `<div class="divider">${replies} ${replies === 1 ? 'reply' : 'replies'}</div>` }); prev = null; }
-    if (last && continues(prev, m)) last.item.html = message(last.m, last.prev, false, true);
+    if (last && continues(prev, m)) { last.followed = true; last.item.html = message(last.m, last.prev, false, true); }
     const item = { html: message(m, prev, false), enter: fresh(m) };
     items.push(item);
     last = { item, m, prev };
+    // The latest message with a header: the first of the last run of one author's.
+    if (m.author?.kind !== 'system' && !continues(prev, m)) headed = last;
     prev = m;
   });
+  // It says its day with its time (timeTag): the others have the day's divider.
+  if (headed) headed.item.html = message(headed.m, headed.prev, false, Boolean(headed.followed), true);
   if (gap) items.push({ html: `<div class="sys">${gap.toLocaleString()} later ${gap === 1 ? 'post is' : 'posts are'} not shown.</div>` });
   // The newest message, counting the ones being sent: newer than the agent's note hides it.
   const latest = shown.reduce((at, m) => (m.at > at ? m.at : at), '') || null;
@@ -3037,11 +3232,12 @@ async function openThread(key, { live = false, cached = false } = {}) {
       <div class="l1">${lead}</div>
       <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
-  const reply = side.key === key && canSide(key) ? sideComposer(key, thread)
+  const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
+  placeSidePanel(key, thread, runs);
   syncHeadMenus();
   restorePreviews(pane);
   state.shownIds = ids;
@@ -6644,11 +6840,31 @@ function fromUrl() {
   };
 }
 
+/**
+ * A click on a link the inbox opens itself, in a message of the thread or of its sidebar: a
+ * Slack link with several places to go, another thread, a channel's view of the inbox. Says
+ * whether it was one; with a modifier key it is the browser's.
+ */
+function followLink(e) {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return false;
+  const choice = e.target.closest('a[data-pile]');
+  if (choice) { e.preventDefault(); openSlackChoice(choice); return true; }
+  const jump = e.target.closest('a[data-thread]');
+  if (jump) { e.preventDefault(); closeSlackChoice(); openThread(jump.dataset.thread); return true; }
+  const inbox = e.target.closest('a[data-inbox]');
+  if (inbox) { e.preventDefault(); openInbox(inbox.getAttribute('href')); return true; }
+  return false;
+}
+
 // ---------------------------------------------------------------- narrow screens
 // Under 700px the list and the open thread take turns (`main.reading` while one is open), and
 // under 1100px the filter cards are in a drawer (`main.filtering` while it is open).
 const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
-const syncReading = () => document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
+const syncReading = () => {
+  document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
+  // The sidebar's panel is beside the thread it is about, and only there.
+  if (!sidePaneled(state.open)) hideSidePanel();
+};
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
   state.expertsOpen = null;
@@ -6704,6 +6920,43 @@ function wireRail() {
     if (main.classList.contains('railopen') && !e.target.closest('#filters')) main.classList.remove('railopen');
   }, { capture: true });
   syncRail();
+}
+
+// ---------------------------------------------------------------- the sidebar's room
+// The sidebar's panel shows where the content area, from the list's left edge to its right, is
+// this wide (px): the list at its least (380), 440 for the thread, more than a phone gives it,
+// and the panel's least (360, `--side-w` in ui/spectrum-inbox.css, which shares the room out).
+// Measured, not asked of the screen's width: the filters fold to a rail on some screens. From
+// the list's edge, not the thread's, which moves as the panel shows. Under that the
+// conversation is in the thread (sideGroup).
+const SIDE_ROOM = 1180;
+function sideRoom() {
+  if (!WIDE.matches) return false;
+  const main = document.querySelector('main');
+  const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight);
+  return right - $('threads').getBoundingClientRect().left >= SIDE_ROOM;
+}
+/** The room changed (the window, the filter rail): the sidebar you are in moves to where it shows now. */
+function syncSideRoom() {
+  const wide = sideRoom();
+  if (wide === side.wide) return;
+  const typing = document.activeElement === $('side-reply');
+  side.wide = wide;
+  if (!showSide(state.open)) hideSidePanel();
+  if (typing) $('side-reply')?.focus();
+}
+function wireSideRoom() {
+  const panel = $('side');
+  // The thread's column changes with everything that takes room from it; the panel does not
+  // change the room, only how it is shared.
+  new ResizeObserver(syncSideRoom).observe($('pane'));
+  syncSideRoom();
+  panel.onclick = (e) => {
+    if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
+    followLink(e);
+  };
+  // Esc closes it from anywhere in it, as from its box (wireSide).
+  panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
 }
 
 // The filter drawer's swipes: one to the right over the list pulls it in, one to the left over
@@ -6926,6 +7179,7 @@ async function start() {
   wireDrawerSwipes();
   wireHeadAway();
   wireRail();
+  wireSideRoom();
   wireLogos();
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
@@ -6935,6 +7189,8 @@ async function start() {
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;
+      // Beside the thread where there is room; else unfolded where it is.
+      if (side.wide) { enterSide(state.open, { at: id }); return; }
       if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
       showSide(state.open);
       return;
@@ -6944,13 +7200,7 @@ async function start() {
     if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
     // A link picked from a dropdown opens in a new tab; the dropdown closes.
     if (e.target.closest('.ph .hmpop a')) closeHeadMenus();
-    const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button;
-    const choice = e.target.closest('a[data-pile]');
-    if (choice && !modified) { e.preventDefault(); openSlackChoice(choice); return; }
-    const jump = e.target.closest('a[data-thread]');
-    if (jump && !modified) { e.preventDefault(); closeSlackChoice(); openThread(jump.dataset.thread); return; }
-    const inbox = e.target.closest('a[data-inbox]');
-    if (inbox && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)) { e.preventDefault(); openInbox(inbox.getAttribute('href')); return; }
+    if (followLink(e)) return;
     const retry = e.target.closest('[data-retry]');
     if (retry) { retrySend(retry.dataset.retry); return; }
     const unsend = e.target.closest('[data-unsend]');

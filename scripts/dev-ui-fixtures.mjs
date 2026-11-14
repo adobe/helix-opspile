@@ -1191,12 +1191,15 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
     // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
-    // thread, between Dana's question and Sam's answer.
+    // thread, between Dana's question and Sam's answer. Dana asked it after that: a second
+    // conversation, under the thread. A wide screen shows both in the panel beside the thread.
     sidebar: [
       ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
       ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
       ['lena', 82, 'So it could be their rewrite?'],
       ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
+      ['dana', 64, 'Does the rewrite Sam sent explain it?'],
+      ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
     ],
   });
 
@@ -1347,6 +1350,33 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     reads: { dana: 'latest', priya: 'latest' },
     label: {
       kind: 'question', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8,
+    },
+  });
+
+  // A thread that went on for more than a year and was last heard of yesterday: its latest
+  // message says its day with its time ("Yesterday at 12:02 PM"), the others the time alone,
+  // as the day is in the divider, which stays on top while its messages scroll by (and says
+  // the year of another year). Pointing at any time shows the whole date. A short reply under
+  // a long header, and Dana's own, which have the pen beside their quick reactions.
+  const noonBefore = (n) => {
+    const d = new Date(now);
+    const noon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 12);
+    return Math.round((now - noon.getTime()) / MIN);
+  };
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', noonBefore(430), 'Could the image CDN keep the original file names in its URLs? Our analytics group by them.'],
+      ['priya', noonBefore(430) - 25, 'Yes.'],
+      ['ola', noonBefore(6), 'It is back to hashed names since last week\'s release. Was that intended?'],
+      ['dana', noonBefore(6) - 40, 'It was not: the release dropped the setting. I am putting it back.'],
+      ['ola', noonBefore(1), 'Thanks. The names are right on preview, live still has the hashed ones.'],
+      ['dana', noonBefore(1) - 2, 'Live follows with tonight\'s publish.'],
+      ['dana', noonBefore(1) - 3, 'I will check it in the morning.'],
+    ],
+    reads: { dana: 'latest', priya: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.7, topics: ['publishing'],
     },
   });
 

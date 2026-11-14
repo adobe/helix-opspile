@@ -68,7 +68,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .fr .not:hover { color: var(--red); box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
 .fr.off .not { opacity: 1; pointer-events: auto; color: var(--red); background: none; }
 .fr.off .lab { text-decoration: line-through; color: var(--mute); }
-.fr.off .ind, .fr.off .ico, .fr.off .bar { opacity: 0.4; }
+.fr.off .ind, .fr.off .ico, .fr.off .bar, .fr.off .logo { opacity: 0.4; }
 @media (hover: none) { .fr .not { opacity: 0.6; pointer-events: auto; } }
 .fr .ind { width: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); height: var(--spectrum-spacing-300); background: var(--faint); }
 .fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
@@ -421,8 +421,16 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .expertlist small { display: block; font-size: var(--spectrum-font-size-50); color: var(--mute); }
 .expertlist li { display: flex; align-items: flex-start; }
 
-.feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); }
-.day { text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 0 var(--spectrum-spacing-100); }
+/* The feed is a size container: a message's header line is as wide as the feed
+   (`--msg-line`), which is how its quick reactions know whether they have room on it. */
+.feed { padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-600); container: feed / inline-size; }
+/* The day stays on top while its messages scroll by, so a long day's messages still say which
+   day they are of: a band of the pane's color, as wide as the feed, which covers the day before
+   it whatever the two are called (a pill alone would leave the ends of a longer one showing).
+   Its padding is the room it had as margins, so nothing in the feed moved; what scrolls under
+   it fades out below it. Under the quick reactions and the picker, over the rest of a message. */
+.day { position: sticky; top: 0; z-index: 2; text-align: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300) - var(--spectrum-spacing-100)) 0 calc(-1 * var(--spectrum-spacing-75)); padding: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-75); background: var(--pane); }
+.day::after { content: ""; position: absolute; inset: 100% 0 auto; height: var(--spectrum-spacing-75); background: linear-gradient(var(--pane), transparent); pointer-events: none; }
 
 .divider { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
 .divider::after { content: ""; flex: 1; border-top: var(--spectrum-border-width-100) solid var(--line); }
@@ -440,7 +448,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .bubble-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); padding: var(--spectrum-border-width-200); box-sizing: border-box; border-radius: 50%; pointer-events: none; }
 
 /* The sidebar (ui/inbox.js, "the sidebar"): a conversation with the thread's agent, folded to one
-   line in the feed where it happened, and unfolded below it; the reply box in sidebar mode. */
+   line in the feed where it happened, and unfolded below it; the reply box in sidebar mode. On a
+   wide screen it is unfolded in a panel beside the thread instead (`#side`, below). */
 .sidechat { margin: var(--spectrum-spacing-200) 0; }
 .sidechat .sc-head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%; text-align: left; font: inherit; cursor: pointer; }
 .sidechat.live .sc-head { cursor: default; }
@@ -449,28 +458,59 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sidechat .faces .av + .av { margin-left: calc(-1 * var(--spectrum-spacing-50)); }
 .sidechat .sc-what { flex: 1; min-width: 0; }
 .sidechat .sc-meta { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75); }
-.sidechat .chev { flex: none; transition: transform var(--spectrum-animation-duration-100) ease-out; }
+.sidechat .chev { flex: none; margin-left: var(--spectrum-spacing-50); transition: transform var(--spectrum-animation-duration-100) ease-out; }
 .sidechat.open .chev { transform: rotate(90deg); }
-.sidechat .sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
-.sidechat .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
-.sidechat .sm.person { flex-direction: row-reverse; }
-.sidechat .sm .face { position: relative; flex: none; }
-.sidechat .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
-.sidechat .sm.person .col { align-items: flex-end; }
-.sidechat .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
-.sidechat .sm.pending .bubble { opacity: .7; }
-.sidechat .sc-foot { display: flex; justify-content: center; }
-.sidechat .sc-continue { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); font: inherit; cursor: pointer; }
-.sidechat :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
-.sidechat .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
+/* Beside the panel the thread's column is narrower: what the line counts goes under who talked. */
+.sidechat.paneled .sc-head { flex-wrap: wrap; }
+.sidechat.paneled .sc-what { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
+.sidechat.paneled .sc-meta { margin-left: auto; }
+/* What a conversation shows (`.sc-body`): under its line in the feed, or in the panel. */
+.sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
+.sc-body .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
+.sc-body .sm.person { flex-direction: row-reverse; }
+.sc-body .sm .face { position: relative; flex: none; }
+.sc-body .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
+.sc-body .sm.person .col { align-items: flex-end; }
+.sc-body .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
+.sc-body .sm.pending .bubble { opacity: .7; }
+.sc-body .sc-foot { display: flex; justify-content: center; }
+.sc-body .sc-continue { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); font: inherit; cursor: pointer; }
+.sc-body :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
+.sc-body .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
 .sidechat.blank .sc-body { padding-top: var(--spectrum-spacing-200); }
 .composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
 .composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 .composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
 .composer.sidebar .side-bar { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-100); }
-.composer.sidebar .side-bar .face { position: relative; flex: none; }
-.composer.sidebar .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+:is(.side-bar, .sp-head) .face { position: relative; flex: none; }
+.side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
+/* The sidebar beside the thread (placeSidePanel): a panel at the right edge of the thread's
+   column, which makes room for it. While it shows, the content area is shared 3 : 5 : 3 between
+   the list, the thread and the panel: the thread, which has the code and the logs, stays the
+   widest by far, and what flanks it is as wide on either side. So the list gives up room too
+   (its rows keep their height, and end in an ellipsis sooner), down to its least width; the
+   panel is 3 of the thread's column's 8, 360px at least, and 560px at most, where its lines get
+   too long to read. It shows where the three have room (syncSideRoom in ui/inbox.js, which
+   these widths are part of). Its top, its conversations, which scroll, and its box, as the
+   thread's are. */
+main { --nav-w: var(--filters-w); --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 70)); }
+main.rail { --nav-w: var(--rail); }
+main.siding { grid-template-columns: var(--nav-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), calc((100% - var(--nav-w)) * 3 / 11)) 1fr; }
+#side { grid-row: 1; grid-column: 3; justify-self: end; width: var(--side-w); display: flex; flex-direction: column; overflow: hidden; }
+#side[hidden] { display: none; }
+main.siding #pane { margin-right: var(--side-w); }
+#side .sp-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+#side .sp-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
+#side .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
+#side .sc-body { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-300) var(--spectrum-spacing-400); }
+#side .sc-body .sm .col { max-width: 88%; }
+#side .sp-when { text-align: center; margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-50); }
+#side .sp-when:first-child { margin-top: 0px; }
+#side .sc-wait.blank { margin: auto 0; padding: var(--spectrum-spacing-400) 0; }
+#side .scroller:has(.sc-wait.blank) { display: flex; flex-direction: column; }
+#side .scroller:has(.sc-wait.blank) .sc-body { flex: 1; }
+#side .composer { padding-left: var(--spectrum-spacing-300); padding-right: var(--spectrum-spacing-300); }
 .msg .face .badge-ico { position: absolute; right: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300);
  border: var(--spectrum-border-width-200) solid var(--pane); }
 /* A run of one author's messages: the name above the first, the avatar beside the last. */
@@ -478,7 +518,17 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .msg.adobe { flex-direction: row-reverse; }
 .msg .col { max-width: min(74%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .msg.adobe .col { align-items: flex-end; }
+/* The header line: who and when, then the quick reactions (below, with their rules). It is as
+   wide as the feed has room beside the avatar (`--msg-line`), not as the bubble, and takes none
+   of the column's width (the margin takes it back): the bubble alone says how wide a message
+   is. Its lines stack upwards (wrap-reverse), so their start, where its items are held, is the
+   bottom: the bubble's top edge. */
+.msg { --msg-line: calc(100cqw - var(--spectrum-spacing-75) - var(--spectrum-spacing-500) - var(--spectrum-spacing-50) - var(--spectrum-spacing-100)); }
+.msg .head { flex: none; display: flex; flex-wrap: wrap-reverse; align-items: flex-start; width: var(--msg-line); margin-right: calc(-1 * var(--msg-line)); }
+.msg.adobe .head { flex-direction: row-reverse; margin-right: 0; margin-left: calc(-1 * var(--msg-line)); }
 .msg .who { margin: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
+.msg .head .who { min-width: 0; margin-right: 0; }
+.msg.adobe .head .who { margin-right: var(--spectrum-spacing-200); margin-left: 0; }
 
 .msg.cont .who { display: none; }
 .bubble { background: var(--them);
@@ -931,14 +981,25 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .srcpop .view .none { margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--mute); font-size: var(--spectrum-font-size-100); }
 .srcpop .view .none a { color: var(--link); }
 .srcpop iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--spectrum-white); }
-/* Quick reactions on hovering a message, like Slack: held at the avatar's side of the bubble, so
-   a short one's row grows into the pane, not past its edge. They show once the pointer has rested
-   on the message for a moment, not as it passes over the thread; focus shows them at once. */
-.msg .quick { position: absolute; top: calc(-1 * (var(--spectrum-spacing-50) + var(--spectrum-spacing-200))); left: var(--spectrum-spacing-100); z-index: 3; display: flex;
- visibility: hidden; transition: visibility var(--spectrum-animation-duration-0); }
-.msg.adobe .quick { left: auto; right: var(--spectrum-spacing-100); }
-.msg:hover .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
-.msg .quick:focus-within { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
+/* Quick reactions on hovering a message's bubble, like Slack. They are the bubble's: the name
+   has the profile card and the time its whole date, so pointing at the header shows neither
+   under a bar. They sit on the header line, after the time and just over the bubble's top
+   edge, and stay while the pointer is on them. Where the line has no room for both (a narrow
+   pane, a long name) they wrap to a line of their own above the header (the header line's
+   wrap-reverse), at the avatar's side, so they grow into the pane. A message that goes on from
+   the one before has no header: over its bubble's top edge, as before.
+   `.quick-at` is their place in the line: as wide as they are, so the line knows when to
+   wrap, and of no height, so neither line makes the message any taller.
+   They show once the pointer has rested on the bubble for a moment, not as it passes over the
+   thread, and go a moment after it left, which is the time it has to reach them across the
+   header, or from a bubble shorter than its header; focus, and their open picker, show them
+   at once. */
+.msg .quick-at { flex: none; display: flex; align-items: flex-end; height: 0; margin: 0 var(--spectrum-spacing-100); }
+.msg .quick { position: relative; top: var(--spectrum-spacing-50); z-index: 3; flex: none; display: flex;
+ visibility: hidden; transition: visibility var(--spectrum-animation-duration-0) linear var(--spectrum-animation-duration-1000); }
+.msg.cont .quick { top: var(--spectrum-spacing-300); }
+.msg:has(.bubble:hover) .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
+.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
 .msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
 .msg .quick button[aria-pressed="true"] { background: var(--sel); }
@@ -1033,6 +1094,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 [data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg .who b[data-p] { cursor: default; }
 .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+/* The time says its whole date when pointed at, as the name shows its card: in the thread, and
+   in the sidebar's messages wherever they show. */
+.feed time[title], .sc-body time[title] { cursor: default; }
+.feed time[title]:hover, .sc-body time[title]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
 .pcard { position: fixed; z-index: 20; width: calc(var(--spectrum-spacing-100) * 36 + var(--spectrum-spacing-50)); padding: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-75); background: var(--card);
   border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 var(--spectrum-spacing-100) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-400)) var(--spectrum-transparent-black-400); }
 .pcard[hidden] { display: none; }
@@ -1192,9 +1257,11 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
      over its top, which leaves it room, moved up as far as the thread scrolled. */
   #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
   #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
+  /* The day stays under the header, which is that room, as far as the header is in view. */
+  .day { top: calc(-1 * var(--ph-off, 0px)); }
   .ph h2 { flex-wrap: wrap; }
   .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
-  .msg { gap: var(--spectrum-spacing-100); }
+  .msg { gap: var(--spectrum-spacing-100); --msg-line: calc(100cqw - var(--spectrum-spacing-500) + var(--spectrum-spacing-50) - var(--spectrum-spacing-100)); }
   .msg .face { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); }
   .msg .face .av { width: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-500) - var(--spectrum-spacing-50)); font-size: var(--spectrum-font-size-50); }
   .msg .col { max-width: calc(100% - calc(var(--spectrum-spacing-600) - var(--spectrum-spacing-50))); }
@@ -1651,8 +1718,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-large-default);
   background: var(--spectrum-purple-subtle-background-color-default);
 }
-/* The one you are writing in has an edge, as a field with the focus has. */
-.spectrum .sidechat.live { border-color: var(--spectrum-purple-visual-color); }
+/* The one you are writing in has an edge, as a field with the focus has; so have the ones the
+   panel beside the thread shows. */
+.spectrum .sidechat:is(.live, .paneled) { border-color: var(--spectrum-purple-visual-color); }
 .spectrum .sidechat .sc-head {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
   border: 0;
@@ -1667,16 +1735,16 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .sidechat .sc-meta, .spectrum .sidechat .chev { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .sidechat .faces .av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-purple-subtle-background-color-default); font-size: var(--spectrum-font-size-50); }
 .spectrum .sidechat .sc-body { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200) var(--spectrum-spacing-200); }
-.spectrum .sidechat .sm .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .sidechat .sm .who b { color: var(--spectrum-neutral-content-color-default); }
-.spectrum .sidechat .sm .bubble { border-radius: var(--spectrum-corner-radius-extra-large-default); }
-.spectrum .sidechat .sm.person .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); }
-.spectrum .sidechat .sm.person .bubble a { color: var(--spectrum-white); }
-.spectrum .sidechat .sm.person .bubble code { background: var(--spectrum-transparent-black-400); }
-.spectrum .sidechat .sm.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .sidechat .sm.agent.working .bubble { border-style: solid; }
-.spectrum .sidechat .sm.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
-.spectrum .sidechat .spin {
+.spectrum .sc-body .sm .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sc-body .sm .who b { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .sm .bubble { border-radius: var(--spectrum-corner-radius-extra-large-default); }
+.spectrum .sc-body .sm.person .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); }
+.spectrum .sc-body .sm.person .bubble a { color: var(--spectrum-white); }
+.spectrum .sc-body .sm.person .bubble code { background: var(--spectrum-transparent-black-400); }
+.spectrum .sc-body .sm.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .sm.agent.working .bubble { border-style: solid; }
+.spectrum .sc-body .sm.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum :is(.sidechat, .sc-body) .spin {
   display: inline-block;
   border-radius: 50%;
   width: var(--spectrum-progress-circle-size-small);
@@ -1688,9 +1756,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   animation: spin var(--spectrum-animation-duration-2000) linear infinite;
 }
 .spectrum .sidechat .sc-meta .spin { margin-right: 0; }
-@media (prefers-reduced-motion: reduce) { .spectrum .sidechat .spin { animation: none; } }
-.spectrum .sidechat .sc-wait { text-align: center; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .sidechat .sc-continue {
+@media (prefers-reduced-motion: reduce) { .spectrum :is(.sidechat, .sc-body) .spin { animation: none; } }
+.spectrum .sc-body .sc-wait { text-align: center; font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .sc-body .sc-continue {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
   border-radius: calc(var(--spectrum-component-height-100) / 2);
@@ -1699,8 +1767,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-size: var(--spectrum-font-size-75);
   font-weight: var(--spectrum-bold-font-weight);
 }
-.spectrum .sidechat .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
-.spectrum .sidechat :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+.spectrum .sc-body .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 .spectrum .composer .sidebtn {
   width: var(--spectrum-component-height-200);
   height: var(--spectrum-component-height-200);
@@ -1714,9 +1782,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: var(--spectrum-purple-subtle-background-color-default);
   border-top: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
 }
-.spectrum .composer.sidebar .side-bar { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .composer.sidebar .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
-.spectrum .composer.sidebar .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum :is(.side-bar, .sp-head) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
+.spectrum .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .composer.sidebar .side-exit {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
@@ -1732,6 +1800,33 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .composer.sidebar textarea:focus { border-color: var(--spectrum-purple-1000); border-style: solid; }
 .spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
 .spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
+/* The sidebar's panel: the thread's column ends where it starts, and it has the content area's
+   right corners. All of it is in the sidebar's purple, half as strong as a line in the thread
+   is, as it is much more of the page; its top and its box are divided from what scrolls
+   between them as the thread's are, in purple. ✕ is a quiet ActionButton. */
+.spectrum #side {
+  --side-line: color-mix(in srgb, var(--spectrum-purple-visual-color) 25%, transparent);
+  background: color-mix(in srgb, var(--spectrum-purple-subtle-background-color-default) 50%, var(--content));
+  border-left: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
+  border-radius: 0px var(--content-radius) var(--content-radius) 0px;
+}
+.spectrum main.siding #pane { border-radius: 0px; }
+.spectrum #side .sp-close {
+  width: var(--spectrum-component-height-100);
+  height: var(--spectrum-component-height-100);
+  border: 0;
+  border-radius: var(--s2-radius);
+  background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+  transition: background-color var(--s2-ease);
+}
+.spectrum #side .sp-close:hover { background: color-mix(in srgb, var(--spectrum-purple-visual-color) 15%, transparent); }
+.spectrum #side .sp-close:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #side .sp-when { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); transition: color var(--s2-ease); }
+/* The conversation whose line was picked in the thread, for a moment. */
+.spectrum #side .sp-when.found { color: var(--spectrum-purple-1000); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #side .sp-head { border-bottom: var(--spectrum-border-width-100) solid var(--side-line); }
+.spectrum #side .composer.sidebar { border-top: var(--spectrum-border-width-100) solid var(--side-line); background: none; }
 .spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);
@@ -2376,9 +2471,10 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    and name, and the list by customer until one is picked: each customer a heading over its
    threads. Its one mark is red: the badge counts the messages that mention you and that you
    have not read, beside a customer, and the threads it counts are marked in the same red.
-   Unread is bold; nothing else is red, nothing else has a count. */
+   Unread is bold; nothing else is red, nothing else has a count. A customer's \2260 excludes
+   it, as on the expert view's cards: over the end of its name, before the badge. */
 main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
-main.simple .fr .lab { grid-column: 2; }
+main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
 /* A logo: the icon over the customer's initial, which shows where there is none. */
