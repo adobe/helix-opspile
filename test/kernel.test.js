@@ -20,7 +20,7 @@ import {
   isImageName, listImages, readImage,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageMount, isRuntime, overWorkspace, patientFs, runtimeFor,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, overWorkspace, patientFs, runtimeFor,
   RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
 } from '../src/agent/kernel.js';
 import {
@@ -355,19 +355,15 @@ describe('a kernel\'s image, from the bucket', () => {
     assert.equal(gets.length, 4);
   });
 
-  it('is mounted read-only, at the place the kernel looks for its commands', async () => {
-    const { bucket, data } = stack();
-    const driver = imageDriver(bucket, await imageTree(bucket, data));
-    const spec = imageMount(data, IMAGE_ROOT, driver);
-    assert.deepEqual([spec.type, spec.source, spec.target, spec.options], [
-      'image', `data@${data.digest.slice(0, 12)}`, '/opt/image', { ro: '' },
-    ]);
+  it('is mounted read-only, at the place the kernel looks for its commands', () => {
+    const { data } = stack();
+    assert.deepEqual(imageSpec(data, IMAGE_ROOT), {
+      type: 'image',
+      source: `data@${data.digest.slice(0, 12)}`,
+      target: '/opt/image',
+      options: { ro: '' },
+    });
     assert.equal(IMAGE_COMMANDS, '/opt/image/node_modules');
-    // The kernel finds the driver under the key its bundles share (its inProcessMount).
-    const inProcess = spec[Symbol.for('slicc-kernel.mount.in-process')];
-    assert.equal(inProcess.handlers, driver.handlers);
-    assert.equal(inProcess.capabilities, driver.capabilities);
-    assert.equal(typeof inProcess.served, 'function');
   });
 
   it('is read from the bucket by name, and listed by its index', async () => {

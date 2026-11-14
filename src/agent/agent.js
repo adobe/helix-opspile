@@ -23,7 +23,8 @@ import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
 import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import {
-  attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, sliccBackend,
+  attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, inProcessMount,
+  sliccBackend,
 } from '@ai-ecoverse/slicc-kernel/cloudflare';
 import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 // wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
@@ -44,7 +45,7 @@ import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageMount, overWorkspace, shellFor,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, overWorkspace, shellFor,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -427,7 +428,10 @@ export class ThreadAgent extends Agent {
         } finally {
           await client.close();
         }
-        await kernel.mount(imageMount(image, IMAGE_ROOT, imageDriver(this.env.IMAGES, tree)));
+        await kernel.mount(inProcessMount(
+          imageSpec(image, IMAGE_ROOT),
+          imageDriver(this.env.IMAGES, tree),
+        ));
       } catch (e) {
         kernel.terminate();
         throw e;

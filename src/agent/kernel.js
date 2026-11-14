@@ -24,7 +24,7 @@ import { DEFAULT_IMAGE, isImageName } from './image.js';
  * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
- * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageMount`).
+ * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageSpec`).
  * The agent's object keeps no copy of it.
  *
  * Its programs reach the network through the kernel's proxy, which hands every request to a
@@ -144,18 +144,16 @@ export function gatewayFetch(send) {
 }
 
 /**
- * What a kernel's `mount` takes for `image` (a manifest) at `target`, served by `driver`
- * (`imageDriver`, src/agent/image.js) in the agent's own object. It is the kernel's
- * `inProcessMount`, which no release exports yet (slicc-kernel#1831): the key is the one
- * its bundles share, and `served` is given because 1.185.0 starts no driver without it.
+ * Where and as what a kernel mounts `image` (a manifest) at `target`: read-only, named by the
+ * image and the start of its digest, as `/proc/mounts` and `df` show it. The agent's object
+ * serves it (`imageDriver`, src/agent/image.js) through the kernel's `inProcessMount`.
  */
-export function imageMount(image, target, driver) {
+export function imageSpec(image, target) {
   return {
     type: 'image',
     source: `${image.name}@${image.digest.slice(0, 12)}`,
     target,
     options: { ro: '' },
-    [Symbol.for('slicc-kernel.mount.in-process')]: { ...driver, served: () => {} },
   };
 }
 

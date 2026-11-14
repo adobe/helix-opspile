@@ -53,7 +53,7 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@ai-ecoverse/slicc-kernel": "1.185.0",
+    "@ai-ecoverse/slicc-kernel": "1.186.0",
     "@ai-ecoverse/wasm-tls-engine": "4.2.0-12",
     "@cloudflare/computer": "0.8.0",
     "@codemirror/commands": "6.11.1",
