@@ -15,6 +15,7 @@
     "computer:dev": "node scripts/dev-computer/dev.mjs",
     "computer:images": "node scripts/computer-images.mjs --upload",
     "rank": "node scripts/rank.mjs",
+    "response:backtest": "node scripts/response-backtest.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",
     "pretest": "npm run build --silent",

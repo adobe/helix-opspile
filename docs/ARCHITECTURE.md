@@ -1219,9 +1219,21 @@ without an account on the thread's platform, who could not be mentioned. Someone
 accounts there is listed once, by their account for the thread ("One account a person"), with
 the signals of all of them.
 
-A response time is the median between a mention and the person's next post in that thread (a
-re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
-included. It is only said with at least three answered mentions, most of those made. "Not in this
+A response time comes from a small hierarchical model (`src/response-model.js`) of the last 180
+days. It measures from a customer's message to the first post of someone new to the thread (a
+re-threaded group as one); whoever is already active there is left out, and so is a first post
+no customer came before. That time runs on the person's own clock: each hour counts for as
+much as they usually post in it (UTC hour of day, weekdays and weekends apart, pooled with
+everyone's while they have few posts), so their hours stand for their timezone and a question
+asked as they log off has not waited all night. The log of it is a typical value, plus what the
+channel and then the person add, each counting for as much as its data can carry, and left out
+when its groups do not differ beyond chance. The model is fit per isolate, once an hour; asked
+about now, it runs the person's clock forward and says the minutes on the wall. (Hour and day
+effects on wall-clock time, tried first, did no better than one number for everyone.) It only
+knows who did answer,
+so a time is only said with at least three such answers, and most mentions of the person
+answered in the thread. `npm run response:backtest` says whether the model beats one number for
+everyone. "Not in this
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
