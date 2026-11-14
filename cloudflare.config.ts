@@ -145,6 +145,9 @@ function resources(mode: string | undefined) {
     // Copies of the files attached to messages, for agents' computers (src/threadfiles.js).
     // Its lifecycle rule deletes them after 30 days; `cf deploy` does not set it: see README.
     FILES: bindings.r2({ name: `helix-opspile-files${suffix}` }),
+    // The images of the agents' computers on the SLICC kernel (src/agent/image.js), which
+    // `npm run computer:images` uploads after a deploy made the bucket.
+    IMAGES: bindings.r2({ name: `helix-opspile-images${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
     // Workers AI: Clef (thread labels) and Clairic (facts).
@@ -179,7 +182,7 @@ function cogsResources(mode: string | undefined, worker: string) {
     worker,
     dataset: `helix-opspile-usage${suffix}`,
     artifacts: `helix-opspile${suffix}`,
-    buckets: ['raw', 'channels', 'files'].map((b) => `helix-opspile-${b}${suffix}`),
+    buckets: ['raw', 'channels', 'files', 'images'].map((b) => `helix-opspile-${b}${suffix}`),
     indexes: ['roots', 'content'].map((i) => `helix-opspile-${i}${suffix}`),
   });
 }

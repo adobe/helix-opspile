@@ -18,6 +18,7 @@ import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
+import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
 import { fakeBucket } from '../test/fakes.js';
@@ -550,6 +551,21 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // which runs extraction scripts (src/extract.js) in this process, with network access: the
     // preview's scripts are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
+    // The images of the computers on the SLICC kernel, as the bucket lists them
+    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes.
+    IMAGES: fakeBucket({
+      'images/index.json': JSON.stringify({
+        v: 2,
+        images: IMAGES.map((image, i) => ({
+          name: image.name,
+          title: image.title,
+          description: image.description,
+          digest: `dev-${image.name}`,
+          bytes: (10 + 6 * i) * 1024 * 1024,
+          layers: layerNames(image),
+        })),
+      }),
+    }),
     LOADER: {
       get: (id, make) => ({
         getEntrypoint: () => ({
@@ -590,6 +606,11 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+  // The admin team gave platform ops' computers the SLICC kernel as their shell, with the
+  // image for working on data.
+  DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
+    VALUES ('computer', 'platform', 'runtime', 'slicc-kernel', 'Dana', '2026-10-26T09:00:00Z'),
+      ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
   // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
   // technology of its own, and one of the admin team's turned off for its channels.
   DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,

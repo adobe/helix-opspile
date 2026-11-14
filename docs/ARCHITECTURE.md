@@ -1748,6 +1748,96 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
+**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
+does not run. The admin team can give a team's agents another shell (`runtime`, a row of
+`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
+Computer tool's row of the team's knowledge base): GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
+`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
+the default. An agent follows its team's choice before each delivery, as it follows its tools
+(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+
+- **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
+  process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
+  network of its own and asks the kernel for every system call over Workers RPC. It is a
+  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
+  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
+  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
+- **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
+  Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
+  tables of its own (`slicc_*`). Output that was too long is saved under
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`), so
+  writing into the read-only uploads fails where it happens. The kernel's driver makes its
+  mount point with `mkdir -p`, which the Workspace refuses in a directory with a read-only
+  mount: `patientFs` answers it when the directory is there.
+- **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
+  by what a computer is for. An image is a stack of read-only layers, as a container image
+  is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
+  the admin team chooses one per team, next to the shell (`image`, another row of
+  `agent_tool_options`; `base` without one).
+  - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
+    top of those of the image it is `from`, and where two layers have a path, the upper one's
+    file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
+    defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
+    ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
+    and cmp, tree, which, rev, column, hexdump), `archive` (gzip, tar, zip and unzip), `net`
+    (curl), `js` (qjs) and `data` (ripgrep, sqlite3, strings). `base` is the first five, and
+    `data` is `from: 'base'` with the sixth. An image names what the agent is told it has (`tools`), and
+    the build fails if that names a command the image lacks.
+  - **In the bucket**, everything but the images and their index is named by its content, and
+    never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
+    modes and hashes of its files, with small files (a package's manifest) in it;
+    `images/<name>.json` is an image's manifest, its layers by digest, its commands and a
+    `digest` of the stack; `images/index.json` lists the images for the editor. An Emscripten
+    program's JavaScript glue is an empty file: the kernel runs the program without it in a
+    Worker, but finds the command by it.
+  - **Uploading.** `npm run computer:images -- --mode prod` (the deploy job runs it after
+    `cf deploy`, which makes the bucket) sends the blobs of the layers the bucket lacks, then
+    those layers, then the manifests, then the index, so a kernel that boots meanwhile finds
+    an image whole. It never deletes: a layer no image names any more stays, and a kernel
+    that runs an older image keeps reading it.
+  - **Mounting.** When a kernel boots, it reads the team's image, its layers (each checked
+    against its digest) and merges them into one tree (`imageTree`), which it mounts
+    read-only at `/opt/image`, as a file system the agent's object serves itself
+    (`imageDriver`, the kernel's in-process mount). `/opt/image/node_modules` is a command
+    root of the kernel (`commands.append`), so the image's programs are in `/usr/bin`. A
+    file's bytes come from the bucket when a program first reads it, checked against its
+    hash. Nothing of the image is written to the object's SQLite, so changing a team's image
+    costs a boot (some 50 ms), and every write to `/opt/image` fails (`EROFS`). A boot without
+    the bucket, the image or one of its layers fails and says so: the command answers "the
+    computer failed".
+  - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
+    read for every agent in its isolate: the trees of the last 8 images, and blobs up to
+    32 MB, the least recently used going first. A new isolate reads them again.
+  - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
+    whether it has `jq`. So the prompt cannot name a program the image lacks.
+- **Its network.** The kernel's programs reach the network through its proxy, which hands
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
+  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
+  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
+  again.
+- **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
+  `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
+  loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
+  run time. Workers allow neither, so the Worker carries the engine itself (a dependency,
+  0.25 MB compressed: wrangler compiles the `.wasm` import at build) and passes it in
+  (`network.tlsEngine`, `compiledTlsEngine`). The real TLS connection is `fetch`'s: a server
+  whose certificate Cloudflare refuses answers curl as an HTTP error (526), not as a TLS
+  error, so `curl` without `-f` exits 0 on it.
+- **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
+  second one, so `pthread_create` fails with `EAGAIN`. jq declares 64 MiB of memory, a whole
+  Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+- **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
+  program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
+  which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
+  `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
+  so where its image has it.
+- **What it does not have:** python, and `yq`, `xan` and `html-to-markdown`, which just-bash
+  has.
+
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
 it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and never shown

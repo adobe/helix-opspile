@@ -100,3 +100,7 @@ jobs:
           npx cf d1 migrations apply "$id"
       - name: Deploy
         run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"
+      # The images of the agents' computers on the SLICC kernel (scripts/computer-images.mjs),
+      # into the bucket the deploy made: only what changed since the last upload.
+      - name: Upload computer images
+        run: npm run computer:images -- --mode prod

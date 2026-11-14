@@ -438,6 +438,24 @@ describe('a command request', () => {
       await quiet(() => settled(slow));
       assert.equal((await requestOf(e, request.id)).status, 'timeout');
       assert.match(told(slow)[0], /^Ada \(Adobe staff\) ran the command .* It was stopped after 5 s, its timeout, before it finished\..*<stdout>\nhalf\n<\/stdout>/s);
+
+      // The kernel's shell says it with the signal that ended bash; to just-bash that is an
+      // exit code like any other.
+      const killed = async () => {
+        mock.timers.tick(5000);
+        return { exitCode: 143, stdout: 'half\n', stderr: '' };
+      };
+      const kernel = fakeAgent(e, { ws: fakeWorkspace({ result: killed }) });
+      kernel.runtime = 'slicc-kernel';
+      ({ request } = await ask(kernel, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
+      await quiet(() => runBash(kernel, { id: request.id, values: {}, by: ada }));
+      await quiet(() => settled(kernel));
+      assert.equal((await requestOf(e, request.id)).status, 'timeout');
+      const plain = fakeAgent(e, { ws: fakeWorkspace({ result: killed }) });
+      ({ request } = await ask(plain, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
+      await quiet(() => runBash(plain, { id: request.id, values: {}, by: ada }));
+      await quiet(() => settled(plain));
+      assert.deepEqual([(await requestOf(e, request.id)).status, (await requestOf(e, request.id)).exit_code], ['done', 143]);
     } finally {
       mock.timers.reset();
     }

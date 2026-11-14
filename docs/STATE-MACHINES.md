@@ -173,6 +173,25 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
+**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
+(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
+storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
+with a value this deployment does not know (written by a later one, read after a rollback), has
+just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
+tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
+command makes a new one, over the same files. An image the bucket does not have is still the
+team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
+kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
+`/tmp`): nothing reads it until the team chooses the kernel again.
+
+**Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
+every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the
+bucket (`scripts/computer-images.mjs`): blobs are written first, then the layers that name them,
+then the manifests that name the layers, then the index, so nothing ever names what is not there;
+and layers and blobs are named by their content and never deleted, so a kernel that booted on an
+older manifest goes on reading its layers after an upload. A running kernel keeps the image it
+booted with until it boots again.
+
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
 (`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
 (`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
@@ -185,7 +204,8 @@ whose object restarted is one nobody is running, which the watchdog (the timeout
 later) settles as failed. It never runs again by itself: a command may not be safe to repeat. A
 nonzero exit is `done`, not failed: the command ran. Exit code 124 is `timeout` only when the run
 took its whole timeout: the shell says it stopped a run no other way, and a command can exit with
-124 by itself. `told_at` is written last, after the agent was
+124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
+same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
 deadline, without what the command printed, which is kept nowhere.
 

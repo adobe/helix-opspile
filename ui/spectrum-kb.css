@@ -142,6 +142,8 @@ dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spe
 .ch.global .per.flat { margin-top: var(--spectrum-spacing-300); }
 .ch.global .per.flat .row2, .ch.global .per.flat .none { padding-left: 0; }
 .ch.global .per.flat .find { margin-left: 0; width: 100%; }
+/* The computer's shell: a picker, and what the chosen one is. */
+.ch.global .shell { flex-basis: 100%; min-width: 0; margin-top: var(--spectrum-spacing-300); }
 /* The computer's secrets: below its description, a row each, and the form to add one. */
 .ch.global .secrets { flex-basis: 100%; min-width: 0; margin-top: var(--spectrum-spacing-300); }
 .ch.global .secrets > .sub { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-bottom: var(--spectrum-spacing-75); }
