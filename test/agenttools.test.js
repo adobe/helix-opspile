@@ -659,10 +659,12 @@ describe('the agent\'s switchable tools', () => {
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
     assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet; a site whose certificate`));
-    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. There is no npm/);
+    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. qjs runs JavaScript \(QuickJS:/);
+    // It has a JavaScript interpreter, and is told what of node that is not.
+    assert.match(base, /It is not node: no require, no npm packages, no fetch \(use curl, and pipe to it\), no child processes\. There is no npm, node or python, and no other binaries\./);
     assert.doesNotMatch(base, /just-bash|sqlite3/);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, rg, sqlite3, strings\. curl reaches the internet;/);
+    assert.match(data, /curl, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
       // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
       assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);
@@ -677,6 +679,9 @@ describe('the agent\'s switchable tools', () => {
     }));
     assert.match(plain, /There is no jq here: read JSON with grep, sed and awk\./);
     assert.match(plain, /use its \.requests\.ndjson file with grep and awk:/);
+    // Nor is it told of a JavaScript interpreter it has not.
+    assert.doesNotMatch(plain, /qjs/);
+    assert.match(plain, /There is no npm, node or python, and no other binaries\./);
     // An image the bucket does not have (or no bucket): the agent looks for itself.
     const unknown = await guide(async () => ({ runtime: 'slicc-kernel', image: 'gone' }));
     assert.match(unknown, /The shell is GNU bash with real programs: ls \/usr\/bin lists them\. curl reaches/);

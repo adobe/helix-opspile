@@ -468,12 +468,12 @@ describe('the images this repository builds', () => {
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
-    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net']);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'js']);
     // The second image is the first one's layers, the same ones, and one more.
-    assert.deepEqual(data.layers.slice(0, 4), base.layers);
-    assert.deepEqual(data.layers.map((l) => l.name).slice(4), ['data']);
+    assert.deepEqual(data.layers.slice(0, 5), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(5), ['data']);
     assert.notEqual(base.digest, data.digest);
-    assert.equal(data.bytes, base.bytes + data.layers[4].bytes);
+    assert.equal(data.bytes, base.bytes + data.layers[5].bytes);
     // A layer and a blob are named by what they are.
     for (const l of built.layers.values()) {
       assert.equal(sha(l.body), l.digest);
@@ -497,6 +497,13 @@ describe('the images this repository builds', () => {
     }
     assert.ok(toolNames(base.tools).length > 20);
     assert.ok(commandsOf(base).includes('jq'));
+    // A WASI program has no glue: the JavaScript interpreter is its wasm and its manifest.
+    const js = built.layers.get('js').layer.files.map((f) => [f.path, Boolean(f.sha256)]);
+    assert.deepEqual(js, [
+      ['node_modules/@ai-ecoverse/wasi-quickjs/bin/qjs.wasm', true],
+      ['node_modules/@ai-ecoverse/wasi-quickjs/package.json', false],
+    ]);
+    assert.ok(commandsOf(base).includes('qjs'));
     assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
     await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
@@ -507,7 +514,7 @@ describe('the images this repository builds', () => {
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
     assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'data']);
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'js', 'data']);
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
@@ -538,7 +545,7 @@ describe('the images this repository builds', () => {
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
     assert.deepEqual(keys.slice(-3, -1), ['images/base.json', 'images/data.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 5);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 6);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);

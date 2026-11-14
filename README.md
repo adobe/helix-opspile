@@ -419,7 +419,7 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   kernel (experimental)**, GNU bash and real programs on the
   [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel), over the same files. With the
   kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, jq,
-  find, diff, curl, tar, gzip, zip) or **Data** (Base, with ripgrep, sqlite3 and strings).
+  find, diff, curl, tar, gzip, zip, and `qjs`, a JavaScript interpreter) or **Data** (Base, with ripgrep, sqlite3 and strings).
   An image is a stack of read-only layers, as a container image is, defined in
   [scripts/computer-images.mjs](scripts/computer-images.mjs). They live in the `IMAGES`
   bucket, not in the Worker, and a computer mounts its image at `/opt/image` without copying

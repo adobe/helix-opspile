@@ -85,6 +85,10 @@ export const LAYERS = {
   net: [
     { name: '@ai-ecoverse/wasm-curl' },
   ],
+  // QuickJS-NG: the kernel runs no JS programs in a Worker, so its `node` is not to be had.
+  js: [
+    { name: '@ai-ecoverse/wasi-quickjs' },
+  ],
   data: [
     { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
@@ -92,7 +96,7 @@ export const LAYERS = {
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, find, xargs, diff, cmp, tar, gzip, zip, unzip, tree, column, rev, hexdump, curl';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, find, xargs, diff, cmp, tar, gzip, zip, unzip, tree, column, rev, hexdump, curl, qjs';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -104,10 +108,10 @@ export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, jq, find, diff, tar, gzip, zip and curl:'
-      + ' for reading logs, text and JSON, and asking APIs.',
+    description: 'GNU bash, coreutils, grep, sed, gawk, jq, find, diff, tar, gzip, zip, curl and'
+      + ' qjs (JavaScript): for reading logs, text and JSON, asking APIs, and small scripts.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net'],
+    layers: ['shell', 'text', 'archive', 'net', 'js'],
   },
   {
     name: 'data',

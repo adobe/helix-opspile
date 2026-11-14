@@ -1784,8 +1784,8 @@ the default. An agent follows its team's choice before each delivery, as it foll
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
     and cmp, tree, which, rev, column, hexdump), `archive` (gzip, tar, zip and unzip), `net`
-    (curl) and `data` (ripgrep, sqlite3, strings). `base` is the first four, and `data` is
-    `from: 'base'` with the fifth. An image names what the agent is told it has (`tools`), and
+    (curl), `js` (qjs) and `data` (ripgrep, sqlite3, strings). `base` is the first five, and
+    `data` is `from: 'base'` with the sixth. An image names what the agent is told it has (`tools`), and
     the build fails if that names a command the image lacks.
   - **In the bucket**, everything but the images and their index is named by its content, and
     never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
@@ -1830,9 +1830,13 @@ the default. An agent follows its team's choice before each delivery, as it foll
 - **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
   second one, so `pthread_create` fails with `EAGAIN`. jq declares 64 MiB of memory, a whole
   Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
-- **What it does not have:** a JavaScript runtime (the kernel's `node`, slicc-jsh, is a JS
-  program, which it does not run in a Worker), python, and `yq`, `xan` and `html-to-markdown`,
-  which just-bash has.
+- **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
+  program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
+  which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
+  `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
+  so where its image has it.
+- **What it does not have:** python, and `yq`, `xan` and `html-to-markdown`, which just-bash
+  has.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
