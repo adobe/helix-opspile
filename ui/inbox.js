@@ -4615,7 +4615,13 @@ function renderBashBar(key) {
 // Where the stylesheet makes it a drawer. A screen that grows past that (a phone turned, a
 // window widened) has no drawer left to be open.
 const LINES_DRAWER = matchMedia('(max-width: 699px)');
-LINES_DRAWER.addEventListener('change', () => { if (!LINES_DRAWER.matches && linesDrawer.key) setLines(linesDrawer.key, false); });
+LINES_DRAWER.addEventListener('change', () => {
+  if (LINES_DRAWER.matches) return;
+  if (linesDrawer.key) setLines(linesDrawer.key, false);
+  // No drawer: its lines are the reply box's, and none of them inert.
+  const el = $('linesdrawer');
+  if (el) el.inert = false;
+});
 
 // The thread whose drawer is open, or null.
 const linesDrawer = { key: null };
@@ -4663,7 +4669,13 @@ function renderLines(key) {
     $('lines-title').textContent = linesTitle(chips);
   }
   tab.setAttribute('aria-expanded', String(open));
+  // Drawn again while open (the composer was replaced): it is there, it does not rise again.
+  if (!open) el.classList.remove('still');
+  else if (!el.__wired) el.classList.add('still');
   el.classList.toggle('open', open);
+  // Closed, the sheet is still there while it drops away: out of Tab's reach, as of a tap. Only
+  // where it is a drawer: on a wider screen these are the reply box's own lines.
+  el.inert = !open && LINES_DRAWER.matches;
   // A modal dialog only while it is one: on a wider screen the drawer is no box.
   const sheet = el.firstElementChild;
   const dialog = { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' };
