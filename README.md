@@ -680,14 +680,22 @@ already. `cf dev` runs the whole Worker with its own local bucket, which
 `node scripts/computer-images.mjs --upload --local` fills.
 
 Local workerd does not hold a computer to Cloudflare's limits (128 MB per Dynamic Worker,
-module sizes, 10 Dynamic Workers at once), so on every branch but main
-[.github/workflows/computer-stage.yml](.github/workflows/computer-stage.yml) deploys the same
-computer to Cloudflare as `helix-opspile-computer-stage` (`wrangler deploy --env stage`, buckets
+module sizes, 10 Dynamic Workers at once), so on a push to any branch but main that changes
+the computer, [.github/workflows/computer-stage.yml](.github/workflows/computer-stage.yml)
+deploys the same computer to Cloudflare as `helix-opspile-computer-stage` (`wrangler deploy --env stage`, buckets
 `helix-opspile-computer-stage-images` and `-files`, made by the workflow), puts the images into
 its bucket and runs the same checks there. That Worker is a shell on the internet: it answers
 only with the secret `COMPUTER_TOKEN` in `x-opspile-computer-token`, which each run makes and
 replaces with an unknown one when it ends. It needs the repository's `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID`, as the deploy does.
+`CLOUDFLARE_ACCOUNT_ID`, as the deploy does. The check waits for the Worker just deployed to
+answer (two minutes at most), and tries a request again, with a bounded backoff, when the
+network fails it or it answers 403 (the old token, while the deploy spreads), 429, or a 5xx of
+Cloudflare's own (502–504, 520–530); never the Worker's 500, nor a command that ran and failed,
+so a broken program still fails the job. What changes the computer is the workflow's `paths`:
+itself, `package.json` and its lock (the kernel, the images' programs),
+`scripts/computer-images.mjs`, `scripts/dev-computer/`, and every file of `src/` the Worker
+imports; `test/computer-stage-paths.test.js` fails when an import is missing from them, or a
+file is there that the Worker does not import, and names it.
 
 ### Measure the inbox
 
