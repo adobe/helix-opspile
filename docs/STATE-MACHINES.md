@@ -1,7 +1,7 @@
 # State machines
 
-opspile has one status column, `channel_requests.status`. Everything else that has a lifecycle
-keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
+opspile has two status columns, `channel_requests.status` and `bash_requests.status`. Everything
+else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
 
@@ -35,20 +35,27 @@ to a newer `version`, and a tombstone is final, so a replay in any order comes o
 
 **Room read flush.** idle → pending → flushed (`read:*` and the alarm, `src/room.js`). The flush
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
-have arrived. Until then the inbox has the thread unread, so the page that sent a read holds it for
-30 seconds (`readsSent`, `keepReads` in `ui/inbox.js`): a reload meanwhile shows the thread read
-unless something came in after the read.
+have arrived. The room announces a read twice: `read` when it is pending, `reads` once it is
+flushed. Until then the inbox has the thread unread, so the other pages reload on `reads`, not on
+`read` (`heardRead` in `ui/inbox.js`), and the page that sent a read holds it for 30 seconds
+(`readsSent`, `keepReads`): a reload meanwhile shows the thread read unless something came in after
+the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
-conversation's root folded by Clef that gets a person's reply in its own platform thread) split
-(`threads.logical_*`, `src/rethread.js`). `skeleton_hash` is written before the work that can fail,
-and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
+conversation's root folded by Clef that gets a person's reply in its own platform thread) splitting
+→ split (`threads.logical_*` and `split_from`, `src/rethread.js`). `skeleton_hash` is written
+before the work that can fail, and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
 hash. One that is skipped after a job died on it (its file is gone, or an edit emptied it) gets
 `rethreaded_at`, since asking again finds the same. Split is final: `logical_via = 'split'`,
 `logical_thread` cleared and `rethreaded_at` moved to the split (for the export sweep), and neither
 a forced re-threading nor a burst pulls it in again. The split is conditional on the group the root
-is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. A fold as an addressed reply
+is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. Since that write is its guard
+and comes first, it writes what is left with it: `split_from`, the group it left. While that is set,
+the split is unfinished (its root file, the burst roots that go along, the open inboxes), and the
+reply's retry, a later reply, or re-threading (which `sweepRethreads` sends out for it an hour
+after `rethreaded_at`) finishes it; each step can be done again, a burst root that moved already is
+moved again, and `split_from` is cleared last. A fold as an addressed reply
 (`logical_via = 'reply'`: the root @-mentions somebody of the conversation, minutes after its latest
 message) is never split either, like a burst member's: the conversation went on in that platform
 thread, so the replies there are the group's. Routed is final the other way:
@@ -82,7 +89,19 @@ passed, the page looks again every minute while it is on screen.
 
 **Channel filing.** filed → moving → re-filed (`src/refile.js`). "Moving" is not stored: a job's
 payload and `threads.path` say where it stands. The watermarks of what has to be redone are cleared
-before the thread row moves, since a retry compares against that row.
+before the thread row moves, since a retry compares against that row. Two things start a move: a
+rule change in the admin pages (`plan`, `enqueueMoves`), and a change in what the rules read of one
+channel (`followChange`): its name, its Teams team's name or its Slack Connect teams, from a Slack
+rename event, a Teams notice of a rename (which looks the channel up again) or a lookup that finds
+them changed (a day after the last, also from the cron). That one queues jobs only when the rules
+classify the channel differently than before, before the channel's row is written (the row is
+the guard: a failure to queue fails the job with the old row, and its retry finds the change
+again; the jobs wait 30 seconds, so they read the new row), and before the message that came
+with the change is filed: that message points its thread's row at the new folder, so a job moves both the folder it
+was queued with and the row's. A rename event older than the channel's row (`fetched_at`: out of
+order, or a replay of pile 1) changes nothing, and the write says so again, so of two handled at
+once the later wins. A job from `followChange` carries the classification it moved from (`was`):
+a thread a newer message already re-filed in its row still gets its derived data redone.
 
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
@@ -100,13 +119,21 @@ discarded (by a person, or by the agent: withdrawn). Undo is a save of the same 
 draft, by the person who discarded it, within a minute (`UNDO_SECONDS`): it deletes the discard's
 event and the draft goes on with its `created_at` and `origin`, as if it had not been discarded.
 `origin` (who saved the first version) stays through every version and every move into a group;
-`origin_body` follows only that person's saves.
+`origin_body` follows only that person's saves, and an Undo too: a discard by somebody else of a
+draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
+minute is over (pruned at the next discard and by the cron).
 
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
 makes a retry safe: `post_keys` goes claimed → answered, or is removed when the platform refused. A
 claim with no answer means nobody knows, and then only the person can decide to send it again. A key
-lasts a day, so after that Retry turns into Send again.
+lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
+way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
+and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+
+**Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
+shows on the message at once. It goes once the thread's reactions agree after the platform took it,
+when the platform refused it, or after a minute. A second click on the same emoji replaces it.
 
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
 `{ text, from, base }`). Only a box that holds the draft unchanged follows it.
@@ -142,7 +169,14 @@ that stopped half way with no run pending counts as failed after 15 minutes. A f
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
-progress is never kept.
+progress is never kept. A turn that answers a sidebar message is kept as its answer instead
+(`sidebar_messages`, below), and the row stays the turn before it.
+
+**Expert suggestion.** suggested → withdrawn, or fulfilled (`expert_suggestions`, `suggestExpert`
+in `src/experts.js`). Withdrawing deletes the row; suggesting the person again replaces it, with
+the new reason. Fulfilled is not stored: the person is in the thread (a message or a mention of
+theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
+toward the three a thread may have. Both go by the person, whichever of their accounts was named.
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
 asks again; after five in a row the spinner goes.
@@ -152,7 +186,75 @@ failed check is not a verdict: it is not stored, the queue retries the delivery,
 thread asks again.
 
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
-before the list is stored, so a failure tries again.
+before the list is stored, so a failure tries again. With the kernel, they are a read-only mount of
+the kernel too, owned by the Workspace's connection that made it (`overWorkspace`,
+`src/agent/kernel.js`): the next connection takes it away after its backend ended the one before,
+and mounts its own; closing a connection takes away only its own. One still in use when the next
+connection comes stays, read-only over the same files, and becomes the new connection's.
+
+**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
+(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
+storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
+with a value this deployment does not know (written by a later one, read after a rollback), has
+just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
+tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
+command makes a new one, over the same files. An image the bucket does not have is still the
+team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
+kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
+`/tmp`): nothing reads it until the team chooses the kernel again.
+
+**Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
+every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the
+bucket (`scripts/computer-images.mjs`): blobs are written first, then the layers that name them,
+then the manifests that name the layers, then the index, so nothing ever names what is not there;
+and layers and blobs are named by their content and never deleted, so a kernel that booted on an
+older manifest goes on reading its layers after an upload. A running kernel keeps the image it
+booted with until it boots again.
+
+**Command request.** pending → running → done, timeout or failed; pending → denied or expired
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
+(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
+other is told who did. The deadline's schedule is armed before the request is stored (a deadline
+with no request does nothing), and a request past its deadline reads as expired before the schedule
+has written it, so it cannot be run in between. A run is claimed in the agent's own object, after
+its watchdog is armed: the values a person filled in live only in that object's memory, so a run
+whose object restarted is one nobody is running, which the watchdog (the timeout and 30 seconds
+later) settles as failed. It never runs again by itself: a command may not be safe to repeat. A
+nonzero exit is `done`, not failed: the command ran. Exit code 124 is `timeout` only when the run
+took its whole timeout: the shell says it stopped a run no other way, and a command can exit with
+124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
+same condition. `told_at` is written last, after the agent was
+told how the request ended; one that ended untold (the agent's storage failed) is told at its
+deadline, without what the command printed, which is kept nowhere.
+
+**Sidebar message.** asked → answered (or failed → answered) (`sidebar_messages`, `src/sidebar.js`,
+`src/agent/sidebar.js`). The person's row is written before the agent is told, and deleted when the
+agent did not take it, so an answer is only ever kept for a message the thread has (the insert
+selects it). The answer's id is the message's with `:answer`: a turn kept twice writes one answer, a
+failed one is replaced by the next attempt's, and a finished one by nothing. It is never dated
+before its message. Whether a turn is the sidebar's is not stored: it is read from the turn's input
+(`turnSidebar`), at every `post_message`, `add_reaction` and `request_membership`, which refuse
+while it is, and when the transcript cannot be read. A delivery follows a pending sidebar message
+instead of steering into it (`whenBusy`), so no other input becomes its turn's; one that did anyway
+ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of the transcript, each
+once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
+queued right behind one does not hide it.
+
+**Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕,
+Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
+a message the inbox did not take goes back into it. Where it shows is not a state of its own: it
+is worked out from the content area's width (`side.wide`, `syncSideRoom`), whenever the
+thread's column changes its width; not from the thread's own, which the panel changes. With room, the mode is the panel beside the thread
+(`sidePaneled`), which someone who may not talk to the agent can open too, to read; without, it is
+the thread's reply box turned into the sidebar's (`sideInline`), only for who may talk to it. The
+panel is the open thread's: it goes whenever `side.key` is not the open thread (`syncReading`).
+The panel's motion is not a state either: as you enter or leave the sidebar (`side.motion`, only
+while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
+line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
+else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
+Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
+short, and entering again turns it around.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
@@ -236,7 +338,10 @@ fails on its own.
 `src/autojoin.js`). Transient errors are not recorded, and a join removes the row.
 
 **Channel member list.** unknown → complete, stale or failed (`members_at`, `members_error`). What
-reads it says nothing when it cannot be sure: a failed listing is not an empty channel.
+reads it says nothing when it cannot be sure: a failed listing is not an empty channel. Stale after
+a week; for a mention suggestion that matches nobody (`src/post.js` `mentionable`), after 30
+seconds, so someone just added is found. Whoever moves `members_at` lists it: one listing at a
+time.
 
 **Channel label.** unlabeled → labeled → stale (`channel_labels`, `src/suggest.js`). Due when the
 channel has activity, the ops teams change, or the label is a week old.
@@ -250,7 +355,9 @@ repository taken off `agent_repos` keeps its mirror.
 services whose queries answered: a failed query keeps what it counted before, and is not "nothing
 used". A day counts as rolled up for the backfill once a source has any row for it, so each source
 writes a marker row (`volume/days`, `analytics_engine/queries`) even on a quiet day. Storage is
-measured once a day, the first run of the day (`workers/subscription` is the marker).
+measured once a day, the first run of the day (`workers/subscription` is the marker); the Access
+seats separately, by the first run of the day that read them (any `zero_trust` row is the marker),
+so a failed read is tried again on the next run.
 
 **COGS hours.** missing → rolled up → rolled up again while its day is today or yesterday → deleted
 after eight days (`cogs_hours`, `src/cogs/rollup.js`). The flow of `meter` and `account` by the
@@ -279,10 +386,38 @@ the latest question.
 **Knowledge-base editor.** clean → editing → saving → saved, or conflict, unnamed or problem
 (`fileState` in `ui/kb.js`). One save at a time, and a save names the blob it was written from.
 
+**Knowledge-base prefetch.** not here → in flight → text, or not here again (`blobs` in
+`ui/kb.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
+says which hash a path has, and is the watermark: a save relists (unless another save started while
+it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
+not here, and opening one reads it by its path.
+
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
 text, and loaded is part of the key of what is rendered, so the list and the open thread render
 again with it. A failed import is not final: a code block a minute later tries again.
+
+**Command fields.** empty → typed → sent, or remembered → filled in (`bashTyped`, `vault` in
+`ui/inbox.js`). What is typed into a request's fields stays with the request in the tab, so a card
+drawn again keeps it, and goes with Run. Remembered values are read once a page, the first time a
+card has a field: a value that no longer decrypts (its key is gone) is not there. While the room
+says a request changed and the thread is fetched again, the cards stay as they are: the open
+thread keeps its cached requests until the fetch replaces them, so a click shows on its card at
+once.
+
+**Drawer (phones).** closed → open → closed (`linesDrawer.key`, the thread whose drawer is open,
+`ui/inbox.js`). The tab opens it; ✕, a tap beside the sheet, Escape, taking the draft into the
+reply box, sending it, and nothing left in it close it, and another thread's drawer is never
+open. What the tab says is worked out from the thread's requests and the draft its line shows
+(`lineDraft`: not one on its way), each time either line is drawn. While the thread is fetched
+again the drawer stays as it is, open or closed. Only the stylesheet knows whether it is a
+drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows, and a screen that
+grows past the phone's breakpoint closes it. Open, the sheet is a modal dialog: Tab goes round in
+it.
+
+**Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
+the requests that ended within the hour only the latest shows, until its button shows the rest;
+it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.

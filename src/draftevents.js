@@ -105,11 +105,12 @@ export async function recordDraftEvent(env, entry, {
 /**
  * The discard a save of `text` by `me` on the entry's `keys` undoes, if it is one: the same
  * text, discarded by the same person within UNDO_SECONDS. Its event is deleted, since the draft
- * came back, and returned (`draft`, `origin`), so the draft goes on as the one it was.
+ * came back, and returned (`draft`, `origin`, and `origin_body` when keepForUndo kept one), so
+ * the draft goes on as the one it was.
  */
 export async function undoneDiscard(env, me, keys, text, now = Date.now()) {
   try {
-    const ev = await env.DB.prepare(`SELECT id, draft, origin FROM draft_events
+    const ev = await env.DB.prepare(`SELECT id, thread, draft, origin FROM draft_events
       WHERE thread IN (SELECT value FROM json_each(?)) AND action = 'discarded' AND person = ?
         AND hash = ? AND at >= ? ORDER BY at DESC LIMIT 1`)
       .bind(
@@ -123,10 +124,37 @@ export async function undoneDiscard(env, me, keys, text, now = Date.now()) {
       return null;
     }
     await env.DB.prepare('DELETE FROM draft_events WHERE id = ?').bind(ev.id).run();
-    return ev;
+    const kept = await env.DB.prepare(`DELETE FROM draft_undo WHERE thread = ? AND draft = ?
+      RETURNING origin_body`).bind(ev.thread, ev.draft).first();
+    return { ...ev, origin_body: kept ? kept.origin_body : null };
   } catch (e) {
     console.log(JSON.stringify({ route: 'draft', action: 'undo', error: e.message }));
     return null;
+  }
+}
+
+/**
+ * Removes what keepForUndo kept for discards that can no longer be undone.
+ */
+export async function pruneDraftUndo(env, now = Date.now()) {
+  const { meta } = await env.DB.prepare('DELETE FROM draft_undo WHERE at < ?')
+    .bind(new Date(now - UNDO_SECONDS * 1000).toISOString()).run();
+  return { pruned: meta.changes || 0 };
+}
+
+/**
+ * Keeps `proposed`, what the first author of the `draft` (its created_at) that was just discarded
+ * from `entry` last saved, for an Undo of the discard (`draft_undo`, migration 0065): the draft
+ * that comes back is compared with it, not with the text that comes back. Kept UNDO_SECONDS.
+ */
+export async function keepForUndo(env, entry, draft, proposed, now = Date.now()) {
+  try {
+    await env.DB.prepare(`INSERT INTO draft_undo (thread, draft, origin_body, at) VALUES (?, ?, ?, ?)
+      ON CONFLICT (thread, draft) DO UPDATE SET origin_body = excluded.origin_body, at = excluded.at`)
+      .bind(entry.key, draft || '', proposed, new Date(now).toISOString()).run();
+    await pruneDraftUndo(env, now);
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'draft', action: 'keep', error: e.message }));
   }
 }
 

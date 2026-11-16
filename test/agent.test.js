@@ -34,8 +34,9 @@ import {
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
-  agentStatus, pokeAgent, seedAgent, tellDiscarded,
+  agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
 } from '../src/agent/stub.js';
+import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
@@ -320,6 +321,52 @@ describe('thread agents', () => {
     });
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+  });
+
+  it('talk to the team in the inbox\'s sidebar, which the thread shows and the channel never sees', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const told = [];
+    let refuse = null;
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async __unsafe_ensureInitialized() {
+          return true;
+        },
+        async sidebar(note) {
+          told.push([id.name, note]);
+          return refuse ? { error: refuse } : { ok: true, accepted: true };
+        },
+      }),
+    };
+    const me = {
+      id: 7, name: 'Ada Staff', email: 'ada@staff.example', teams: [{ slug: 'helix', name: 'Helix' }],
+    };
+    const inTeam = (t) => [].concat(t).includes('helix');
+    const res = await talkToAgent(e, me, { thread: THREAD, text: '  Is it the CDN?  ' }, inTeam);
+    assert.equal(res.status, 202);
+    const { message } = await res.json();
+    assert.match(message.id, /^sb_/);
+    assert.deepEqual(told, [[THREAD, { id: message.id, by: 'Ada Staff', text: 'Is it the CDN?' }]]);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: ' ' }, inTeam)).status, 400);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'x'.repeat(8001) }, inTeam)).status, 400);
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'x' }, () => false)).status, 404);
+    assert.equal((await talkToAgent(e, { ...me, readonly: true }, { thread: THREAD, text: 'x' }, inTeam)).status, 403);
+    assert.equal((await talkToAgent({ ...e, AGENT_CHANNELS: '' }, me, { thread: THREAD, text: 'x' }, inTeam)).status, 409);
+    // An agent that cannot take it: the message is not left in the sidebar, unanswered.
+    refuse = 'missing AGENT_MODEL';
+    assert.equal((await talkToAgent(e, me, { thread: THREAD, text: 'Still there?' }, inTeam)).status, 503);
+    // The thread has it, and then the agent's answer, and whether it has an agent.
+    await keepSidebarAnswer(e, THREAD, {
+      state: 'done', sidebar: message.id, text: 'Yes: **the CDN**.', endedAt: new Date().toISOString(),
+    });
+    const data = await inboxThread(e, me, THREAD);
+    assert.equal(data.agent, true);
+    assert.deepEqual(data.sidebar.map((m) => [m.role, m.body, m.by && m.by.name]), [
+      ['person', 'Is it the CDN?', 'Ada Staff'], ['agent', 'Yes: **the CDN**.', null],
+    ]);
+    assert.equal((await inboxThread({ ...e, AGENT_CHANNELS: '' }, me, THREAD)).agent, false);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {
@@ -782,7 +829,7 @@ describe('the earlier conversations of the channel', () => {
       const res = await tools[name].execute(args, {});
       return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
     };
-    return { e, run };
+    return { e, run, tools };
   }
 
   it('says who is a member of the channel, and when it cannot tell', async () => {
@@ -834,6 +881,14 @@ describe('the earlier conversations of the channel', () => {
     assert.match((await run('list_experts', {})).text, /^- UEXP \| Exa \| you suggested them: Wrote the purge docs/);
     assert.equal((await run('suggest_expert', { id: 'UEXP', withdraw: true })).text, 'withdrawn');
     assert.equal((await run('suggest_expert', { id: 'U-nobody', reason: 'x' })).error, true);
+  });
+
+  it('tells the agent where the team sees its suggestion: the thread\'s header', async () => {
+    const { tools } = await setup();
+    // The inbox shows no expert finder (#354), only "Agent suggests <name>" in the header.
+    const { description } = tools.suggest_expert;
+    assert.doesNotMatch(description, /expert finder/);
+    assert.match(description, /thread's header, as "Agent suggests <their name>", with your reason/);
   });
 
   it('lists the topics of the inbox, and who works one', async () => {
@@ -1328,6 +1383,84 @@ describe('seeds with a chosen knowledge base', () => {
       await h.close();
       await srv.close();
     }
+  });
+
+  it('write the knowledge bases of the teams the channel is shared with, and only read the others', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const e = env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' });
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('sites', 'Sites'), ('forms', 'Forms');
+      INSERT INTO knowledge_bases (repo, kind, slug, created_at) VALUES
+        ('kb-team-helix', 'team', 'helix', '2026-10-01T00:00:00Z'),
+        ('kb-team-sites', 'team', 'sites', '2026-10-01T00:00:00Z'),
+        ('kb-team-forms', 'team', 'forms', '2026-10-01T00:00:00Z');
+      INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'sites', '2026-10-01T00:00:00Z')`);
+    const h = await pinnedHarness(e, {
+      key: null, team: 'helix', org: null, source: 'slack', channelId: 'C1', threads: [],
+    });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-team-sites');
+      srv.create('kb-team-forms');
+      await seed(h.agent, { by: 'Ada', text: 'Purge by tag.' });
+      await h.run(
+        h.call('kb_write', write('kb-team-sites', 'playbooks/purge.md')),
+        h.call('kb_write', write('kb-team-forms', 'playbooks/purge.md')),
+        h.call('git_ls', { repo: 'kb-team-forms' }),
+        h.call('kb_write', write('kb-team-helix', 'playbooks/purge.md')),
+        h.call('kb_write', write('kb-team-nope', 'playbooks/purge.md')),
+      );
+      const [shared, refused, listed, own, unknown] = h.results;
+      assert.match(unknown, /^unknown repository kb-team-nope; use one of: [^\n]*\. Nothing was written\.$/);
+      assert.match(shared, /^committed [0-9a-f]{12} to kb-team-sites: playbooks\/purge\.md/);
+      assert.match(refused, /kb-team-forms is read only for you[^\n]*Nothing was written\./);
+      assert.equal(listed, '(the repository is empty)');
+      assert.match(own, /^committed [0-9a-f]{12} to kb-team: playbooks\/purge\.md/);
+      assert.ok(srv.files('kb-team-sites').includes('playbooks/purge.md'));
+      assert.equal(srv.head('kb-team-forms'), null);
+      assert.match(h.system[0], /- kb-team: [^\n]*\(you can write it\)\n- kb-team-sites: [^\n]*shared with \(you can write it\)\n- kb-team-forms: [^\n]*\(read only\)/);
+      // Only the ones it writes have their index in the prompt.
+      assert.match(h.system[0], /## kb-team-sites: /);
+      assert.doesNotMatch(h.system[0], /## kb-team-forms: /);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('follow the instructions of the teams the channel is shared with, not of the others', async () => {
+    const e = env({
+      ARTIFACTS: fakeArtifacts({
+        'kb-team-helix': { 'systemprompt.md': 'Sign drafts as the Helix team.' },
+        'kb-team-sites': { 'systemprompt.md': 'Link the Sites runbook.' },
+        'kb-team-forms': { 'systemprompt.md': 'Never seen here.' },
+        'kb-team-admin': { 'systemprompt.md': 'Admins only.' },
+        'kb-org-acme': { 'systemprompt.md': 'Address acme people by first name.' },
+      }),
+    });
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('sites', 'Sites'), ('forms', 'Forms'),
+        ('admin', 'Admin');
+      INSERT INTO knowledge_bases (repo, kind, slug, created_at) VALUES
+        ('kb-team-sites', 'team', 'sites', '2026-10-01T00:00:00Z'),
+        ('kb-team-forms', 'team', 'forms', '2026-10-01T00:00:00Z'),
+        ('kb-team-admin', 'team', 'admin', '2026-10-01T00:00:00Z');
+      INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'sites', '2026-10-01T00:00:00Z')`);
+    const target = {
+      key: THREAD, team: 'helix', org: 'acme', source: 'slack', channelId: 'C1', threads: [THREAD],
+    };
+    const staff = staffExtension({ env: e, target: async () => target });
+    const render = () => staff.sections[0].render({});
+    assert.match(await render(), /## For the ops team helix\n\nSign drafts as the Helix team\.\n\n## For the ops team sites, which your channel is shared with\n\nLink the Sites runbook\.\n\n## For the customer acme\n\nAddress acme people by first name\.$/);
+    assert.doesNotMatch(await render(), /Never seen here|Admins only/);
+    // The admin team's knowledge base is any other team's: read only, unless shared.
+    const repos = await accessibleRepos(e, target);
+    assert.deepEqual(repos.filter((r) => r.kind === 'kb').map((r) => [r.id, r.writable]), [
+      ['kb-team', true], ['kb-org', true], ['kb-team-sites', true],
+      ['kb-team-admin', false], ['kb-team-forms', false],
+    ]);
+    e.DB.sqlite.exec("INSERT INTO channel_teams (source, channel_id, team, added_at) VALUES ('slack', 'C1', 'admin', '2026-10-02T00:00:00Z')");
+    assert.match(await render(), /## For the ops team admin, which your channel is shared with\n\nAdmins only\./);
   });
 });
 

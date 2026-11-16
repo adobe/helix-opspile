@@ -16,6 +16,7 @@ import { CLEF } from './label.js';
 import {
   getChannel, isStaffDomain, loadRules, slackApi,
 } from './lookup.js';
+import { followChange } from './refile.js';
 import { ADMIN_TEAM } from './review.js';
 
 /**
@@ -298,11 +299,15 @@ export async function teamOptions(env) {
   const rules = (await loadRules(env)).filter((r) => r.target === 'team' && r.field !== 'channel_id');
   const criteria = {};
   for (const t of teams) {
+    // The channels it holds and the ones shared with it (migration 0024): a team that only
+    // shares channels is known by them too, not by its members alone.
     // eslint-disable-next-line no-await-in-loop
     const channels = await rows(env, `SELECT COALESCE(c.group_name || ' / ' || c.name, c.name, t.channel_name) AS name,
         COUNT(*) AS n
       FROM threads t LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
-      WHERE t.team = ? GROUP BY t.source, t.tenant, t.channel_id ORDER BY n DESC LIMIT ?`, t.slug, SAMPLE_CHANNELS);
+      WHERE t.team = ?1 OR EXISTS (SELECT 1 FROM channel_teams ct WHERE ct.team = ?1
+        AND ct.source = t.source AND ct.channel_id = t.channel_id)
+      GROUP BY t.source, t.tenant, t.channel_id ORDER BY n DESC LIMIT ?2`, t.slug, SAMPLE_CHANNELS);
     // eslint-disable-next-line no-await-in-loop
     const members = await rows(env, `SELECT p.name FROM team_members tm JOIN people p ON p.id = tm.person
       WHERE tm.team = ? AND p.name IS NOT NULL ORDER BY p.name LIMIT ?`, t.slug, SAMPLE_MEMBERS);
@@ -426,7 +431,13 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
             // eslint-disable-next-line no-await-in-loop
             await getChannel(env, {
               source: ch.source, tenant: ch.tenant, channelId: ch.channel_id, groupId: ch.group_id,
-            }, now).catch(() => null);
+            }, now, {
+              // Renamed since its last lookup: its threads follow, as from the normalizer. A
+              // failure leaves the row as it was, so the next lookup finds the change again.
+              onChange: async (before, after) => followChange(env, ch, {
+                before, after,
+              }, await loadRules(env)),
+            }).catch(() => null);
           }
           // eslint-disable-next-line no-await-in-loop
           row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')

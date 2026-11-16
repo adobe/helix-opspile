@@ -14,19 +14,21 @@
  * Who may look at and who may change a knowledge base (`{ kind, slug }`), its agents' MCP
  * servers and tools, in the editor (`/inbox/kb`):
  *
- * - a team's (`kind: 'team'`): its members look, its managers change it;
+ * - a team's (`kind: 'team'`): the members of every ops team look (as every thread agent
+ *   reads it, src/agent/repos.js), its managers change it;
  * - a customer's (`kind: 'org'`): the members of the teams that own the customer look (a
  *   channel of the customer's is filed under or shared with the team, src/shares.js), and the
  *   managers of those teams change it;
  * - the admin team looks at and changes all of them.
  */
 
-import {
-  inTeam, isAdmin, managedTeams, managesTeam,
-} from './review.js';
+import { isAdmin, managedTeams, managesTeam } from './review.js';
 import { ownedCustomers, ownsCustomer } from './shares.js';
 
 const teamsOf = (me) => ((me && me.teams) || []).map((t) => t.slug);
+
+/** Whether `me` is in an ops team at all (or the admin team): who looks at the teams' ones. */
+const inAnyTeam = (me) => isAdmin(me) || teamsOf(me).length > 0;
 
 /** Whether `me` may change the knowledge base (or the servers) of `kind`/`slug`. */
 export async function mayEdit(env, me, { kind, slug }) {
@@ -41,7 +43,7 @@ export async function mayRead(env, me, { kind, slug }) {
   if (isAdmin(me)) {
     return true;
   }
-  return kind === 'team' ? inTeam(me, slug) : ownsCustomer(env, teamsOf(me), slug);
+  return kind === 'team' ? inAnyTeam(me) : ownsCustomer(env, teamsOf(me), slug);
 }
 
 /**
@@ -58,7 +60,7 @@ export async function access(env, me) {
     ownedCustomers(env, managed),
   ]);
   return {
-    read: (b) => (b.kind === 'team' ? inTeam(me, b.slug) : owned.has(b.slug)),
+    read: (b) => (b.kind === 'team' ? inAnyTeam(me) : owned.has(b.slug)),
     edit: (b) => (b.kind === 'team' ? managesTeam(me, b.slug) : ownedManaged.has(b.slug)),
   };
 }

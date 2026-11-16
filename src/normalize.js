@@ -201,10 +201,16 @@ export function normalizeSlack(key, delivered) {
 
   if (event.type === 'channel_rename' || event.type === 'channel_created') {
     const ch = event.channel || {};
+    const when = event.event_ts || payload.event_time;
     return {
       op: 'channel',
       channel: {
-        source: 'slack', tenant, channelId: ch.id, name: ch.name,
+        source: 'slack',
+        tenant,
+        channelId: ch.id,
+        name: ch.name,
+        // When it was renamed: a replayed rename names the channel as it was then.
+        ...(when ? { at: iso(when) } : {}),
       },
     };
   }
@@ -535,6 +541,13 @@ export function teamsEventText(detail, name = (u) => u.displayName) {
     }
   }
 }
+
+/**
+ * Whether a message is a Teams system notice that its channel or its Teams team got a new name:
+ * the normalizer looks the channel up again then (the rules read both names).
+ */
+export const isRenameNotice = (message) => /^#?microsoft\.graph\.(channel|team)RenamedEventMessageDetail$/
+  .test(String((message && message.event && message.event['@odata.type']) || ''));
 
 export function normalizeTeams(key, msg) {
   const [, tenant] = key.split('/');

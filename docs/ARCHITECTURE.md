@@ -133,7 +133,8 @@ the team's members post, react or are members (listed from Slack, or from the Te
 channels (an admin, say) counts for little and a member active in a few counts the most, and the
 ones Clef gives the team. The cron asks Clef about a batch of the admin
 team's channels every run, one question set per channel (`channel_labels`): which ops team should
-follow it (each described by its rules, some of its channels and its members, or none of them),
+follow it (each described by its rules, some of the channels it holds or follows through a share,
+and its members, or none of them),
 and whether it is a conversation, an alert feed or not worth following. Clef is told the channel's
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
@@ -144,8 +145,9 @@ changes one after the other, so many can be made in a row. Applied, each moved c
 NORMALIZE queue: its thread folders move to `channels/<new org>/<new team>/…` (an object
 already at the new place, from a message that arrived meanwhile, is newer and kept), its
 thread rows take the new org, team and kind, and the new org and team get their knowledge
-bases. A job starts from where each thread is filed in D1, not where it was when the job was
-queued, so several changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
+bases. A job starts from where each thread is filed in D1, and also moves what is still where it was
+when the job was queued (a message filed meanwhile points the row at the new place), so several
+changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
 **Team managers.** A member of a team can be its **manager**: they get the admin pages and
 the knowledge-base editor for that team only, where they add and remove members, promote
@@ -178,6 +180,18 @@ day. These are its only platform calls. Files only move forward to a newer versi
 tombstone is final, so a replay of pile 1 in any order rebuilds the same pile 2. A rule
 changed in D1 by hand needs pile 2 emptied and replayed; one changed in the admin UI re-files
 the channels it moves (below).
+
+**A renamed channel is re-filed** the same way, by the same `refile` jobs: the rules read a
+channel's name, its Teams team's name and its Slack Connect teams, so a channel renamed to a
+name a rule maps to an org (or another team, or a kind) takes its threads along. The normalizer
+notices it when a Slack rename event arrives, when a Teams notice says the channel or its team
+was renamed (it looks the channel up again then), and when a lookup (a day after the last, from a
+message or the cron) finds them changed; Discord renames are found by the lookups. It queues the
+moves only when the rules classify the channel differently than before, before it files the
+message that came with the change. A manual assignment is a rule, so a rename does not undo it
+(a channel assigned to a team keeps it, and takes the org its new name gives); the teams the
+channel is shared with stay. A rename event older than what D1 knows of the channel (a replay)
+is left out.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
@@ -327,7 +341,8 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   was folded is split back out (`dethread`, on that reply): its row loses `logical_thread`
   and gets `logical_via = 'split'`, which re-threading (forced, or a burst before it) leaves
   alone for good, its root file loses `logicalThread`, the roots that followed it in a burst go
-  with it, and the open inboxes reload the group (`split` in the room's `thread` event). So the
+  with it, and the open inboxes reload the group (`split` in the room's `thread` event); until
+  all of that is done, `split_from` names the group it left, so a retry finishes it. So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
   platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
   reply (`logical_via = 'reply'`, above) and alerts stay in their group.
@@ -411,24 +426,27 @@ frontmatter with a required `type`, links between concepts, an `index.md` per di
 to them; `generated` says which agent wrote it and when, and `verified` will record staff
 review. Every change is a commit, so a bad memory is a `git revert`.
 
-[Thread agents](#thread-agents) are the writers. Code, not the agent, writes `index.md` and `log.md`
+[Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
+customer's knowledge base, and those of the teams its channel is shared with (`channel_teams`);
+every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
 and stamps `generated`, and a write that is not a well-formed concept is refused. For now
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
-concept of type `System Prompt`). Every thread agent appends the bodies of the two that apply
-to it, the team's first and then the customer's, to the end of its system prompt, read again
+concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
+to it, its team's first, then those of the teams its channel is shared with, then the customer's,
+to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
 whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The other members of a team see its knowledge base there read-only (its
+and the concepts. The members of every ops team see every team's knowledge base there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), and the customers' it owns the
-same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`), as every thread agent reads them,
+and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -458,7 +476,11 @@ question: it is one channel, and switches back as easily). The switch is a row i
 `agent_channels` with who set it and when. A team's knowledge base also has the team's
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
-channels it gets later too. A channel nobody switched has an agent when its team's default or
+channels it gets later too. A new team starts with it on (the admin team's name for it in
+`changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
+the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
+`newTeams`); the teams from before that have them as they had them, and deleting a team
+deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
@@ -518,7 +540,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   (`src/previews.js`, from the latest message's file in pile 2).
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
-  them back to D1 in batches.
+  them back to D1 in batches, a couple of seconds later (`FLUSH_MS`). Once a batch is written,
+  the room says which reads it had (`reads`); the inboxes reload on that, since one that reloaded
+  on the read itself would still have the thread unread.
   New messages, reactions and drafts are announced in the room of every team whose inbox
   has the thread (a shared channel's are in several). A message posted in the last hour that
   mentions people it did not mention before (a new message, or an edit that adds a mention)
@@ -569,7 +593,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team
-  views. Besides its cards it has one switch, **Mentions** (the @ at the top right of the
+  views. Unless the expert view is on (the user menu, the `expert` setting), it is the simple
+  one: a column of customers by logo and name instead of the cards, and the list by customer
+  until one is picked. A customer's ≠ in that column, or a Shift-click on it, excludes it as on
+  the cards (`not.customer=` in the URL, and in a bell on the view): its threads leave the list,
+  and it stays at the end of the column, struck through and out of the red badge of **All
+  customers**, with or without threads, until a click brings it back. **All customers** drops
+  the pick and what is excluded.
+  Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones the red badge counts. The
   customers without such a thread leave the column while it is on. Team views do not have it:
@@ -599,7 +630,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   platform (`src/channelurl.js`, the `channel_links` of `/api/thread`): a Teams channel's link
   in a Slack message, or a Slack channel's in a Teams post, opens the channel's threads in the
   inbox, and a bare link shows `#name`. A link to a channel that is in none of your inboxes
-  stays a link to its platform.
+  stays a link to its platform. A link names the channel's workspace, and only a channel there
+  is the one it means; Slack's app links (`app.slack.com/client/T…/C…`) name a workspace, which
+  under Enterprise Grid is one of the org's that channels are filed under (`channels.group_id`,
+  their `tenant` being the org).
 - **The list stays put** while it is the same list (the same view, filters, unread only and
   Mentions):
   reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
@@ -794,9 +828,12 @@ and an unchanged thread is never labeled twice):
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the
-  platform, the kind of thread and Edge Delivery itself; a customer or product name the model
-  still writes is removed afterwards. When the model finds nothing to name ("None", "No title
-  available"), the thread has no title, and the inbox shows its first words.
+  platform, the kind of thread and Edge Delivery itself. When the model still names the
+  customer or the product, it is asked once more, told which names to leave out, and its
+  second answer is kept whole (the names are never cut out of a title, which leaves broken
+  phrases such as "Headless options in without App Builder"). When the model finds nothing
+  to name ("None", "No title available"), the thread has no title, and the inbox shows its
+  first words.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
@@ -1089,7 +1126,14 @@ channel or by its affinity, and the bots), and the page ranks what is typed afte
 with the Worker's own `suggestMentions` (in the markdown bundle), so completing a name asks the
 Worker nothing. Until the pool is there, each typed letter asks the Worker, as before. The page
 keeps a thread's pool for the page's life, and asks for it again in the background once it is
-two minutes old. The Worker reads the thread's place first, then whether the viewer may see
+two minutes old, or when a message came in in its channel since (the room's `thread` event: it
+may be an admin bot's confirmation that someone was added, or the platform's notice of it); the
+suggestions follow the new pool when it comes. A name the kept pool has nobody for asks the
+Worker at once, when the pool is more than five seconds old. The Worker, for a name that matches
+nobody, lists the channel's members again when that is more than 30 seconds old, and waits for
+it: someone just added who never posted is not in D1 until then (a Teams notice that they were
+added names them, and so records them, but not every channel gets one), and is in the answer
+when the listing found them. The Worker reads the thread's place first, then whether the viewer may see
 it and all the suggestions need at once: one round trip to D1 after the place, not up to four.
 
 **The thread's header.** Line 1 is the customer's icon with the platform's on it, the title,
@@ -1206,10 +1250,11 @@ channels of every team, which neither the viewer nor a thread agent may read. It
 minutes per version of the thread, per isolate.
 
 A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
-puts a colleague at the top of it, with its reason (`expert_suggestions`, migration 0045; user
-state, like drafts). Nobody is told or mentioned; a person decides. It takes only staff with an
-account on the thread's platform, three per thread at most, and a suggestion goes away once the
-person is in the thread. It tells the open inboxes (a room event `experts`), and the header shows
+suggests a colleague to the team, with its reason (`expert_suggestions`, migration 0045; user
+state, like drafts), and puts them first in its own `list_experts`. Nobody is told or mentioned;
+a person decides. It takes only staff with an account on the thread's platform, three per thread
+at most, and a suggestion goes away once the person is in the thread, which frees its place for
+another (docs/STATE-MACHINES.md, "Expert suggestion"). It tells the open inboxes (a room event `experts`), and the header shows
 it as "Agent suggests …": clicking it mentions them in the reply box, as picking them after `@`
 does, and ▾ lists each suggestion with its reason when there are several. Nothing is sent: the
 reply stays the person's to write.
@@ -1322,6 +1367,16 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   channel, so every open inbox follows at once; a reply box that took the draft in and still
   holds it unchanged follows the draft, one with your own changes keeps them (and the line says
   the draft changed since). What you type and do not save stays with its thread in the tab.
+- **On a phone** (a screen up to 699 px wide) the draft's line and the command cards (see
+  "Agent tools") would leave the thread a few lines of the screen, so they are in a **drawer**
+  (`renderLines`, `ui/inbox.js`). Under the reply box only its tab shows: one line that says
+  what waits there ("1 command to decide", "Draft by …"), outlined as a command's card while
+  one waits for a decision. A tap opens the lines as a sheet from the screen's bottom edge,
+  over the thread, the rest dimmed. ✕, a tap beside the sheet and Escape close it; so do Edit
+  and the sends, which happen in the thread, and opening another thread. Run, Deny, View draft
+  and Discard leave it open, and Undo of a discard shows over it. It is the same markup on
+  every screen: on a wider one the stylesheet shows no tab and makes the drawer no box
+  (`display: contents`), so the lines are the reply box's own.
 - In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
   one shows ✓), in the status's color and outlined while the team has not read the thread; the
   personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
@@ -1347,11 +1402,19 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   a sign-in, is a reason and a link. The route fetches only the sources of the thread's current
   draft, follows at most 4 redirects, each checked (public names, never an address or the
   inbox's own host), and reads at most 512 KB.
+- A source that links to a Slack or Teams message is never fetched (the platform's page needs a
+  sign-in a frame does not have). It is the message as opspile has it (`view: 'message'`,
+  src/messagelinks.js), for a viewer who may see its channel, and the inbox shows it as the card
+  a link to that message in a thread shows (src/ui-markdown.js), in a popover only as tall as
+  the card. Its time shows the message in the inbox: where it is in the open thread, else its
+  thread, opened at it. A message opspile does not have, or the viewer may not see, is a reason.
 
 ### Steering reactions
 
-Resting the pointer on a message for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟.
-Three of them steer the inbox, on any message of the thread:
+Resting the pointer on a message's bubble for 300 ms shows the quick reactions ✅ 👀 🙏 👍 😀 🚀 🛟,
+beside the message's header (above it where the pane is narrow), never over it: the name there
+shows the profile card, and the time the whole date. Three of them steer the inbox, on any
+message of the thread:
 
 - **👀 seen**: the person who put it is on it. For them it counts like having posted (higher);
   for the rest of the team, a colleague's 👀 since the customer last wrote puts the thread in
@@ -1384,7 +1447,9 @@ agent in an arm uses is counted for COGS with the arm in the detail (below).
 a root folded into a group pokes the group's agent, not one of its own); it reads the
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, its own posts included, a schedule
-wakes it once more to wrap up: file what was learned, or put a follow-up in the draft.
+wakes it once more to wrap up: file what was learned, or put a follow-up in the draft. It is also
+told, as an input of their own, that a person discarded its draft, and how a command it asked a
+person to run ended (see "Agent tools").
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1399,14 +1464,58 @@ answer (or a failed request), and whenever `status()` finds a finished turn it h
 that stopped half way and counts as failed now). The page asks `GET /api/agent` when the thread
 opens or changes, and every few seconds while the agent works or a new message waits for it;
 what the agent says wins over the kept turn when it is about a later one. A turn in progress is
-only ever the agent's to say, so it comes in after the messages. Its avatar and name open the agent
-settings of the thread's team (Agents, its thread agents, at the thread's channel).
+only ever the agent's to say, so it comes in after the messages. Its avatar opens the sidebar
+(below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
+thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
 on unless they turn it off, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
 Agents does too, a select on each channel with an agent. Hidden, the page does not ask
 `GET /api/agent` at all.
+
+**The sidebar.** Anyone who may work a thread can talk to its agent in the inbox, about the
+thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`). Each
+message goes into the agent's own conversation as an input of its own (`ThreadAgent.sidebar`,
+`src/agent/sidebar.js`), after the run it is in, never steered into one; so the agent remembers
+it in later turns. New messages of the thread do not steer into it either: while a sidebar
+message is pending, a delivery follows it as a run of its own. It goes into the thread's history
+too: `sidebar_messages` in D1, the person's message when it is sent, the agent's answer when the
+turn ends (the turn's closing text, up to 8000 characters, kept by `keepTurn` instead of the
+thread's note, which stays the turn before). Every finished sidebar turn in the transcript is
+kept, not only the latest: an input queued behind one starts at the boundary its answer is
+committed at.
+Nothing of it is posted: while the agent's latest input is a sidebar message, `post_message`,
+`add_reaction` and `request_membership` refuse (the admin bots answer in the channel), and so do
+they when the transcript cannot be read. The input starts with a line that names the message,
+and only an input that starts with it is one: a customer quoting it is told inside a delivery.
+The inboxes of the thread's teams hear of each message and answer through the team's room
+(`{ type: 'sidebar' }`).
+
+In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
+of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
+a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
+thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
+"the sidebar"):
+
+- **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from
+  the list's left edge to the content area's right (the list's least 380, 440 for the thread,
+  the panel's least 360), measured, because the filters fold to a rail on some screens. While
+  the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
+  panel, so the thread stays the widest by far and the list gives up room too, down to its
+  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
+  conversation of the thread, each under when it started, the agent working on its answer, and
+  a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
+  A line in the thread opens the panel at its conversation, also for someone who may not talk
+  to the agent (viewing as someone else): they read there, without a box.
+- **In the thread**, on a narrower screen: a line unfolds its conversation where it is, the one
+  you are in stays open at the bottom, with the agent working on its answer, and the reply box
+  turns into the sidebar's.
+
+Both are purple, say that only the team sees it and that nothing goes to the platform, and are
+left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
+sidebar you are in from one to the other, with what is typed in its box.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
@@ -1442,8 +1551,9 @@ written by people outside its control.
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
-| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base, and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
-| `kb_write` | create, replace or delete concepts in either knowledge base, in one commit |
+| `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
+| `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
+| `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone
@@ -1510,8 +1620,8 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. They are off until
-the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. A new team starts
+with both on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
 and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
@@ -1589,7 +1699,8 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Four tools are off until they are turned on. Three by the admin team or a team's managers, as
+Four tools are off until they are turned on (a new team starts with `computer` and
+`extraction_rules` on for the team). Three by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
@@ -1657,6 +1768,120 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
+**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
+does not run. The admin team can give a team's agents another shell (`runtime`, a row of
+`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
+Computer tool's row of the team's knowledge base): GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
+`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
+the default. An agent follows its team's choice before each delivery, as it follows its tools
+(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+
+- **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
+  process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
+  network of its own and asks the kernel for every system call over Workers RPC. It is a
+  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
+  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
+  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
+- **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
+  Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
+  tables of its own (`slicc_*`). Output that was too long is saved under
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
+  `/workspace/uploads` is a mount of the kernel of its own, read-only, over the same files
+  (`overWorkspace`, `readOnlySpec`): the kernel's driver of `/workspace` opens a file there for
+  writing and fails only when it is closed, and bash does not look at what `close` answers, so
+  `echo x > uploads/a.log` exited 0 without a word. The kernel refuses a read-only mount's
+  changes when they start, as Linux does: `Read-only file system`, and a non-zero exit code.
+  Each connection of the Workspace (a new one when the uploads change) mounts it anew, after the
+  backend ended the connection before it, and takes it away when it is closed. The kernel's
+  driver makes its mount point with `mkdir -p`, which the Workspace refuses in a directory with
+  a read-only mount: `patientFs` answers it when the directory is there. `npm run
+  computer:check` checks both shells on the uploads in local workerd.
+- **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
+  by what a computer is for. An image is a stack of read-only layers, as a container image
+  is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
+  the admin team chooses one per team, next to the shell (`image`, another row of
+  `agent_tool_options`; `base` without one).
+  - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
+    top of those of the image it is `from`, and where two layers have a path, the upper one's
+    file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
+    defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
+    ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
+    and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
+    unzip, xz, bzip2), `net` (curl, dig), `js` (qjs), `git`, `formats` (yq, html2markdown,
+    file) and `data` (ripgrep, sqlite3, strings). `base` is the first seven, and `data` is
+    `from: 'base'` with the eighth. A package's other files a program needs are named in its
+    `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's magic).
+    An image names what the agent is told it has (`tools`), and the build fails if that names
+    a command the image lacks.
+  - **In the bucket**, everything but the images and their index is named by its content, and
+    never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
+    modes and hashes of its files, with small files (a package's manifest) in it;
+    `images/<name>.json` is an image's manifest, its layers by digest, its commands and a
+    `digest` of the stack; `images/index.json` lists the images for the editor. An Emscripten
+    program's JavaScript glue is an empty file: the kernel runs the program without it in a
+    Worker, but finds the command by it.
+  - **Uploading.** `npm run computer:images -- --mode prod` (the deploy job runs it after
+    `cf deploy`, which makes the bucket) sends the blobs of the layers the bucket lacks, then
+    those layers, then the manifests, then the index, so a kernel that boots meanwhile finds
+    an image whole. It never deletes: a layer no image names any more stays, and a kernel
+    that runs an older image keeps reading it.
+  - **Mounting.** When a kernel boots, it reads the team's image, its layers (each checked
+    against its digest) and merges them into one tree (`imageTree`), which it mounts
+    read-only at `/opt/image`, as a file system the agent's object serves itself
+    (`imageDriver`, the kernel's in-process mount). `/opt/image/node_modules` is a command
+    root of the kernel (`commands.append`), so the image's programs are in `/usr/bin`. A
+    file's bytes come from the bucket when a program first reads it, checked against its
+    hash. Nothing of the image is written to the object's SQLite, so changing a team's image
+    costs a boot (some 50 ms), and every write to `/opt/image` fails (`EROFS`). A boot without
+    the bucket, the image or one of its layers fails and says so: the command answers "the
+    computer failed".
+  - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
+    read for every agent in its isolate: the trees of the last 8 images, and blobs up to
+    32 MB, the least recently used going first. A new isolate reads them again.
+  - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
+    whether it has `jq`. So the prompt cannot name a program the image lacks.
+- **Its network.** The kernel's programs reach the network through its proxy, which hands
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
+  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
+  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
+  again.
+- **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
+  `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
+  loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
+  run time. Workers allow neither, so the Worker carries the engine itself (a dependency,
+  0.25 MB compressed: wrangler compiles the `.wasm` import at build) and passes it in
+  (`network.tlsEngine`, `compiledTlsEngine`). The real TLS connection is `fetch`'s: a server
+  whose certificate Cloudflare refuses answers curl as an HTTP error (526), not as a TLS
+  error, so `curl` without `-f` exits 0 on it.
+- **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
+  second one, so `pthread_create` fails with `EAGAIN`. A program that starts threads fails
+  with it: BIND's dig (`wasix-bind`), so dig is `wasi-dig`. jq declares 64 MiB of memory, most
+  of a Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+- **How many processes a Dynamic Worker holds**: the kernel places them by their memory, up
+  to a budget per Dynamic Worker (`isolates.memory`), which is 96 MiB of its 128 MB here, not
+  the kernel's 64 MiB: git's clone is three processes deep (git, git remote-https,
+  git-remote-https) and forks a fourth to read the pack, and with 64 MiB the fork waits for a
+  Dynamic Worker that never comes free (`EAGAIN`). A Durable Object may run at most 10 Dynamic
+  Workers at once; the kernel runs at most 8.
+- **DNS**: the kernel has no UDP, and its programs no route to a name server. `dig`
+  (`@ai-ecoverse/wasi-dig`) asks DNS over HTTPS of `cloudflare-dns.com` through the proxy and
+  the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
+  every name curl reaches, so the agent is told it may look up a customer's names there. It
+  has no `+trace` and asks no name server itself.
+- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain:
+  there is no `openssl`.
+- **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
+  program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
+  which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
+  `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
+  so where its image has it.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), `openssl`, and
+  `xan`, which just-bash has.
+
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
 it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and never shown
@@ -1681,6 +1906,57 @@ and nothing is sent. The gateway reads the secrets from D1 on each such request,
 team and customer as they are now, so a deleted secret or a moved thread counts at once. What it
 does not stop: a host on the list that publishes what it receives (the agent could post the key
 into a ticket of the API it is for), and a value the host sends back encoded otherwise.
+
+**Commands a person runs.** With the computer comes `request_bash` (`src/agent/bashrequest.js`;
+the record is `bash_requests`, migration 0062, `src/bashrequests.js`): the agent asks a person on
+the team to run a command in its shell, for what needs a credential it does not have, or a
+person's go-ahead. It gives the command, its reason, a `timeout` (how long the command may run:
+60 seconds unless it says, 180 at most, the shell's own limit), a `deadline` (until when the
+request stays open: a duration from now such as `4h`, or a time; a day unless it says, a week at
+most) and `env`, the variables a person is to fill in, by name, each with what it is for. The
+tool answers at once, and the agent goes on: nothing waits on the request, and at most 5 of a
+thread wait or run at a time. A thread's agent only: a knowledge-base agent has no thread to show
+the request under.
+
+The inbox shows each request as a card between the reply box and the draft's line
+(`bash_requests` in `GET /api/thread`; `bashCard` in `ui/inbox.js`): its id, which is how the
+agent names it in its notes, the command (highlighted as shell, to be read before it is run),
+the reason, a password field per variable, **Run** and **Deny**, for whoever may work the
+thread; Deny and Run stay in sight at the cards' bottom edge while a tall card scrolls. A person can
+have the page **remember** what they fill in, by variable name, on that device: encrypted
+(AES-GCM) in localStorage, with a key made in the browser that cannot be exported and is kept in
+IndexedDB; the next request with a variable of that name has it filled in, and **Forget** removes
+it. `POST /api/bash/run` and `/api/bash/deny` go to the agent's own object (`runBash`,
+`denyBash`), which decides: the request has to be pending still (the first click wins, the
+second is told who was first), the computer still on, every variable filled in. The run is the
+agent's computer's, as its own `bash`: the same Workspace, working directory and team secrets
+(as placeholders), with the person's values as variables of that one run. `run` answers 202 once
+the command has started; the page hears how it ended through the team's room, as it hears of
+every change of a request (`{ type: 'bash' }`), and keeps the request for an hour, on one line,
+saying how it ended (a nonzero exit, a timeout and a failure marked) and who decided. An agent
+often asks a few times until a command works, so of the requests that ended only the latest
+shows (`bashCards`), with a button for the earlier ones (**2 earlier**), all in one box. The
+card itself says that a command runs or was denied; a toast only says what went wrong. On a
+phone the cards are in the drawer the draft's line is in (see "Drafts").
+
+How a request ended comes back to the agent **as an input of its own**, as a discarded draft
+does (`harness.submit`, with the request's id as the operation, so once): what the command
+printed and its exit code; that it was stopped at its timeout, with what it printed until then;
+that the computer failed; that a person denied it, and who; or that nobody decided before the
+deadline, which a schedule of the agent's object closes. A watchdog schedule, armed before each
+run, settles a run whose object restarted under it as failed (docs/STATE-MACHINES.md).
+
+**The values are kept nowhere**: not in D1, not in the object's storage, not in the transcript,
+not in a log. They go from the page to the Worker, to the agent's object and into the shell's
+environment, for one run. What the agent is told of the output has each value of 8 characters or
+more replaced by its variable's name (`[API_TOKEN]`), as it is and as it would be escaped in a
+URL, JSON or XML (`hider`); the shell's own record of the run, which Cloudflare Computer keeps
+for an hour, is deleted, and output it saved to a file is rewritten the same way (removed, over
+4 MB). Unlike the team's secrets, these are real values in the shell, not placeholders the
+gateway fills in, so that a person's own token works with any host and any tool. What that does
+not stop: the command itself can write a value to a file, which the agent can read afterwards,
+send it to any host, or print it encoded. The person who runs the command is the check, as with
+a command a colleague asks them to run: the card shows it whole, and says so.
 
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and
@@ -1798,6 +2074,12 @@ day, what only D1 knows is kept: its own size (`meta.size_after`), the agents' s
 (`cogs_objects`), the full-text items (their number times the average upload of the last 30 days)
 and the Workers Paid plan.
 
+**The Access API** (`seatRows`, with `ACCESS_API_TOKEN` and `ACCESS_ACCOUNT_ID`), once a day too,
+and written as `d1` rows: the account's Zero Trust seats (users with `access_seat` or
+`gateway_seat`), one `seats` each, every one at $7 (the Free plan's 50 are not taken off: past
+them, Pay-as-you-go bills every seat). A holder whose email is a person on ops teams is those teams', split evenly; anyone else's seat is
+shared. The emails stay in the run. A failed read writes nothing, and the next run tries again.
+
 **The rollup.** The cron rolls up today and yesterday every run, and up to three of the last 30 days
 that have no rows of a source yet (backfilling what Cloudflare's analytics and D1 still have; the
 meter's counts start with it). A day of a source is replaced whole, writing only the rows that
@@ -1821,7 +2103,9 @@ agent's draft a person sent is **accepted**: as it was (`changed` 0) or edited (
 or saved over by a colleague first). One a person discarded is **discarded**, one the agent
 discarded itself (`discard_draft`) **withdrawn**. An Undo saves the same text again: a save with no
 draft, by the person who discarded one with that text (its hash, never the text) in the minute
-before, deletes the discard's event and goes on as that draft, with its origin. The agent's
+before, deletes the discard's event and goes on as that draft, with its origin and what the origin
+proposed: a draft somebody else changed and discarded keeps that text in `draft_undo` (migration
+0065) for the minute, so the Undo is compared with it, not with the text that came back. The agent's
 `post_message` that used no draft up is recorded as `posted`. The report reads the events as they
 are (they are few), per customer and team; nothing is rolled up.
 

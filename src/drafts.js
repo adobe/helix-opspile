@@ -11,11 +11,12 @@
  */
 
 import { json } from './http.js';
+import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
 import {
-  AGENT_EMAIL, changeOf, recordDraftEvent, textHash, undoneDiscard,
+  AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
 
 /**
@@ -39,8 +40,8 @@ const PREVIEW = 140;
  * inbox has it (a shared channel's too), and every member thread.
  */
 export async function entryOf(env, key) {
-  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, channel_id
-    FROM threads WHERE thread = ?`).bind(String(key)).first();
+  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, tenant,
+    channel_id FROM threads WHERE thread = ?`).bind(String(key)).first();
   if (!row) {
     return null;
   }
@@ -53,6 +54,7 @@ export async function entryOf(env, key) {
     team: row.team,
     // The channel, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
+    tenant: row.tenant,
     channel_id: row.channel_id,
     teams: await teamsOf(env, row),
     keys: [...new Set([k, row.thread, ...(results || []).map((r) => r.thread)])],
@@ -196,8 +198,11 @@ export async function saveDraft(env, me, request, inTeam) {
       .bind(body, picked, cited, me.id, version, me.id, body, e.key, current.updated_at).run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
-    // group's key.
-    const proposed = origin === me.id || undone ? body : await originBody(env, current);
+    // group's key. One that comes back by an Undo is still compared with its origin's text.
+    let proposed = body;
+    if (origin !== me.id) {
+      proposed = undone ? undone.origin_body ?? body : await originBody(env, current);
+    }
     if (current) {
       await env.DB.prepare('DELETE FROM drafts WHERE thread = ? AND updated_at = ?')
         .bind(current.thread, current.updated_at).run();
@@ -242,7 +247,9 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
   if (base && current.updated_at !== base) {
     return conflict(current);
   }
-  const proposed = sent ? await originBody(env, current) : null;
+  // What its origin proposed: what a sent draft is compared with, and what an Undo of a
+  // discard by somebody else needs to compare it with once it is back.
+  const proposed = sent || current.origin !== me.id ? await originBody(env, current) : null;
   const { meta: { changes } } = await env.DB.prepare(`DELETE FROM drafts
     WHERE thread IN (SELECT value FROM json_each(?)) AND (? IS NULL OR updated_at = ?)`)
     .bind(JSON.stringify(e.keys), base, base).run();
@@ -257,6 +264,9 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
       changed: sent ? changeOf(proposed ?? current.body, sent.text) : null,
       hash: sent ? null : await textHash(current.body),
     });
+    if (!sent && proposed != null && proposed !== current.body) {
+      await keepForUndo(env, e, current.created_at, proposed);
+    }
     await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   }
   return json({ ok: true, discarded: Boolean(changes), draft: current });
@@ -264,7 +274,10 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
 
 /**
  * GET /api/draft/source?thread=&url=: how the inbox can show one of the sources of the entry's
- * draft (src/sources.js). Any other address is not fetched.
+ * draft (src/sources.js). Any other address is not fetched. A Slack or Teams message is not
+ * fetched either: it is the message as opspile has it (`view: 'message'`, src/messagelinks.js),
+ * which the inbox shows as it shows a message link, else nothing (the platform's page needs
+ * the viewer signed in there, which a frame is not).
  */
 export async function draftSource(env, key, address, canSee, { own, fetchImpl } = {}) {
   const e = await entryOf(env, key);
@@ -274,6 +287,16 @@ export async function draftSource(env, key, address, canSee, { own, fetchImpl } 
   const draft = draftOf(await draftsFor(env, e.keys), e.keys);
   if (!draft?.sources.some((s) => s.url === address)) {
     return json({ error: 'not a source of this draft' }, 404);
+  }
+  const ref = messageRef(address);
+  if (ref) {
+    const message = await linkedMessage(env, address, { near: e, canSee });
+    const where = ref.source === 'teams' ? 'Teams' : 'Slack';
+    return json(message ? { view: 'message', url: address, message } : {
+      view: 'none',
+      url: address,
+      reason: `The inbox does not have this ${where} message, or it is not yours to see.`,
+    });
   }
   return json(await lookAt(address, { own, fetchImpl }));
 }

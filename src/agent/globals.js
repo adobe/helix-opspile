@@ -17,7 +17,8 @@ import {
 /**
  * Global MCP servers: set up once for the whole deployment, not per team or customer, and
  * turned on for an ops team or a single channel (`mcp_global_switches`; a channel's switch
- * wins over its team's, and both are off until someone turns them on).
+ * wins over its team's, and both are off until someone turns them on). Those marked `newTeams`
+ * are turned on for a team when it is created (src/admin.js).
  *
  * - `browser`: Cloudflare's hosted Browser Run MCP server, with an API token of the account
  *   (BROWSER_RUN_TOKEN, Browser Run Write only): fetch pages as markdown or HTML, screenshots,
@@ -47,6 +48,7 @@ export const GLOBAL_SERVERS = [
       + ' start_crawl is for whole sites (then get_crawl_result).',
     // The account's own sessions are not the agents' business.
     exclude: ['list_browser_sessions', 'kill_browser_session'],
+    newTeams: true,
   },
   {
     server: 'github',
@@ -55,6 +57,7 @@ export const GLOBAL_SERVERS = [
       + ' runs and discussions of the repositories the opspile GitHub App is installed on',
     instructions: 'Only the repositories the opspile GitHub App is installed on can be read; a'
       + ' repository that is not found is one it is not installed on.',
+    newTeams: true,
   },
 ];
 
@@ -122,6 +125,27 @@ export async function switchesFor(env, { team, channelId }) {
     }
   }
   return out;
+}
+
+/**
+ * Sets a global server's switch for a team or a channel, as `by` (a name), now; `enabled: null`
+ * lets a channel follow its team again. Resolves to the switch, or null when it was removed.
+ */
+export async function setGlobalSwitch(env, {
+  server, scope, target, enabled, by,
+}) {
+  if (enabled === null) {
+    await env.DB.prepare(`DELETE FROM mcp_global_switches WHERE server = ? AND scope = ?
+      AND target = ?`).bind(server, scope, target).run();
+    return null;
+  }
+  const at = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO mcp_global_switches (server, scope, target, enabled,
+      changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (server, scope, target) DO UPDATE SET enabled = excluded.enabled,
+      changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
+    .bind(server, scope, target, enabled ? 1 : 0, by, at).run();
+  return { enabled: Boolean(enabled), by, at };
 }
 
 /** Whether a global server is on: the channel's switch if it has one, else the team's. */

@@ -73,6 +73,7 @@ import { sweepTopicMap } from './topicmap.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
+import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
@@ -284,7 +285,8 @@ const handlers = {
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
  * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
  * behind, fill in the latest message's text of threads indexed before it was kept, delete
- * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js), and enqueue the
+ * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals
+ * kept for an Undo of a discarded draft past its time (src/draftevents.js), and enqueue the
  * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
  * what the days used, for COGS.
  */
@@ -355,6 +357,9 @@ const handlers = {
     ctx.waitUntil(sweepBackfills(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', backfills: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', backfills: 'error', error: e.message }))));
+    ctx.waitUntil(pruneDraftUndo(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', draftUndo: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', draftUndo: 'error', error: e.message }))));
     ctx.waitUntil(pruneRankEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rankEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rankEvents: 'error', error: e.message }))));

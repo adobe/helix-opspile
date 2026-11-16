@@ -37,21 +37,39 @@ describe('Spectrum 2', () => {
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);
-      // The browser's chrome: Spectrum 2's base background, light and dark.
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
-      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-base-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
+      // The browser's chrome: the app frame's layer, light and dark.
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-layer-1-color', 'dark').replace('rgba', 'rgb')}" media="(prefers-color-scheme: dark)">`), name);
+      assert.ok(html.includes(`<meta name="theme-color" content="${spectrumColor('spectrum-background-layer-1-color', 'light').replace('rgba', 'rgb')}" media="(prefers-color-scheme: light)">`), name);
     }
   });
 
-  it('keeps zero lengths that calc() adds to lengths, and the filter cards\' overhang', () => {
+  it('keeps zero lengths that calc() adds to lengths', () => {
     for (const file of STYLESHEETS) {
       // A custom property set to a unitless 0 breaks every calc() that adds it to a length.
       assert.doesNotMatch(SCRIPTS[file], /--[a-z0-9-]+:\s*0\s*[;}]/, file);
     }
-    // The filter cards hang out to the right as they are picked (--out), padded as much, so
-    // their contents stay where they are; pointing at one moves nothing.
-    assert.match(SCRIPTS['spectrum-inbox.css'], /#filters \.card \{[^}]*--out: 0px; margin-right: calc\(-1 \* var\(--out\)\); padding-right: calc\([^;]*\+ var\(--out\)\)/);
-    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /#filters \.card(\.active)?:hover \{[^}]*--out/);
+  });
+
+  it('frames every page as Spectrum 2\'s app frame does: a content area on the frame\'s layer', () => {
+    const shared = SCRIPTS['spectrum.css'];
+    assert.match(shared, /--frame: var\(--spectrum-background-layer-1-color\);\s*--content: var\(--spectrum-background-base-color\);/);
+    assert.match(shared, /:where\(\.spectrum\) body \{ background: var\(--frame\);/);
+    // The header is part of the frame: no fill of its own, and no line under it.
+    assert.match(shared, /\.spectrum header \{[^}]*background: transparent;\s*border-bottom: 0;/);
+    // The inbox's list and thread, and a knowledge base's files and editor, are one container.
+    for (const file of ['spectrum-inbox.css', 'spectrum-kb.css']) {
+      assert.match(SCRIPTS[file], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/, file);
+    }
+    assert.match(SCRIPTS['spectrum-admin.css'], /\.spectrum #detail \{[^}]*background: var\(--content\);\s*border-radius: var\(--content-radius\);\s*box-shadow: var\(--content-shadow\);/);
+    // Nothing on a page hangs over another part of it at rest: the open thread's row is
+    // selected where it is, and a filter group has no card or shadow until it slides out.
+    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /#lift|--out\b/);
+    assert.doesNotMatch(PAGES['inbox.html'], /id="lift"/);
+    // Dashes are a DropZone's, and the agent's thought bubble's: not a card's edge.
+    assert.doesNotMatch(SCRIPTS['spectrum-inbox.css'], /\.spectrum \.(draftbar|bashbar \.br|sidechat) \{[^}]*dashed/);
+    // What deletes is a secondary Button on a page; the red fill confirms it in a dialog.
+    assert.match(shared, /\.spectrum button\.danger \{[^}]*background: transparent;/);
+    assert.match(shared, /\.spectrum dialog button\.danger \{[^}]*background: var\(--spectrum-negative-background-color-default\);/);
   });
 
   it('sends the preview\'s addresses, /spectrum…, to the same page under /inbox', () => {
@@ -115,5 +133,64 @@ describe('Spectrum 2', () => {
       ].map((m) => m[0]);
       assert.deepEqual(raw, [], file);
     }
+  });
+
+  it('labels its fields, with no placeholder, and asks before a team is deleted', () => {
+    const written = [...Object.entries(PAGES), ...Object.entries(SCRIPTS)].filter(([name]) => /\.(html|js)$/.test(name));
+    for (const [name, text] of written) {
+      // A placeholder is gone once you type and reads as a value until then: a field has a
+      // label (`.fld`, a form's own <label>), a search field its magnifier and an aria-label.
+      assert.doesNotMatch(text, /placeholder\s*[=:]/, name);
+    }
+    assert.match(SCRIPTS['admin.js'], /<label class="fld grow"><span>Name<\/span><input id="ntName" required><\/label>/);
+    assert.match(SCRIPTS['admin.js'], /<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams"/);
+    assert.match(SCRIPTS['spectrum.css'], /\.spectrum \.s2-search::before \{[^}]*mask: var\(--s2-icon-search\)/);
+    // Deleting a team is confirmed in an alert dialog; resetting an org is not.
+    assert.match(SCRIPTS['admin.js'], /\$\('tDelete'\)\.onclick = async \(\) => \(await confirmFirst\(/);
+    assert.match(SCRIPTS['admin.js'], /\$\('oDelete'\)\.onclick = \(\) => hold\(/);
+    assert.match(SCRIPTS['admin.js'], /dlg\.setAttribute\('role', 'alertdialog'\)/);
+  });
+
+  it('shows what a filter\'s value or a thread is with Spectrum 2\'s workflow icons, not emoji', () => {
+    const js = SCRIPTS['inbox.js'];
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const maps = [...js.matchAll(/const (?:KIND|URGENCY|STATUS|RESOLVED|DRAFT|WAITING|TYPE)_ICON = \{([^}]*)\};/g)];
+    assert.equal(maps.length, 7);
+    for (const [, body] of maps) {
+      const names = [...body.matchAll(/: '([^']+)'/g)].map((m) => m[1]);
+      assert.ok(names.length > 1);
+      // Each is an icon the stylesheet has, by name; none is a character.
+      for (const name of names) {
+        assert.match(name, /^[a-z-]+$/);
+        assert.ok(css.includes(`.spectrum .wf-${name} { --wf: `), name);
+      }
+    }
+    assert.match(css, /\.spectrum \.wf \{[^}]*background: currentColor;\s*mask: var\(--wf\) center \/ contain no-repeat;/);
+  });
+
+  it('draws its icons and checkboxes itself, and its overlays arrive', () => {
+    const shared = SCRIPTS['spectrum.css'];
+    // A chevron or a menu's checkmark is Spectrum 2's icon, a mask in the text's color, on an
+    // empty span: not a triangle or a check mark of the typeface, which a screen reader reads.
+    for (const icon of ['chevron', 'checkmark', 'close']) {
+      assert.match(shared, new RegExp(`--s2-icon-${icon}: url\\("data:image/svg\\+xml;base64,`));
+    }
+    const written = [...Object.entries(PAGES), ...Object.entries(SCRIPTS)].filter(([name]) => /\.(html|js)$/.test(name));
+    for (const [name, text] of written) {
+      assert.doesNotMatch(text.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, ''), /[▾▸▴◂]/, name);
+      assert.doesNotMatch(text, /class="ck">|class="ck[^"]*"[^>]*>✓/, name);
+    }
+    assert.match(PAGES['inbox.html'], /<span class="ck s2-check" aria-hidden="true"><\/span>When someone mentions me/);
+    // The header's mode (reviewing labels, viewing as someone) is one row: icon, label, cross.
+    assert.match(shared, /header \.mode \{ display: inline-flex; align-items: center;/);
+    // The checkbox is drawn here, in tokens, in place of the browser's.
+    assert.match(shared, /input:where\(\[type="checkbox"\]\) \{\s*appearance: none;/);
+    // Popovers and dialogs fade in from where they come from, and out; not for reduced motion,
+    // which sets every transition's duration to none.
+    assert.match(shared, /@starting-style \{\s*\.spectrum \[popover\]:popover-open \{ opacity: 0;/);
+    assert.match(shared, /@starting-style \{\s*\.spectrum dialog:not\(\.lightbox\)\[open\] \{ opacity: 0;/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum \*, [^{]*\{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    // New rows and messages do not slide in for reduced motion either.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /prefers-reduced-motion: reduce\) \{ \.t\.enter, \.msg\.enter, \.sys\.enter \{ animation: none; \} \}/);
   });
 });

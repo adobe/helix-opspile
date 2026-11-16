@@ -128,7 +128,7 @@ describe('code highlighting', () => {
     };
     const over = (base, top, alpha) => base.map((v, i) => v * (1 - alpha) + top[i] * alpha);
     for (const group of new Set(Object.values(GROUPS))) {
-      assert.match(css, new RegExp(`\\.spectrum \\.bubble pre\\.hl \\.hl-${group}[ ,]`), group);
+      assert.match(css, new RegExp(`\\.spectrum :is\\(\\.bubble, \\.bashbar\\) pre\\.hl \\.hl-${group}[ ,]`), group);
     }
     const colors = [...css.matchAll(/pre\.hl \.hl-[a-z]+ \{ color: var\(--(spectrum-[a-z0-9-]+)\)/g)]
       .map((m) => m[1]);
@@ -137,8 +137,12 @@ describe('code highlighting', () => {
       // A code block is the faint overlay (--s2-hover) on a bubble, or on the pane (the agent's).
       const tint = rgb(spectrumColor('spectrum-gray-1000', scheme));
       const alpha = Number(spectrumColor('spectrum-transparent-black-100-opacity', scheme));
-      const grounds = ['spectrum-gray-100', 'spectrum-background-base-color']
-        .map((name) => over(rgb(spectrumColor(name, scheme)), tint, alpha));
+      const base = rgb(spectrumColor('spectrum-background-base-color', scheme));
+      // A command a person is asked to run (.bashbar): its card is the notice's subtle fill,
+      // half and half with the pane.
+      const card = over(base, rgb(spectrumColor('spectrum-notice-subtle-background-color-default', scheme)), 0.5);
+      const grounds = [rgb(spectrumColor('spectrum-gray-100', scheme)), base, card]
+        .map((ground) => over(ground, tint, alpha));
       for (const color of colors) {
         for (const ground of grounds) {
           const r = ratio(rgb(spectrumColor(color, scheme)), ground);

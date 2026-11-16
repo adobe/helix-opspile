@@ -28,7 +28,11 @@ import { membershipOn } from './membership.js';
  *   just-bash shell in a Dynamic Worker over a filesystem in the agent's own Durable Object,
  *   so each thread keeps its files from one turn to the next, with network access and curl,
  *   and the team's and the customer's secrets, which only the Worker's gateway puts into the
- *   shell's requests (src/agent/secrets.js).
+ *   shell's requests (src/agent/secrets.js). With it comes `request_bash`: a command the agent
+ *   asks a person on the team to run there, with values the person fills in
+ *   (src/agent/bashrequest.js). The admin team can give a team's agents another shell on the
+ *   same files, its `runtime`: GNU bash and real programs on the SLICC kernel
+ *   (src/agent/kernel.js), which is experimental.
  * - `extraction_rules`: the agent reads, tests and changes its team's extraction rules and
  *   tech stack (src/extract.js), which apply to every channel of the team from the next
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
@@ -38,6 +42,8 @@ import { membershipOn } from './membership.js';
  *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
  *   through a service binding. The admins approve, as when a person asks the bot.
+ *
+ * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
  *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
@@ -59,16 +65,20 @@ export const AGENT_TOOLS = [
   {
     tool: 'computer',
     title: 'Computer',
-    names: ['bash'],
-    description: 'A bash shell for the agent on Cloudflare Computer: just-bash in a Dynamic'
-      + ' Worker, over a working directory of its own per thread that keeps its files. cat, grep,'
-      + ' sed, awk, jq, sort, find, curl and the like; no npm, node or python. The files attached'
-      + ' to the thread are in it, read-only, for 30 days',
+    names: ['bash', 'request_bash'],
+    description: 'A bash shell for the agent on Cloudflare Computer, in Dynamic Workers, over a'
+      + ' working directory of its own per thread that keeps its files. cat, grep, sed, awk,'
+      + ' sort, find, curl and the like; no npm, node or python. The files attached to the'
+      + ' thread are in it, read-only, for 30 days. It can also ask a person to run a command'
+      + ' there (request_bash), with values only they have',
     note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
       + ' leave the inbox through it, the files attached to the thread included. Secrets kept'
       + ' here are put into its requests on the way out, only to their hosts: the agent never'
-      + ' sees their values.',
+      + ' sees their values. A command it asks for shows under its thread, for the team to run'
+      + ' or deny: what the person fills in goes to that one run, is kept nowhere, and is taken'
+      + ' out of what the agent reads of the output.',
     platforms: null,
+    newTeams: true,
   },
   {
     tool: 'extraction_rules',
@@ -82,6 +92,7 @@ export const AGENT_TOOLS = [
       + ' a thread, and shows on this page, attributed to the agent. It cannot change the admin'
       + ' team\'s rules.',
     platforms: null,
+    newTeams: true,
   },
   {
     tool: 'any_thread',

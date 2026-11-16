@@ -33,7 +33,7 @@ export default [
       ...recommended.rules,
       // Workers runtime modules, and packages that only declare `exports` (the resolver does
       // not read them).
-      'import/no-unresolved': ['error', { ignore: ['^cloudflare:', '^agents(/|$)', '^@earendil-works/', '^@modelcontextprotocol/', '^@cloudflare/computer/'] }],
+      'import/no-unresolved': ['error', { ignore: ['^cloudflare:', '^agents(/|$)', '^@earendil-works/', '^@modelcontextprotocol/', '^@cloudflare/computer/', '^@ai-ecoverse/slicc-kernel(/|$)', '^@ai-ecoverse/wasm-tls-engine(/|$)'] }],
       // console is how a Worker writes to Workers Logs.
       'no-console': 'off',
       'max-len': ['error', 100, 2, {

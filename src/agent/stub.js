@@ -11,8 +11,11 @@
  */
 
 import { AGENT_EMAIL, entryOf } from '../drafts.js';
+import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
+import { notifyRoom } from '../notify.js';
+import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
 import { agentEnabled } from './enabled.js';
 
 /**
@@ -136,6 +139,47 @@ export async function seedAgent(env, me, body, inTeam) {
 }
 
 /**
+ * POST /api/agent/sidebar `{ thread, text }`: a person on the team talks to the thread's agent in
+ * the inbox's sidebar (src/sidebar.js). The message goes into the thread's sidebar and into the
+ * agent's conversation, and nowhere else: never to the platform. The agent answers it when it is
+ * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may work
+ * the thread. Answers 202 with the message.
+ */
+export async function talkToAgent(env, me, body, inTeam) {
+  const text = String((body && body.text) || '').trim();
+  if (!text || text.length > MAX_SIDEBAR) {
+    return json({ error: `write what to ask the agent (up to ${MAX_SIDEBAR} characters)` }, 400);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const t = await threadTarget(env, body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (!t.enabled) {
+    return json({ error: 'this thread has no agent' }, 409);
+  }
+  const by = me.name || me.email || 'staff';
+  // Written first: the agent's answer is kept only for a message the thread has.
+  const message = await addSidebarMessage(env, t.entry.key, {
+    id: sidebarId(), person: me.id, name: by, text,
+  });
+  const agent = await agentStub(env, t.entry.key);
+  const res = await agent.sidebar({ id: message.id, by, text })
+    .catch((e) => ({ error: e.message }));
+  if (res.error) {
+    await env.DB.prepare('DELETE FROM sidebar_messages WHERE id = ?').bind(message.id).run();
+    return json({ error: res.error }, 503);
+  }
+  await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+  return json({ message }, 202);
+}
+
+/**
  * After DELETE /api/draft (`result`: what discardDraft answered): when the draft a person
  * discarded was the agent's, the thread's agent hears who discarded it and what it said, so it
  * learns which drafts are not wanted. A draft a person saved last, or one a reply used up, is
@@ -159,6 +203,37 @@ export async function tellDiscarded(env, me, key, result) {
   return agent.discarded({
     by: me.name || me.email || 'staff', body: draft.body, version: draft.updated_at,
   });
+}
+
+/**
+ * POST /api/bash/run `{ thread, id, env }` and POST /api/bash/deny `{ thread, id }`: a person
+ * runs, with the values they filled in for its variables (`env`: `{ NAME: value }`), or denies
+ * a command the thread's agent asked for (src/agent/bashrequest.js). Only who may work the
+ * thread. The agent that asked decides the rest, in its own object: whether the request can
+ * still be run, and the run itself, on its computer; `run` answers 202 once the command has
+ * started, and the inbox hears how it ended through the team's room. The values go to the
+ * agent's object and from there to the shell, and are neither kept nor logged.
+ */
+export async function decideBash(env, me, body, inTeam, { run }) {
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const entry = await entryOf(env, body && body.thread);
+  if (!entry || !await inTeam(entry.teams, entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const request = await requestOf(env, body.id);
+  // Of this entry: one of its member threads asked (a thread folded into a group since).
+  if (!request || !entry.keys.includes(request.thread)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const by = { id: me.id, name: me.name || me.email || 'staff' };
+  const agent = await agentStub(env, request.thread);
+  const res = run
+    ? await agent.runBash({ id: request.id, values: body.env || {}, by })
+    : await agent.denyBash({ id: request.id, by });
+  const { status, ...rest } = res;
+  return json(rest, status || (run ? 202 : 200));
 }
 
 /** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */

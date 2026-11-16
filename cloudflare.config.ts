@@ -53,7 +53,8 @@ const VARS = [
 // in the account AI_GATEWAY_ACCOUNT (default: the Worker's); AGENT_REGION is the Bedrock
 // region (default us-east-2).
 // The sign-in allow list (Cloudflare Access policy of the inbox) follows the ops teams when
-// these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write).
+// these are set, with the secret ACCESS_API_TOKEN (Access: Apps and Policies Write). With
+// Access: Audit Logs Read too, the token counts the account's Access seats for COGS.
 const ACCESS_SYNC_VARS = ['ACCESS_ACCOUNT_ID', 'ACCESS_APP_ID', 'ACCESS_POLICY_ID'] as const;
 // No-team mode, optional: SIGNIN_DOMAINS, comma-separated mail domains whose people may sign in
 // without being on an ops team (their personal view only); the allow list gets them as domains.
@@ -122,6 +123,10 @@ const SECRETS = [
   // with Browser Run Write only. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BROWSER_RUN_TOKEN'] : []),
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),
+  // Slack: an org admin's token, which adds a colleague mentioned to the channel's workspace
+  // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
+  // has `cf` check it exists.
+  ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.
@@ -140,6 +145,9 @@ function resources(mode: string | undefined) {
     // Copies of the files attached to messages, for agents' computers (src/threadfiles.js).
     // Its lifecycle rule deletes them after 30 days; `cf deploy` does not set it: see README.
     FILES: bindings.r2({ name: `helix-opspile-files${suffix}` }),
+    // The images of the agents' computers on the SLICC kernel (src/agent/image.js), which
+    // `npm run computer:images` uploads after a deploy made the bucket.
+    IMAGES: bindings.r2({ name: `helix-opspile-images${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
     // Workers AI: Clef (thread labels) and Clairic (facts).
@@ -174,7 +182,7 @@ function cogsResources(mode: string | undefined, worker: string) {
     worker,
     dataset: `helix-opspile-usage${suffix}`,
     artifacts: `helix-opspile${suffix}`,
-    buckets: ['raw', 'channels', 'files'].map((b) => `helix-opspile-${b}${suffix}`),
+    buckets: ['raw', 'channels', 'files', 'images'].map((b) => `helix-opspile-${b}${suffix}`),
     indexes: ['roots', 'content'].map((i) => `helix-opspile-${i}${suffix}`),
   });
 }

@@ -78,6 +78,11 @@ const MEMBERS = [
   {
     key: 'noor', name: 'Noor Haddad', login: 'nhaddad', email: 'nhaddad@example.com', staff: true,
   },
+  // In the Enterprise org but not in the channels' workspace: Slack will not let the bot add
+  // him (`org_user_not_in_team`), and the note says so until it is dismissed.
+  {
+    key: 'mateo', name: 'Mateo Ruiz', login: 'mruiz', email: 'mruiz@example.com', staff: true, elsewhere: true,
+  },
 ];
 
 /** The `partner_domains` table: mail domain -> partner name. */
@@ -166,7 +171,9 @@ const CHANNELS = {
   cdn: {
     source: 'teams',
     channelId: 'CH-CDN',
-    name: 'CDN tickets',
+    // A Teams team's default channel: the thread header names the team alone.
+    name: 'Main',
+    groupName: 'Globex CDN',
     org: 'globex',
     team: 'edge',
     teamId: 'TEAM-EDGE',
@@ -418,6 +425,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   // Messages the viewer posted as the opspile app (`app_posts`): `${thread}|${id}`.
   const appPosts = new Set();
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
+  // thread -> the commands its agent asked a person to run, as src/bashrequests.js shapes them
+  const bashRequests = new Map();
+  // thread -> what the team said to its agent in the sidebar, and its answers (src/sidebar.js)
+  const sidebars = new Map();
   // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
   const sourceViews = new Map([
     ['https://docs.example.com/purge', { view: 'frame', url: '/__dev/source-page' }],
@@ -594,9 +605,16 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `mentioned` lists person keys, mentioned in the last message, or `[key, minutesAgo]`.
    * `draft`: the thread's shared draft, `{ by, ago, body, sources? }`; `by` is a person key or
    * 'agent'.
+   * `bash`: the commands the thread's agent asked a person to run, `[{ ago, command, reason,
+   * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
+   * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
+   * minutes ago (2, unless it says).
+   * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
+   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js).
    */
   function seed({
-    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft,
+    ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
+    sidebar = [],
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -678,6 +696,49 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         updated_at: at,
       });
     }
+    if (sidebar.length) {
+      let asked = null;
+      sidebars.set(key, sidebar.map(([who, ago, body], i) => {
+        const p = who !== 'agent' && byKey.get(who);
+        const id = `sb_${String(threads.size).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`;
+        const m = {
+          id: p ? id : `${asked}:answer`,
+          role: p ? 'person' : 'agent',
+          by: p ? { id: p.id, name: p.name } : null,
+          body,
+          state: 'done',
+          reply_to: p ? null : asked,
+          at: new Date(now - ago * MIN).toISOString(),
+        };
+        if (p) {
+          asked = id;
+        }
+        return m;
+      }));
+    }
+    if (bash.length) {
+      bashRequests.set(key, bash.map((b, i) => {
+        const who = b.by && byKey.get(b.by);
+        const decided = b.status ? new Date(now - (b.ended ?? 2) * MIN).toISOString() : null;
+        return {
+          // Twelve hex digits, as src/agent/bashrequest.js makes them: the agent names them.
+          id: (0x375f59640760 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
+          thread: key,
+          command: b.command,
+          reason: b.reason,
+          env: b.env || [],
+          timeout: b.timeout || 60,
+          deadline: new Date(now + (b.open ?? 23 * 60) * MIN).toISOString(),
+          status: b.status || 'pending',
+          created_at: new Date(now - b.ago * MIN).toISOString(),
+          by: who ? { id: who.id, name: who.name } : null,
+          decided_at: decided,
+          finished_at: decided,
+          exit_code: b.status === 'done' ? b.exit ?? 0 : null,
+          error: null,
+        };
+      }));
+    }
     return key;
   }
 
@@ -756,7 +817,73 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         { url: 'https://status.example.com/incidents/42', title: 'Status page' },
       ],
     },
+    // The agent tried three times, as the viewer ran each, and asks for a fourth: one long line,
+    // with one variable whose description says where to find the value.
+    bash: [
+      {
+        ago: 9,
+        command: 'curl -sf -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'Reads version 41 of the CDN service, the one from before the 14:00 flush.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
+        status: 'done',
+        exit: 22,
+        by: 'dana',
+        ended: 7,
+      },
+      {
+        ago: 6,
+        command: 'curl -s -D headers.txt -o body.json -w "HTTP %{http_code}\\n" '
+          + '-H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'The same call, printing the status and keeping the headers, to see why it failed.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
+        status: 'done',
+        exit: 2,
+        by: 'dana',
+        ended: 5,
+      },
+      {
+        ago: 4,
+        command: 'curl -s -i -A "opspile-agent" -w "\\nHTTP %{http_code}\\n" '
+          + '-H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41',
+        reason: 'The same call with a User-Agent, which the API wants.',
+        env: [{ name: 'CDN_API_TOKEN', description: 'Your CDN API token (read-only is enough)' }],
+        status: 'done',
+        by: 'dana',
+        ended: 3,
+      },
+      {
+        ago: 1,
+        command: 'curl -sf -A "opspile-agent" -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + 'https://api.cdn.example.com/v1/services/acme-preview/versions/41 -o version-41.json && '
+          + 'curl -sf -A "opspile-agent" -H "Authorization: Bearer $CDN_API_TOKEN" -H "Accept: application/json" '
+          + '"https://api.cdn.example.com/v1/services/acme-preview/versions/42?include=backends" -o version-42.json && '
+          + 'jq \'{number, active, updated_at, comment, backends: [.backends[].name]}\' version-41.json && '
+          + 'jq \'{number, active, updated_at, comment, backends: [.backends[].name]}\' version-42.json',
+        reason: 'Reads versions 41 and 42 of the CDN service with your token, saves them to my '
+          + 'workspace, and prints what changed with the 14:00 flush. Nothing gets written to '
+          + 'the CDN.',
+        env: [{
+          name: 'CDN_API_TOKEN',
+          description: 'A CDN API token with read access to the acme-preview service (a '
+            + 'read-only token is enough). cdn.example.com → Account → API tokens.',
+        }],
+        timeout: 60,
+      },
+    ],
   });
+  {
+    // A message of this thread cited too, once its id is known: the source shows its card, not
+    // Slack's page (src/messagelinks.js).
+    const { ch, rootId, messages } = threads.get(preview503);
+    const reply = String(messages[2].id).replace('.', '');
+    drafts.get(preview503).sources.push({
+      url: `https://acme.slack.com/archives/${ch.channelId}/p${reply}?thread_ts=${rootId}&cid=${ch.channelId}`,
+      title: 'Sam: the paths affected',
+    });
+  }
   {
     // Reactions on the bubbles' edge: two of a kind (one yours) show a count, a single one not.
     const entry = threads.get(preview503);
@@ -985,7 +1112,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   });
 
   // An Adobe person who knows the preview deploys (the ACME 503 thread is about one): offered
-  // first among staff when someone types @ there, as "Adobe · related" (src/expertise.js).
+  // first of those outside the thread and the channel when someone types @ there, as
+  // "Adobe · related" (src/expertise.js).
   seed({
     ch: CHANNELS.release,
     messages: [
@@ -1063,6 +1191,17 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     label: {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
+    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
+    // thread, between Dana's question and Sam's answer. Dana asked it after that: a second
+    // conversation, under the thread. A wide screen shows both in the panel beside the thread.
+    sidebar: [
+      ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
+      ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
+      ['lena', 82, 'So it could be their rewrite?'],
+      ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
+      ['dana', 64, 'Does the rewrite Sam sent explain it?'],
+      ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
+    ],
   });
 
   seed({
@@ -1215,6 +1354,33 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A thread that went on for more than a year and was last heard of yesterday: its latest
+  // message says its day with its time ("Yesterday at 12:02 PM"), the others the time alone,
+  // as the day is in the divider, which stays on top while its messages scroll by (and says
+  // the year of another year). Pointing at any time shows the whole date. A short reply under
+  // a long header, and Dana's own, which have the pen beside their quick reactions.
+  const noonBefore = (n) => {
+    const d = new Date(now);
+    const noon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - n, 12);
+    return Math.round((now - noon.getTime()) / MIN);
+  };
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['ola', noonBefore(430), 'Could the image CDN keep the original file names in its URLs? Our analytics group by them.'],
+      ['priya', noonBefore(430) - 25, 'Yes.'],
+      ['ola', noonBefore(6), 'It is back to hashed names since last week\'s release. Was that intended?'],
+      ['dana', noonBefore(6) - 40, 'It was not: the release dropped the setting. I am putting it back.'],
+      ['ola', noonBefore(1), 'Thanks. The names are right on preview, live still has the hashed ones.'],
+      ['dana', noonBefore(1) - 2, 'Live follows with tonight\'s publish.'],
+      ['dana', noonBefore(1) - 3, 'I will check it in the morning.'],
+    ],
+    reads: { dana: 'latest', priya: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.7, topics: ['publishing'],
+    },
+  });
+
   // A follow-up posted as a new root, folded into the thread it continues (re-threading): one
   // inbox entry, "2 posts folded into one thread". The live case, a root folded after it was
   // in the list, is `POST /__dev/rethread` (scripts/dev-ui.mjs).
@@ -1281,6 +1447,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     mentions,
     appPosts,
     drafts,
+    bashRequests,
+    sidebars,
     sourceViews,
     sourcePage,
     uploads,

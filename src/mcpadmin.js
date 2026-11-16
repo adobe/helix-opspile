@@ -11,7 +11,8 @@
  */
 
 import {
-  GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, storedTools, storeTools,
+  GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, setGlobalSwitch, storedTools,
+  storeTools,
   usableTools,
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
@@ -445,17 +446,9 @@ async function switchGlobal(env, me, body) {
     return bad('give a team or a channel');
   }
   const by = me.name || me.email || String(me.id);
-  const at = new Date().toISOString();
-  if (enabled === null) {
-    await env.DB.prepare(`DELETE FROM mcp_global_switches WHERE server = ? AND scope = ?
-      AND target = ?`).bind(server, scope, target).run();
-  } else {
-    await env.DB.prepare(`INSERT INTO mcp_global_switches (server, scope, target, enabled,
-        changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (server, scope, target) DO UPDATE SET enabled = excluded.enabled,
-        changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
-      .bind(server, scope, target, enabled ? 1 : 0, by, at).run();
-  }
+  const sw = await setGlobalSwitch(env, {
+    server, scope, target, enabled, by,
+  });
   console.log(JSON.stringify({
     route: 'kb', mcp: 'global', server, scope, team, enabled, by: me.id,
   }));
@@ -463,7 +456,7 @@ async function switchGlobal(env, me, body) {
     ok: true,
     server,
     [scope]: target,
-    switch: enabled === null ? null : { enabled, by, at },
+    switch: sw,
   });
 }
 

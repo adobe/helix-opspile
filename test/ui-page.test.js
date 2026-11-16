@@ -16,7 +16,7 @@ import { transform } from 'esbuild';
 import { appRule, checkFiles, personRule } from '../src/attach.js';
 import { bellKey as serverBellKey, withDefaults } from '../src/settings.js';
 import { CHANNEL_REF } from '../src/markdown.js';
-import { SCRIPTS } from './ui.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
 const html = SCRIPTS['inbox.js'];
 
@@ -96,11 +96,18 @@ describe('inbox page', () => {
     for (const iso of ['2024-03-01T07:05:00Z', '2023-12-31T23:59:00Z', '2024-06-15T13:30:00Z']) {
       const d = new Date(iso);
       assert.equal(clock(iso), d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
-      assert.equal(dayLabel(iso), d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
+      // The day of a message, on another day of its year, and looked at in a later year.
+      const then = new Date(d.getFullYear(), 6, 4);
+      assert.equal(dayLabel(iso, then), d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
+      assert.equal(dayLabel(iso), d.toLocaleDateString(undefined, {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      }));
       assert.equal(ago(iso), d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
     }
     assert.equal(dayLabel(new Date().toISOString()), 'Today');
-    assert.equal(dayLabel(new Date(Date.now() - 86400000).toISOString()), 'Yesterday');
+    const today = new Date();
+    const noonBefore = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 12);
+    assert.equal(dayLabel(noonBefore.toISOString()), 'Yesterday');
     assert.equal(ago(new Date(Date.now() - 2 * 3600000).toISOString()), '2h');
     assert.equal(clock('not a date'), 'Invalid Date');
     assert.equal(dayLabel(undefined), 'Invalid Date');
@@ -240,6 +247,15 @@ describe('inbox page', () => {
     assert.equal(drawerOpens(0.4, -0.1), false);
   });
 
+  it('moves the thread\'s header away on a phone as the thread scrolls, and back', () => {
+    const { headAway } = piece('const headAway', 'function wireHeadAway', 'headAway');
+    // Down: as far as the thread went, until it is gone; up: back as far, until it is all there.
+    assert.equal(headAway(0, 40, 140), 40);
+    assert.equal(headAway(120, 40, 140), 140);
+    assert.equal(headAway(140, -30, 140), 110);
+    assert.equal(headAway(20, -30, 140), 0);
+  });
+
   it('opens the personal view unless the address names a team', () => {
     const { personalAsked } = piece('const personalAsked', 'function fromUrl', 'personalAsked');
     const asks = (search) => personalAsked(new URLSearchParams(search));
@@ -368,7 +384,7 @@ describe('inbox page', () => {
       profileKey: () => 'k',
       avatar: () => '',
       esc: (x) => String(x ?? ''),
-      clock: () => '10:00',
+      timeTag: () => '10:00',
       md: (x) => x,
       canReact: () => false,
       canEdit: () => false,
@@ -397,7 +413,7 @@ describe('inbox page', () => {
       profileKey: () => 'k',
       avatar: () => '',
       esc: (x) => String(x ?? ''),
-      clock: () => '10:00',
+      timeTag: () => '10:00',
       md: (x) => x,
       canReact: () => true,
       canEdit: (m) => Boolean(m.editable),
@@ -483,7 +499,7 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['b', 'gap']);
   });
 
-  it('shows your reads from another tab or device, and not this tab\'s own again', () => {
+  it('shows your reads from another tab or device once the room has written them, and not this tab\'s own again', () => {
     const at = (h) => `2026-11-05T${String(h).padStart(2, '0')}:00:00Z`;
     const state = {
       sockets: [],
@@ -506,31 +522,38 @@ describe('inbox page', () => {
       },
     };
     const memberLast = (m) => m.last_at || m.any_at;
-    const { readHere } = piece('function readHere(', 'function markRead(', 'readHere', { state, memberLast });
     const sockets = [];
     const reloads = [];
+    const reloadSoon = (k) => reloads.push(k);
+    const { heardRead } = piece('function readHere(', '// Live updates reload the inbox', 'heardRead', { state, memberLast, reloadSoon });
     const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
       WebSocket: function FakeSocket() { sockets.push(this); },
       location: { protocol: 'https:', host: 'x' },
       state,
-      reloadSoon: (k) => reloads.push(k),
+      reloadSoon,
       noteEvent: () => {},
       screenTeams: () => ['helix'],
-      readHere,
+      heardRead,
     });
     listen('helix', 1);
-    const send = (ev) => sockets[0].onmessage({ data: JSON.stringify({ type: 'read', ...ev }) });
-    send({ person: 1, thread: 'b', at: at(9) });
+    const send = (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) });
+    // Said at once, before D1 has it: an inbox loaded now would still have it unread.
+    send({
+      type: 'read', person: 1, thread: 'a', at: at(9),
+    });
+    send({
+      type: 'read', person: 2, thread: 'b', at: at(9),
+    });
+    assert.deepEqual(reloads, [], 'not written yet');
+    const flushed = (...reads) => send({ type: 'reads', reads: reads.map(([person, thread, h]) => ({ person, thread, at: at(h) })) });
+    flushed([1, 'b', 9]);
     assert.deepEqual(reloads, [], 'read here already (this tab marked it)');
-    send({ person: 1, thread: 'a', at: at(8) });
+    flushed([1, 'a', 8]);
     assert.deepEqual(reloads, [], 'not up to its last message');
-    send({ person: 1, thread: 'a', at: at(9) });
+    flushed([1, 'a', 9]);
     assert.deepEqual(reloads, ['a'], 'read on another device');
-    send({ person: 1, thread: 'g', at: at(8) });
-    assert.deepEqual(reloads, ['a', 'g'], 'a member of a folded entry, read to its end');
-    send({ person: 1, thread: 'elsewhere', at: at(9) });
-    send({ person: 2, thread: 'b', at: at(9) });
-    assert.deepEqual(reloads, ['a', 'g', 'b'], 'a teammate\'s read, as before');
+    flushed([1, 'g', 8], [1, 'elsewhere', 9], [2, 'b', 9]);
+    assert.deepEqual(reloads, ['a', 'g', 'b'], 'a member of a folded entry, read to its end, and a teammate\'s read');
   });
 
   describe('a thread folded into a group (re-threading)', () => {
@@ -593,7 +616,9 @@ describe('inbox page', () => {
         }),
         reloadSoon: (k) => reloads.push(k),
         noteEvent: () => {},
+        stalePools: () => {},
         screenTeams: () => ['helix'],
+        heardRead: () => {},
         foldInto,
         splitFrom,
       });
@@ -660,6 +685,48 @@ describe('inbox page', () => {
       addPage(page([entry('group')]));
       assert.deepEqual(keys(), ['b', 'a', 'group']);
     });
+  });
+
+  it('shows a reaction made here at once, and one taken off as gone', () => {
+    const glyphs = {
+      eyes: 'E', pray: 'P', thumbsup: 'U', '+1': 'U',
+    };
+    const { withReaction } = piece('function withReaction', 'async function react(', 'withReaction', {
+      emoji: (n) => glyphs[n] || `:${n}:`,
+    });
+    const list = [{
+      emoji: '+1', count: 1, names: ['Ann'], mine: false,
+    }];
+    // Added to someone else's, under the name the thread has it.
+    assert.deepEqual(withReaction(list, 'thumbsup', false, 'Me'), [{
+      emoji: '+1', count: 2, names: ['Ann', 'Me'], mine: true,
+    }]);
+    // A new one goes last; the thread's list is left as it was.
+    assert.deepEqual(withReaction(list, 'eyes', false, 'Me').map((r) => [r.emoji, r.count, r.mine]), [['+1', 1, false], ['eyes', 1, true]]);
+    assert.equal(list[0].count, 1);
+    // Taken off: one fewer, or gone when it was the only one; nothing to take off, no change.
+    const mine = withReaction(list, 'pray', false, 'Me');
+    assert.deepEqual(withReaction(mine, 'pray', true, 'Me'), list);
+    assert.deepEqual(withReaction(withReaction(list, '+1', false, 'Me'), '+1', true, 'Me'), list);
+    assert.deepEqual(withReaction(list, '+1', true, 'Me'), list);
+    // Twice is once.
+    assert.deepEqual(withReaction(mine, 'pray', false, 'Me'), mine);
+  });
+
+  it('sends a reply as the bot looking like the bot\'s replies in that workspace', () => {
+    const ours = (thread, name) => ({
+      thread, editable: 'app', author: { kind: 'bot', name }, avatar: `${name}.png`, authorKey: `k-${name}`,
+    });
+    const state = {
+      cache: new Map([
+        ['slack:T1:C1:1', { data: { messages: [ours('slack:T1:C1:1', 'Ops'), { thread: 'slack:T1:C1:1', author: { kind: 'bot', name: 'Other' } }] } }],
+        ['slack:T2:C2:1', { data: { messages: [ours('slack:T2:C2:1', 'Elsewhere')] } }],
+      ]),
+    };
+    const { appLook } = piece('function appLook', '/** Shows the thread', 'appLook', { state });
+    assert.deepEqual(appLook('slack:T1:C9:2'), { author: { kind: 'bot', name: 'Ops' }, avatar: 'Ops.png', authorKey: 'k-Ops' });
+    assert.equal(appLook('teams:T1:C1:1').unnamed, true);
+    assert.equal(appLook('teams:T1:C1:1').author.name, 'The bot');
   });
 
   it('fills the sending bar towards 90%, then completes it and fades it out', () => {
@@ -789,6 +856,180 @@ describe('inbox page', () => {
     assert.equal(timers.length, 3);
     assert.equal(state.agents.get('t').turn, null);
     assert.equal(placed.pop(), null);
+  });
+
+  it('talks to the agent in the sidebar through its own route only, and says who did', () => {
+    const from = html.indexOf('async function askSide');
+    const ask = html.slice(from, html.indexOf('\n}\n', from));
+    assert.match(ask, /request\('POST', '\/api\/agent\/sidebar'/);
+    assert.doesNotMatch(ask, /\/api\/post|sendAsApp|postPending/);
+    const { sidePeople } = piece('/** "Lena Berg", "You"', '/** One message of a sidebar conversation', 'sidePeople', {
+      state: { me: { id: 1 } },
+    });
+    const said = (...people) => people.map((by) => ({ role: 'person', by }));
+    const lena = { id: 2, name: 'Lena Berg' };
+    const me = { id: 1, name: 'Dana Ops' };
+    assert.equal(sidePeople([...said(lena), { role: 'agent' }, ...said(lena)]), 'Lena Berg');
+    assert.equal(sidePeople(said(me)), 'You');
+    assert.equal(sidePeople(said(me, lena)), 'Lena Berg and you');
+    assert.equal(sidePeople(said(lena, { id: 3, name: 'Tom' }, me)), 'Lena Berg, Tom and you');
+  });
+
+  describe('the sidebar beside the thread, where there is room', () => {
+    const lena = { id: 2, name: 'Lena Berg' };
+    const run = [
+      {
+        id: 'sb1', role: 'person', by: lena, body: 'Seen before?', at: '2026-10-21T10:00:00.000Z',
+      },
+      {
+        id: 'sb1:answer', role: 'agent', body: 'Twice.', state: 'done', reply_to: 'sb1', at: '2026-10-21T10:00:30.000Z',
+      },
+    ];
+    /** The sidebar's markup with `side` as it stands, for who may talk to the agent, or not. */
+    const sidebar = (side, { may = true } = {}) => {
+      const globals = {
+        side: { open: new Set(), ...side },
+        state: { me: { id: 1 }, agents: new Map(), cache: new Map() },
+        canSide: () => may,
+        avatar: (name) => `<i>${name}</i>`,
+        AGENT_NAME: 'Thread Agent',
+        SIDE_ICON: '',
+        SIDE_HINT: '',
+        PLATFORM: { slack: 'Slack' },
+        esc: (x) => String(x),
+        md: (x) => x,
+        clock: () => '10:00 AM',
+        timeTag: () => '<time>10:00 AM</time>',
+        dayLabel: () => 'Today',
+      };
+      return {
+        ...piece('/** Whether thread `key` is in sidebar mode in the thread itself', '/** The reply box in sidebar mode', 'sideInline, sidePaneled, sideRun, sideGroup', globals),
+        ...piece('/** The panel\'s top:', '/** The panel goes, with what it showed.', 'sidePanelHead, sidePanelItems, sidePanelBox', {
+          ...globals, sideRun: (key, r) => r.map((m) => `<p>${m.body}</p>`),
+        }),
+      };
+    };
+
+    it('unfolds a conversation in the thread on a narrower screen, as before', () => {
+      const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: false, key: 't', open: new Set(['sb1']) });
+      assert.equal(sideInline('t'), true);
+      assert.equal(sidePaneled('t'), false);
+      const line = sideGroup('t', run, { last: true, trailing: false });
+      assert.match(line, /class="sidechat open /);
+      assert.match(line, /aria-expanded="true"/);
+      assert.doesNotMatch(line, /aria-controls/);
+      assert.match(line, /<div class="sc-body">.*Seen before\?.*Twice\./s);
+      // The one you are in stays open under the thread.
+      assert.match(sideGroup('t', run, { last: true, trailing: true }), /class="sidechat open live /);
+      // Nothing said yet: the place where it will show.
+      assert.match(sideGroup('t', [], { last: true, trailing: true }), /class="sidechat open live blank"/);
+    });
+
+    it('keeps one line per conversation in the thread on a wide screen, for everyone, and shows the rest in the panel', () => {
+      for (const may of [true, false]) {
+        // Not in the sidebar: the line is all there is, and it opens the panel.
+        const shut = sidebar({ wide: true, key: null, open: new Set(['sb1']) }, { may });
+        const line = shut.sideGroup('t', run, { last: true, trailing: true });
+        assert.match(line, /data-side-toggle="sb1" aria-expanded="false" aria-controls="side">/);
+        assert.match(line, /Lena Berg had a sidebar conversation with <b>Thread Agent<\/b>/);
+        assert.match(line, /2 messages · 10:00 AM · not posted/);
+        assert.doesNotMatch(line, /sc-body|Seen before\?| open | live /);
+        // In it: the same line, marked as shown beside the thread; never unfolded there too.
+        const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: true, key: 't' }, { may });
+        assert.equal(sideInline('t'), false);
+        assert.equal(sidePaneled('t'), true);
+        assert.equal(sidePaneled('u'), false);
+        const shown = sideGroup('t', run, { last: true, trailing: true });
+        assert.match(shown, /class="sidechat {3}paneled /);
+        assert.match(shown, /aria-expanded="true" aria-controls="side">/);
+        assert.doesNotMatch(shown, /sc-body|Seen before\?|aria-disabled|joined/);
+        // The line that opened the panel is one shape with it.
+        const picked = sidebar({ wide: true, key: 't', joined: 'sb1' }, { may });
+        assert.match(picked.sideGroup('t', run, { last: true, trailing: true }), /class="sidechat {3}paneled {2}joined" data-side="sb1">/);
+        assert.doesNotMatch(sidebar({ wide: true, key: null, joined: 'sb1' }, { may }).sideGroup('t', run, { last: true, trailing: true }), /joined/);
+      }
+      // No thread, no panel.
+      assert.equal(sidebar({ wide: true, key: null }).sidePaneled(null), false);
+    });
+
+    it('gives the panel every conversation, each under when it started, and a box of its own', () => {
+      const { sidePanelHead, sidePanelItems, sidePanelBox } = sidebar({ wide: true, key: 't' });
+      const later = [{
+        id: 'sb2', role: 'person', by: lena, body: 'And now?', at: '2026-10-21T11:00:00.000Z',
+      }];
+      const items = sidePanelItems('t', [{ run, last: false }, { run: later, last: true }]).map((i) => i.html);
+      assert.deepEqual(items.map((h) => (/^<div class="sp-when" data-run="(\w+)">/.exec(h) || [])[1] || h), [
+        'sb1', '<p>Seen before?</p>', '<p>Twice.</p>', 'sb2', '<p>And now?</p>',
+      ]);
+      assert.match(items[0], /Today · 10:00 AM/);
+      assert.match(sidePanelItems('t', [])[0].html, /class="sc-wait blank".*It is never posted\./);
+      // It says who sees it, and where nothing goes, as the box in the thread does.
+      assert.match(sidePanelHead({ source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(sidePanelHead({ source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
+      // The thread keeps its reply box, with the draft's and the commands' lines: the panel's
+      // box is the sidebar's only.
+      const box = sidePanelBox('t');
+      assert.equal(box.match(/id="side-reply"/g).length, 1);
+      assert.match(box, /id="side-send"/);
+      assert.doesNotMatch(box, /id="(draftbar|bashbar|reply|send)"|data-side-exit/);
+      // Someone who may not talk to the agent reads there.
+      assert.equal(sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t'), '');
+    });
+
+    it('shows the panel where the list, the thread and it have room, measured from the list\'s left edge', () => {
+      const room = (width, wideEnough = true) => {
+        const main = { getBoundingClientRect: () => ({ right: 1000 + width + 16 }) };
+        return piece('const SIDE_ROOM = ', '/** The room changed', 'sideRoom, SIDE_ROOM', {
+          WIDE: { matches: wideEnough },
+          document: { querySelector: () => main },
+          getComputedStyle: () => ({ paddingRight: '16px' }),
+          // The list's edge: the thread's moves as the panel shows, which must not matter.
+          $: (id) => ({ getBoundingClientRect: () => ({ left: id === 'threads' ? 1000 : 0 }) }),
+        });
+      };
+      const { SIDE_ROOM } = room(0);
+      assert.equal(room(SIDE_ROOM).sideRoom(), true);
+      assert.equal(room(SIDE_ROOM - 1).sideRoom(), false);
+      // Under 1100px the filters are a drawer and the thread may be off the screen: never there.
+      assert.equal(room(SIDE_ROOM, false).sideRoom(), false);
+      // The list's and the panel's least widths leave the thread more than a phone gives it.
+      assert.ok(SIDE_ROOM - 380 - 360 >= 440, 'the thread between the least list and panel');
+    });
+
+    it('shares the content area 3 : 5 : 3 between the list, the thread and the panel', () => {
+      const css = SCRIPTS['spectrum-inbox.css'];
+      // The list: 3 of the 11, of what the filters (or their rail) leave, not under its least.
+      const least = 'calc\\(var\\(--spectrum-spacing-100\\) \\* 47 \\+ var\\(--spectrum-spacing-75\\)\\)';
+      assert.match(css, new RegExp(`main\\.siding \\{ grid-template-columns: var\\(--nav-w\\) minmax\\(${least}, calc\\(34% \\+ \\(\\(100% - var\\(--nav-w\\)\\) \\* 3 / 11 - 34%\\) \\* var\\(--side-open, 1\\)\\)\\) 1fr; \\}`));
+      assert.match(css, new RegExp(`\\nmain \\{ flex: 1; display: grid; grid-template-columns: var\\(--filters-w\\) minmax\\(${least}, 34%\\) 1fr;`));
+      assert.match(css, /main \{ --nav-w: var\(--filters-w\); --side-w: /);
+      assert.match(css, /main\.rail \{ --nav-w: var\(--rail\); \}/);
+      // The panel: 3 of the 8 that are left, 360px to 560px.
+      assert.match(css, /--side-w: clamp\(calc\(var\(--spectrum-spacing-100\) \* 45\), 37\.5%, calc\(var\(--spectrum-spacing-100\) \* 70\)\); \}/);
+      assert.equal(3 / 8, 0.375);
+    });
+
+    it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
+      const css = SCRIPTS['spectrum-inbox.css'];
+      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n<\/main>/);
+      assert.match(css, /#side \{ grid-row: 1; grid-column: 3; justify-self: end; width: var\(--side-w\);/);
+      assert.match(css, /#side\[hidden\] \{ display: none; \}/);
+      // It comes out of the line that opened it, and goes back into it.
+      assert.match(PAGES['inbox.html'], /<div id="side-join" aria-hidden="true" hidden><svg><clipPath id="side-join-clip"><rect><\/rect><rect><\/rect><\/clipPath><path clip-path="url\(#side-join-clip\)"><\/path><\/svg><\/div>/);
+      assert.match(css, /#side-join \{ position: absolute; z-index: 2; overflow: hidden; pointer-events: none; \}/);
+      assert.match(css, /main\.side-veiled #side \{ opacity: 0; pointer-events: none; \}/);
+      assert.match(css, /main \{ --side-motion: var\(--spectrum-animation-duration-1000\); \}/);
+      assert.match(css, /\.spectrum #side \{[^}]*background: var\(--spectrum-purple-subtle-background-color-default\);/);
+      assert.match(css, /main\.siding #pane \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
+      // The thread's reply box is the sidebar's only in the thread itself.
+      assert.match(html, /const reply = sideInline\(key\) \? sideComposer\(key, thread\)\s*: composer\(/);
+      // The panel is the open thread's: gone with it, and with the room.
+      assert.match(html, /if \(!sidePaneled\(state\.open\)\) hideSidePanel\(\);/);
+      assert.match(html, /if \(!sidePaneled\(key\)\) \{ hideSidePanel\(\); return; \}/);
+      // A line in the thread opens the panel at its conversation, for anyone who sees it.
+      assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
+      assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
+    });
   });
 
   it('tells bells apart as the server does, whatever order the filters come in', () => {

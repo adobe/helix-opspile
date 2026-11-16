@@ -272,6 +272,7 @@ const WRAPS = {
   RAW: (b, s) => r2(b, s, 'raw'),
   CHANNELS: (b, s) => r2(b, s, 'channels'),
   FILES: (b, s) => r2(b, s, 'files'),
+  IMAGES: (b, s) => r2(b, s, 'images'),
   NORMALIZE: (b, s) => queue(b, s),
   AI: (b, s) => ai(b, s),
   VECTORS: (b, s) => vectorize(b, s, 'roots'),

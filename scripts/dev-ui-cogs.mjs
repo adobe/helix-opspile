@@ -243,6 +243,12 @@ export function seedCogs(DB, now = Date.now()) {
       put('account', 'vectorize', 'stored_dims', 'helix-opspile-content', '', '', 3500 * grown * DIMENSIONS);
       put('d1', 'd1', 'stored_bytes', '', '', '', 32e6 * grown);
       put('d1', 'workers', 'subscription', '', '', '', 1);
+      // Cloudflare Access: the seats grow, shared and the teams' alike.
+      const seats = 38 + Math.round(24 * grown) - 24;
+      const teams = [...new Set(pairs.map((p) => p.team))];
+      for (const team of ['', ...teams]) {
+        put('d1', 'zero_trust', 'seats', '', '', team, seats / (teams.length + 1));
+      }
       for (const { org, team, n } of pairs) {
         put('d1', 'ai_search', 'stored_bytes', '', org, team, n * 4 * 650 * grown);
         if (AGENTS.has(org)) {

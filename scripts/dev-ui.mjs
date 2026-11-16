@@ -306,6 +306,23 @@ function broadcast(team, event) {
   }
 }
 
+/** FLUSH_MS in src/room.js, which Node cannot import. */
+const FLUSH_MS = 2000;
+
+/**
+ * ME's read, as a team's room has it (src/room.js): announced at once, written a while later,
+ * then announced as written (`reads`). A page that reloads before then has the thread unread.
+ */
+function readInRoom(team, key, at) {
+  broadcast(team, {
+    type: 'read', person: ME, thread: key, at,
+  });
+  setTimeout(() => {
+    store.read(ME, key, at);
+    broadcast(team, { type: 'reads', reads: [{ person: ME, thread: key, at }] });
+  }, FLUSH_MS);
+}
+
 // ---- API, the same shapes as src/api.js -----------------------------------------------
 
 /** The members of a team, or of several (the personal view: all of ME's teams). */
@@ -390,7 +407,8 @@ function channelMember(entry) {
 
 /**
  * As src/invite.js answers a Slack post: the Adobe people it mentions who are not in the
- * channel were added to it first (`invited`). They stay out here, so the case shows again.
+ * channel were added to it first (`invited`), but not those of another workspace of the org
+ * (`elsewhere`, `uninvited`). They stay out here, so the case shows again.
  */
 function invitedFor(entry, mentions) {
   if (!entry || entry.row.source !== 'slack') {
@@ -398,10 +416,14 @@ function invitedFor(entry, mentions) {
   }
   const inChannel = channelMember(entry);
   const ids = new Set((mentions || []).map((m) => String(m.id || m)));
-  const invited = [...store.people.values(), ...store.members]
-    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p))
-    .map((p) => ({ id: `slack-${p.key}`, name: p.name }));
-  return invited.length ? { invited } : {};
+  const out = [...store.people.values(), ...store.members]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`slack-${p.key}`) && !inChannel(p));
+  const invited = out.filter((p) => !p.elsewhere).map((p) => ({ id: `slack-${p.key}`, name: p.name }));
+  const uninvited = out.filter((p) => p.elsewhere)
+    .map((p) => ({ id: `slack-${p.key}`, name: p.name, error: 'org_user_not_in_team' }));
+  return {
+    ...(invited.length ? { invited } : {}), ...(uninvited.length ? { uninvited } : {}),
+  };
 }
 
 function myChannels() {
@@ -682,6 +704,59 @@ function channelLinksFor(texts) {
     }));
 }
 
+// The sidebar messages sent in this preview: the made-up agent answers those.
+const sidebarLive = new Set();
+
+// How long the made-up agent takes to answer in the sidebar, and what it says it is doing.
+const SIDEBAR_STEPS = [
+  [0, 'Reading your message'], [2500, 'Looking things up in the knowledge bases and repositories'], [5000, 'Reading the thread'],
+];
+const SIDEBAR_MS = 7000;
+
+/** The made-up agent's answer to a sidebar message: about the thread, never posted. */
+function sidebarAnswer(question) {
+  const q = question.split('\n')[0].slice(0, 120);
+  return `About “${q}”: as far as this thread goes, **it looks like the CDN, not the origin**.\n\n`
+    + '- Preview answers 200 for the same paths, so the origin is fine\n'
+    + '- The 503s started right after the 14:00 cache flush\n\n'
+    + 'I left the draft as it is. Nothing of this went to the channel; say so if you want it in the draft.';
+}
+
+/**
+ * The agent's turn on the latest sidebar message of `entry` (src/agent/turn.js), while it has
+ * not answered it: working for a few seconds, then done, and its answer goes into the sidebar
+ * (as ThreadAgent.keepTurn keeps it). Null when nothing waits.
+ */
+function sidebarTurn(entry) {
+  const key = entry.row.thread;
+  const list = store.sidebars.get(key) || [];
+  const asked = [...list].reverse().find((m) => m.role === 'person');
+  if (!asked || !sidebarLive.has(asked.id)) {
+    return null;
+  }
+  const answered = list.find((m) => m.reply_to === asked.id);
+  const t = Date.now() - Date.parse(asked.at);
+  const turn = { sidebar: asked.id, startedAt: asked.at };
+  if (!answered && t < SIDEBAR_MS) {
+    const [, doing] = SIDEBAR_STEPS.filter(([at]) => t >= at).pop();
+    return {
+      ...turn, state: 'working', text: doing, endedAt: null,
+    };
+  }
+  const endedAt = answered ? answered.at
+    : new Date(Date.parse(asked.at) + SIDEBAR_MS).toISOString();
+  const answer = answered ? answered.body : sidebarAnswer(asked.body);
+  if (!answered) {
+    list.push({
+      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt,
+    });
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+  }
+  return {
+    ...turn, state: 'done', text: answer, endedAt,
+  };
+}
+
 const AGENT_NOTE = 'www.acme.example answers 503 on /en/* and /de/*; preview is fine, so it is the CDN config from the 14:00 flush, not the origin.\n\n'
   + '- Updated the draft: asks Sam for one failing request id, links the purge docs\n'
   + '- Filed *cdn-503-after-config-change* in the ACME knowledge base';
@@ -699,6 +774,11 @@ const agentAsked = new WeakMap();
 function agentTurn(entry, { asked = false } = {}) {
   if (entry.row.channel_id !== 'C0ACMEAEM') {
     return undefined;
+  }
+  // A sidebar message waits for its answer: the agent works on it, then answers.
+  const side = sidebarTurn(entry);
+  if (side) {
+    return side;
   }
   const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
     .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
@@ -779,8 +859,12 @@ function thread(asked) {
     }) => ({
       person, thread: t, read_at: readAt, via,
     }));
+  // As src/api.js: the Teams team the channel is in (channels.group_name).
+  const { ch } = entry;
+  const teamName = ch.teamId
+    ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null;
   return {
-    thread: entry.row,
+    thread: { ...entry.row, channel_group: teamName || null },
     members: group.map(({ row: m }) => ({
       thread: m.thread,
       root_at: m.root_at,
@@ -816,11 +900,17 @@ function thread(asked) {
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
-    // As src/api.js: the agent's latest finished turn, kept when it ended.
+    // As src/api.js: the commands the agent asked a person to run (src/bashrequests.js).
+    bash_requests: store.bashRequests.get(key) || [],
+    // As src/api.js: the agent's latest finished turn, kept when it ended; one of the
+    // sidebar's is not.
     agent_turn: (() => {
       const t = agentTurn(entry);
-      return t && t.state !== 'working' ? t : null;
+      return t && t.state !== 'working' && !t.sidebar ? t : null;
     })(),
+    // As src/api.js: whether the thread has an agent, and what the sidebar said to it.
+    agent: agentTurn(entry) !== undefined,
+    sidebar: store.sidebars.get(key) || [],
   };
 }
 
@@ -929,6 +1019,10 @@ async function kbApi(req, res, url) {
   }
   if (url.pathname === '/api/kb/log') {
     return json(res, { repo, commits: await kb.log(repo) });
+  }
+  if (url.pathname === '/api/kb/blobs') {
+    const hashes = String(url.searchParams.get('hashes') || '').split(',').filter(Boolean);
+    return json(res, { repo, blobs: await kb.blobs(repo, hashes) });
   }
   if (url.pathname === '/api/kb/file' && req.method === 'GET') {
     const r = await kb.read(repo, url.searchParams.get('path'));
@@ -1209,7 +1303,7 @@ async function api(req, res, url) {
         ref,
         source: ch.source,
         name: ch.name,
-        group: ch.teamId ? store.teams.find((t) => t.slug === ch.team)?.name : null,
+        group: ch.teamId ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null,
         org: ch.org,
         orgName: ch.org,
         teams: [ch.team],
@@ -1286,9 +1380,76 @@ async function api(req, res, url) {
     return json(res, { platform: entry.row.source, experts });
   }
   if (url.pathname === '/api/draft/source') {
-    // As src/sources.js would answer about each fixture's source.
+    // As src/sources.js would answer about each fixture's source; a Slack message as
+    // src/messagelinks.js does, the message the store has.
     const u = url.searchParams.get('url');
+    const [message] = slackLinksFor([u]);
+    if (message) {
+      return json(res, { view: 'message', url: u, message: { source: 'slack', ...message } });
+    }
     return json(res, store.sourceViews.get(u) || { view: 'none', url: u, reason: 'The site answered 403: it may need a sign-in.' });
+  }
+  const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
+  if (bash && req.method === 'POST') {
+    // As src/agent/bashrequest.js: run answers once the command has started; it ends a few
+    // seconds later, and the room says so each time. The values are not kept, or printed.
+    const { thread: key, id, env: values = {} } = await readJson(req);
+    const entry = store.threads.get(key);
+    const request = entry && inTeam(entry.row.team)
+      && (store.bashRequests.get(key) || []).find((r) => r.id === id);
+    if (!request) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const me = store.people.get(ME);
+    if (request.status !== 'pending') {
+      return json(res, { error: `${request.by?.name || 'Someone'} ran it already`, request }, 409);
+    }
+    const missing = request.env.find((v) => !values[v.name]);
+    if (bash[1] === 'run' && missing) {
+      return json(res, { error: `fill in ${missing.name}` }, 400);
+    }
+    const at = new Date().toISOString();
+    Object.assign(request, { by: { id: ME, name: me.name }, decided_at: at });
+    if (bash[1] === 'deny') {
+      Object.assign(request, { status: 'denied', finished_at: at });
+    } else {
+      request.status = 'running';
+      setTimeout(() => {
+        Object.assign(request, { status: 'done', exit_code: 0, finished_at: new Date().toISOString() });
+        broadcast(entry.row.team, { type: 'bash', thread: key });
+      }, 4000);
+    }
+    console.log(`command ${id} on ${key}: ${bash[1]}`);
+    broadcast(entry.row.team, { type: 'bash', thread: key });
+    return json(res, { ok: true, request }, bash[1] === 'run' ? 202 : 200);
+  }
+  if (url.pathname === '/api/agent/sidebar' && req.method === 'POST') {
+    // As src/agent/stub.js talkToAgent: into the thread's sidebar and the agent's conversation,
+    // never to the platform.
+    const { thread: key, text: raw } = await readJson(req);
+    const entry = store.threads.get(key);
+    const said = String(raw || '').trim();
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    if (!said || said.length > 8000) {
+      return json(res, { error: 'write what to ask the agent (up to 8000 characters)' }, 400);
+    }
+    if (agentTurn(entry) === undefined) {
+      return json(res, { error: 'this thread has no agent' }, 409);
+    }
+    const me = store.people.get(ME);
+    const message = {
+      id: `sb_${crypto.randomUUID()}`, role: 'person', by: { id: ME, name: me.name }, body: said, state: 'done', reply_to: null, at: new Date().toISOString(),
+    };
+    if (!store.sidebars.has(key)) {
+      store.sidebars.set(key, []);
+    }
+    store.sidebars.get(key).push(message);
+    sidebarLive.add(message.id);
+    console.log(`sidebar message on ${key} (not posted)`);
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+    return json(res, { message }, 202);
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
@@ -1421,11 +1582,9 @@ async function api(req, res, url) {
     if (files.length) {
       console.log(`post with ${files.length} file(s): ${files.map((f) => `${f.name} (${f.size} bytes)`).join(', ')}`);
     }
-    if (!app) {
-      await new Promise((r) => {
-        setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
-      });
-    }
+    await new Promise((r) => {
+      setTimeout(r, SEND_MS * (0.6 + Math.random() * 0.8));
+    });
     // A channel that turns replies away (fixtures: `rejects`), as Slack does an archived one.
     if (entry.ch.rejects && !app) {
       return json(res, { error: `Slack: ${entry.ch.rejects}` }, 502);
@@ -1455,7 +1614,8 @@ async function api(req, res, url) {
     setTimeout(() => {
       store.post(key, app ? 'app' : 'dana', `${arrived}${listed}`.trim(), at.toISOString(), id);
       broadcast(entry.row.team, { type: 'thread', thread: key });
-    }, app ? 1200 : ARRIVE_MS);
+    // As the bot, it comes back later still in production (now and then after a minute).
+    }, app ? ARRIVE_MS * 1.5 : ARRIVE_MS);
     return json(res, {
       ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
     });
@@ -1488,6 +1648,10 @@ async function api(req, res, url) {
       return json(res, { error: 'not found' }, 404);
     }
     const native = entry.row.source === 'teams' ? PICKER_TEAMS[emoji] || emoji : emoji;
+    // The platform takes a moment, as with a reply; the page shows the reaction meanwhile.
+    await new Promise((r) => {
+      setTimeout(r, SEND_MS);
+    });
     setReaction(entry, id, native, remove);
     console.log(`react ${remove ? '-' : '+'}${native}`);
     broadcast(entry.row.team, { type: 'thread', thread: key });
@@ -1528,10 +1692,7 @@ async function api(req, res, url) {
     if (!entry || !inTeam(entry.row.team) || typeof at !== 'string') {
       return json(res, { error: 'not found' }, 404);
     }
-    store.read(ME, key, at);
-    broadcast(entry.row.team, {
-      type: 'read', person: ME, thread: key, at,
-    });
+    readInRoom(entry.row.team, key, at);
     res.writeHead(204).end();
     return true;
   }
@@ -1620,10 +1781,7 @@ function handleClientMessage(team, data) {
     return;
   }
   if (msg.type === 'read' && store.threads.get(msg.thread)) {
-    store.read(ME, msg.thread, msg.at);
-    broadcast(team, {
-      type: 'read', person: ME, thread: msg.thread, at: msg.at,
-    });
+    readInRoom(team, msg.thread, msg.at);
   }
 }
 

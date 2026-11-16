@@ -23,7 +23,7 @@ import {
   allocate, CHART_GROUPS, chartUnit, cogsReport, columns, estimateWindow, OTHER, period,
 } from '../src/cogs/report.js';
 import {
-  accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, volumeRows,
+  accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, seatRows, volumeRows,
 } from '../src/cogs/rollup.js';
 import { AGENT_EMAIL } from '../src/drafts.js';
 import { jobSubject } from '../src/normalizer.js';
@@ -113,6 +113,9 @@ describe('cogs: prices', () => {
     assert.equal(isStock('r2', 'stored_bytes'), true);
     assert.equal(isStock('r2', 'class_a'), false);
     assert.equal(costOf('nope', 'x', '', 5), 0);
+    // Access: every seat at $7 a month, the first 50 too.
+    close(costOf('zero_trust', 'seats', '', 60), 420);
+    assert.equal(isStock('zero_trust', 'seats'), true);
   });
 
   it('prices models: Workers AI by id, Bedrock by the model behind the inference profile', () => {
@@ -448,6 +451,78 @@ describe('cogs: rollup', () => {
     assert.equal(again['meter 2026-11-02'], 0);
     assert.equal(again['volume 2026-11-02'], 0);
     assert.equal(again['stored 2026-11-02'], undefined, 'storage is measured once a day');
+  });
+
+  it('counts the account\'s Access seats, every one, a holder\'s teams\' or shared', async () => {
+    const DB = d1({
+      teams: [{ slug: 'helix', name: 'Helix ops' }, { slug: 'admin', name: 'Admin' }],
+      people: [{ ...ADA, teams: ['admin', 'helix'] }, BO],
+    });
+    const env = { DB, ACCESS_API_TOKEN: 't', ACCESS_ACCOUNT_ID: 'acc' };
+    // 60 holders: Ada (on two teams), Bo (helix), 58 others; and one removed, without a seat.
+    const users = [
+      { email: 'ADA@staff.example', access_seat: true },
+      { email: 'bo@staff.example', access_seat: false, gateway_seat: true },
+      { email: 'gone@staff.example', access_seat: false, gateway_seat: false },
+      ...Array.from({ length: 58 }, (_, i) => ({ email: `u${i}@x.example`, access_seat: true })),
+    ];
+    const asked = [];
+    const fetchImpl = async (url, { headers }) => {
+      asked.push(url);
+      assert.equal(headers.authorization, 'Bearer t');
+      const page = Number(new URL(url).searchParams.get('page'));
+      const part = page === 1 ? users.slice(0, 1000) : [];
+      return new Response(JSON.stringify({
+        success: true, result: part, result_info: { page, total_pages: 1 },
+      }));
+    };
+    const rows = await seatRows(env, '2026-11-02', { fetchImpl });
+    assert.equal(asked.length, 1);
+    assert.ok(asked[0].startsWith('https://api.cloudflare.com/client/v4/accounts/acc/access/users?per_page=1000&page=1'));
+    const sum = (metric, team) => rows.filter((r) => r.metric === metric && r.team === team)
+      .reduce((n, r) => n + r.quantity, 0);
+    // 60 seats, every one counted: Ada's split over her two teams.
+    close(sum('seats', 'admin'), 0.5);
+    close(sum('seats', 'helix'), 0.5 + 1);
+    close(sum('seats', ''), 58);
+    assert.deepEqual([...new Set(rows.map((r) => r.metric))], ['seats']);
+    assert.ok(rows.every((r) => r.service === 'zero_trust' && r.org === '' && r.day === '2026-11-02'));
+
+    // Under 50 they count too; an API error is an error, and nothing is written.
+    const answer = (body, status = 200) => async () => new Response(
+      JSON.stringify(body),
+      { status },
+    );
+    const few = await seatRows(env, '2026-11-02', {
+      fetchImpl: answer({ success: true, result: users.slice(0, 3) }),
+    });
+    close(few.reduce((n, r) => n + r.quantity, 0), 2);
+    await assert.rejects(seatRows(env, '2026-11-02', {
+      fetchImpl: answer({ success: false, errors: [{ code: 10000 }] }, 403),
+    }), /access users: 403/);
+  });
+
+  it('reads the seats once a day, and again after a failed read', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix ops' }], people: [BO] });
+    const now = Date.parse('2026-11-02T12:00:00Z');
+    let calls = 0;
+    let fail = true;
+    const fetchImpl = async () => {
+      calls += 1;
+      return fail
+        ? new Response(JSON.stringify({ success: false, errors: [] }), { status: 403 })
+        : new Response(JSON.stringify({ success: true, result: [{ email: 'bo@staff.example', access_seat: true }] }));
+    };
+    assert.equal((await rollupCogs({ DB }, { now, fetchImpl }))['seats 2026-11-02'], undefined, 'not configured');
+    assert.equal(calls, 0);
+    const env = { DB, ACCESS_API_TOKEN: 't', ACCESS_ACCOUNT_ID: 'acc' };
+    assert.match((await rollupCogs(env, { now, fetchImpl }))['seats 2026-11-02'], /^error: access users: 403/);
+    fail = false;
+    assert.equal((await rollupCogs(env, { now, fetchImpl }))['seats 2026-11-02'], 1);
+    assert.equal(DB.sqlite.prepare(`SELECT quantity FROM cogs_usage WHERE source = 'd1'
+      AND service = 'zero_trust' AND metric = 'seats' AND team = 'helix'`).get().quantity, 1);
+    assert.equal((await rollupCogs(env, { now, fetchImpl }))['seats 2026-11-02'], undefined);
+    assert.equal(calls, 2);
   });
 
   it('rolls up the flow by the hour too, for a week, and lets older hours go', async () => {

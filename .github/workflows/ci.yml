@@ -67,6 +67,7 @@ jobs:
       MEMBERSHIP_SLACK_CHANNEL: ${{ secrets.MEMBERSHIP_SLACK_CHANNEL }}
       MEMBERSHIP_SLACK_BOT: ${{ secrets.MEMBERSHIP_SLACK_BOT }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
+      SLACK_ADMIN_TOKEN_REQUIRED: ${{ secrets.SLACK_ADMIN_TOKEN_REQUIRED }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
       DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}
@@ -99,3 +100,7 @@ jobs:
           npx cf d1 migrations apply "$id"
       - name: Deploy
         run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"
+      # The images of the agents' computers on the SLICC kernel (scripts/computer-images.mjs),
+      # into the bucket the deploy made: only what changed since the last upload.
+      - name: Upload computer images
+        run: npm run computer:images -- --mode prod

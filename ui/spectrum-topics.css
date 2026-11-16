@@ -32,6 +32,8 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; }
 .bar .group { display: flex; align-items: center; }
+/* The kinds wrap where the bar is narrower than they are (a phone), so none is cut off. */
+.bar .legend { flex-wrap: wrap; }
 .bar .spacer { flex: 1; }
 .bar input.search { width: calc(var(--spectrum-spacing-100) * 24); }
 

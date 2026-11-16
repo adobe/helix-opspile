@@ -272,8 +272,11 @@ const quoteTimeLink = (at, href, { title, attrs = '' }) => {
 /** `${channel}:${id}` for a resolved message, else whatever the permalink itself says. */
 const hitKey = (hit, href) => (hit && hit.channel && hit.id
   ? `${hit.channel}:${hit.id}` : slackMessageKey(href));
-/** A card for a message opspile has, from its preview (plain text, not markdown again). */
-function quoteCardFromHit(hit) {
+/**
+ * A card for a message opspile has, from its preview (plain text, not markdown again). The
+ * inbox also shows a draft's source that is a message as one.
+ */
+export function quoteCardFromHit(hit) {
   const who = quoteWho(encode(hit.author || 'Message'), hit.authorKey);
   const when = quoteTimeLink(hit.at, encode(hit.href || ''), {
     title: 'Open in opspile', attrs: ` data-thread="${encode(hit.thread || '')}"`,

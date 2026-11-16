@@ -134,6 +134,12 @@ describe('normalize (slack)', () => {
   it('skips reactions and records renames', () => {
     assert.equal(normalize(SKEY, slack({ type: 'reaction_added', item: { channel: 'C1' } })).op, 'skip');
     const r = normalize(SKEY, slack({ type: 'channel_rename', channel: { id: 'C1', name: 'new' } }));
+    // When it happened, to the millisecond of `event_ts` (the envelope's is whole seconds).
+    const timed = normalize(SKEY, {
+      ...slack({ type: 'channel_rename', channel: { id: 'C1', name: 'new' }, event_ts: '1761048000.900' }),
+      event_time: 1761048000,
+    });
+    assert.equal(timed.channel.at, '2025-10-21T12:00:00.900Z');
     assert.deepEqual(r, {
       op: 'channel',
       channel: {

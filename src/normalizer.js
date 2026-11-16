@@ -28,12 +28,12 @@ import {
   discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
 } from './markdown.js';
 import {
-  normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+  isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
-import { refile } from './refile.js';
+import { followChange, refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
@@ -360,21 +360,33 @@ export async function processKey(env, key, cache = {}) {
     return processReaction(env, key, op.reaction);
   }
   if (op.op === 'channel') {
-    await updateChannelName(env, op.channel);
-    return { key, result: 'channel' };
+    let jobs = 0;
+    await updateChannelName(env, op.channel, undefined, {
+      onChange: async (before, after) => {
+        // eslint-disable-next-line no-param-reassign
+        cache.rules = cache.rules || await loadRules(env);
+        jobs = await followChange(env, op.channel, { before, after }, cache.rules);
+      },
+    });
+    return { key, result: 'channel', ...(jobs ? { refile: jobs } : {}) };
   }
 
   const { message } = op;
   if (!message.channelId || !message.id) {
     return { key, result: 'skip', reason: 'no channel or id' };
   }
-  const channel = await getChannel(env, message);
+  // eslint-disable-next-line no-param-reassign
+  cache.rules = cache.rules || await loadRules(env);
+  const lookup = { ...message, refresh: isRenameNotice(message) };
+  const channel = await getChannel(env, lookup, undefined, {
+    // The lookup found the channel renamed: its threads follow, from where they are now, before
+    // this message is filed where the rules say now.
+    onChange: (before, after) => followChange(env, message, { before, after }, cache.rules),
+  });
   if (message.source === 'slack') {
     // The link opens in the channel's workspace, not the one the browser used last.
     message.permalink = slackLinkIn(channel.domain, message.permalink);
   }
-  // eslint-disable-next-line no-param-reassign
-  cache.rules = cache.rules || await loadRules(env);
   const cls = classify(cache.rules, channel);
   env.meter?.attribute({ org: cls.org, team: cls.team });
   if (cls.kind === 'ignore') {
@@ -572,9 +584,10 @@ export async function consume(batch, baseEnv, meter = null) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
-        // The group it joined (or pulled in) is exported again.
+        // The group it joined (or pulled in) is exported again, or the one a split it finished
+        // left, with the roots it took.
         // eslint-disable-next-line no-await-in-loop
-        await queueExport(env, body.rethread);
+        await queueExport(env, r.split ? [r.group, ...r.split] : body.rethread);
         if (body.poke) {
           // eslint-disable-next-line no-await-in-loop
           await env.NORMALIZE.send({ agent: body.rethread });

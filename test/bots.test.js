@@ -82,8 +82,10 @@ describe('syncInstalledBots', () => {
   it('makes a bot mentionable in a Teams team before anyone has mentioned it there', async () => {
     const e = env();
     const inTeam = () => true;
-    const names = async () => (await (await mentionable(e, 'teams:T:G1:19:a:1', 'help', inTeam)).json())
-      .people.filter((p) => p.kind === 'bot').map((p) => p.name);
+    // A name nobody matches lists the Teams team's members again: nobody here.
+    const learn = { graph: async () => Response.json({ value: [] }) };
+    const names = async () => (await (await mentionable(e, 'teams:T:G1:19:a:1', 'help', inTeam, { learn }))
+      .json()).people.filter((p) => p.kind === 'bot').map((p) => p.name);
     assert.deepEqual(await names(), []);
 
     const { graph, calls } = fakeGraph({ G1: [app('b-1', 'helper')], G2: [app('b-1', 'helper')] });
