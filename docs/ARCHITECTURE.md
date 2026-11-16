@@ -195,7 +195,9 @@ is left out.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
-and Teams HTML are converted; a Teams system notice, whose body is an empty
+and Teams HTML are converted: Teams HTML through a syntax tree, parsed and written out by the
+unified tools (`src/html.js`), so markers and escapes are where markdown wants them and the
+inbox shows what Teams shows; a Teams system notice, whose body is an empty
 `<systemEventMessage/>`, is written from its `eventDetail`: "Meeting ended after 50 s. Only Ada
 joined.", with the names looked up where Graph leaves them out), so keeping each message in its own file avoids nesting one
 document inside another, and makes every file a natural retrieval chunk. There is no

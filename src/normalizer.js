@@ -25,8 +25,9 @@ import {
 } from './lookup.js';
 import { discordApi } from './discord.js';
 import {
-  discordToMarkdown, htmlToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
+  discordToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
 } from './markdown.js';
+import { htmlToMarkdown } from './html.js';
 import {
   isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';

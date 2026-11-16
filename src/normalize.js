@@ -549,6 +549,11 @@ export function teamsEventText(detail, name = (u) => u.displayName) {
 export const isRenameNotice = (message) => /^#?microsoft\.graph\.(channel|team)RenamedEventMessageDetail$/
   .test(String((message && message.event && message.event['@odata.type']) || ''));
 
+/** Text as an HTML attribute value (or element text). */
+const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
+  '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
+})[c]);
+
 export function normalizeTeams(key, msg) {
   const [, tenant] = key.split('/');
   if (key.split('/').pop().startsWith('notification-')) {
@@ -592,9 +597,6 @@ export function normalizeTeams(key, msg) {
     const url = canonicalUrl(a.contentUrl);
     const { width: w, height: h } = a.opspile;
     if (html) {
-      const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
-        '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
-      })[c]);
       const img = `<img src="${attr(url)}" alt="${attr(a.name || 'image')}"${sizeTitle(w, h) ? ` width="${Math.round(w)}" height="${Math.round(h)}"` : ''}>`;
       const id = String(a.id || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const tag = new RegExp(`<attachment\\s+id="${id}"\\s*>\\s*</attachment>`, 'i');
@@ -607,9 +609,10 @@ export function normalizeTeams(key, msg) {
       after.push(mdLink(a.name || 'image', url, true, sizeTitle(w, h)));
     }
   }
-  const attachments = refs.filter((a) => !inline.has(a))
-    .map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`)
-    .join('\n');
+  const files = refs.filter((a) => !inline.has(a));
+  const attachments = files.map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`).join('\n');
+  // In an HTML body, the list is HTML too: htmlToMarkdown keeps markdown in HTML as text.
+  const htmlList = `<ul>${files.map((a) => `<li><a href="${attr(a.contentUrl || '')}">${attr(a.name || 'file')}</a></li>`).join('')}</ul>`;
   const message = {
     source: 'teams',
     tenant,
@@ -632,7 +635,7 @@ export function normalizeTeams(key, msg) {
       format: html ? 'html' : 'text',
       // The same list as for Slack files; a plain-text body gets no HTML around it.
       text: [body, ...after, attachments
-        && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
+        && (html ? `<p>Attachments:</p>${htmlList}` : `\nAttachments:\n\n${attachments}`)]
         .filter(Boolean).join('\n'),
     }),
     permalink: msg.webUrl,

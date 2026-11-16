@@ -11,8 +11,9 @@
  */
 
 /**
- * Message bodies to markdown: Slack mrkdwn and Teams HTML. Both converters are small and
- * conservative; anything they do not understand is kept as text.
+ * Message bodies to markdown: Slack mrkdwn and Discord's tokens (Teams HTML is src/html.js),
+ * and markdown to Slack mrkdwn. The converters are small and conservative; anything they do
+ * not understand is kept as text.
  */
 
 const ENTITIES = {
@@ -31,7 +32,8 @@ export function decodeEntities(s) {
 
 /**
  * A URL as a markdown link destination. CommonMark ends a destination at a space or an
- * unbalanced parenthesis, and htmlToMarkdown would strip `<…>`: those are percent-encoded.
+ * unbalanced parenthesis, and what reads links in messages takes them without `<…>`: those
+ * are percent-encoded.
  */
 export function mdUrl(url) {
   const s = String(url || '');
@@ -173,100 +175,6 @@ export function slackToMarkdown(text, userName = () => undefined) {
       })
       .join('');
   }).join('').trim();
-}
-
-/** A list with no list inside it. */
-const INNER_LIST = /<(ul|ol)(?:\s[^>]*)?>((?:(?!<\/?(?:ul|ol)[\s>])[\s\S])*)<\/\1>/gi;
-
-/** One list, in a line each item: what an item holds on further lines is indented under it. */
-function listToMarkdown(tag, items) {
-  let n = 0;
-  return `\n\n${items.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => {
-    n += 1;
-    const marker = tag.toLowerCase() === 'ol' ? `${n}. ` : '- ';
-    const text = t.trim().replace(/\n+(?=- |\d+\. )/g, '\n').replace(/\n/g, `\n${' '.repeat(marker.length)}`);
-    return `${marker}${text}\n`;
-  })}\n`;
-}
-
-/** HTML lists to markdown, the innermost first, so a list in an item stays in the item. */
-function listsToMarkdown(html) {
-  let before;
-  let s = html;
-  do {
-    before = s;
-    s = s.replace(INNER_LIST, (_, tag, items) => listToMarkdown(tag, items));
-  } while (s !== before);
-  return s;
-}
-
-const TABLE_RULE = {
-  left: ':---', right: '---:', center: ':---:',
-};
-
-/** An HTML table to markdown: its first row is the header, each cell on one line. */
-function tableToMarkdown(table) {
-  const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
-    .map(([, row]) => [...row.matchAll(/<t[dh]([^>]*)>([\s\S]*?)<\/t[dh]>/gi)]);
-  if (!rows.length || !rows[0].length) {
-    return table;
-  }
-  const line = (cells) => `| ${cells.join(' | ')} |`;
-  const text = (html) => html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ')
-    .trim()
-    .replace(/(?<!\\)\|/g, '\\|');
-  const rule = rows[0].map(([, attrs]) => TABLE_RULE[(/\balign="(\w+)"/i.exec(attrs) || [])[1]] || '---');
-  const [head, ...body] = rows.map((cells) => line(cells.map(([, , cell]) => text(cell))));
-  return `\n\n${[head, line(rule), ...body].join('\n')}\n\n`;
-}
-
-/**
- * Teams message HTML to markdown. Handles the tags Teams produces: paragraphs, breaks,
- * emphasis, links, lists, tables, code, quotes, mentions (`<at>`) and images.
- */
-export function htmlToMarkdown(html) {
-  if (!html) {
-    return '';
-  }
-  let s = String(html).replace(/\r\n?/g, '\n');
-  s = s.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_, code) => {
-    const inner = code.replace(/<\/?code[^>]*>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
-    return `\n\n\`\`\`\n${decodeEntities(inner).replace(/\n+$/, '')}\n\`\`\`\n\n`;
-  });
-  s = s
-    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => `\`${c.replace(/<[^>]+>/g, '')}\``)
-    .replace(/<at[^>]*>([\s\S]*?)<\/at>/gi, (_, name) => `@${name.replace(/<[^>]+>/g, '')}`)
-    .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
-      const text = label.replace(/<[^>]+>/g, '').trim();
-      // Never `<href>`: the tag stripping below would remove it as if it were a tag.
-      return mdLink(!text || text === href ? href : text, href);
-    })
-    .replace(/<img\s[^>]*>/gi, (tag) => {
-      const attr = (name) => (new RegExp(`\\s${name}="([^"]*)"`, 'i').exec(tag) || [])[1] || '';
-      // Teams gives an image's size as attributes (and in its style).
-      const px = (name) => attr(name) || (new RegExp(`${name}:\\s*(\\d+)px`, 'i').exec(attr('style')) || [])[1];
-      return mdLink(attr('alt') || 'image', attr('src'), true, sizeTitle(px('width'), px('height')));
-    })
-    .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')
-    .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')
-    .replace(/<(s|strike|del)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '~~$3~~')
-    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
-      .split('\n')
-      .map((l) => `> ${l}`)
-      .join('\n')}\n\n`)
-    .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, tableToMarkdown)
-    .replace(/<hr\s*\/?>/gi, '\n\n---\n\n');
-  s = listsToMarkdown(s)
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => `- ${t.trim()}\n`)
-    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '');
-  return decodeEntities(s)
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 const pad2 = (n) => String(n).padStart(2, '0');
