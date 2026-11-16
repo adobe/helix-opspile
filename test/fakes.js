@@ -78,24 +78,43 @@ const meta = (key, o) => ({
   customMetadata: (o.options && o.options.customMetadata) || {},
 });
 
-/** An R2 bucket with get/put, enough for pile 2. */
+/**
+ * An R2 bucket with get/put, enough for pile 2. `get(key, { range: { offset, length } })` reads
+ * a part of the object, as R2's does.
+ */
 export function fakeBucket(initial = {}) {
   const objects = new Map(Object.entries(initial)
     .map(([k, body]) => [k, { body, options: {}, version: nextVersion() }]));
   return {
     objects,
-    async get(key) {
+    async get(key, { range } = {}) {
       const o = objects.get(key);
       if (!o) {
         return null;
       }
+      const whole = async () => new Uint8Array(await new Response(o.body).arrayBuffer());
+      const bytes = async () => {
+        const all = await whole();
+        if (!range) {
+          return all;
+        }
+        const offset = range.offset || 0;
+        return all.slice(offset, range.length === undefined ? all.length : offset + range.length);
+      };
       return {
         ...meta(key, o),
+        ...(range ? { range } : {}),
         get body() {
-          return new Response(o.body).body;
+          return range ? new ReadableStream({
+            async start(controller) {
+              controller.enqueue(await bytes());
+              controller.close();
+            },
+          }) : new Response(o.body).body;
         },
-        text: async () => (typeof o.body === 'string' ? o.body : new TextDecoder().decode(o.body)),
-        arrayBuffer: async () => new Response(o.body).arrayBuffer(),
+        text: async () => (!range && typeof o.body === 'string' ? o.body
+          : new TextDecoder().decode(await bytes())),
+        arrayBuffer: async () => (await bytes()).buffer,
       };
     },
     async put(key, body, options) {

@@ -36,6 +36,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -209,6 +210,35 @@ export const CHECKS = [
   ...uploadChecks('just-bash'),
   ...uploadChecks('slicc-kernel'),
 ];
+
+/**
+ * Files of the base image read in parts, as a program reads a data file (file's magic, under
+ * the isolate's per-file limit, and yq's wasm, over it): whole, its first 1.5 MB, its last
+ * 3 MB and 100 kB from 2 MB on, none of them where a piece of the image driver begins or
+ * ends (src/agent/image.js), each checked against what `built` (`build`) has of it.
+ */
+export function rangeChecks(built) {
+  const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+  const base = built.images.find((i) => i.name === 'base');
+  const files = new Map(base.layers.flatMap(({ name }) => built.layers.get(name).layer.files)
+    .map((f) => [f.path, f]));
+  return [
+    'node_modules/@ai-ecoverse/wasm-file/share/misc/magic.mgc',
+    'node_modules/@ai-ecoverse/wasi-yq/bin/yq.wasm',
+  ].map((path) => {
+    const body = built.blobs.get(files.get(path).sha256);
+    const parts = [body, body.subarray(0, 1_500_000), body.subarray(body.length - 3_000_000),
+      body.subarray(2_000_000, 2_100_000)];
+    const at = `/opt/image/${path}`;
+    return {
+      name: `base: ${path.split('/').pop()} read whole and in parts`,
+      command: `f=${at}; sha256sum < $f; head -c 1500000 $f | sha256sum;`
+        + ' tail -c 3000000 $f | sha256sum; tail -c +2000001 $f | head -c 100000 | sha256sum',
+      match: new RegExp(`^${parts.map((p) => `${sha256(p)}  -\\n`).join('')}$`),
+      timeout: 120,
+    };
+  });
+}
 
 /** Every command of `image` (a manifest) the computer has in /usr/bin. */
 export const commandsCheck = (image) => ({
@@ -473,7 +503,7 @@ async function checkAll(origin, argv) {
     await syncImages(origin, built, { token });
   }
   const run = process.env.GITHUB_RUN_ID || Date.now().toString(36);
-  const checks = [...CHECKS, ...built.images.map(commandsCheck)];
+  const checks = [...CHECKS, ...rangeChecks(built), ...built.images.map(commandsCheck)];
   const results = [];
   for (const check of checks) {
     // eslint-disable-next-line no-await-in-loop

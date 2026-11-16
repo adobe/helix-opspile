@@ -24,9 +24,19 @@
  * (`imageTree`), which reads a file from the bucket when a program first opens it. The kernel
  * finds the image's commands under IMAGE_COMMANDS.
  *
+ * A blob over a piece has the hash of each piece (1 MiB) in its layer, so the mount reads only
+ * the pieces a read covers, one GET for each run of them (the whole blob when that is all of
+ * it), and checks each by itself; a file without them (a layer of an older build) is read
+ * whole, and checked by its sha256. The kernel reads a program whole, in runs of 8 MiB, and a
+ * data file in pages, a run of 1 MiB at a time.
+ *
  * Layers and blobs are named by their content and never change, so what was read is kept for
- * every agent of this isolate: the trees of the last few images, and blobs up to CACHE_BYTES
- * (but none above CACHE_BLOB_MAX, which only the file handle that read it keeps).
+ * every agent of this isolate: the trees of the last few images, and pieces and whole blobs up
+ * to CACHE_BYTES, the least recently used going first. None of a file over CACHE_BLOB_MAX: of
+ * one with pieces, the mount holds the last HOLD_PIECES it read; of one without, the file
+ * handle that read it holds it whole. A kernel keeps its own copy of a program it runs, so
+ * while it runs what is kept here is a second one; it is worth it when the agent's kernel
+ * boots again in the same isolate, as it mostly does, and then finds every program here.
  *
  * No Workers runtime is needed here, so this is tested in Node, with a bucket in memory.
  */
@@ -39,11 +49,12 @@ export const IMAGE_ROOT = '/opt/image';
 export const IMAGE_COMMANDS = `${IMAGE_ROOT}/node_modules`;
 
 const CACHE_BYTES = 32 * 1024 * 1024;
-// A blob larger than this is kept by the file handle that read it, not for the isolate: the
-// kernel keeps its own copy of a program it runs (gh's 50 MB), and two would crowd the
-// object's 128 MB.
+// Of a file larger than this none is kept for the isolate: the kernel keeps its own copy of a
+// program it runs (gh's 50 MB), and two would crowd the object's 128 MB.
 const CACHE_BLOB_MAX = CACHE_BYTES / 2;
 const CACHE_TREES = 8;
+// How many pieces of a file over CACHE_BLOB_MAX a mount holds: the last two it read.
+const HOLD_PIECES = 2;
 // How long the kernel may keep what it was told of a file: the image never changes.
 const TTL_MS = 60 * 60 * 1000;
 
@@ -79,15 +90,59 @@ export const commandsOf = (image) => [...image.commands].sort();
 
 /** The trees of the images last mounted in this isolate, by digest. */
 const trees = new Map();
-/** The blobs last read in this isolate, by sha256, the least recently used first. */
-const blobs = new Map();
+/**
+ * The blobs and the pieces of blobs last read in this isolate, by their sha256, the least
+ * recently used first; `cached` their bytes. A piece is named by its own hash, so two files
+ * that share one share it here too.
+ */
+const kept = new Map();
 let cached = 0;
+/** What is being read from the bucket now, by sha256: two reads of it wait for one GET. */
+const reading = new Map();
 
 /** Forgets what this isolate kept of the bucket (for tests). */
 export function forgetImages() {
   trees.clear();
-  blobs.clear();
+  kept.clear();
+  reading.clear();
   cached = 0;
+}
+
+/** What this isolate keeps of the bucket's files now: `{ entries, bytes }` (for tests). */
+export const keptOfImages = () => ({ entries: kept.size, bytes: cached });
+
+/** The bytes kept as `hash`, now the most recently used, or undefined. */
+function recall(hash) {
+  const bytes = kept.get(hash);
+  if (bytes) {
+    kept.delete(hash);
+    kept.set(hash, bytes);
+  }
+  return bytes;
+}
+
+/** Keeps `bytes` as `hash`, the least recently used going while there is too much. */
+function keep(hash, bytes) {
+  if (kept.has(hash)) {
+    return;
+  }
+  kept.set(hash, bytes);
+  cached += bytes.length;
+  while (cached > CACHE_BYTES && kept.size > 1) {
+    const [oldest, old] = kept.entries().next().value;
+    kept.delete(oldest);
+    cached -= old.length;
+  }
+}
+
+/** `read()` once at a time for `hash`: a second caller meanwhile waits for the first. */
+function once(hash, read) {
+  let pending = reading.get(hash);
+  if (!pending) {
+    pending = read().finally(() => reading.delete(hash));
+    reading.set(hash, pending);
+  }
+  return pending;
 }
 
 async function layer(bucket, { name, digest }) {
@@ -101,25 +156,44 @@ async function layer(bucket, { name, digest }) {
   return JSON.parse(body);
 }
 
+const isHash = (h) => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h);
+
+/**
+ * The pieces of a layer's file `f` (scripts/computer-images.mjs `piecesOf`), when they are
+ * well-formed and cover it: `{ size, sha256 }`, or undefined (the file is read whole).
+ */
+function piecesOf(f) {
+  const { pieces } = f;
+  if (!pieces || !Number.isInteger(pieces.size) || pieces.size <= 0
+    || !Array.isArray(pieces.sha256) || !pieces.sha256.every(isHash)
+    || pieces.sha256.length !== Math.ceil(f.size / pieces.size)) {
+    return undefined;
+  }
+  return { size: pieces.size, sha256: pieces.sha256 };
+}
+
 /**
  * The tree of `image` (a manifest): its layers from `bucket`, each checked against its
  * digest, merged from the bottom up, so that the upper layer's file is the image's.
- * `{ files, dirs }`: `files` by path (`/node_modules/…`: `{ size, mode, sha256 | bytes }`),
- * `dirs` the names in each directory, by its path (`/` the image's root).
+ * `{ files, dirs }`: `files` by path (`/node_modules/…`: `{ size, mode, sha256, pieces? }`
+ * or `{ size, mode, bytes }`), `dirs` the names in each directory, by its path (`/` the
+ * image's root).
  */
 export async function imageTree(bucket, image) {
-  const kept = trees.get(image.digest);
-  if (kept) {
-    return kept;
+  const known = trees.get(image.digest);
+  if (known) {
+    return known;
   }
   const files = new Map();
   for (const l of await Promise.all(image.layers.map((ref) => layer(bucket, ref)))) {
     for (const f of l.files) {
+      const pieces = f.sha256 ? piecesOf(f) : undefined;
       files.set(`/${f.path}`, {
         size: f.size,
         mode: f.mode,
         ...(f.sha256 ? { sha256: f.sha256 }
           : { bytes: Uint8Array.from(atob(f.data || ''), (c) => c.charCodeAt(0)) }),
+        ...(pieces ? { pieces } : {}),
       });
     }
   }
@@ -143,34 +217,60 @@ export async function imageTree(bucket, image) {
   return tree;
 }
 
-/** The bytes of the blob `hash` from `bucket`, checked against its name; kept (see above). */
+/**
+ * The bytes of the blob `hash` from `bucket`, whole, checked against its name: a file without
+ * pieces. Kept (see above) unless it is over CACHE_BLOB_MAX.
+ */
 async function blob(bucket, hash, path) {
-  const kept = blobs.get(hash);
-  if (kept) {
-    // The most recently used last.
-    blobs.delete(hash);
-    blobs.set(hash, kept);
-    return kept;
+  const known = recall(hash);
+  if (known) {
+    return known;
   }
-  const object = await bucket.get(`blobs/${hash}`);
+  return once(hash, async () => {
+    const object = await bucket.get(`blobs/${hash}`);
+    if (!object) {
+      throw fsError('EIO', `the images bucket has no blobs/${hash} (${path})`);
+    }
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    if (await sha256(bytes) !== hash) {
+      throw fsError('EIO', `blobs/${hash} is not the file it names (${path})`);
+    }
+    if (bytes.length <= CACHE_BLOB_MAX) {
+      keep(hash, bytes);
+    }
+    return bytes;
+  });
+}
+
+/**
+ * Pieces `first` to `last` of `file` (one with `pieces`) from `bucket`, in one GET: the whole
+ * blob when they are all of it, else the range they cover. Each is checked against its hash
+ * and is a copy of its own, so that one kept does not hold the others' bytes.
+ */
+async function readPieces(bucket, file, first, last, path) {
+  const { size, sha256: hashes } = file.pieces;
+  const offset = first * size;
+  const length = Math.min(file.size, (last + 1) * size) - offset;
+  const whole = first === 0 && last === hashes.length - 1;
+  const key = `blobs/${file.sha256}`;
+  const object = await (whole ? bucket.get(key) : bucket.get(key, { range: { offset, length } }));
   if (!object) {
-    throw fsError('EIO', `the images bucket has no blobs/${hash} (${path})`);
+    throw fsError('EIO', `the images bucket has no ${key} (${path})`);
   }
   const bytes = new Uint8Array(await object.arrayBuffer());
-  if (await sha256(bytes) !== hash) {
-    throw fsError('EIO', `blobs/${hash} is not the file it names (${path})`);
+  if (bytes.length !== length) {
+    throw fsError('EIO', `${key} is not the file it names (${path})`);
   }
-  if (bytes.length > CACHE_BLOB_MAX) {
-    return bytes;
+  const out = [];
+  for (let i = first; i <= last; i += 1) {
+    const piece = bytes.slice((i - first) * size, (i - first + 1) * size);
+    // eslint-disable-next-line no-await-in-loop
+    if (await sha256(piece) !== hashes[i]) {
+      throw fsError('EIO', `${key} is not the file it names, at piece ${i} (${path})`);
+    }
+    out.push(piece);
   }
-  blobs.set(hash, bytes);
-  cached += bytes.length;
-  while (cached > CACHE_BYTES && blobs.size > 1) {
-    const [oldest, old] = blobs.entries().next().value;
-    blobs.delete(oldest);
-    cached -= old.length;
-  }
-  return bytes;
+  return out;
 }
 
 /**
@@ -182,6 +282,90 @@ export function imageDriver(bucket, tree) {
   const { files, dirs } = tree;
   const open = new Map();
   let next = 0;
+  // Of the files over CACHE_BLOB_MAX, the pieces this mount read last (HOLD_PIECES): the
+  // kernel reads a file in runs that need not start where a piece does, so a run's first
+  // piece may be the one before's last.
+  const held = new Map();
+  const hold = (hash, bytes) => {
+    held.delete(hash);
+    held.set(hash, bytes);
+    while (held.size > HOLD_PIECES) {
+      held.delete(held.keys().next().value);
+    }
+  };
+  const have = (file, hash) => {
+    if (file.size <= CACHE_BLOB_MAX) {
+      return recall(hash);
+    }
+    const bytes = held.get(hash);
+    if (bytes) {
+      hold(hash, bytes);
+    }
+    return bytes;
+  };
+
+  /**
+   * `size` bytes at `offset` of `file` (one with pieces): the pieces they are in, from this
+   * isolate or this mount where it has them, else from the bucket, one GET for each run of
+   * pieces neither has. A copy: the kernel may take the buffer it is given.
+   */
+  async function pieced(file, path, offset, size) {
+    const { size: piece, sha256: hashes } = file.pieces;
+    const end = Math.min(file.size, offset + size);
+    if (!(offset < end)) {
+      return new Uint8Array(0);
+    }
+    const first = Math.floor(offset / piece);
+    const last = Math.floor((end - 1) / piece);
+    const found = new Map();
+    const runs = [];
+    for (let i = first; i <= last; i += 1) {
+      const bytes = have(file, hashes[i]);
+      if (bytes) {
+        found.set(i, bytes);
+      } else if (!reading.has(hashes[i])) {
+        const run = runs[runs.length - 1];
+        if (run && run[1] === i - 1) {
+          run[1] = i;
+        } else {
+          runs.push([i, i]);
+        }
+      }
+    }
+    for (const [from, to] of runs) {
+      const got = readPieces(bucket, file, from, to, path);
+      for (let i = from; i <= to; i += 1) {
+        const hash = hashes[i];
+        if (!reading.has(hash)) {
+          const one = got.then((parts) => {
+            const bytes = parts[i - from];
+            if (file.size <= CACHE_BLOB_MAX) {
+              keep(hash, bytes);
+            } else {
+              hold(hash, bytes);
+            }
+            return bytes;
+          });
+          const done = () => reading.delete(hash);
+          one.then(done, done);
+          reading.set(hash, one);
+        }
+      }
+    }
+    const wanted = [];
+    for (let i = first; i <= last; i += 1) {
+      wanted.push(found.get(i) || reading.get(hashes[i]));
+    }
+    const parts = await Promise.all(wanted);
+    const out = new Uint8Array(end - offset);
+    parts.forEach((bytes, k) => {
+      const at = (first + k) * piece;
+      const part = bytes.subarray(Math.max(0, offset - at), Math.min(piece, end - at));
+      out.set(part, Math.max(0, at - offset));
+    });
+    return out;
+  }
+
   const refuse = async (path) => {
     throw fsError('EROFS', path);
   };
@@ -225,6 +409,9 @@ export function imageDriver(bucket, tree) {
         throw fsError('EBADF', String(fh));
       }
       const file = files.get(handle.path);
+      if (file.pieces) {
+        return pieced(file, handle.path, offset, size);
+      }
       // The handle keeps what it read, so a large blob is read once per open, not per read.
       handle.bytes ??= file.bytes ? Promise.resolve(file.bytes)
         : blob(bucket, file.sha256, handle.path);
