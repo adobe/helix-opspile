@@ -202,6 +202,11 @@ describe('Spectrum 2', () => {
     for (const [name, css] of pageCss) {
       assert.doesNotMatch(css, /dialog(?!\.lightbox)[^{},]*::backdrop \{[^}]*[\s;]opacity:/, name);
     }
+    // Folds grow open and fold away, ease-out in and ease-in out; not for reduced motion.
+    assert.match(shared, /\.spectrum details \{ interpolate-size: allow-keywords; \}/);
+    assert.match(shared, /\.spectrum details::details-content \{\s*block-size: 0;\s*opacity: 0;[^}]*transition: block-size var\(--s2-out\)/);
+    assert.match(shared, /\.spectrum details\[open\]::details-content \{\s*block-size: auto;\s*opacity: 1;\s*transition: block-size var\(--s2-pop-in\)/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum details::details-content, \.spectrum details\[open\]::details-content \{\s*transition-duration: var\(--spectrum-animation-duration-0\);/);
     // New rows and messages do not slide in for reduced motion either.
     assert.match(SCRIPTS['spectrum-inbox.css'], /prefers-reduced-motion: reduce\) \{ \.t\.enter, \.msg\.enter, \.sys\.enter \{ animation: none; \} \}/);
   });

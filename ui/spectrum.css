@@ -756,6 +756,35 @@ header .note { white-space: nowrap; }
 .spectrum .s2-chevron.right { rotate: -90deg; }
 .spectrum .s2-chevron.right:dir(rtl) { rotate: 90deg; }
 
+/* Folds (<details>) open as S2's Disclosure does: the panel grows from nothing and fades in
+   (ease-out), and folds away faster (ease-in). This is ::details-content, so a browser without
+   it snaps, as before; one without interpolate-size only fades. A fold rendered open (the pages
+   re-render, and the knowledge base keeps its open folds) has no style to start from, so it
+   does not replay the opening. The clip keeps the growing panel inside the fold, but not the
+   focus rings of what is in it. */
+.spectrum details { interpolate-size: allow-keywords; }
+.spectrum details::details-content {
+  block-size: 0;
+  opacity: 0;
+  overflow: clip;
+  /* As far as a focus ring reaches, its gap and its thickness: Chrome takes no calc() here. */
+  overflow-clip-margin: var(--spectrum-spacing-75);
+  transition: block-size var(--s2-out), opacity var(--s2-out),
+    content-visibility var(--s2-out) allow-discrete;
+}
+.spectrum details[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+  transition: block-size var(--s2-pop-in), opacity var(--s2-pop-in),
+    content-visibility var(--s2-pop-in) allow-discrete;
+}
+/* Reduced motion snaps them, as ever (the rule at the end does not reach a pseudo-element). */
+@media (prefers-reduced-motion: reduce) {
+  .spectrum details::details-content, .spectrum details[open]::details-content {
+    transition-duration: var(--spectrum-animation-duration-0);
+  }
+}
+
 /* Windows High Contrast: the focus ring and the drawn controls in the system's colors. */
 @media (forced-colors: active) {
   .spectrum :focus-visible { outline-color: Highlight; }
