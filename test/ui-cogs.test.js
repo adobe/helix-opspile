@@ -96,3 +96,38 @@ describe('cogs: the chart by customer or team', () => {
     ]);
   });
 });
+
+describe('cogs: the chart and the treemap move to a new answer', () => {
+  const { flip } = piece('/** The keyframes that draw the rect', '/**\n * The old drawing', 'flip');
+
+  it('draws the new rect where the old one was, and lets it go to where it is', () => {
+    // A bar twice as tall as it was, its foot where it was: from half its height, at its foot.
+    const [from, to] = flip({
+      x: 10, y: 60, w: 20, h: 40,
+    }, {
+      x: 10, y: 20, w: 20, h: 80,
+    });
+    assert.equal(from.transform, 'translate(0px, 50px) scale(1, 0.5)');
+    assert.equal(to.transform, 'none');
+    // What is new grows from nothing at its foot.
+    assert.equal(flip({
+      x: 0, y: 100, w: 20, h: 0,
+    }, {
+      x: 0, y: 60, w: 20, h: 40,
+    })[0].transform, 'translate(0px, 100px) scale(1, 0)');
+  });
+
+  it('leaves what has not moved alone, so an unchanged redraw animates nothing', () => {
+    const box = {
+      x: 1, y: 2, w: 3, h: 4,
+    };
+    assert.equal(flip(box, { ...box, y: 2.2 }), null);
+  });
+
+  it('keys the bars and the tiles by what they show, and moves none for less motion', () => {
+    assert.match(js, /<g class="col" data-i="\$\{i\}" data-at="\$\{esc\(at\[i\]\.at\)\}">/);
+    assert.match(js, /data-series="\$\{esc\(s\.series\)\}" data-k="\$\{esc\(s\.id\)\}"\/>/);
+    assert.match(js, /function shapes\(\) \{\n {2}if \(REDUCED_MOTION\.matches/);
+    assert.match(js, /function morph\(from\) \{\n {2}if \(!from \|\| REDUCED_MOTION\.matches/);
+  });
+});

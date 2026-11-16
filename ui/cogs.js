@@ -194,10 +194,13 @@ async function load() {
   const ticket = state.loading + 1;
   state.loading = ticket;
   $('body').classList.add('busy');
+  let from = null;
   try {
     const res = await fetch(apiUrl(), { credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (ticket !== state.loading) return;
+    // Where the chart and the treemap are drawn now, before the answer redraws them.
+    from = shapes();
     if (!res.ok) {
       state.error = body.error || `failed (${res.status})`;
     } else {
@@ -209,7 +212,7 @@ async function load() {
     state.error = e.message;
   }
   $('body').classList.remove('busy');
-  render();
+  render(from);
 }
 
 /** A change of the filters: the address, then the numbers. */
@@ -511,13 +514,13 @@ function chart(d, width) {
       const v = x[s.id] || 0;
       if (!v) return '';
       const t = y(acc + v);
-      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${s.color}" data-series="${esc(s.series)}"/>`;
+      const r = `<rect x="${x0 + gap / 2}" y="${t}" width="${Math.max(1, bw - gap)}" height="${Math.max(0.5, y(acc) - t)}" fill="${s.color}" data-series="${esc(s.series)}" data-k="${esc(s.id)}"/>`;
       acc += v;
       return r;
     }).join('');
     const text = label(at[i], i);
     const tick = text ? `<text x="${x0 + bw / 2}" y="${H - 5}" text-anchor="middle">${text}</text>` : '';
-    return `<g class="col" data-i="${i}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${tick}</g></g>`;
+    return `<g class="col" data-i="${i}" data-at="${esc(at[i].at)}"><rect class="hover" x="${x0}" y="0" width="${bw}" height="${H - B}"/>${rects}<g class="axis">${tick}</g></g>`;
   }).join('');
   // Other is no one to pick: an entry, but not a button that does anything.
   const legend = list.map((s) => `<button type="button" ${s.pick || 'disabled'} aria-pressed="${s.on}" title="${esc(s.title)}"><span class="dot" data-series="${esc(s.series)}" style="background:${s.color}"></span>${esc(s.name)}</button>`).join('');
@@ -600,6 +603,7 @@ const fit = (text, w) => {
 function tmItems(d, by) {
   if (by === 'services') {
     return d.services.filter((s) => s.flow > 0).map((s) => ({
+      key: s.id,
       value: s.flow,
       name: s.name,
       color: color(s.id),
@@ -616,6 +620,7 @@ function tmItems(d, by) {
     return slots.has(k) ? `g${slots.get(k)}` : 'other';
   };
   return [...d[by]].filter((g) => g.flow > 0).sort((a, b) => b.flow - a.flow).map((g) => ({
+    key: g[key],
     value: g.flow,
     name: g.name,
     color: slots.has(g[key]) ? GROUPS[slots.get(g[key])] : GREY,
@@ -651,10 +656,10 @@ function treemap(d, width) {
       const kids = squarify([...t.children].sort((a, b) => b.value - a.value), {
         x: t.x + 2, y: t.y + 36, w: t.w - 4, h: t.h - 38,
       });
-      inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''} fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
+      inner = kids.map((k, j) => `<g class="tile" ${t.pick} ${tip} data-k="${esc(`${t.key}/${k.name}`)}" data-kid="${j}"><rect x="${k.x}" y="${k.y}" width="${Math.max(0, k.w)}" height="${Math.max(0, k.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''} fill-opacity="${j % 2 ? 0.55 : 0.75}"/>${k.w >= 60 && k.h >= 20 ? `<text class="tl" x="${k.x + 5}" y="${k.y + 14}">${esc(fit(k.name, k.w))}</text>` : ''}</g>`).join('');
       t.kids = kids;
     }
-    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip}><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''}/>${label(t, t.name, t.value)}</g>${inner}`;
+    return `<g class="tile${t.picked ? ' on' : ''}" ${t.pick} ${tip} data-k="${esc(t.key)}"><rect x="${t.x}" y="${t.y}" width="${Math.max(0, t.w)}" height="${Math.max(0, t.h)}" fill="${t.color}"${t.series ? ` data-series="${esc(t.series)}"` : ''}/>${label(t, t.name, t.value)}</g>${inner}`;
   }).join('');
   state.tmTiles = { items, total };
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the flow goes, by ${esc(TM[by].toLowerCase())}">${tiles}</svg><div class="tip" id="tmtip" hidden></div>`;
@@ -664,6 +669,179 @@ function treemap(d, width) {
 function drawTreemap() {
   const box = $('treemap');
   if (box && state.data) box.innerHTML = treemap(state.data, box.clientWidth);
+}
+
+// ---- motion -------------------------------------------------------------------------------
+
+/*
+ * A new answer redraws the chart and the treemap from scratch; `shapes` reads where their bars
+ * and tiles are before it does, and `morph` moves the new ones from there: a bar's segments to
+ * their new heights, a tile to its new place, what is new growing or fading in, what is gone
+ * fading out. Where the drawing is another (another breakdown, other columns, another width), the
+ * old one fades out over the new. All of it with transforms and opacity, and none of it for those
+ * who ask the browser for less motion: then the new drawing is just there.
+ */
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+/** Past this many moving shapes (a 90-day chart, every segment moving) the chart fades instead. */
+const MORPH_MAX = 600;
+
+/** A timing of ui/spectrum.css (`--s2-dialog-in`, `--s2-pop-in`, `--s2-out`), for `animate`. */
+function timing(name) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const m = /^([\d.]+)(ms|s)\s+(.+)$/.exec(v);
+  return m ? { duration: Number(m[1]) * (m[2] === 's' ? 1000 : 1), easing: m[3] } : null;
+}
+
+// Runs `fn` once `anim` is over, or a little after it should be: a page in the background
+// draws no frames, and its animations do not finish (ui/inbox.js does the same).
+const settled = (anim, fn) => {
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.finished.then(once, once);
+  setTimeout(once, anim.effect.getComputedTiming().endTime + 100);
+};
+
+/** A rect's box as its attributes draw it, moved by the transform it is animated with now. */
+function boxOf(el) {
+  const b = {
+    x: Number(el.getAttribute('x')), y: Number(el.getAttribute('y')), w: Number(el.getAttribute('width')), h: Number(el.getAttribute('height')),
+  };
+  if (!el.getAnimations().length) return b;
+  const t = getComputedStyle(el).transform;
+  if (!t || t === 'none') return b;
+  const m = new DOMMatrix(t);
+  return {
+    x: m.a * b.x + m.e, y: m.d * b.y + m.f, w: m.a * b.w, h: m.d * b.h,
+  };
+}
+
+/** What the chart and the treemap show now and where: the shapes `morph` moves from. */
+function shapes() {
+  if (REDUCED_MOTION.matches || !state.data) return null;
+  const read = (id, sel, key, rect) => {
+    const svg = $(id)?.querySelector(':scope > svg:not(.ghost)');
+    if (!svg) return { svg: null, at: new Map() };
+    const at = new Map();
+    for (const el of svg.querySelectorAll(sel)) at.set(key(el), { el, ...boxOf(rect(el)) });
+    return { svg, at, width: svg.getAttribute('width') };
+  };
+  const chartAt = read('chart', 'g.col rect[data-k]', (el) => `${el.parentNode.dataset.at}|${el.dataset.k}`, (el) => el);
+  return {
+    by: byOf(state.data),
+    cols: state.data.chart.columns.map((x) => x.at).join(),
+    chart: { ...chartAt, ticks: chartAt.svg?.querySelector(':scope > g.axis')?.textContent },
+    tree: read('treemap', 'g.tile[data-k]', (el) => el.dataset.k, (el) => el.querySelector(':scope > rect')),
+  };
+}
+
+/** The keyframes that draw the rect at `to` where `from` was: a translation and a scale. */
+function flip(from, to) {
+  if (Math.abs(from.x - to.x) < 0.5 && Math.abs(from.y - to.y) < 0.5
+    && Math.abs(from.w - to.w) < 0.5 && Math.abs(from.h - to.h) < 0.5) return null;
+  const sx = to.w ? from.w / to.w : 1;
+  const sy = to.h ? from.h / to.h : 1;
+  return [{ transform: `translate(${from.x - to.x * sx}px, ${from.y - to.y * sy}px) scale(${sx}, ${sy})` }, { transform: 'none' }];
+}
+
+/**
+ * The old drawing `old` fading out over the new one, `svg`, fading in; with many shapes in
+ * either (an hourly chart), only the new one fading in: two of them at once take frames to paint.
+ */
+function crossFade(box, old, svg, t) {
+  const many = (x) => x && x.querySelectorAll('rect').length > MORPH_MAX;
+  if (old && !many(old) && !many(svg)) {
+    old.querySelectorAll('.ghost').forEach((g) => g.remove());
+    old.classList.add('ghost');
+    box.prepend(old);
+    old.getAnimations({ subtree: true }).forEach((a) => a.cancel());
+    settled(old.animate([{ opacity: 1 }, { opacity: 0 }], { ...t.out, fill: 'forwards' }), () => old.remove());
+  }
+  if (svg) svg.animate([{ opacity: 0 }, { opacity: 1 }], t.in);
+}
+
+/** What is gone, `ghost` (a copy of it), fading out where it was, under or over the rest. */
+function fadeOut(ghost, parent, before, t) {
+  ghost.classList.add('ghost');
+  parent.insertBefore(ghost, before);
+  settled(ghost.animate([{ opacity: 1 }, { opacity: 0 }], { ...t.out, fill: 'forwards' }), () => ghost.remove());
+}
+
+function morphChart(from, same, t) {
+  const box = $('chart');
+  const svg = box?.querySelector(':scope > svg');
+  if (!from.svg && !svg) return;
+  if (!from.svg || !svg || !same || from.width !== svg.getAttribute('width')) {
+    crossFade(box, from.svg, svg, t);
+    return;
+  }
+  const moves = [];
+  const now = new Set();
+  for (const el of svg.querySelectorAll('g.col rect[data-k]')) {
+    const key = `${el.parentNode.dataset.at}|${el.dataset.k}`;
+    now.add(key);
+    const to = boxOf(el);
+    // What is new in a column grows from its foot.
+    const frames = flip(from.at.get(key) || { ...to, y: to.y + to.h, h: 0 }, to);
+    if (frames) moves.push([el, frames]);
+  }
+  const gone = [...from.at].filter(([key]) => !now.has(key));
+  if (moves.length + gone.length > MORPH_MAX) {
+    crossFade(box, from.svg, svg, t);
+    return;
+  }
+  for (const [el, frames] of moves) el.animate(frames, t.move);
+  for (const [, { el }] of gone) {
+    const col = svg.querySelector(`g.col[data-at="${CSS.escape(el.parentNode.dataset.at)}"]`);
+    if (col) fadeOut(el.cloneNode(), col, col.querySelector('.hover').nextSibling, t);
+  }
+  // A new scale: its numbers fade in.
+  const ticks = svg.querySelector(':scope > g.axis');
+  if (ticks && ticks.textContent !== from.ticks) ticks.animate([{ opacity: 0 }, { opacity: 1 }], t.in);
+}
+
+function morphTreemap(from, same, t) {
+  const box = $('treemap');
+  const svg = box?.querySelector(':scope > svg');
+  if (!from.svg && !svg) return;
+  if (!from.svg || !svg || !same || from.width !== svg.getAttribute('width')) {
+    crossFade(box, from.svg, svg, t);
+    return;
+  }
+  const now = new Set();
+  for (const g of svg.querySelectorAll('g.tile[data-k]')) {
+    now.add(g.dataset.k);
+    const old = from.at.get(g.dataset.k);
+    const rect = g.querySelector(':scope > rect');
+    if (!old) {
+      g.animate([{ opacity: 0 }, { opacity: 1 }], t.in);
+    } else {
+      const to = boxOf(rect);
+      const frames = flip(old, to);
+      if (frames) {
+        rect.animate(frames, t.move);
+        // Its label moves along, unscaled.
+        const label = [{ transform: `translate(${old.x - to.x}px, ${old.y - to.y}px)` }, { transform: 'none' }];
+        g.querySelectorAll(':scope > text').forEach((x) => x.animate(label, t.move));
+      }
+    }
+  }
+  // What is gone fades out under the tiles taking its place.
+  for (const [key, { el }] of from.at) {
+    if (!now.has(key)) {
+      const ghost = el.cloneNode(true);
+      fadeOut(ghost, svg, svg.firstChild, t);
+    }
+  }
+}
+
+/** The chart and the treemap, redrawn, moved from where they were (`from`, `shapes`). */
+function morph(from) {
+  if (!from || REDUCED_MOTION.matches || !state.data) return;
+  const t = { move: timing('--s2-dialog-in'), in: timing('--s2-pop-in'), out: timing('--s2-out') };
+  if (!t.move || !t.in || !t.out) return;
+  const same = from.by === byOf(state.data);
+  morphChart(from.chart, same && from.cols === state.data.chart.columns.map((x) => x.at).join(), t);
+  morphTreemap(from.tree, same, t);
 }
 
 function servicesTable(d) {
@@ -751,7 +929,8 @@ function notes(d) {
   return `<p class="hint">${parts.map(esc).join(' ')}</p>${unpriced}`;
 }
 
-function render() {
+/** The page, from `state`; `from`, what the chart and the treemap showed, to move them from. */
+function render(from = null) {
   renderBar();
   const d = state.data;
   if (state.error && !d) {
@@ -774,6 +953,7 @@ function render() {
     ${notes(d)}`;
   drawChart();
   drawTreemap();
+  morph(from);
 }
 
 // ---- events -------------------------------------------------------------------------------
