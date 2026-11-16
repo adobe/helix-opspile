@@ -69,6 +69,9 @@ describe('markdownToMrkdwn', () => {
     );
     // An unclosed fence still ends the code block.
     assert.equal(markdownToMrkdwn('```\nopen'), '```\nopen\n```');
+    // A code span on a line of its own is no fence, and a fence with text after it no end.
+    assert.equal(markdownToMrkdwn('```x``` and **b**\n**c**'), '`x` and *b*\n*c*');
+    assert.equal(markdownToMrkdwn('```\na\n```x\n```\n**c**'), '```\na\n```x\n```\n*c*');
   });
 });
 

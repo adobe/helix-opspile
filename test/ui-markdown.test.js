@@ -145,6 +145,8 @@ describe('ui markdown', () => {
 
   it('ends a quote where its `>` lines do, as Slack does, but not in code', () => {
     assert.equal(md('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
+    // A code span on a line of its own opens no code block.
+    assert.equal(md('```x```\n> asked\nanswer'), '<p><code>x</code></p><blockquote><p>asked</p></blockquote><p>answer</p>');
     assert.equal(md('> one\n> two\nthree\nfour'), '<blockquote><p>one<br />two</p></blockquote><p>three<br />four</p>');
     assert.equal(md('```\n> a\nb\n```'), '<pre><code>&gt; a\nb\n</code></pre>'.replace(/\n/g, ''));
     assert.equal(messageHtml('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');

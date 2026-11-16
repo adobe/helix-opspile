@@ -109,19 +109,16 @@ export function codeLines(lines, strip = (l) => l) {
  * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
  */
 export const unlazy = (src) => {
-  let fence = null;
+  const lines = src.split('\n');
+  const code = codeLines(lines);
   let quoted = false;
-  return src.split('\n').flatMap((line) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
-        fence = null;
-      }
+  return lines.flatMap((line, i) => {
+    if (code[i]) {
+      quoted = false;
       return [line];
     }
     const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
     quoted = /^ {0,3}>/.test(line);
-    fence = f && !quoted ? f[1] : null;
     return out;
   }).join('\n');
 };
@@ -215,20 +212,12 @@ export function markdownToMrkdwn(md) {
   const keep = [];
   const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
-  let fence = null;
-  for (const line of lines) {
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      const closes = open && open[1][0] === fence[0] && open[1].length >= fence.length;
-      if (closes && !line.trim().slice(open[1].length)) {
-        fence = null;
-        out.push('```');
-      } else {
-        out.push(slackEscape(line));
-      }
-    } else if (open) {
-      [, fence] = open;
+  const code = codeLines(lines);
+  lines.forEach((line, i) => {
+    if (code[i] === 'fence') {
       out.push('```');
+    } else if (code[i] === 'code') {
+      out.push(slackEscape(line));
     } else {
       let m = /^ {0,3}(?:[-*_][ \t]*){3,}$/.exec(line);
       if (m) {
@@ -246,8 +235,9 @@ export function markdownToMrkdwn(md) {
         }
       }
     }
-  }
-  if (fence) {
+  });
+  // A code block not closed ends with the text.
+  if (code.length && code[code.length - 1] === 'code') {
     out.push('```');
   }
   return out.join('\n').replace(new RegExp(`${KEEP}(\\d+)${KEEP}`, 'g'), (_, i) => keep[Number(i)]);
