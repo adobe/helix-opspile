@@ -17,7 +17,7 @@ import {
 import { api, inbox, MAX_READ_MEMBERS } from '../src/api.js';
 import { render } from '../src/channels.js';
 import { AGENT_EMAIL, discardDraft, saveDraft } from '../src/drafts.js';
-import { changeOf } from '../src/draftevents.js';
+import { changeOf, pruneDraftUndo, UNDO_SECONDS } from '../src/draftevents.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -559,6 +559,38 @@ describe('shared drafts', () => {
         const later = (await (await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: d.body, base: null })).json()).draft;
         assert.notEqual(later.created_at, d.created_at);
         assert.equal(events(e).at(-1).origin_agent, 0);
+      });
+
+      it('compares a draft edited, discarded and brought back with what the agent proposed', async () => {
+        const { e, d } = await withDraft('one two three');
+        const edited = (await (await call(e, BO, 'PUT', '/api/draft', { thread: ROOT, text: 'one two four', base: d.updated_at })).json()).draft;
+        await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: edited.updated_at });
+        // What the agent proposed is kept for the Undo, and only while it can come.
+        assert.equal(e.DB.rows('SELECT * FROM draft_undo').length, 1);
+        assert.deepEqual(await pruneDraftUndo(e), { pruned: 0 });
+        // Undo: the same text again, from no draft.
+        const back = (await (await call(e, BO, 'PUT', '/api/draft', { thread: ROOT, text: 'one two four', base: null })).json()).draft;
+        assert.equal(back.origin, AGENT);
+        await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: back.body, draft: back.updated_at });
+        const sent = events(e).at(-1);
+        assert.deepEqual([sent.action, sent.origin_agent, sent.changed], ['sent', 1, 0.333]);
+        // What was kept for the Undo is gone with it.
+        assert.deepEqual(e.DB.rows('SELECT * FROM draft_undo'), []);
+      });
+
+      it('keeps what the agent proposed for an Undo for the Undo\'s time only', async () => {
+        const { e, d } = await withDraft('one two three');
+        const edited = (await (await call(e, BO, 'PUT', '/api/draft', { thread: ROOT, text: 'one two four', base: d.updated_at })).json()).draft;
+        await call(e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: edited.updated_at });
+        const later = Date.now() + (UNDO_SECONDS + 1) * 1000;
+        assert.deepEqual(await pruneDraftUndo(e, later), { pruned: 1 });
+        // A draft discarded as its origin proposed it, or by its origin, needs nothing kept.
+        const again = await withDraft('one two three');
+        await call(again.e, BO, 'DELETE', '/api/draft', { thread: ROOT, base: again.d.updated_at });
+        const own = (await (await call(again.e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'mine', base: null })).json()).draft;
+        const over = (await (await call(again.e, BO, 'PUT', '/api/draft', { thread: ROOT, text: 'theirs', base: own.updated_at })).json()).draft;
+        await call(again.e, ADA, 'DELETE', '/api/draft', { thread: ROOT, base: over.updated_at });
+        assert.deepEqual(again.e.DB.rows('SELECT * FROM draft_undo'), []);
       });
     });
   });

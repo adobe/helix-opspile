@@ -2060,7 +2060,9 @@ agent's draft a person sent is **accepted**: as it was (`changed` 0) or edited (
 or saved over by a colleague first). One a person discarded is **discarded**, one the agent
 discarded itself (`discard_draft`) **withdrawn**. An Undo saves the same text again: a save with no
 draft, by the person who discarded one with that text (its hash, never the text) in the minute
-before, deletes the discard's event and goes on as that draft, with its origin. The agent's
+before, deletes the discard's event and goes on as that draft, with its origin and what the origin
+proposed: a draft somebody else changed and discarded keeps that text in `draft_undo` (migration
+0065) for the minute, so the Undo is compared with it, not with the text that came back. The agent's
 `post_message` that used no draft up is recorded as `posted`. The report reads the events as they
 are (they are few), per customer and team; nothing is rolled up.
 
