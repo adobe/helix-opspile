@@ -670,7 +670,11 @@ function kernelShell(shell) {
   const openssl = shell.commands && shell.commands.includes('openssl')
     ? ' openssl works on certificates, keys and requests (x509 -text -noout, verify, asn1parse, req, dgst, pkcs12, base64), with Mozilla\'s roots. Its s_client is the only way to see the certificate chain a site itself sends, which curl does not show: openssl s_client -connect host:443 -servername host -showcerts < /dev/null. It reaches port 443 only; no other port leaves this computer except through curl\'s HTTP.'
     : '';
-  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  // gh, where the image has it: with what token, and that it is for reading.
+  const gh = shell.commands && shell.commands.includes('gh')
+    ? ' gh (GitHub CLI) reads GitHub: gh api, gh repo view, gh pr view, gh issue list, gh run list and view. It needs $GH_TOKEN, a secret the team keeps for api.github.com: without it gh does not run (gh auth login cannot work here), so use curl for public pages instead. Use it to read: creating, commenting on or merging anything on GitHub is for people.'
+    : '';
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${gh}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**

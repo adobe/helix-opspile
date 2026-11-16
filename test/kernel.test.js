@@ -353,6 +353,31 @@ describe('a kernel\'s image, from the bucket', () => {
     assert.equal(gets.length, 4);
   });
 
+  it('keeps a file over half that limit by its open file only, read once however it is read', async () => {
+    const bucket = fakeBucket();
+    const files = { 'bin/gh': 'g'.repeat(17 * 1024 * 1024) };
+    const manifest = image(bucket, 'huge', [layer(bucket, 'huge', files)]);
+    const gets = [];
+    const counting = {
+      get: (key) => {
+        gets.push(key);
+        return bucket.get(key);
+      },
+    };
+    const { handlers } = imageDriver(counting, await imageTree(bucket, manifest));
+    const fh = await handlers.open('/bin/gh', {});
+    const reads = await Promise.all([0, 1, 2].map((i) => handlers.read(fh, i * 1024 * 1024, 4)));
+    assert.deepEqual(reads.map((r) => r.length), [4, 4, 4]);
+    await handlers.read(fh, 16 * 1024 * 1024, 4);
+    assert.equal(gets.length, 1);
+    await handlers.release(fh);
+    // Opened again, it is read from the bucket again: the isolate kept no copy.
+    const again = await handlers.open('/bin/gh', {});
+    await handlers.read(again, 0, 4);
+    assert.equal(gets.length, 2);
+    await assert.rejects(handlers.read(fh, 0, 4), { code: 'EBADF' });
+  });
+
   it('is mounted read-only, at the place the kernel looks for its commands', () => {
     const { data } = stack();
     assert.deepEqual(imageSpec(data, IMAGE_ROOT), {
@@ -473,7 +498,7 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
@@ -524,6 +549,14 @@ describe('the images this repository builds', () => {
       .some((f) => f.path === 'node_modules/@ai-ecoverse/wasm-file/share/misc/magic.mgc'));
     assert.ok(built.layers.get('tls').layer.files
       .some((f) => f.path === 'node_modules/@ai-ecoverse/wasix-openssl-cli/etc/ssl/openssl.cnf'));
+    // gh, with the imports module the kernel runs beside it, in an image of its own.
+    const github = built.images[2];
+    assert.deepEqual(github.layers.slice(0, base.layers.length), base.layers);
+    assert.ok(commandsOf(github).includes('gh') && !commandsOf(base).includes('gh'));
+    assert.deepEqual(
+      built.layers.get('github').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
+      ['bin/gh.wasm', 'host/gh-host.mjs', 'wasi-gh/package.json'],
+    );
     assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl']
       .every((c) => commandsOf(base).includes(c)));
     assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
@@ -540,7 +573,8 @@ describe('the images this repository builds', () => {
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
-    assert.equal(packages.length, Object.values(LAYERS).flat().length);
+    // Every package but gh's, which is in the GitHub image only.
+    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length);
     const fh = await handlers.open('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm', {});
     assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
     const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
@@ -566,8 +600,8 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-3, -1), ['images/base.json', 'images/data.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 9);
+    assert.deepEqual(keys.slice(-4, -1), ['images/base.json', 'images/data.json', 'images/github.json']);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 10);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);

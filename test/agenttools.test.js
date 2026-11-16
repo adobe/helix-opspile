@@ -663,6 +663,10 @@ describe('the agent\'s switchable tools', () => {
     // It has a JavaScript interpreter, and is told what of node that is not.
     assert.match(base, /It is not node: no require, no npm packages, no fetch \(use curl, and pipe to it\), no child processes\. There is no npm, node or python, and no other binaries\./);
     assert.doesNotMatch(base, /just-bash|sqlite3/);
+    assert.doesNotMatch(base, /GitHub CLI/);
+    const github = await guide(shellOf(images[2]));
+    assert.match(github, /, qjs, gh\. curl reaches the internet;/);
+    assert.match(github, /gh \(GitHub CLI\) reads GitHub: .* It needs \$GH_TOKEN, a secret the team keeps for api\.github\.com: without it gh does not run .* Use it to read: creating, commenting on or merging anything on GitHub is for people\./);
     const data = await guide(shellOf(images[1]));
     assert.match(data, /curl, dig, openssl, git, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {

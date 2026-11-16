@@ -113,6 +113,10 @@ export const LAYERS = {
   js: [
     { name: '@ai-ecoverse/wasi-quickjs' },
   ],
+  // gh, with its imports module (host/gh-host.mjs), which the kernel runs beside it.
+  github: [
+    { name: '@ai-ecoverse/wasi-gh' },
+  ],
   data: [
     { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
@@ -148,6 +152,17 @@ export const IMAGES = [
     tools: `${BASE_TOOLS}, rg, sqlite3, strings`,
     layers: ['data'],
   },
+  // Not in Base: gh.wasm is 50 MB, which the agent's object keeps a copy of while its kernel
+  // runs, and each gh has a Dynamic Worker to itself.
+  {
+    name: 'github',
+    from: 'base',
+    title: 'GitHub',
+    description: 'Base, with gh (GitHub CLI): for reading repositories, issues, pull requests and'
+      + ' workflow runs. Give the team a GH_TOKEN secret for github.com.',
+    tools: `${BASE_TOOLS}, gh`,
+    layers: ['github'],
+  },
 ];
 
 /** Files up to this size are in their layer itself, not in a blob of their own. */
@@ -156,7 +171,7 @@ const INLINE_BYTES = 16 * 1024;
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 /** The files of a command entry (`slicc.commands.<name>`), relative to its package. */
-const filesOf = (entry) => [entry.glue, entry.wasm, entry.script, entry.module,
+const filesOf = (entry) => [entry.glue, entry.wasm, entry.script, entry.module, entry.imports,
   ...(entry.variants || []).map((v) => v.wasm)].filter((f) => typeof f === 'string');
 
 /**

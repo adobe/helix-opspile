@@ -178,6 +178,16 @@ export const CHECKS = [
     match: /^JSON text data\n68690a\nc\nhi\nhi\n$/,
   },
   {
+    // gh.wasm is 50 MB: its own Dynamic Worker, and its imports module beside it. Without a
+    // real token, GitHub's own 401 shows that gh's HTTP reaches it through the transport.
+    name: 'github: gh version, and gh api to github.com',
+    image: 'github',
+    command: 'gh version | head -1 | cut -d" " -f1-3'
+      + ' && { GH_TOKEN=not-a-token gh api rate_limit 2>&1 | grep -c "Bad credentials"; true; }',
+    match: /^gh version 2\.\d+\.\d+\n[1-9]\n$/,
+    timeout: 120,
+  },
+  {
     name: 'data: rg, sqlite3, strings',
     image: 'data',
     command: "printf 'x\\nneedle\\n' | rg -c needle && sqlite3 :memory: 'select 6 * 7'"
