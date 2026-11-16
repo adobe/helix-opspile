@@ -229,10 +229,8 @@ async function askAbout(key, name) {
   }
   if (state.open !== key || !canSide(key)) return;
   await enterSide(key);
-  const box = $('side-reply');
-  if (!box) return;
-  box.value = `What should I know about ${name}?`;
-  askSide(key);
+  // Asked beside what you typed in the sidebar's box, which stays as it was.
+  askSide(key, `What should I know about ${name}?`);
 }
 
 function cardHtml(p, ctx, found) {
@@ -3281,13 +3279,16 @@ function wireSide(key) {
  * Sends what is in the sidebar's box to the thread's agent: shown at once, and the agent asked
  * how it is doing until it has answered. A message the inbox did not take goes back into the box.
  */
-async function askSide(key) {
+async function askSide(key, said = null) {
   const box = $('side-reply');
-  const text = (box?.value || '').trim();
+  // `said`: a question asked for you (askAbout); what is typed in the box stays there.
+  const text = (said ?? box?.value ?? '').trim();
   if (!text) return;
-  box.value = '';
-  growReply(box);
-  side.typed.delete(key);
+  if (said === null) {
+    box.value = '';
+    growReply(box);
+    side.typed.delete(key);
+  }
   const p = {
     thread: key, id: `pending-${crypto.randomUUID()}`, role: 'person', by: { id: state.me.id, name: state.me.name }, body: text, at: new Date().toISOString(), pending: true,
   };

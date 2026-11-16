@@ -182,8 +182,10 @@ export function checkLayout(path, content, kind) {
     const slug = personSlug(scalar(fm.yaml, 'title'));
     // A list of people, whatever its file is called: "Customer contacts", "ACME people".
     const title = scalar(fm.yaml, 'title') || '';
-    if (ROSTERS.has(name) || !slug || /\b(contacts|people|roster|stakeholders|team)\b/i.test(title.replace(/\([^)]*\)/g, ''))) {
-      return `a Contact is one person, with their full name as its title: one file per person (${CONTACTS}/dana-ops.md for "Dana Ops"), never a list of people in one file`;
+    const many = /\b(contacts|people|roster|stakeholders|team)\b/i.exec(title.replace(/\([^)]*\)/g, ''));
+    if (ROSTERS.has(name) || !slug || many) {
+      const why = many ? ` (its title says "${many[1]}": a role or company goes in the description, or in parentheses after the name)` : '';
+      return `a Contact is one person, with their full name as its title: one file per person (${CONTACTS}/dana-ops.md for "Dana Ops"), never a list of people in one file${why}`;
     }
     if (name !== slug) {
       return `a Contact's file is named after its title: ${CONTACTS}/${slug}.md`;
