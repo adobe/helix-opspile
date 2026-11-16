@@ -176,7 +176,7 @@ function confirmFirst(question, detail, yes) {
     dlg.innerHTML = `<form method="dialog"><h2 id="confirmTitle">${esc(question)}</h2><p>${esc(detail)}</p>
       <div class="apply"><button value="no">Cancel</button><button value="yes" class="danger">${esc(yes)}</button></div></form>`;
     dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
-    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'yes'); Dialog.remove(dlg); });
     document.body.append(dlg);
     dlg.showModal();
     dlg.querySelector('[value="no"]').focus();

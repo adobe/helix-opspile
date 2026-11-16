@@ -68,6 +68,8 @@ export default [
         Editor: 'readonly',
         // Every page's header, ui/header.js.
         Header: 'readonly',
+        // Closed dialogs leaving the page, ui/app.js (every page's).
+        Dialog: 'readonly',
         // The team order's model, ui/rank.js (the inbox).
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).

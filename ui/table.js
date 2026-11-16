@@ -476,7 +476,7 @@ globalThis.Table = (() => {
     });
     close.addEventListener('click', () => dlg.close());
     dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
-    dlg.addEventListener('close', () => dlg.remove());
+    dlg.addEventListener('close', () => Dialog.remove(dlg));
     document.body.append(dlg);
     dlg.showModal();
     view.focus();

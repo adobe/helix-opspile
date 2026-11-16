@@ -152,7 +152,7 @@ function ask(question, detail, yes) {
     dlg.innerHTML = `<form method="dialog"><p><b>${esc(question)}</b></p>${detail ? `<p class="detail">${esc(detail)}</p>` : ''}
       <div class="apply"><button value="no">Cancel</button><button value="yes" class="primary">${esc(yes)}</button></div></form>`;
     dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
-    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'yes'); });
+    dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'yes'); Dialog.remove(dlg); });
     document.body.append(dlg);
     dlg.showModal();
     dlg.querySelector('[value="no"]').focus();

@@ -8175,8 +8175,8 @@ function confirmInPage(question, body, signal, yesLabel = 'Post as me') {
       signal?.removeEventListener('abort', abort);
       if (dlg.returnValue === 'yes') answer = true;
       else if (dlg.returnValue === 'no') answer = false;
-      dlg.remove();
       resolve(answer);
+      Dialog.remove(dlg);
     });
     // Escape is an answer too.
     dlg.addEventListener('cancel', () => { dlg.returnValue = 'no'; });
