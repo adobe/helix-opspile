@@ -3655,6 +3655,83 @@ function growReply(box) {
   box.style.height = `${Math.min(max, box.scrollHeight)}px`;
 }
 
+// The reply box's rows that come and go: the tray of files over it, and the lines under it (the
+// draft's, the command cards). One that shows within the open thread grows into its place, and
+// one that goes folds away, faster, so that the reply box slides instead of jumping. A row of the
+// reply box's (a flex box that wraps) takes its gap at once, however low it is: that gap is made
+// up for, until the row is all there, on the row after it (its top margin), else on the reply
+// box's padding at that edge. What is there as a thread opens is there at once, and those who ask
+// the browser for less motion get none.
+
+/** The rows' motion `in` or `out`, as the stylesheet says (--fold-in, --fold-out). */
+function foldTiming(el, dir) {
+  const s = getComputedStyle(el);
+  return {
+    duration: parseFloat(s.getPropertyValue(`--fold-${dir}`)) || 0,
+    easing: s.getPropertyValue(`--fold-${dir}-ease`).trim() || 'ease',
+  };
+}
+
+/**
+ * Shows (`show`) or hides row `el` of the reply box, once `apply` changed what it holds; `done`
+ * runs once it is hidden (it holds what it held while it folds away, inert). With `animate` (a
+ * change within the thread) it grows or folds, from where it is if it is on its way; with
+ * `resize` too, it slides to its new height when it stays. `edge` is the reply box's edge it is
+ * next to when no row follows it: `top` for the tray, the first row.
+ */
+function foldRow(el, show, {
+  animate = false, resize = true, edge = 'bottom', apply, done,
+} = {}) {
+  const box = el.closest('.composer');
+  // How far it is there: 0 hidden, 1 all there, between while it grows or folds.
+  const k0 = el.hidden ? 0 : Number(el.__fold ? getComputedStyle(el).opacity : 1);
+  const from = el.hidden ? 0 : el.getBoundingClientRect().height;
+  for (const a of el.__fold || []) a.cancel();
+  el.__fold = null;
+  el.classList.remove('folding');
+  apply?.();
+  el.hidden = false;
+  const k1 = show ? 1 : 0;
+  const to = show ? el.getBoundingClientRect().height : 0;
+  if (!animate || REDUCED_MOTION.matches || !box || !el.getClientRects().length
+    || (show && k0 === 1 && !resize) || (k0 === k1 && Math.abs(from - to) < 1)) {
+    el.hidden = !show;
+    el.inert = false;
+    if (!show) done?.();
+    return;
+  }
+  el.inert = !show;
+  const s = getComputedStyle(el);
+  const pad = [parseFloat(s.paddingTop) || 0, parseFloat(s.paddingBottom) || 0];
+  const at = (k, h) => ({
+    height: `${h}px`, paddingTop: `${pad[0] * k}px`, paddingBottom: `${pad[1] * k}px`, opacity: k,
+  });
+  // It leaves faster than it comes; staying, it slides to its new height as it would come.
+  const timing = { ...foldTiming(el, show ? 'in' : 'out'), fill: 'forwards' };
+  const anims = [el.animate([at(k0, from), at(k1, to)], timing)];
+  const gap = parseFloat(getComputedStyle(box).rowGap) || 0;
+  if (gap && k0 !== k1) {
+    let next = edge === 'top' ? null : el.nextElementSibling;
+    while (next && !next.getClientRects().length) next = next.nextElementSibling;
+    const [target, prop] = next ? [next, 'marginTop'] : [box, edge === 'top' ? 'paddingTop' : 'paddingBottom'];
+    // A padding is never below 0, so it is not added to: it is set, from what it is at rest.
+    const base = next ? 0 : parseFloat(getComputedStyle(box)[prop]) || 0;
+    const off = (k) => `${next ? -gap * (1 - k) : Math.max(0, base - gap * (1 - k))}px`;
+    anims.push(target.animate([{ [prop]: off(k0) }, { [prop]: off(k1) }], { ...timing, composite: next ? 'add' : 'replace' }));
+  }
+  el.__fold = anims;
+  el.classList.add('folding');
+  settled(anims[0], () => {
+    // Another change took over from this one.
+    if (el.__fold !== anims) return;
+    el.__fold = null;
+    el.classList.remove('folding');
+    el.inert = false;
+    if (!show) { el.hidden = true; done?.(); }
+    for (const a of anims) a.cancel();
+  });
+}
+
 // Threads whose draft line shows all of the draft ("View draft"), not only how it starts.
 const draftOpen = new Set();
 
@@ -3912,10 +3989,24 @@ function renderDraftBar(key, force = false) {
     });
   }
   if (force || el.__html !== html) {
+    // A change in the open thread's line grows or folds it; a line that comes with the thread
+    // is there at once. On a phone the line is in the drawer, and the drawer is what moves.
+    const animate = el.__html !== undefined && el.__key === key && !LINES_DRAWER.matches;
     el.__html = html;
-    el.innerHTML = html;
-    el.hidden = !d;
-    el.classList.toggle('open', draftOpen.has(key));
+    foldRow(el, Boolean(d), {
+      animate,
+      // Opening and closing the draft (View draft, the pointer resting on it) is not this.
+      resize: false,
+      apply: () => {
+        if (!d) return;
+        el.innerHTML = html;
+        el.classList.toggle('open', draftOpen.has(key));
+      },
+      done: () => {
+        el.innerHTML = '';
+        el.classList.toggle('open', draftOpen.has(key));
+      },
+    });
   }
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   el.__key = key;
@@ -4283,9 +4374,15 @@ function renderBashBar(key) {
     options: (r) => ({ decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
   });
   if (el.__html !== html) {
+    // A change in the open thread's cards grows, folds or resizes them (on a phone they are in
+    // the drawer, and the drawer is what moves); cards that come with the thread are there at once.
+    const animate = el.__html !== undefined && el.__key === key && !LINES_DRAWER.matches;
     el.__html = html;
-    el.innerHTML = html;
-    el.hidden = !list.length;
+    foldRow(el, list.length > 0, {
+      animate,
+      apply: () => { if (list.length) el.innerHTML = html; },
+      done: () => { el.innerHTML = ''; },
+    });
     for (const form of el.querySelectorAll('form.br')) {
       const typed = bashTyped.get(form.dataset.id) || {};
       const fields = [...form.querySelectorAll('.var input')];
@@ -5444,13 +5541,18 @@ function attachRefused(rule, text) {
 function showAttachError(key, text) {
   const tray = inPane(key) && $('tray');
   if (!tray) return;
-  tray.querySelector('.attach-error')?.remove();
-  const el = document.createElement('div');
-  el.className = 'attach-error';
-  el.setAttribute('role', 'alert');
-  el.textContent = text;
-  tray.append(el);
-  tray.hidden = false;
+  foldRow(tray, true, {
+    animate: tray.__key === key,
+    edge: 'top',
+    apply: () => {
+      tray.querySelector('.attach-error')?.remove();
+      const el = document.createElement('div');
+      el.className = 'attach-error';
+      el.setAttribute('role', 'alert');
+      el.textContent = text;
+      tray.append(el);
+    },
+  });
 }
 
 /** Adds files to the thread's tray, if they may go with the ones already there. */
@@ -5483,21 +5585,72 @@ function removeFile(key, id) {
   renderTray(key);
 }
 
-const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" title="${esc(`${a.file.name} · ${fileSize(a.file.size)}`)}">
+const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" data-id="${a.id}" title="${esc(`${a.file.name} · ${fileSize(a.file.size)}`)}">
     ${a.url ? `<img src="${esc(a.url)}" alt="">` : `<span class="ico" aria-hidden="true">${esc((a.file.name.split('.').pop() || 'file').slice(0, 4).toUpperCase())}</span><span class="nm">${esc(a.file.name)}</span><span class="sz">${fileSize(a.file.size)}</span>`}
     <button type="button" class="x" data-rm="${a.id}" aria-label="Remove ${esc(a.file.name)}" title="Remove">×</button></div>`;
 
-/** The tray: the files waiting to go with the reply, each with an × to take it off. */
+/**
+ * The tray: the files waiting to go with the reply, each with an × to take it off. Within the
+ * thread a file that comes fades in, one that goes fades out, and the others slide to their new
+ * places; the tray grows and folds as a row of the reply box does (foldRow).
+ */
 function renderTray(key) {
   const tray = $('tray');
   if (!tray || !inPane(key)) return;
-  const list = state.attachments.get(key) || [];
-  tray.hidden = !list.length;
-  tray.innerHTML = list.map(fileChip).join('');
   tray.onclick = (e) => {
     const b = e.target.closest('[data-rm]');
     if (b) { removeFile(key, b.dataset.rm); $('reply')?.focus(); }
   };
+  const list = state.attachments.get(key) || [];
+  // A change in the tray of this thread, not a tray that comes with the thread.
+  const animate = tray.__key === key;
+  tray.__key = key;
+  const chips = new Map([...tray.querySelectorAll(':scope > .chip:not(.gone)')].map((c) => [c.dataset.id, c]));
+  const error = tray.querySelector(':scope > .attach-error');
+  if (!error && [...chips.keys()].join() === list.map((a) => a.id).join()) return;
+  const motion = animate && !REDUCED_MOTION.matches;
+  const home = tray.getBoundingClientRect();
+  const was = new Map([...chips].map(([id, c]) => [id, c.getBoundingClientRect()]));
+  const ids = new Set(list.map((a) => a.id));
+  const came = [];
+  foldRow(tray, list.length > 0, {
+    animate,
+    edge: 'top',
+    apply: () => {
+      error?.remove();
+      for (const [id, c] of chips) {
+        if (ids.has(id)) continue;
+        if (!motion) { c.remove(); continue; }
+        // Where it was, out of the others' way, while it fades.
+        const r = c.getBoundingClientRect();
+        c.style.left = `${r.left - home.left}px`;
+        c.style.top = `${r.top - home.top}px`;
+        c.style.width = `${r.width}px`;
+        c.classList.add('gone');
+        c.inert = true;
+        tray.append(c);
+        settled(c.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.8)' }], { ...foldTiming(tray, 'out'), fill: 'forwards' }), () => c.remove());
+      }
+      list.forEach((a, i) => {
+        let c = chips.get(a.id);
+        if (!c) { c = toNode(fileChip(a)); came.push(c); }
+        if (tray.children[i] !== c) tray.insertBefore(c, tray.children[i] || null);
+      });
+    },
+    done: () => tray.querySelectorAll(':scope > .chip.gone').forEach((c) => c.remove()),
+  });
+  if (!motion) return;
+  const timing = foldTiming(tray, 'in');
+  for (const c of came) c.animate([{ opacity: 0, transform: 'scale(.8)' }, { opacity: 1, transform: 'none' }], timing);
+  const now = tray.getBoundingClientRect();
+  for (const [id, r] of was) {
+    const c = chips.get(id);
+    if (!ids.has(id)) continue;
+    const n = c.getBoundingClientRect();
+    const dx = (r.left - home.left) - (n.left - now.left);
+    const dy = (r.top - home.top) - (n.top - now.top);
+    if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) c.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], timing);
+  }
 }
 
 /** The files of a reply being sent, as the message will show them once it arrives. */

@@ -300,7 +300,7 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 
 .composer .attach:hover, .composer .attach:focus-visible { background: var(--hover); color: var(--ink); }
 .composer .attach[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
-.tray { flex-basis: 100%; flex-wrap: wrap; }
+.tray { position: relative; flex-basis: 100%; display: flex; flex-wrap: wrap; min-width: 0; }
 .tray[hidden] { display: none; }
 .tray .chip { position: relative; height: var(--spectrum-spacing-800); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); background: var(--card);
   display: flex; align-items: center; gap: var(--spectrum-spacing-100); max-width: calc(var(--spectrum-spacing-100) * 30); }
@@ -315,6 +315,15 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
   border: var(--spectrum-border-width-100) solid var(--line); background: var(--card); color: var(--ink); font-size: var(--spectrum-font-size-100); line-height: 1; cursor: pointer; }
 .tray .chip .x:hover, .tray .chip .x:focus-visible { background: var(--red); border-color: var(--red); color: var(--spectrum-white); }
 .tray .attach-error { flex-basis: 100%; color: var(--red); font-size: var(--spectrum-font-size-75); }
+/* How the reply box's rows come and go within a thread (foldRow in ui/inbox.js): the tray and
+   the lines under the box grow into their place as S2's overlays arrive, eased out, and fold away
+   faster, eased in; a file's chip fades in and out, and the others slide to their places. While a
+   row grows or folds it is cut at its edges, but for the × buttons that stand off its chips. */
+.composer { --fold-in: var(--spectrum-animation-duration-400); --fold-in-ease: var(--spectrum-animation-ease-out);
+  --fold-out: var(--spectrum-animation-duration-200); --fold-out-ease: var(--spectrum-animation-ease-in); }
+.composer .draftbar.folding { overflow: clip; }
+.tray.folding { overflow: clip; overflow-clip-margin: var(--spectrum-spacing-100); }
+.tray .chip.gone { position: absolute; margin: 0; pointer-events: none; }
 #pane { position: relative; }
 #pane .dropzone { position: absolute; inset: var(--spectrum-spacing-100); z-index: 6; display: flex; align-items: center; justify-content: center;
   border: var(--spectrum-border-width-200) dashed var(--accent); border-radius: var(--spectrum-corner-radius-800); background: color-mix(in srgb, var(--pane) 86%, transparent);
