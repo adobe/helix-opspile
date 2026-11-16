@@ -496,10 +496,26 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
    thread's are. */
 main { --nav-w: var(--filters-w); --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 70)); }
 main.rail { --nav-w: var(--rail); }
-main.siding { grid-template-columns: var(--nav-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), calc((100% - var(--nav-w)) * 3 / 11)) 1fr; }
+main.siding { grid-template-columns: var(--nav-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), calc(34% + ((100% - var(--nav-w)) * 3 / 11 - 34%) * var(--side-open, 1))) 1fr; }
 #side { grid-row: 1; grid-column: 3; justify-self: end; width: var(--side-w); display: flex; flex-direction: column; overflow: hidden; }
 #side[hidden] { display: none; }
-main.siding #pane { margin-right: var(--side-w); }
+main.siding #pane { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
+/* How it comes and goes (moveSide in ui/inbox.js), in --side-motion: the room for it opens as
+   --side-open goes from 0 to 1, the list and the thread giving it up as they do at rest. From
+   the line that was picked, the line grows into it: it reaches across to the content area's
+   edge, then the panel grows up and down from it to the column's height (`#side-join`, drawn
+   over the two, while the panel itself is veiled), and what is in the panel fades in
+   (--side-in). Without a line in sight it slides in from the edge, clipped there. Closing, the
+   same backwards. Open, the line stays joined to the panel: `#side-join` bridges the gap
+   between them, with a rounded inner corner on either side, and opens the panel's edge where
+   the line meets it; it is clipped to where the thread scrolls, as the line is. */
+main { --side-motion: var(--spectrum-animation-duration-1000); }
+#side > * { opacity: var(--side-in, 1); }
+main.side-veiled #side { opacity: 0; pointer-events: none; }
+main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 100%)); clip-path: inset(0px calc((1 - var(--side-open)) * 100%) 0px 0px); }
+#side-join { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
+#side-join[hidden] { display: none; }
+#side-join svg { display: block; width: 100%; height: 100%; }
 #side .sp-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
 #side .sp-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
 #side .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
@@ -1801,16 +1817,25 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .composer.sidebar button.send { background: var(--spectrum-purple-background-color-default); }
 .spectrum .composer.sidebar button.send:hover:not(:disabled) { background: var(--spectrum-purple-1000); }
 /* The sidebar's panel: the thread's column ends where it starts, and it has the content area's
-   right corners. All of it is in the sidebar's purple, half as strong as a line in the thread
-   is, as it is much more of the page; its top and its box are divided from what scrolls
-   between them as the thread's are, in purple. ✕ is a quiet ActionButton. */
+   right corners. All of it is in the sidebar's purple, the fill of a line in the thread, so the
+   line that opened it is one shape with it (`#side-join`); its top and its box are divided from
+   what scrolls between them as the thread's are, in purple. ✕ is a quiet ActionButton. */
 .spectrum #side {
   --side-line: color-mix(in srgb, var(--spectrum-purple-visual-color) 25%, transparent);
-  background: color-mix(in srgb, var(--spectrum-purple-subtle-background-color-default) 50%, var(--content));
+  background: var(--spectrum-purple-subtle-background-color-default);
   border-left: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
   border-radius: 0px var(--content-radius) var(--content-radius) 0px;
 }
 .spectrum main.siding #pane { border-radius: 0px; }
+.spectrum main.side-sliding #side { clip-path: inset(0px calc((1 - var(--side-open)) * 100%) 0px 0px round 0px var(--content-radius) var(--content-radius) 0px); }
+.spectrum #side-join { border-radius: 0px var(--content-radius) var(--content-radius) 0px; }
+.spectrum #side-join path {
+  fill: var(--spectrum-purple-subtle-background-color-default);
+  stroke: var(--spectrum-purple-visual-color);
+  stroke-width: var(--spectrum-border-width-200);
+}
+/* The line joined to the panel is part of it: no hover of its own, which would stop at the join. */
+.spectrum .sidechat.joined .sc-head:hover { background: none; }
 .spectrum #side .sp-close {
   width: var(--spectrum-component-height-100);
   height: var(--spectrum-component-height-100);

@@ -2511,6 +2511,11 @@ const side = {
   wide: false,
   // The conversation the panel shows next, by its first message's id: the line that was picked.
   at: null,
+  // The line the panel is joined to, by its conversation's first message's id: the one that was
+  // picked to open it, or since; null when it was opened otherwise (moveSide, drawJoin).
+  joined: null,
+  // Whether the panel moves as it comes or goes now: while you enter or leave the sidebar.
+  motion: false,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
@@ -2615,6 +2620,7 @@ function sideGroup(key, run, { last, trailing }) {
   }
   const id = run[0].id;
   const paneled = sidePaneled(key);
+  const joined = paneled && side.joined === id;
   const live = trailing && sideInline(key);
   const open = !side.wide && (live || side.open.has(id));
   const working = sideWorking(key, run, last);
@@ -2629,7 +2635,7 @@ function sideGroup(key, run, { last, trailing }) {
   const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
   // What the line opens: its run under it, or the panel, which has every run.
   const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
-  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}" data-side="${esc(id)}">
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" ${shows}${live ? ' aria-disabled="true"' : ''}>
       <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
     </button>${body}</div>`;
@@ -2677,14 +2683,217 @@ function sidePanelBox(key) {
     <button class="send ask" id="side-send" type="button">Ask</button></div>`;
 }
 
-/** The panel goes, with what it showed. */
+/** The panel goes, with what it showed. Into the line it is joined to, or out to the edge, as
+ * you leave the sidebar (`side.motion`) and the thread stays open; at once otherwise. */
 function hideSidePanel() {
   const panel = $('side');
   if (!panel || panel.hidden) return;
+  if (panel.__key === state.open && (side.motion || (sideMotion.raf && sideMotion.to === 0))) {
+    // Going already, it goes on: the thread is shown again as it does.
+    if (sideMotion.to !== 0 || !sideMotion.raf) moveSide(0, { animate: true });
+    return;
+  }
+  goneSidePanel();
+}
+
+/** The panel gone now, and its motion with it. */
+function goneSidePanel() {
+  const panel = $('side');
+  const main = panel.parentElement;
+  cancelAnimationFrame(sideMotion.raf);
+  Object.assign(sideMotion, { p: 0, to: 0, raf: 0 });
   panel.hidden = true;
   panel.replaceChildren();
   panel.__key = null;
-  panel.parentElement.classList.remove('siding');
+  panel.style.removeProperty('--side-in');
+  main.style.removeProperty('--side-open');
+  main.classList.remove('siding', 'side-sliding', 'side-veiled');
+  side.joined = null;
+  $('side-join').hidden = true;
+}
+
+// ---------------------------------------------------------------- the panel's motion
+// The panel comes out of the line that was picked (`side.joined`), and goes back into it: the
+// line reaches across to the content area's edge as the thread gives up the panel's room, then
+// the panel grows from it up and down to the column's height, and what is in it fades in.
+// Without that line in sight it slides in from the edge instead. Open, the line stays joined to
+// it. `p` goes from 0 (gone) to 1 (open) in --side-motion; `mode` is 'join' or 'slide', picked
+// as it sets out from either end. In spectrum-inbox.css, "How it comes and goes".
+const sideMotion = {
+  p: 0, to: 0, raf: 0, mode: 'slide',
+};
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2);
+const lerp = (a, b, t) => a + (b - a) * t;
+// Where the phases of a join end: the line across, the panel grown, its content in.
+const JOIN_ACROSS = 0.45;
+const JOIN_GROWN = 0.85;
+
+/** The line of conversation `run` in the thread, and the thread's scroller, or null. */
+function sideLine(run) {
+  const scroller = $('pane').querySelector(':scope > .scroller');
+  const el = run && scroller?.querySelector(`.sidechat[data-side="${CSS.escape(run)}"]`);
+  return el ? { el, scroller } : null;
+}
+
+/** Whether the line of conversation `run` is in sight in the thread, all of it. */
+function sideLineInSight(run) {
+  const line = sideLine(run);
+  if (!line) return false;
+  const l = line.el.getBoundingClientRect();
+  const s = line.scroller.getBoundingClientRect();
+  return l.height > 0 && l.top >= s.top && l.bottom <= s.bottom;
+}
+
+/** The panel's motion towards `to` (0 or 1): over --side-motion if `animate`, else at once. */
+function moveSide(to, { animate }) {
+  const m = sideMotion;
+  cancelAnimationFrame(m.raf);
+  m.raf = 0;
+  m.to = to;
+  const main = document.querySelector('main');
+  // Setting out from either end: from the joined line where it is in sight.
+  if (m.p === 0 || m.p === 1) m.mode = sideLineInSight(side.joined) ? 'join' : 'slide';
+  else if (m.mode === 'join' && !sideLine(side.joined)) m.mode = 'slide';
+  const ms = parseFloat(getComputedStyle(main).getPropertyValue('--side-motion')) || 0;
+  const dur = animate && !REDUCED_MOTION.matches ? ms * Math.abs(to - m.p) : 0;
+  if (!dur) {
+    m.p = to;
+    if (to === 0) goneSidePanel();
+    else drawSide();
+    return;
+  }
+  const from = m.p;
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = clamp01((now - t0) / dur);
+    m.p = lerp(from, to, k);
+    drawSide();
+    if (k < 1) m.raf = requestAnimationFrame(step);
+    else {
+      m.raf = 0;
+      if (to === 0) goneSidePanel();
+    }
+  };
+  m.raf = requestAnimationFrame(step);
+}
+
+/** The panel and its room where its motion is now, and the line joined to it. */
+function drawSide() {
+  const { p, mode } = sideMotion;
+  const main = document.querySelector('main');
+  const panel = $('side');
+  const join = mode === 'join';
+  const open = join ? easeInOut(clamp01(p / JOIN_ACROSS)) : easeInOut(p);
+  const veiled = join && p < JOIN_GROWN;
+  if (p === 1) {
+    main.style.removeProperty('--side-open');
+    panel.style.removeProperty('--side-in');
+  } else {
+    main.style.setProperty('--side-open', open.toFixed(4));
+    panel.style.setProperty('--side-in', (join ? clamp01((p - JOIN_GROWN) / (1 - JOIN_GROWN)) : 1).toFixed(4));
+  }
+  main.classList.toggle('side-sliding', !join && p < 1);
+  main.classList.toggle('side-veiled', veiled);
+  drawJoin();
+}
+
+/**
+ * The line joined to the panel (`#side-join`, an outline over the two): while the panel grows
+ * from it, the line and the panel as one shape; open, the bridge from the line to the panel,
+ * with a rounded inner corner on either side, and the panel's edge open where the line meets
+ * it. Only the part of the bridge where the thread scrolls shows, as only that of the line does.
+ */
+function drawJoin() {
+  const box = $('side-join');
+  const panel = $('side');
+  const { p, mode } = sideMotion;
+  const line = !panel.hidden && p > 0 && (mode === 'join' || p === 1) && sideLine(side.joined);
+  const l = line && line.el.getBoundingClientRect();
+  const s = line && sideScrolls(line.scroller);
+  if (!line || !l.height || l.bottom <= s.top || l.top >= s.bottom) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const main = document.querySelector('main').getBoundingClientRect();
+  const pane = $('pane').getBoundingClientRect();
+  const sp = panel.getBoundingClientRect();
+  const path = box.querySelector('path');
+  const css = getComputedStyle(line.el);
+  const bw = parseFloat(getComputedStyle(path).strokeWidth) || parseFloat(css.borderTopWidth) || 2;
+  const r = parseFloat(css.borderTopRightRadius) || 0;
+  // Its box: the thread's column and the panel's, in which everything below is measured.
+  const ox = pane.left;
+  const oy = Math.min(pane.top, sp.top);
+  const w = sp.right - ox;
+  const h = Math.max(pane.bottom, sp.bottom) - oy;
+  Object.assign(box.style, {
+    left: `${ox - main.left}px`, top: `${oy - main.top}px`, width: `${w}px`, height: `${h}px`,
+  });
+  const f = (x) => x.toFixed(2);
+  // The outline runs on the middle of the line's border, and of the panel's.
+  const x0 = l.right - ox - r;
+  const lt = l.top - oy + bw / 2;
+  const lb = l.bottom - oy - bw / 2;
+  const jx = sp.left - ox + bw / 2;
+  const far = w + bw * 2;
+  // Where the line meets the panel: the part of it in sight, with an inner corner only where
+  // there is room for one in sight too.
+  const t = (l.top >= s.top ? l.top + bw / 2 : s.top) - oy;
+  const b = (l.bottom <= s.bottom ? l.bottom - bw / 2 : s.bottom) - oy;
+  const roomT = Math.max(0, l.top - s.top);
+  const roomB = Math.max(0, s.bottom - l.bottom);
+  let d;
+  const across = mode === 'join' && p < JOIN_ACROSS ? easeInOut(p / JOIN_ACROSS) : null;
+  if (across !== null) {
+    // The line reaching across, its right corners squaring as they get to the content's edge.
+    const rr = Math.max(0, lerp(r - bw / 2, 0, across));
+    const xe = lerp(l.right - ox - bw / 2, far, across);
+    d = `M${f(x0)},${f(lt)}L${f(xe - rr)},${f(lt)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe)},${f(lt + rr)}`
+      + `L${f(xe)},${f(lb - rr)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe - rr)},${f(lb)}L${f(x0)},${f(lb)}`;
+  } else {
+    // The panel grown from the line, or all grown: one outline, open at the line's left, which
+    // the line draws itself. Its top and bottom reach past the box, which clips them.
+    const grown = mode === 'join' && p < JOIN_GROWN ? easeInOut((p - JOIN_ACROSS) / (JOIN_GROWN - JOIN_ACROSS)) : 1;
+    const pt = lerp(t, -bw * 2, grown);
+    const pb = lerp(b, h + bw * 2, grown);
+    const ft = Math.min(r, t - pt, roomT);
+    const fb = Math.min(r, pb - b, roomB);
+    d = `M${f(x0)},${f(lt)}L${f(jx - ft)},${f(lt)}L${f(jx - ft)},${f(t)}A${f(ft)},${f(ft)} 0 0 0 ${f(jx)},${f(t - ft)}`
+      + `L${f(jx)},${f(pt)}L${f(far)},${f(pt)}L${f(far)},${f(pb)}L${f(jx)},${f(pb)}`
+      + `L${f(jx)},${f(b + fb)}A${f(fb)},${f(fb)} 0 0 0 ${f(jx - fb)},${f(b)}L${f(jx - fb)},${f(lb)}L${f(x0)},${f(lb)}`;
+  }
+  path.setAttribute('d', d);
+  // In the thread's column only where it scrolls; in the panel's, all of it while the panel is
+  // veiled, and its edge once it shows.
+  const [inThread, inPanel] = box.querySelectorAll('rect');
+  const px = sp.left - ox;
+  const shows = mode !== 'join' || p >= JOIN_GROWN;
+  const set = (el, x, y, width, height) => {
+    el.setAttribute('x', f(x)); el.setAttribute('y', f(y));
+    el.setAttribute('width', f(Math.max(0, width))); el.setAttribute('height', f(Math.max(0, height)));
+  };
+  set(inThread, 0, s.top - oy, px, s.bottom - s.top);
+  set(inPanel, px, 0, shows ? bw : w - px, h);
+}
+
+/** Where the thread scrolls in sight: its scroller, under the day's divider stuck at its top. */
+function sideScrolls(scroller) {
+  const r = scroller.getBoundingClientRect();
+  let top = r.top;
+  for (const el of scroller.querySelectorAll('.day, .rv')) {
+    const d = el.getBoundingClientRect();
+    if (d.top <= r.top + 1 && d.bottom > top) top = d.bottom;
+  }
+  return { top, bottom: r.bottom };
+}
+
+let joinFrame = 0;
+/** The joined line again, once a frame at most: the thread scrolled, or something moved it. */
+function queueJoin() {
+  if (joinFrame || sideMotion.raf) return;
+  joinFrame = requestAnimationFrame(() => { joinFrame = 0; drawJoin(); });
 }
 
 /**
@@ -2699,6 +2908,15 @@ function placeSidePanel(key, thread, runs) {
   if (panel.__key !== key) {
     panel.innerHTML = '<div class="scroller"><div class="sc-body"></div></div>';
     panel.__key = key;
+  }
+  // Coming, or back while it was going: it moves as you enter the sidebar, else it is there.
+  const coming = panel.hidden || sideMotion.to === 0;
+  if (panel.hidden) {
+    sideMotion.p = 0;
+    sideMotion.to = 0;
+    document.querySelector('main').style.setProperty('--side-open', '0');
+    panel.style.setProperty('--side-in', '0');
+    panel.parentElement.classList.add('side-veiled');
   }
   panel.hidden = false;
   panel.parentElement.classList.add('siding');
@@ -2719,6 +2937,8 @@ function placeSidePanel(key, thread, runs) {
     scroller.scrollTop += picked.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     markFound(picked);
   } else if (atEnd) scroller.scrollTop = scroller.scrollHeight;
+  if (coming) moveSide(1, { animate: side.motion });
+  else drawJoin();
 }
 
 /** The open thread again, from what is known, with the sidebar as it stands now. */
@@ -2736,7 +2956,14 @@ async function enterSide(key = state.open, { at = null } = {}) {
   const was = side.key;
   side.key = key;
   side.at = at;
-  if (was !== key || at) await showSide(key);
+  // The panel is joined to the line that opened it, or that was picked since; opened otherwise,
+  // to none.
+  if (at) side.joined = at;
+  else if (was !== key) side.joined = null;
+  side.motion = true;
+  const shown = was !== key || at ? showSide(key) : null;
+  side.motion = false;
+  await shown;
   const box = $('side-reply');
   if (side.wide) {
     // The thread stays where it is: the conversation is beside it.
@@ -2754,7 +2981,9 @@ function exitSide({ focus = true } = {}) {
   if (!key) return;
   side.key = null;
   if (state.open === key) {
+    side.motion = true;
     showSide(key);
+    side.motion = false;
     if (focus) $('reply')?.focus();
   }
 }
@@ -6951,6 +7180,12 @@ function wireSideRoom() {
   // change the room, only how it is shared.
   new ResizeObserver(syncSideRoom).observe($('pane'));
   syncSideRoom();
+  // The line joined to the panel moves with the thread, and as the two change their size.
+  const moved = new ResizeObserver(queueJoin);
+  moved.observe(panel);
+  moved.observe($('pane'));
+  $('pane').addEventListener('scroll', queueJoin, { capture: true, passive: true });
+  $('pane').addEventListener('load', queueJoin, true);
   panel.onclick = (e) => {
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
     followLink(e);
