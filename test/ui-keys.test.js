@@ -98,6 +98,9 @@ describe('formatting in a text box', () => {
     assert.equal(key('*', 'Digit8', { shiftKey: true }), 'bullet');
     assert.equal(key('&', 'Digit7', { shiftKey: true }), 'number');
     assert.equal(key('b', 'KeyB', { metaKey: false, ctrlKey: true }), 'bold');
+    // Off a Mac, Ctrl+Shift+7…9 are lists and quote in a text box, not the views (globalKey).
+    assert.equal(key('&', 'Digit7', { metaKey: false, ctrlKey: true, shiftKey: true }), 'number');
+    assert.match(js, /e\.shiftKey !== MAC && !\(writable\(e\.target\) && formatKind\(e\)\)/);
     assert.equal(key('s', 'KeyS'), null);
     assert.equal(key('b', 'KeyB', { metaKey: false }), null);
   });
