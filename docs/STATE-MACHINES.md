@@ -179,8 +179,21 @@ that stopped half way with no run pending counts as failed after 15 minutes. A f
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
-progress is never kept. A turn that answers a sidebar message is kept as its answer instead
+progress is never kept there. A turn that answers a sidebar message is kept as its answer instead
 (`sidebar_messages`, below), and the row stays the turn before it.
+
+**Agent live turn.** absent → kept, then replaced by every newer reading (`agent_live`, one row per
+entry, `keepLive` in `src/agent/kept.js`): the latest turn as `latestTurn` reads it, in any state,
+sidebar turns included, `null` before the first. The agent writes it a moment after it accepts work
+(`harness.submit`), after each round of tools, after an answer or a failed request, and from
+`status()`; only when it changed since the last one kept (`live-turn` in the agent's storage), and a
+working one again a third of the stuck time after the last, so a long turn stays fresh. `at` is when
+the transcript was read, and the write is conditional on it being newer, so readings that cross keep
+the latest. `GET /api/agent` answers from the row, without the agent's object. It asks the agent
+instead when there is no row (an agent that has not worked since migration 0070) or the row has said
+`working` for 15 minutes without being written again (its object stopped half way): the agent's
+answer, `failed` once the transcript says so, is kept again then. A row is never deleted; a thread
+whose channel's agent is turned off is answered `enabled: false` before it is read.
 
 **Expert suggestion.** suggested → withdrawn, or fulfilled (`expert_suggestions`, `suggestExpert`
 in `src/experts.js`). Withdrawing deletes the row; suggesting the person again replaces it, with
