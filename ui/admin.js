@@ -243,7 +243,10 @@ function openUrl(url, { push = true, instant = false } = {}) {
   };
   // Phones slide between the list and what is picked in it within a page, not to another page
   // or from one picked to another.
-  if (instant || tab !== state.tab || (sel && state.sel)) instantly(open); else open();
+  if (instant || tab !== state.tab || (sel && state.sel)) instantly(open);
+  // Back to the list within the page: as its back button, what was picked slides out as it was.
+  else if (!sel && state.sel) unselect();
+  else open();
 }
 
 /**
