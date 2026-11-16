@@ -666,7 +666,11 @@ function kernelShell(shell) {
   const dig = shell.commands && shell.commands.includes('dig')
     ? ' dig asks Cloudflare\'s resolver, over DNS over HTTPS (cloudflare-dns.com): this computer runs on Cloudflare, which resolves every name curl reaches from it anyway, so dig may look up a customer\'s names. It cannot ask a name server itself (no @server, no +trace, no UDP).'
     : '';
-  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  // openssl, where the image has it: what it can work on, as nothing but HTTP leaves.
+  const openssl = shell.commands && shell.commands.includes('openssl')
+    ? ' openssl works on certificates, keys and requests you have as files (x509 -text -noout, verify, asn1parse, req, dgst, pkcs12, base64), with Mozilla\'s roots; s_client cannot reach the internet (no TCP leaves this computer but curl\'s HTTP), so it cannot show a site\'s certificate chain.'
+    : '';
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**

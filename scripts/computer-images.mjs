@@ -95,6 +95,11 @@ export const LAYERS = {
     { name: '@ai-ecoverse/wasm-curl' },
     { name: '@ai-ecoverse/wasi-dig' },
   ],
+  // openssl, with its configuration and Mozilla's roots. It has no TCP of its own out of the
+  // computer, so s_client reaches only the kernel's loopback.
+  tls: [
+    { name: '@ai-ecoverse/wasix-openssl-cli', files: ['etc/ssl'] },
+  ],
   // git runs its transports (git-remote-https) from libexec/git-core, by their paths.
   git: [
     { name: '@ai-ecoverse/wasm-git', files: ['libexec/git-core', 'share/git-core/templates'] },
@@ -115,7 +120,7 @@ export const LAYERS = {
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, git, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, openssl, git, qjs';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -128,10 +133,11 @@ export const IMAGES = [
     name: 'base',
     title: 'Base',
     description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
-      + ' html2markdown, curl, dig, git and qjs (JavaScript): for reading logs, text, JSON and'
-      + ' YAML, asking APIs and DNS, cloning repositories, and small scripts.',
+      + ' html2markdown, curl, dig, openssl, git and qjs (JavaScript): for reading logs, text,'
+      + ' JSON and YAML, asking APIs and DNS, reading certificates, cloning repositories, and'
+      + ' small scripts.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats'],
+    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats'],
   },
   {
     name: 'data',

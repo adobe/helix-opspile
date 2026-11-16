@@ -1784,10 +1784,11 @@ the default. An agent follows its team's choice before each delivery, as it foll
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
     and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, dig), `js` (qjs), `git`, `formats` (yq, html2markdown,
-    file) and `data` (ripgrep, sqlite3, strings). `base` is the first seven, and `data` is
-    `from: 'base'` with the eighth. A package's other files a program needs are named in its
-    `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's magic).
+    unzip, xz, bzip2), `net` (curl, dig), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
+    html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
+    `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
+    in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
+    magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names
     a command the image lacks.
   - **In the bucket**, everything but the images and their index is named by its content, and
@@ -1845,15 +1846,17 @@ the default. An agent follows its team's choice before each delivery, as it foll
   the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
   every name curl reaches, so the agent is told it may look up a customer's names there. It
   has no `+trace` and asks no name server itself.
-- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain:
-  there is no `openssl`.
+- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain.
+  `openssl` (`@ai-ecoverse/wasix-openssl-cli`) works on certificates and keys as files, and
+  its `s_client` reaches only the kernel's loopback: no TCP leaves the computer. The agent is
+  told so.
 - **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
   program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
   which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
   `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
   so where its image has it.
-- **What it does not have:** python, node (and so the AEM CLI or `aio`), `openssl`, and
-  `xan`, which just-bash has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
+  just-bash has.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits

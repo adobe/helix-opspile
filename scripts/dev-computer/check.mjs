@@ -60,6 +60,31 @@ export const CHECKS = [
   },
   { name: 'grep, after git', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
   {
+    name: 'openssl: a CA, a certificate, verify, and s_client on loopback',
+    command: 'cd /tmp && rm -rf tls && mkdir tls && cd tls'
+      + ' && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1'
+      + ' -subj /CN=ca -keyout ca.key -out ca.pem 2> /dev/null'
+      + ' && openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=localhost'
+      + ' -keyout s.key -out s.csr 2> /dev/null'
+      + ' && openssl x509 -req -in s.csr -CA ca.pem -CAkey ca.key -days 1 -out s.pem'
+      + ' -extfile <(printf "subjectAltName=DNS:localhost") 2> /dev/null'
+      + ' && openssl verify -CAfile ca.pem s.pem'
+      + ' && openssl x509 -in s.pem -noout -ext subjectAltName | tail -1'
+      + ' && { openssl s_server -accept 4433 -cert s.pem -key s.key -quiet -naccept 1'
+      + ' > /dev/null 2>&1 & sleep 1;'
+      + ' echo | openssl s_client -connect localhost:4433 -servername localhost -CAfile ca.pem'
+      + ' -verify_return_error 2>&1 | grep -E "^Verify return code"; wait; }',
+    match: /^s\.pem: OK\n +DNS:localhost\nVerify return code: 0 \(ok\)\n$/,
+    timeout: 90,
+  },
+  {
+    // What the agent is told: no TCP leaves the computer but curl's HTTP.
+    name: 'openssl: s_client does not reach the internet',
+    command: 'openssl s_client -connect www.aem.live:443 -servername www.aem.live < /dev/null'
+      + ' > /dev/null 2>&1; echo $?',
+    match: /^1\n$/,
+  },
+  {
     name: 'yq',
     command: "printf 'a:\\n  b: [1, 2]\\n' | yq -o json -I0 .a",
     match: /^\{"b":\[1,2\]\}\n$/,
