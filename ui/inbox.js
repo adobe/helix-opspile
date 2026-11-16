@@ -1678,7 +1678,8 @@ function filtButton(on) {
  * that moves or hides a row you have seen, and new threads do not push the rows you look at
  * away. While the list lasts:
  * - every thread it has shown stays in it (`held`), read or not, whatever its filters say now:
- *   unread only is "unread when the list was opened", and what came in since;
+ *   unread only is "unread when the list was opened", and what came in since; until the inbox has
+ *   been away for a while (`forgetRead`), when the read ones but the open thread go;
  * - the rows you have seen (in view, or scrolled past: `seen`) keep their order; the rows below
  *   them are sorted as the view sorts, as older pages come in behind them;
  * - threads that come in (`arrived`: activity since the list was opened, and not in it yet) are
@@ -1739,6 +1740,22 @@ function placeRows(sorted) {
   L.order = out.map((t) => t.thread);
   for (const k of L.order) L.held.add(k);
   return out;
+}
+/**
+ * Unread only, after a while away (`AWAY_MS`): the list lets go of the threads it kept because it
+ * had shown them, and that are read now. The open thread stays. Whether something changed.
+ */
+function forgetRead() {
+  const L = state.list;
+  if (!state.unread || !state.data || !L) return false;
+  let gone = false;
+  for (const t of state.data.threads) {
+    if (t.unread || t.thread === state.open || !L.held.has(t.thread)) continue;
+    for (const s of [L.held, L.seen, L.arrived, L.grouped]) s?.delete(t.thread);
+    gone = true;
+  }
+  if (L.open !== state.open) { gone ||= Boolean(L.open); L.open = state.open; }
+  return gone;
 }
 /** The rows in view, and the ones above them, are seen: they keep their order from now on. */
 function noteSeen() {
@@ -6164,13 +6181,42 @@ const STATUS_TICK_MS = 60 * 1000;
 // A thread's status depends on the time too (waiting too long, customer silent), and nothing
 // announces that: the list is looked at again every minute while it is on screen.
 setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
+// Away from the inbox (its tab hidden, or another window in front) for AWAY_MS, unread only lets go
+// of the threads read meanwhile (forgetRead): not sooner, so a look at another window and back
+// finds the list as it was. While away, so the list is short when you are back; and when you are,
+// in case a timer in the background was late, and after the catch-up reload, for what was read
+// elsewhere.
+const AWAY_MS = 5 * 60 * 1000;
+const away = { since: 0, timer: null };
+const forgetSoon = () => { if (forgetRead()) render(); };
+/** Left or back: the time away starts, or ends. */
+function awayOrBack() {
+  if (hidden() || !document.hasFocus()) {
+    if (!away.since) {
+      away.since = Date.now();
+      away.timer = setTimeout(forgetSoon, AWAY_MS);
+    }
+    return;
+  }
+  clearTimeout(away.timer);
+  if (away.since && Date.now() - away.since >= AWAY_MS) forgetSoon();
+  away.since = 0;
+}
+awayOrBack();
+// After the blur: focus gone into one of the page's frames (a source shown) is not away.
+window.addEventListener('blur', () => setTimeout(awayOrBack));
+window.addEventListener('focus', awayOrBack);
 document.addEventListener('visibilitychange', () => {
+  const { since } = away;
+  awayOrBack();
   if (hidden() || !state.data) return;
+  const long = Boolean(since) && Date.now() - since >= AWAY_MS;
   const open = state.open;
   const agent = open && state.agents.get(open);
   // Shown again: what changed meanwhile, and the agent's turn if it was due to be asked (and
   // the thread's reload did not ask already).
   const caught = changed.size && !reload ? reloadChanged() : null;
+  if (long && caught) caught.then(forgetSoon);
   if (agent?.due) {
     Promise.resolve(caught).then(() => {
       if (state.open === open && state.agents.get(open) === agent) loadAgent(open);

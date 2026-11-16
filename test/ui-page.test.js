@@ -1060,7 +1060,7 @@ describe('inbox page', () => {
     let every = 0;
     let renders = 0;
     let away = false;
-    piece('// A thread\'s status depends on the time too', 'document.addEventListener(\'visibilitychange\'', 'state', {
+    piece('// A thread\'s status depends on the time too', '// Away from the inbox', 'state', {
       setInterval: (f, ms) => {
         tick = f;
         every = ms;
@@ -1078,6 +1078,52 @@ describe('inbox page', () => {
     away = true;
     tick();
     assert.equal(renders, 1);
+  });
+
+  it('lets go of the threads read meanwhile only after five minutes away', () => {
+    let now = 0;
+    let focused = true;
+    let timer = null;
+    let forgets = 0;
+    const on = {};
+    const { awayOrBack } = piece('// Away from the inbox', 'document.addEventListener(\'visibilitychange\'', 'awayOrBack', {
+      hidden: () => false,
+      document: { hasFocus: () => focused },
+      window: { addEventListener: (type, f) => { on[type] = f; } },
+      setTimeout: (f, ms) => {
+        if (!ms) {
+          f();
+          return null;
+        }
+        timer = { f, at: now + ms };
+        return timer;
+      },
+      clearTimeout: () => { timer = null; },
+      Date: { now: () => now },
+      forgetRead: () => {
+        forgets += 1;
+        return true;
+      },
+      render: () => {},
+    });
+    // Another window for a minute, and back: nothing is let go of.
+    focused = false;
+    on.blur();
+    now = 60 * 1000;
+    focused = true;
+    on.focus();
+    assert.equal(timer, null);
+    assert.equal(forgets, 0);
+    // Away for longer: let go of while away, and again when back (for a timer that was late).
+    focused = false;
+    on.blur();
+    assert.equal(timer.at, now + 5 * 60 * 1000);
+    now = timer.at;
+    timer.f();
+    assert.equal(forgets, 1);
+    focused = true;
+    awayOrBack();
+    assert.equal(forgets, 2);
   });
 
   it('outlines neighboring picked values as one, with no edge between them', () => {
@@ -1384,7 +1430,7 @@ describe('inbox page', () => {
       const passes = (t) => (!state.unread || api.keptUnread(t))
         && (!state.mentions || t.mentionedMe)
         && (!state.sel.customer?.size || state.sel.customer.has(t.org));
-      const names = 'newList, keptUnread, syncList, onList, viewSort, placeRows';
+      const names = 'newList, keptUnread, syncList, onList, viewSort, placeRows, forgetRead';
       api = piece('function newList(', '/** The rows in view', names, {
         state,
         passes,
@@ -1402,7 +1448,9 @@ describe('inbox page', () => {
         return api.placeRows(sorted).map((t) => t.thread);
       };
       const see = (...keys) => keys.forEach((k) => state.list.seen.add(k));
-      return { state, shown, see };
+      return {
+        state, shown, see, forgetRead: api.forgetRead,
+      };
     }
     const thread = (key, o = {}) => ({
       thread: key, org: 'acme', unread: true, last_at: '2026-01-01T10:00:00Z', score: 1, ...o,
@@ -1422,6 +1470,26 @@ describe('inbox page', () => {
       shown();
       state.unread = true;
       assert.deepEqual(shown(), ['b', 'c']);
+    });
+
+    it('lets go of the threads read meanwhile, after a while away, but not of the open one', () => {
+      const {
+        state, shown, see, forgetRead,
+      } = list();
+      state.unread = true;
+      state.data.threads = [thread('a', { score: 3 }), thread('b', { score: 2 }), thread('c', { score: 1 })];
+      assert.deepEqual(shown(), ['a', 'b', 'c']);
+      see('a', 'b', 'c');
+      state.open = 'b';
+      state.data.threads[0] = thread('a', { score: 3, unread: false });
+      state.data.threads[1] = thread('b', { score: 2, unread: false });
+      assert.deepEqual(shown(), ['a', 'b', 'c']);
+      assert.equal(forgetRead(), true);
+      assert.deepEqual(shown(), ['b', 'c']);
+      // Nothing more to let go of; and nothing without unread only.
+      assert.equal(forgetRead(), false);
+      state.unread = false;
+      assert.equal(forgetRead(), false);
     });
 
     it('sorts the rows below the ones seen, and adds arrivals at the end of a team list', () => {
