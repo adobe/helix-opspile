@@ -412,6 +412,11 @@ export class ThreadAgent extends Agent {
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
         clock: () => this.env.AGENTS.get(this.ctx.id).now(),
         commands: { append: [IMAGE_COMMANDS] },
+        // How much of a Dynamic Worker's 128 MB the kernel fills with processes: by default
+        // 64 MiB, too little for git's clone, which is three processes deep (git, git
+        // remote-https, git-remote-https) and forks a fourth to read the pack. The kernel
+        // runs no more Dynamic Workers (8) than a Durable Object may (10).
+        isolates: { memory: 96 * 2 ** 20 },
         network: {
           transport: fetchTransport({
             fetch: gatewayFetch((request) => forward(this.env, { agent: this.name }, request)),

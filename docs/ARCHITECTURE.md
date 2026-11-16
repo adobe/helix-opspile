@@ -1783,10 +1783,13 @@ the default. An agent follows its team's choice before each delivery, as it foll
     defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
-    and cmp, tree, which, rev, column, hexdump), `archive` (gzip, tar, zip and unzip), `net`
-    (curl), `js` (qjs) and `data` (ripgrep, sqlite3, strings). `base` is the first five, and
-    `data` is `from: 'base'` with the sixth. An image names what the agent is told it has (`tools`), and
-    the build fails if that names a command the image lacks.
+    and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
+    unzip, xz, bzip2), `net` (curl, dig), `js` (qjs), `git`, `formats` (yq, html2markdown,
+    file) and `data` (ripgrep, sqlite3, strings). `base` is the first seven, and `data` is
+    `from: 'base'` with the eighth. A package's other files a program needs are named in its
+    `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's magic).
+    An image names what the agent is told it has (`tools`), and the build fails if that names
+    a command the image lacks.
   - **In the bucket**, everything but the images and their index is named by its content, and
     never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
     modes and hashes of its files, with small files (a package's manifest) in it;
@@ -1828,15 +1831,29 @@ the default. An agent follows its team's choice before each delivery, as it foll
   whose certificate Cloudflare refuses answers curl as an HTTP error (526), not as a TLS
   error, so `curl` without `-f` exits 0 on it.
 - **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
-  second one, so `pthread_create` fails with `EAGAIN`. jq declares 64 MiB of memory, a whole
-  Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+  second one, so `pthread_create` fails with `EAGAIN`. A program that starts threads fails
+  with it: BIND's dig (`wasix-bind`), so dig is `wasi-dig`. jq declares 64 MiB of memory, most
+  of a Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+- **How many processes a Dynamic Worker holds**: the kernel places them by their memory, up
+  to a budget per Dynamic Worker (`isolates.memory`), which is 96 MiB of its 128 MB here, not
+  the kernel's 64 MiB: git's clone is three processes deep (git, git remote-https,
+  git-remote-https) and forks a fourth to read the pack, and with 64 MiB the fork waits for a
+  Dynamic Worker that never comes free (`EAGAIN`). A Durable Object may run at most 10 Dynamic
+  Workers at once; the kernel runs at most 8.
+- **DNS**: the kernel has no UDP, and its programs no route to a name server. `dig`
+  (`@ai-ecoverse/wasi-dig`) asks DNS over HTTPS of `cloudflare-dns.com` through the proxy and
+  the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
+  every name curl reaches, so the agent is told it may look up a customer's names there. It
+  has no `+trace` and asks no name server itself.
+- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain:
+  there is no `openssl`.
 - **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
   program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
   which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
   `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
   so where its image has it.
-- **What it does not have:** python, and `yq`, `xan` and `html-to-markdown`, which just-bash
-  has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), `openssl`, and
+  `xan`, which just-bash has.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits

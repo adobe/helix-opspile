@@ -48,18 +48,21 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  mkdir, mkdtemp, readFile, rm, writeFile,
+  mkdir, mkdtemp, readdir, readFile, rm, writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import {
+  dirname, join, relative, sep,
+} from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * The layers: each a set of packages, with all of a package's commands or those named. A
- * package is in one layer only.
+ * The layers: each a set of packages, with all of a package's commands or those named, and
+ * the package's other files a program needs (`files`: paths in the package, a directory with
+ * all it holds). A package is in one layer only.
  */
 export const LAYERS = {
   shell: [
@@ -76,14 +79,30 @@ export const LAYERS = {
     { name: '@ai-ecoverse/wasm-tree' },
     { name: '@ai-ecoverse/wasm-which' },
     { name: '@ai-ecoverse/wasm-util-linux', commands: ['rev', 'column', 'hexdump'] },
+    { name: '@ai-ecoverse/wasm-xxd' },
+    { name: '@ai-ecoverse/wasm-patch' },
   ],
   archive: [
     { name: '@ai-ecoverse/wasm-gzip' },
     { name: '@ai-ecoverse/wasm-tar' },
     { name: '@ai-ecoverse/wasm-zip' },
+    { name: '@ai-ecoverse/wasm-xz' },
+    { name: '@ai-ecoverse/wasm-bzip2' },
   ],
+  // dig asks DNS over HTTPS (cloudflare-dns.com) through the kernel's proxy: the kernel has no
+  // UDP, and a Worker no route to a name server. BIND's (wasix-bind) needs threads.
   net: [
     { name: '@ai-ecoverse/wasm-curl' },
+    { name: '@ai-ecoverse/wasi-dig' },
+  ],
+  // git runs its transports (git-remote-https) from libexec/git-core, by their paths.
+  git: [
+    { name: '@ai-ecoverse/wasm-git', files: ['libexec/git-core', 'share/git-core/templates'] },
+  ],
+  formats: [
+    { name: '@ai-ecoverse/wasi-yq' },
+    { name: '@ai-ecoverse/wasi-html-to-markdown' },
+    { name: '@ai-ecoverse/wasm-file', files: ['share/misc/magic.mgc'] },
   ],
   // QuickJS-NG: the kernel runs no JS programs in a Worker, so its `node` is not to be had.
   js: [
@@ -96,7 +115,7 @@ export const LAYERS = {
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, find, xargs, diff, cmp, tar, gzip, zip, unzip, tree, column, rev, hexdump, curl, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, git, qjs';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -108,10 +127,11 @@ export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, jq, find, diff, tar, gzip, zip, curl and'
-      + ' qjs (JavaScript): for reading logs, text and JSON, asking APIs, and small scripts.',
+    description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
+      + ' html2markdown, curl, dig, git and qjs (JavaScript): for reading logs, text, JSON and'
+      + ' YAML, asking APIs and DNS, cloning repositories, and small scripts.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net', 'js'],
+    layers: ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats'],
   },
   {
     name: 'data',
@@ -135,9 +155,12 @@ const filesOf = (entry) => [entry.glue, entry.wasm, entry.script, entry.module,
 
 /**
  * One package of an image: its manifest with only the commands kept, the paths of the files
- * those need, sorted, and which of them are glue.
+ * those need, sorted, and which of them are glue. `present` (the package's files, when its
+ * `files` are asked for) adds those under `files`, and counts as glue every one of them an
+ * Emscripten package has beside its `.wasm`: a program another one runs by its path (git's
+ * `libexec/git-core/git-remote-https`).
  */
-export function imagePackage(manifest, { commands } = {}) {
+export function imagePackage(manifest, { commands, files } = {}, present = []) {
   const all = (manifest.slicc && manifest.slicc.commands) || {};
   const missing = (commands || []).filter((c) => !all[c]);
   if (missing.length) {
@@ -152,8 +175,16 @@ export function imagePackage(manifest, { commands } = {}) {
     ...(manifest.type ? { type: manifest.type } : {}),
     slicc: { ...manifest.slicc, commands: kept },
   };
-  const paths = [...new Set(Object.values(kept).flatMap(filesOf))].sort();
-  const glue = [...new Set(Object.values(kept).map((c) => c.glue).filter(Boolean))].sort();
+  const under = (path) => (files || []).some((f) => path === f || path.startsWith(`${f}/`));
+  const extra = present.filter(under);
+  const unknown = (files || []).filter((f) => !present.some((p) => p === f || p.startsWith(`${f}/`)));
+  if (unknown.length) {
+    throw new Error(`${manifest.name} has no file ${unknown.join(', ')}`);
+  }
+  const paths = [...new Set([...Object.values(kept).flatMap(filesOf), ...extra])].sort();
+  const glue = [...new Set([...Object.values(kept).map((c) => c.glue).filter(Boolean),
+    ...((manifest.slicc || {}).abi === 'emscripten'
+      ? extra.filter((p) => extra.includes(`${p}.wasm`)) : [])])].sort();
   return { manifest: slim, paths, glue };
 }
 
@@ -173,6 +204,14 @@ export function layerNames(image, images = IMAGES, seen = []) {
     throw new Error(`image ${image.name} is from ${image.from}, which there is none of`);
   }
   return [...(parent ? layerNames(parent, images, [...seen, image.name]) : []), ...image.layers];
+}
+
+/** The paths of the files in `dir`, relative to it, sorted. */
+async function filesIn(dir) {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  return entries.filter((e) => e.isFile())
+    .map((e) => relative(dir, join(e.parentPath, e.name)).split(sep).join('/'))
+    .sort();
 }
 
 /**
@@ -202,7 +241,9 @@ export async function buildLayer(name, packages, modules) {
     const dir = join(modules, spec.name);
     // eslint-disable-next-line no-await-in-loop
     const manifest = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'));
-    const { manifest: slim, paths, glue } = imagePackage(manifest, spec);
+    // eslint-disable-next-line no-await-in-loop
+    const present = spec.files ? await filesIn(dir) : [];
+    const { manifest: slim, paths, glue } = imagePackage(manifest, spec, present);
     const at = `node_modules/${spec.name}`;
     add(`${at}/package.json`, Buffer.from(JSON.stringify(slim, null, 2)), 0o444);
     for (const path of paths) {

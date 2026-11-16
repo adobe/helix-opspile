@@ -432,6 +432,21 @@ describe('the images this repository builds', () => {
       name: '@acme/rg', version: '1', slicc: { abi: 'wasi', commands: { rg: { wasm: 'bin/rg.wasm' } } },
     });
     assert.deepEqual([wasi.paths, wasi.glue], [['bin/rg.wasm'], []]);
+    // Other files of the package a program needs, a directory with all it holds: the
+    // Emscripten programs among them, with a .wasm beside them, are glue too.
+    const git = {
+      name: '@acme/git',
+      version: '1',
+      slicc: { abi: 'emscripten', commands: { git: { glue: 'bin/git', wasm: 'bin/git.wasm' } } },
+    };
+    const present = ['README.md', 'bin/git', 'bin/git.wasm', 'libexec/core/git-remote-https',
+      'libexec/core/git-remote-https.wasm', 'libexec/core/git-sh-setup', 'share/magic.mgc'];
+    const more = imagePackage(git, { files: ['libexec/core', 'share/magic.mgc'] }, present);
+    assert.deepEqual(more.paths, ['bin/git', 'bin/git.wasm', 'libexec/core/git-remote-https',
+      'libexec/core/git-remote-https.wasm', 'libexec/core/git-sh-setup', 'share/magic.mgc']);
+    assert.deepEqual(more.glue, ['bin/git', 'libexec/core/git-remote-https']);
+    assert.deepEqual(imagePackage(git, {}, present).paths, ['bin/git', 'bin/git.wasm']);
+    assert.throws(() => imagePackage(git, { files: ['libexec/gone'] }, present), /no file libexec\/gone/);
   });
 
   it('stack their layers on those of the image they are from', () => {
@@ -464,12 +479,12 @@ describe('the images this repository builds', () => {
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
-    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'js']);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats']);
     // The second image is the first one's layers, the same ones, and one more.
-    assert.deepEqual(data.layers.slice(0, 5), base.layers);
-    assert.deepEqual(data.layers.map((l) => l.name).slice(5), ['data']);
+    assert.deepEqual(data.layers.slice(0, 7), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(7), ['data']);
     assert.notEqual(base.digest, data.digest);
-    assert.equal(data.bytes, base.bytes + data.layers[5].bytes);
+    assert.equal(data.bytes, base.bytes + data.layers[7].bytes);
     // A layer and a blob are named by what they are.
     for (const l of built.layers.values()) {
       assert.equal(sha(l.body), l.digest);
@@ -500,6 +515,17 @@ describe('the images this repository builds', () => {
       ['node_modules/@ai-ecoverse/wasi-quickjs/package.json', false],
     ]);
     assert.ok(commandsOf(base).includes('qjs'));
+    // git, with the transports it runs by their paths, and file, with its magic.
+    const git = built.layers.get('git').layer.files;
+    const at = 'node_modules/@ai-ecoverse/wasm-git/';
+    const remote = (path) => git.find((f) => f.path === `${at}${path}`);
+    assert.equal(remote('libexec/git-core/git-remote-https').size, 0);
+    assert.ok(remote('libexec/git-core/git-remote-https.wasm').sha256);
+    assert.ok(git.some((f) => f.path.startsWith(`${at}share/git-core/templates/`)));
+    assert.ok(built.layers.get('formats').layer.files
+      .some((f) => f.path === 'node_modules/@ai-ecoverse/wasm-file/share/misc/magic.mgc'));
+    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch']
+      .every((c) => commandsOf(base).includes(c)));
     assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
     await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
@@ -510,7 +536,7 @@ describe('the images this repository builds', () => {
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
     assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'js', 'data']);
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats', 'data']);
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
@@ -526,7 +552,7 @@ describe('the images this repository builds', () => {
     const one = await buildLayer('net', LAYERS.net, modules);
     const same = await buildLayer('net', LAYERS.net, modules);
     assert.equal(one.digest, same.digest);
-    assert.deepEqual(one.commands, ['curl']);
+    assert.deepEqual(one.commands, ['curl', 'dig']);
     const other = await buildLayer('net', [...LAYERS.net, ...LAYERS.archive], modules);
     assert.notEqual(one.digest, other.digest);
     const paths = other.layer.files.map((f) => f.path);
@@ -541,7 +567,7 @@ describe('the images this repository builds', () => {
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
     assert.deepEqual(keys.slice(-3, -1), ['images/base.json', 'images/data.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 6);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 8);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);
