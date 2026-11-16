@@ -253,7 +253,7 @@ function hideCardSoon() {
   card.hideTimer = setTimeout(hideCard, 160);
 }
 /** After a re-render: a card whose name or avatar is gone goes too. */
-function cardGone() { if (card.target && !card.target.isConnected) hideCard(); }
+function cardGone() { if (card.target && (!card.target.isConnected || card.target.closest?.('.leaving'))) hideCard(); }
 
 function wireCards() {
   const hovering = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
@@ -1528,6 +1528,7 @@ function searchRows(box) {
   else if (all.length) list.innerHTML = `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
   else if (data) list.innerHTML = `<div class="empty">Nothing found for “${esc(q)}”.</div>`;
   list.classList.toggle('stale', Boolean(loading && data));
+  list.__list = null;
   const keep = new Set(hits.map((h) => h.thread));
   for (const k of made.keys()) if (!keep.has(k)) made.delete(k);
   cardGone();
@@ -1627,7 +1628,7 @@ function recordPick(key) {
   const bottom = Math.min(innerHeight, list.bottom);
   const byKey = new Map(state.data.threads.map((t) => [t.thread, t]));
   const shown = [];
-  for (const node of $('threads').querySelectorAll('.t[data-thread]')) {
+  for (const node of $('threads').querySelectorAll('.t[data-thread]:not(.leaving)')) {
     const r = node.getBoundingClientRect();
     const t = byKey.get(node.dataset.thread);
     if (t && r.height && r.bottom > top && r.top < bottom && shown.length < 40) {
@@ -1770,7 +1771,7 @@ function noteSeen() {
     const mid = (lo + hi) >> 1;
     if (rows[mid].getBoundingClientRect().top < bottom) { last = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  for (let i = 0; i <= last; i += 1) if (rows[i].dataset.thread) state.list.seen.add(rows[i].dataset.thread);
+  for (let i = 0; i <= last; i += 1) if (rows[i].dataset.thread && !rows[i].__leave) state.list.seen.add(rows[i].dataset.thread);
 }
 let seenFrame = 0;
 const seenSoon = () => { if (!seenFrame) seenFrame = requestAnimationFrame(() => { seenFrame = 0; noteSeen(); }); };
@@ -1852,6 +1853,123 @@ function endNote() {
   return endHtml(state.data?.elsewhere);
 }
 
+/*
+ * The rows move while the list changes under them, as long as it is the same list (`state.list`):
+ * a row that moves slides from where it was to where it goes (FLIP), one that leaves folds away
+ * before it goes, the rows below coming up as it does, and one that comes into view from
+ * elsewhere (or back) fades in. Only rows on screen, before and after: one that comes from off
+ * screen or goes there is simply there. A new list (another view or filter, unread only), a
+ * search, a page in the background and reduced motion change at once.
+ * A leaving row is out of `state.order`, inert and `.leaving`; it stays in `state.rowNodes`, as
+ * any row a filter hid, and is taken back if its thread shows again before it is gone.
+ */
+let rowTiming = null;
+/** `--row-move`, `--row-leave` and `--row-in` (ui/spectrum-inbox.css), as WAAPI timings. */
+function rowTimings() {
+  if (rowTiming) return rowTiming;
+  const css = getComputedStyle($('threads'));
+  const timing = (name) => {
+    const m = /^([\d.]+)(m?s)\s+(.+)$/.exec(css.getPropertyValue(name).trim());
+    return m && { duration: Number(m[1]) * (m[2] === 's' ? 1000 : 1), easing: m[3] };
+  };
+  const t = { move: timing('--row-move'), leave: timing('--row-leave'), in: timing('--row-in') };
+  if (t.move && t.leave && t.in) rowTiming = t;
+  return t.move && t.leave && t.in ? t : null;
+}
+/** The part of the list on screen: the scroller, within the window. */
+function rowBand(box) {
+  const r = box.getBoundingClientRect();
+  return { top: Math.max(0, r.top), bottom: Math.min(innerHeight, r.bottom) };
+}
+/**
+ * Where the children of `list` on screen (`band`) are drawn: their tops, by node. A sticky
+ * heading is where it sticks, so its group's heading above the band is one of them too.
+ */
+function rowTops(list, band) {
+  const kids = list.children;
+  const tops = new Map();
+  const rect = (i) => {
+    const k = kids[i].classList.contains('sticky') && kids[i + 1] ? i + 1 : i;
+    return kids[k].getBoundingClientRect();
+  };
+  let lo = 0;
+  let hi = kids.length - 1;
+  let first = kids.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rect(mid).bottom > band.top) { first = mid; hi = mid - 1; } else lo = mid + 1;
+  }
+  const from = Math.max(0, first - 1);
+  let head = from - 1;
+  while (head >= 0 && kids[head].classList.contains('t')) head -= 1;
+  const stuck = head >= 0 && kids[head].classList.contains('sticky') && kids[head].getBoundingClientRect();
+  if (stuck && stuck.bottom > band.top && stuck.top < band.bottom) tops.set(kids[head], stuck.top);
+  for (let i = from; i < kids.length; i += 1) {
+    const r = kids[i].getBoundingClientRect();
+    if (r.top >= band.bottom) break;
+    if (r.height && r.bottom > band.top) tops.set(kids[i], r.top);
+  }
+  return tops;
+}
+/** Runs `fn` once `anim` is over, or a little after it should be (a page in the background draws no frames). */
+function afterAnim(anim, fn) {
+  let done = false;
+  const once = () => { if (!done) { done = true; fn(); } };
+  anim.finished.then(once, once);
+  setTimeout(once, anim.effect.getComputedTiming().endTime + 100);
+}
+/** Row `node` folds away, then goes. It is out of reach meanwhile. */
+function leaveRow(node, timing) {
+  if (node.__leave) return;
+  preload.unobserve(node);
+  node.classList.add('leaving');
+  node.inert = true;
+  node.__flip?.cancel();
+  const anim = node.animate([
+    { height: 0, paddingTop: 0, borderBottomWidth: 0, opacity: 0 },
+  ], { ...timing, fill: 'forwards' });
+  node.__leave = anim;
+  afterAnim(anim, () => {
+    if (node.__leave !== anim) return;
+    stopLeave(node);
+    node.remove();
+  });
+}
+/** Row `node` stays after all (its thread shows again), or goes at once. */
+function stopLeave(node) {
+  if (!node.__leave) return;
+  const anim = node.__leave;
+  node.__leave = null;
+  anim.cancel();
+  node.classList.remove('leaving');
+  node.inert = false;
+}
+/** The rows on screen now slide from where they were (`before`), or fade in if they were not on screen. */
+function moveRows(list, before, band, timing) {
+  for (const [n, now] of rowTops(list, band)) {
+    if (n.__leave) continue;
+    const was = before.get(n);
+    if (was === undefined) {
+      if (n.classList.contains('t') && !n.classList.contains('enter') && !n.__fade) {
+        const fade = n.animate([{ opacity: 0 }, { opacity: 1 }], timing.in);
+        n.__fade = fade;
+        afterAnim(fade, () => { if (n.__fade === fade) n.__fade = null; });
+      }
+      continue;
+    }
+    // A slide still under way to where the row is now goes on; else it starts from where it is drawn.
+    if (n.__flip && n.__flipAt === n.offsetTop) continue;
+    let top = now;
+    if (n.__flip) { n.__flip.cancel(); n.__flip = null; top = n.getBoundingClientRect().top; }
+    const dy = was - top;
+    if (Math.abs(dy) < 2) continue;
+    const flip = n.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], timing.move);
+    n.__flip = flip;
+    n.__flipAt = n.offsetTop;
+    afterAnim(flip, () => { if (n.__flip === flip) n.__flip = null; });
+  }
+}
+
 function threadRows() {
   const box = $('threads');
   if (!state.data) return;
@@ -1879,8 +1997,12 @@ function threadRows() {
   // also rows a filter hid for a while, which are kept aside for when they show again.
   const list = box.querySelector('.rows');
   const existing = state.rowNodes || (state.rowNodes = new Map());
-  for (const c of list.children) if (c.dataset.thread && !c.dataset.hit) existing.set(c.dataset.thread, c);
+  for (const c of list.children) if (c.dataset.thread && !c.dataset.hit && !c.__leave) existing.set(c.dataset.thread, c);
   list.classList.remove('stale');
+  // The rows move (moveRows) while it is the same list, from where they are on screen now.
+  const timing = list.__list === state.list && !REDUCED_MOTION.matches && !hidden() ? rowTimings() : null;
+  const band = timing && list.children.length ? rowBand(box) : null;
+  const before = band ? rowTops(list, band) : null;
   const nodes = shown.map((t) => {
     const html = row(t);
     // Selection, read state and the status dot change on a click; only the first line is
@@ -1890,6 +2012,7 @@ function threadRows() {
     const old = existing.get(t.thread);
     const l2 = /<div class="l2">[\s\S]*$/.exec(body)[0];
     if (old && (old.__body === body || old.__l2 === l2)) {
+      stopLeave(old);
       old.className = cls.replace(/\benter\b/, '').trim();
       if (old.__body !== body) {
         old.querySelector('.l1').outerHTML = /<div class="l1">[\s\S]*?<\/div>/.exec(body)[0];
@@ -1940,13 +2063,29 @@ function threadRows() {
     if (list.__empty !== empty) { list.innerHTML = empty; list.__empty = empty; }
   } else {
     list.__empty = '';
+    // A row on screen whose thread the list no longer shows folds away where it is: after the
+    // row it came after. One whose thread is shown anew (`fresh`) moves from where it was.
+    const showing = new Set(shown.map((t) => t.thread));
+    const leaving = new Map();
+    let prev = null;
     [...list.children].forEach((c) => {
-      if (!keep.has(c) && !c.classList.contains('older') && !c.classList.contains('end')) {
-        preload.unobserve(c);
-        c.remove();
+      if (keep.has(c)) { prev = c; return; }
+      if (c.classList.contains('older') || c.classList.contains('end')) return;
+      const key = c.classList.contains('t') && !c.dataset.hit ? c.dataset.thread : null;
+      if (before?.has(c) && key && !showing.has(key)) {
+        leaveRow(c, timing.leave);
+        leaving.set(prev, [...(leaving.get(prev) || []), c]);
+        return;
       }
+      if (before?.has(c) && key && existing.get(key) !== c) before.set(existing.get(key), before.get(c));
+      stopLeave(c);
+      preload.unobserve(c);
+      c.remove();
     });
-    nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+    const seq = leaving.size ? [...(leaving.get(null) || [])] : nodes;
+    if (leaving.size) for (const n of nodes) seq.push(n, ...(leaving.get(n) || []));
+    seq.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+    if (before) moveRows(list, before, band, timing);
   }
   // The end of the list: older threads, while there are any.
   let older = list.querySelector(':scope > .older');
@@ -1975,6 +2114,7 @@ function threadRows() {
   cardGone();
   state.order = shown.map((t) => t.thread);
   state.prevKeys = known;
+  list.__list = state.list;
   noteSeen();
 }
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
@@ -7359,7 +7499,7 @@ function move(step) {
   const next = state.order[Math.max(0, Math.min(state.order.length - 1, i < 0 ? 0 : i + step))];
   if (next && next !== state.open) {
     if (searching()) openHit(next); else openThread(next);
-    document.querySelector(`#threads .t[data-thread="${CSS.escape(next)}"]`)?.scrollIntoView({ block: 'nearest' });
+    document.querySelector(`#threads .t[data-thread="${CSS.escape(next)}"]:not(.leaving)`)?.scrollIntoView({ block: 'nearest' });
   }
 }
 
@@ -7768,7 +7908,7 @@ const READONLY = 'This inbox is a read-only "view as" of someone else. Ask the u
 async function showThread(key) {
   if (state.open === key) await openThread(key, { live: true });
   else { state.cache.delete(key); await openThread(key); }
-  document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
+  document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"]:not(.leaving)`)?.scrollIntoView({ block: 'nearest' });
   return state.open === key ? state.cache.get(key)?.data || null : null;
 }
 

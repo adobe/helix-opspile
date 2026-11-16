@@ -273,6 +273,12 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 }
 
 .t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
+/* How the rows move while the list changes under them (moveRows in ui/inbox.js): a row slides
+   to its new place, one that leaves folds away faster, one that comes into view fades in. */
+#threads { --row-move: var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-in-out);
+  --row-leave: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-in);
+  --row-in: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t.leaving { overflow: hidden; pointer-events: none; }
 @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
 .msg.enter, .sys.enter { animation: rise var(--spectrum-animation-duration-700) ease-out; }
 @keyframes rise { from { transform: translateY(calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50))); opacity: 0; } to { transform: none; opacity: 1; } }
