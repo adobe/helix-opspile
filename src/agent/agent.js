@@ -807,6 +807,10 @@ export class ThreadAgent extends Agent {
 
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
+    // Called without agentStub's startup call first (GET /api/agent, src/agent/stub.js): one
+    // round trip to the object for the inbox, not two.
+    // eslint-disable-next-line no-underscore-dangle
+    await this.__unsafe_ensureInitialized();
     this.meterModel();
     const catalog = await this.servers.current();
     const { pending, turn } = await this.latestTurn();

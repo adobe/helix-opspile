@@ -316,11 +316,19 @@ describe('thread agents', () => {
     assert.equal((await seedAgent(e, { ...me, readonly: true }, { thread: THREAD, text: 'x' }, inTeam)).status, 403);
     assert.equal((await seedAgent({ ...e, AGENT_CHANNELS: '' }, me, { thread: THREAD, text: 'x' }, inTeam)).status, 409);
 
-    assert.deepEqual(await (await agentStatus(e, THREAD, inTeam)).json(), {
+    // The inbox's question: one D1 query, and one call to the agent (`status` starts it).
+    calls.length = 0;
+    const asked = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => asked.push(sql) && prepare(sql) } };
+    assert.deepEqual(await (await agentStatus(counted, THREAD, inTeam)).json(), {
       enabled: true, name: THREAD, mark: null, pending: [],
     });
+    assert.equal(asked.length, 1);
+    assert.deepEqual(calls, []);
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+    assert.equal((await agentStatus(e, 'slack:E1:C1:9.9', inTeam)).status, 404);
   });
 
   it('talk to the team in the inbox\'s sidebar, which the thread shows and the channel never sees', async () => {

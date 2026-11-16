@@ -10,13 +10,15 @@
  * governing permissions and limitations under the License.
  */
 
-import { AGENT_EMAIL, entryOf } from '../drafts.js';
+import {
+  AGENT_EMAIL, ENTRY_ROW, entryFields, entryOf,
+} from '../drafts.js';
 import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
 import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
-import { agentEnabled } from './enabled.js';
+import { switchedOn } from './enabled.js';
 
 /**
  * Reaching thread agents from the Worker: the queue pokes them, the inbox API seeds them and
@@ -53,19 +55,31 @@ export async function pokeAgent(env, thread, { retry = false } = {}) {
   return { agent: entry.key, ...await agent.deliver({ retry }) };
 }
 
+/**
+ * Thread `key`'s entry (`entryOf`, without its members' keys), whose knowledge bases its agent
+ * has, and whether it has one, in one round trip: the inbox asks for this whenever a thread
+ * opens (GET /api/agent), and it took five in a row.
+ */
 async function threadTarget(env, key) {
-  const entry = await entryOf(env, key);
-  if (!entry) {
+  if (!key) {
     return null;
   }
-  const row = await env.DB.prepare('SELECT channel_id, team, org, kind FROM threads WHERE thread = ?')
-    .bind(entry.key).first();
+  const row = await env.DB.prepare(`${ENTRY_ROW}, a.team AS a_team, a.org AS a_org,
+      a.kind AS a_kind, a.channel_id AS a_channel,
+      (SELECT enabled FROM agent_channels WHERE channel_id = a.channel_id) AS channel,
+      (SELECT enabled FROM agent_teams WHERE team = a.team) AS on_team
+    FROM t LEFT JOIN threads a ON a.thread = t.k`).bind(String(key)).first();
+  if (!row) {
+    return null;
+  }
+  const anchor = row.a_kind != null;
   return {
-    entry,
+    entry: entryFields(row),
     // Whose knowledge bases its agent has: as ThreadAgent.target reads them.
-    team: row ? row.team : null,
-    org: row ? row.org : null,
-    enabled: Boolean(row && row.kind === 'channel' && await agentEnabled(env, row.channel_id, row.team)),
+    team: anchor ? row.a_team : null,
+    org: anchor ? row.a_org : null,
+    enabled: anchor && row.a_kind === 'channel'
+      && switchedOn(env, row.a_channel, { channel: row.channel, team: row.on_team }),
   };
 }
 
@@ -245,8 +259,11 @@ export async function agentStatus(env, key, canSee) {
   if (!t.enabled || !env.AGENTS) {
     return json({ enabled: false });
   }
-  const agent = await agentStub(env, t.entry.key);
-  return json({ enabled: true, ...await agent.status() });
+  // One call to the agent's object, not two: `status` waits for the agent's startup itself
+  // (agentStub's first call). In `Server-Timing` as `agent`.
+  const agent = env.AGENTS.get(env.AGENTS.idFromName(t.entry.key));
+  const ask = () => agent.status();
+  return json({ enabled: true, ...await (env.timing ? env.timing.time('agent', ask) : ask()) });
 }
 
 /**
