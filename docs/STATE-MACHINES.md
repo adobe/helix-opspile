@@ -407,6 +407,14 @@ thread the list no longer shows folds away before it is removed; until then it i
 thread that shows again takes its node back (`stopLeave`). A new list, a search, a hidden page or
 reduced motion removes it at once.
 
+**Thread pane (phones).** the thread → leaving → "Pick a thread.", or the thread again (`inert` on
+`#pane`, `paneLeave`, `emptyPane` in `ui/inbox.js`). Under 700px, closing the open thread (‹, Back, another
+view) slides the pane away; until its slide ends it shows what it showed, inert, and is emptied
+once it is out. Nothing renders into it meanwhile: what renders the thread renders the open one
+(`state.open`), and there is none. Opening something before then (`syncReading`) takes the pane
+over, and `paneLeave` tells the slide that ended it is not the latest. No slide (reduced motion,
+`main.instant`, a wider screen): emptied at once.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 

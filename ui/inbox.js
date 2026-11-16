@@ -7584,8 +7584,13 @@ function followLink(e) {
 // Under 700px the list and the open thread take turns (`main.reading` while one is open), and
 // under 1100px the filter cards are in a drawer (`main.filtering` while it is open).
 const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
+const reading = () => Boolean(state.open || state.compose || state.awaiting);
+// The pane sliding away (`emptyPane`): its turn, to tell a later one apart.
+let paneLeave = 0;
 const syncReading = () => {
-  document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
+  document.querySelector('main').classList.toggle('reading', reading());
+  // Back in view before it was emptied: what opens there takes it over.
+  if (reading() && $('pane').inert) { paneLeave += 1; $('pane').inert = false; }
   // The sidebar's panel is beside the thread it is about, and only there.
   if (!sidePaneled(state.open)) hideSidePanel();
 };
@@ -7598,8 +7603,29 @@ function closeThread() {
   closeMentions();
   syncReading();
   renderThreads();
-  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  emptyPane();
   toUrl();
+}
+/**
+ * "Pick a thread." in the pane, once nothing is open (after `syncReading`). On a phone the pane
+ * slides away first (see the styles): until it is out it keeps what it showed, inert, as it
+ * was (what renders into it renders the open thread's only, and there is none); with reduced
+ * motion or `main.instant` there is no slide, and it is emptied at once. Something opened
+ * again meanwhile takes the pane over (`syncReading`).
+ */
+function emptyPane() {
+  const pane = $('pane');
+  const turn = ++paneLeave;
+  const empty = () => {
+    if (turn !== paneLeave || reading()) return;
+    pane.inert = false;
+    pane.innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  };
+  const slides = pane.getAnimations().filter((a) => a instanceof CSSTransition);
+  if (!slides.length) { empty(); return; }
+  pane.inert = true;
+  // Turned back (the thread opened again) cancels them, and the pane is the thread's again.
+  Promise.all(slides.map((a) => a.finished)).then(empty, () => {});
 }
 function setFiltering(on) {
   state.filtering = on;
@@ -8205,7 +8231,7 @@ async function switchView(slug) {
   syncReading();
   renderUser();
   render();
-  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  emptyPane();
   toUrl(); await loadInbox(); connect();
   // The search goes on in the other view.
   if (searching()) { state.search.data = null; const q = state.search.q; state.search.q = ''; runSearch(q); }
@@ -8427,8 +8453,9 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }
     syncReading();
+    if (!compose && !open) emptyPane();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
     main.classList.remove('instant');
@@ -8466,7 +8493,7 @@ async function start() {
       state.prevKeys = null;
       Object.assign(state, { open: null, compose: null, awaiting: null });
       syncReading();
-      $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+      emptyPane();
       await loadWho();
       renderNotify();
       renderExpert();
