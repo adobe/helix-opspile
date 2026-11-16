@@ -17,7 +17,7 @@ import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import { routeReply, target } from '../src/post.js';
 import {
-  addresses, ago, dethread, greets, mentionsOnly, REPLY, rethread, skeleton, SPLIT,
+  addresses, ago, dethread, greets, mentionsOnly, REPLY, rethread, skeleton, SPLIT, sweepRethreads,
 } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -835,6 +835,90 @@ describe('de-threading', () => {
     assert.deepEqual(row(env, c), { logical_thread: b, logical_via: 'burst', logical_p: 1 });
     const file = parse(await (await env.CHANNELS.get('channels/acme/helix/slack-C1/20.7/20.7.md')).text());
     assert.equal(file.meta.logicalThread, b);
+  });
+
+  /** `bucket.put`, failing for the next put of `path`, as a storage outage does. */
+  const failOnce = (bucket, path) => {
+    const real = bucket.put.bind(bucket);
+    let failing = true;
+    return async (k, ...rest) => {
+      if (failing && k === path) {
+        failing = false;
+        throw new Error('storage unavailable');
+      }
+      return real(k, ...rest);
+    };
+  };
+  const fileOf = async (env, n) => parse(await (await env.CHANNELS
+    .get(`channels/acme/helix/slack-C1/${n}/${n}.md`)).text()).meta.logicalThread;
+
+  it('finishes a split on its retry when pile 2 failed half way', async () => {
+    const {
+      env, a, b, notified,
+    } = await folded();
+    const c = await seed(env, '20.7', 'it says the site is not configured', at(61));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel' WHERE thread = ?").run(c);
+    post(env, c, '20.7', at(61), 'U2');
+    assert.equal((await rethread(env, c)).via, 'burst');
+    notified.length = 0;
+    post(env, b, '20.8', at(70), 'U3');
+    // The root's file cannot be written: the split is decided, but nothing else is done yet.
+    env.CHANNELS.put = failOnce(env.CHANNELS, 'channels/acme/helix/slack-C1/20.5/20.5.md');
+    await assert.rejects(dethread(env, b), /storage unavailable/);
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT, logical_p: null });
+    assert.equal(await fileOf(env, '20.5'), a);
+    assert.equal(row(env, c).logical_thread, a);
+    assert.deepEqual(notified, []);
+    // The queue's retry of the reply finishes it.
+    assert.deepEqual(await dethread(env, b), { result: 'split', group: a, split: [b, c] });
+    assert.equal(await fileOf(env, '20.5'), undefined);
+    assert.deepEqual(row(env, c), { logical_thread: b, logical_via: 'burst', logical_p: 1 });
+    assert.equal(await fileOf(env, '20.7'), b);
+    assert.deepEqual(notified, [{
+      team: 'helix', type: 'thread', thread: a, split: [b, c],
+    }]);
+    // Done now, for good.
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.equal(notified.length, 1);
+  });
+
+  it('finishes a split whose jobs gave up from the sweep', async () => {
+    const sent = [];
+    const {
+      env, a, b, notified,
+    } = await folded({ NORMALIZE: { send: async (body) => sent.push(body) } });
+    const c = await seed(env, '20.7', 'it says the site is not configured', at(61));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel' WHERE thread = ?").run(c);
+    post(env, c, '20.7', at(61), 'U2');
+    assert.equal((await rethread(env, c)).via, 'burst');
+    notified.length = 0;
+    post(env, b, '20.8', at(70), 'U3');
+    // The root's file is written, the burst member's is not.
+    env.CHANNELS.put = failOnce(env.CHANNELS, 'channels/acme/helix/slack-C1/20.7/20.7.md');
+    await assert.rejects(dethread(env, b), /storage unavailable/);
+    assert.equal(await fileOf(env, '20.5'), undefined);
+    assert.equal(row(env, c).logical_thread, b);
+    assert.equal(await fileOf(env, '20.7'), a);
+    assert.deepEqual(notified, []);
+
+    // An hour later, the sweep sends it out again, and re-threading finishes it.
+    env.DB.sqlite.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread IN (?, ?)')
+      .run(at(70), b, c);
+    sent.length = 0;
+    assert.deepEqual(await sweepRethreads(env, new Date(T0 + 3 * 3600 * 1000)), { queued: 1 });
+    assert.deepEqual(sent, [{ rethread: b }]);
+    assert.deepEqual(await rethread(env, b), {
+      result: 'unchanged', logical: null, reason: 'split', group: a, split: [b, c],
+    });
+    assert.equal(await fileOf(env, '20.7'), b);
+    assert.deepEqual(notified, [{
+      team: 'helix', type: 'thread', thread: a, split: [b, c],
+    }]);
+    sent.length = 0;
+    assert.deepEqual(await sweepRethreads(env, new Date(T0 + 4 * 3600 * 1000)), { queued: 0 });
+    assert.deepEqual(await rethread(env, b), {
+      result: 'unchanged', logical: null, reason: 'split',
+    });
   });
 
   it('leaves a burst member and alerts in their group', async () => {
