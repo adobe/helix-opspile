@@ -43,16 +43,32 @@ export function d1({ rules = [], people = [], teams = [] } = {}) {
 
   const stmt = (sql, args = []) => ({
     bind: (...a) => stmt(sql, a.map((v) => (v === undefined ? null : v))),
-    async first() {
+    async first(column) {
       const row = db.prepare(sql).get(...args);
-      return row ? { ...row } : null;
+      if (!row) {
+        return null;
+      }
+      // As D1's: one column's value, when asked for one, and an error for one it does not have.
+      if (column === undefined) {
+        return { ...row };
+      }
+      if (!(column in row)) {
+        throw new Error(`D1_COLUMN_NOTFOUND: Column not found (${column})`);
+      }
+      return row[column];
     },
     async all() {
       return { results: db.prepare(sql).all(...args).map((r) => ({ ...r })) };
     },
     async run() {
-      const { changes } = db.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(changes) } };
+      const prepared = db.prepare(sql);
+      // As D1's, a read's rows come along too (`batch` gives each statement's that way).
+      if (prepared.columns().length) {
+        const results = prepared.all(...args).map((r) => ({ ...r }));
+        return { results, success: true, meta: { changes: 0, rows_read: results.length } };
+      }
+      const { changes } = prepared.run(...args);
+      return { results: [], success: true, meta: { changes: Number(changes) } };
     },
   });
   return {
