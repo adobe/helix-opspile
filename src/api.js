@@ -13,6 +13,7 @@
 import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
+import { personInKb } from './kbpeople.js';
 import {
   agentStatus, decideBash, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
@@ -1230,6 +1231,14 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/channels') {
     return postableChannels(env, me);
+  }
+  // Who someone on the thread is in its knowledge bases, for their profile card.
+  if (url.pathname === '/api/person') {
+    return personInKb(env, me, {
+      thread: url.searchParams.get('thread'),
+      key: url.searchParams.get('p'),
+      name: url.searchParams.get('name'),
+    }, seeing);
   }
   if (url.pathname === '/api/experts') {
     return experts(env, url.searchParams.get('thread'), seeing, {

@@ -71,6 +71,11 @@ code and docs, is the decision model that labels threads and channels.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
 
+- The knowledge bases' layout (which OKF type goes in which directory, one Contact per person at
+  `contacts/<first-last>.md`) is `LAYOUT` in `src/agent/okf.js`: the agents' prompt is written
+  from it, their writes are checked against it, and the inbox's profile cards find people by it
+  (`src/kbpeople.js`). Change it there, and in docs/ARCHITECTURE.md, "Layout".
+
 - Message bodies become markdown through a syntax tree, never by regular expressions on
   markdown: `src/html.js` (Teams), `src/slackmd.js` (Slack blocks and mrkdwn) and
   `src/discordmd.js` build mdast, and `src/mdast.js` writes it. A platform's quirk goes into its
