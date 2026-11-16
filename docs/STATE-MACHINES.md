@@ -378,6 +378,13 @@ rows stay where they are. Unread only lets go of the read threads it holds once 
 away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
 and not after a shorter look elsewhere.
 
+**List row.** shown → leaving → kept aside, or shown again (`.leaving` and `__leave` on the row's
+node, `leaveRow` in `ui/inbox.js`). While the list is the same (`state.list`), a row on screen whose
+thread the list no longer shows folds away before it is removed; until then it is inert, out of
+`state.order` and not counted as seen, and it stays in `state.rowNodes` as any hidden row does, so a
+thread that shows again takes its node back (`stopLeave`). A new list, a search, a hidden page or
+reduced motion removes it at once.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 
