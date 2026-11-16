@@ -606,7 +606,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the pick and what is excluded.
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
-  the thread's mentions, has you); with unread only, the ones the red badge counts. The
+  the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
   customers without such a thread leave the column while it is on. Team views do not have it:
   their Involves card has Me (you posted or were mentioned). Its live updates come from the rooms of your teams and of the teams those channels are
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
@@ -621,8 +621,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you (mentioned you, you posted, 🛟 or 👀 by a colleague). Opening a thread by clicking it in
   the list records the pick, with the threads on screen and their features, in `rank_events`
   (`POST /api/rank/pick`, migration 0040), for that training. A facet value with threads
-  you have not read has its label in bold, and a red badge counts the messages that mention
-  you and that you have not read yet (Slack's and Teams' mention count); a thread's
+  you have not read has its label in bold, and a red badge counts the messages for you that you
+  have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
+  were mentioned in (any member of a re-threaded group), the messages of other people since
+  you first were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`).
+  The same count is on the customers of the personal view and on its rows, which it marks red;
+  a thread's
   "N replies" is bold and blue while it has replies you have not read.
 - **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
   it does for bots) are resolved when the thread is read (`src/channelrefs.js`, the `channels`

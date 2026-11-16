@@ -171,7 +171,7 @@ const rowOf = (key) => page.row(state.data.threads.find((t) => t.thread === key)
 /** Reading a thread, as `markRead` leaves it. */
 function read(key) {
   Object.assign(state.data.threads.find((t) => t.thread === key), {
-    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
+    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0, unreadForYou: 0,
   });
 }
 /** A click on a customer's heading (or its row in the column): it picks it, or lets it go. */
@@ -502,8 +502,33 @@ describe('the simple personal view', () => {
       assert.equal(badge(rowOf('a1')), '2');
       assert.equal(badge(rowOf('g2')), '1');
       assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages mention you"/);
-      assert.match(rowOf('g2'), /title="1 unread message mentions you"/);
+      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
+      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+    });
+
+    it('counts what is new in the threads you are in too, as Slack does, each message once', () => {
+      // g1: you posted in it, and three replies came since (src/threads.js unreadInYours).
+      const g1 = state.data.threads.find((t) => t.thread === 'g1');
+      g1.unreadForYou = 3;
+      assert.equal(badge(rowOf('g1')), '3');
+      assert.match(rowOf('g1'), /^<div class="t unread[^"]* mention simple"/);
+      assert.equal(badge(columnRow('globex')), '4');
+      assert.equal(badge(columnRow('')), '6');
+      // a1: two mentions and one more reply since you were first mentioned.
+      state.data.threads.find((t) => t.thread === 'a1').unreadForYou = 3;
+      assert.equal(badge(rowOf('a1')), '3');
+      assert.equal(badge(columnRow('')), '7');
+      // The expert view's row says how many are new; with mentions only, how many mentions.
+      state.settings.expert = true;
+      assert.match(rowOf('g1'), /<b class="men" title="3 unread messages for you[^"]*">3 new<\/b>/);
+      assert.match(rowOf('g2'), /<b class="men" title="Unread mentions of you">1 mention<\/b>/);
+      state.settings.expert = false;
+      read('g1');
+      assert.equal(badge(rowOf('g1')), null);
+      assert.equal(badge(columnRow('globex')), '1');
+      // Not unread: nothing counts, whatever the inbox says.
+      Object.assign(g1, { unreadForYou: 2 });
+      assert.equal(badge(rowOf('g1')), null);
     });
 
     it('goes from the row and its customer once the thread is read, and the row stays', () => {
