@@ -586,7 +586,7 @@ describe('the images this repository builds', () => {
     const one = await buildLayer('net', LAYERS.net, modules);
     const same = await buildLayer('net', LAYERS.net, modules);
     assert.equal(one.digest, same.digest);
-    assert.deepEqual(one.commands, ['curl', 'dig']);
+    assert.deepEqual(one.commands, ['curl', 'dig', 'host', 'nslookup']);
     const other = await buildLayer('net', [...LAYERS.net, ...LAYERS.archive], modules);
     assert.notEqual(one.digest, other.digest);
     const paths = other.layer.files.map((f) => f.path);

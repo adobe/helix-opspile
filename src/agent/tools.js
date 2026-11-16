@@ -661,10 +661,10 @@ function kernelShell(shell) {
   const js = shell.commands && shell.commands.includes('qjs')
     ? ' qjs runs JavaScript (QuickJS: qjs file.js, qjs -e, or a script on stdin; ES modules by relative path; files through its own qjs:std and qjs:os modules, as globals with --std). It is not node: no require, no npm packages, no fetch (use curl, and pipe to it), no child processes. There is no npm, node or python'
     : ' There is no npm, node or python';
-  // dig, where the image has it: whom it asks, as its prompt forbids sending a customer's
+  // dig, where the image has it: whom it asks, as the prompt forbids sending a customer's
   // names to a site that is not the customer's or Adobe's.
   const dig = shell.commands && shell.commands.includes('dig')
-    ? ' dig asks Cloudflare\'s resolver, over DNS over HTTPS (cloudflare-dns.com): this computer runs on Cloudflare, which resolves every name curl reaches from it anyway, so dig may look up a customer\'s names. It cannot ask a name server itself (no @server, no +trace, no UDP).'
+    ? ' dig, host and nslookup (BIND\'s) ask Cloudflare\'s resolver, over DNS over HTTPS (cloudflare-dns.com), and show its answers as they are, CNAME chains and TTLs included: this computer runs on Cloudflare, which resolves every name curl reaches from it anyway, so they may look up a customer\'s names. They cannot ask another name server (no @server, no +trace): no DNS leaves this computer but through that resolver.'
     : '';
   // openssl, where the image has it: what it can work on, as nothing but HTTP leaves.
   const openssl = shell.commands && shell.commands.includes('openssl')

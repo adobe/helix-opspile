@@ -89,11 +89,11 @@ export const LAYERS = {
     { name: '@ai-ecoverse/wasm-xz' },
     { name: '@ai-ecoverse/wasm-bzip2' },
   ],
-  // dig asks DNS over HTTPS (cloudflare-dns.com) through the kernel's proxy: the kernel has no
-  // UDP, and a Worker no route to a name server. BIND's (wasix-bind) needs threads.
+  // BIND's dig, host and nslookup ask the kernel's DNS (127.0.0.53), which forwards what it
+  // does not know over DNS over HTTPS (src/agent/agent.js, `network.doh`).
   net: [
     { name: '@ai-ecoverse/wasm-curl' },
-    { name: '@ai-ecoverse/wasi-dig' },
+    { name: '@ai-ecoverse/wasix-bind' },
   ],
   // openssl, with its configuration and Mozilla's roots. It has no TCP of its own out of the
   // computer, so s_client reaches only the kernel's loopback.
@@ -124,7 +124,7 @@ export const LAYERS = {
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, openssl, git, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the

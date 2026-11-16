@@ -22,13 +22,16 @@
  * gateway does not see these bytes, and so cannot put a secret into them: a program holds
  * only a secret's placeholder, never its value, and a TLS stream carries the placeholder.
  *
- * Names resolve over DNS over HTTPS (`fetch`, the gateway's, to cloudflare-dns.com), as dig
- * asks. The kernel itself keeps loopback, link-local and other reserved addresses from the
- * uplink, and Cloudflare refuses sockets into private networks and its own addresses.
+ * It has no names of its own, so it has no `resolve`: the kernel resolves outside names, for
+ * getaddrinfo and for its DNS (dig, host, nslookup) alike, through `network.doh` (DOH, over the
+ * gateway), and the DNS gets the forwarder's own answers, CNAME chains and TTLs included. The
+ * kernel keeps loopback, link-local and other reserved addresses from the uplink, and Cloudflare
+ * refuses sockets into private networks and its own addresses.
  */
 
 export const UPLINK_PORTS = [443];
-export const DOH_JSON = 'https://cloudflare-dns.com/dns-query';
+/** Cloudflare's DNS over HTTPS (RFC 8484): the kernel's forwarder, `network.doh`. */
+export const DOH = 'https://cloudflare-dns.com/dns-query';
 
 const errno = (code, message) => Object.assign(new Error(message || code), { code });
 
@@ -52,34 +55,13 @@ const named = (host, port) => `${host.includes(':') ? `[${host}]` : host}:${port
 const isAddress = (text) => /^\[?[^\]]*\]?:\d{1,5}$/.test(String(text || ''));
 
 /**
- * The uplink: `connect(address, options)` opens a socket (`cloudflare:sockets`), `fetch(url,
- * init)` asks DNS over HTTPS. IPv4 only: a Worker's sockets take an IPv6 address no better
- * than the kernel's routes do yet.
+ * The uplink: `connect(address, options)` opens a socket (`cloudflare:sockets`). IPv4 only: a
+ * Worker's sockets take an IPv6 address no better than the kernel's routes do yet.
  */
-export function socketUplink({ connect, fetch, ports = UPLINK_PORTS }) {
+export function socketUplink({ connect, ports = UPLINK_PORTS }) {
   return {
     traits: { tcp: true, udp: false, ipv6: false },
     routes: { prefixes: [], exit: true },
-
-    async resolve(name, family, signal) {
-      if (family === 6) {
-        return [];
-      }
-      const url = `${DOH_JSON}?name=${encodeURIComponent(name)}&type=A`;
-      const res = await fetch(url, { headers: { accept: 'application/dns-json' }, signal });
-      if (!res.ok) {
-        return [];
-      }
-      const body = await res.json().catch(() => ({}));
-      const answers = (body.Answer || []).filter((a) => a.type === 1
-        && /^\d{1,3}(\.\d{1,3}){3}$/.test(a.data));
-      return answers.length
-        ? {
-          addresses: answers.map((a) => a.data),
-          ttl: Math.min(...answers.map((a) => Number(a.TTL) || 60)),
-        }
-        : [];
-    },
 
     async dial({ host, port, signal }) {
       if (!ports.includes(port)) {

@@ -51,7 +51,7 @@ import {
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
-import { socketUplink } from './uplink.js';
+import { DOH, socketUplink } from './uplink.js';
 import { seed, seedPin } from './seed.js';
 import { inSidebar, keepAnswers, talk } from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
@@ -422,7 +422,10 @@ export class ThreadAgent extends Agent {
           transport: fetchTransport({ fetch: gateway, redirect: 'manual' }),
           tlsEngine: compiledTlsEngine(createTlsEngine, tlsWasm),
           // TCP out, to port 443 only (src/agent/uplink.js): a site's own TLS.
-          uplink: socketUplink({ connect, fetch: gateway }),
+          uplink: socketUplink({ connect }),
+          // Outside names, for getaddrinfo and the kernel's DNS (127.0.0.53: dig, host,
+          // nslookup) alike, through the gateway.
+          doh: DOH,
         },
       });
       try {
