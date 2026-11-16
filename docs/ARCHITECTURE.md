@@ -437,6 +437,39 @@ and stamps `generated`, and a write that is not a well-formed concept is refused
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
+**Layout.** OKF fixes no taxonomy; ours does, so that every knowledge base is laid out the
+same way and a concept is found by its type (`LAYOUT`, src/agent/okf.js). The types and their
+directories are the ones the agents had settled on most:
+
+| type | directory | |
+| --- | --- | --- |
+| Customer | `customer/` | kb-org only |
+| Contact | `contacts/` | one person, at `contacts/<first-last>.md` |
+| Site | `sites/` | kb-org only |
+| Tech Stack | `tech-stack/` | |
+| Project | `projects/` | kb-org only |
+| Known Issue | `issues/` | |
+| Incident | `incidents/` | |
+| Decision | `decisions/` | |
+| Playbook | `playbooks/` | |
+| Product Area | `product-areas/` | |
+| Reference | `reference/` | anything else worth looking up |
+| Stack Drawing | `stack.md` at the root | kb-org only, one per customer, written with `draw_stack` (below) |
+
+A type of its own goes in a directory named after it. The agents' prompt lists the table, and
+`kb_write` refuses an agent's concept of one of these types anywhere but its directory, a type
+spelled otherwise, a customer's type in a team's knowledge base, and a Contact that is not one
+person named after its title (a list of people, `contacts/people.md`); people's edits in the
+editor are not held to it. Concepts written before it stay where they are until an agent changes
+them, which moves them (the prompt says so). People are a Contact each, an
+[OKF concept](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md#4-concept-documents)
+like any other: its `title` their name as the platform shows it, its `description` who they are
+to us in one sentence (which the inbox's profile cards show), `aliases` the other names they go
+by, and `resource: mailto:<address>` (OKF's "canonical URI for the underlying asset") when a
+message shows it. A customer's knowledge base has everyone who works on its threads, the
+customer's, partners' and Adobe's people, with their role on that account; a team's has the
+colleagues and partners it works with across customers, and never a customer's people.
+
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,
@@ -446,7 +479,8 @@ whoever may edit the knowledge base, in the knowledge-base editor: agents' write
 prompt injection cannot change what later agents are told.
 
 **Stack drawing.** A customer's knowledge base may have a `stack.md` at its root (a concept of
-type `Tech Stack`, src/stack.js): how their site is put together, as Markdown that reads as it
+type `Stack Drawing`, src/stack.js; a `Tech Stack` concept is one platform's setup, in
+`tech-stack/`, which a part's Note may link to): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
 name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
 `| From | To | What |` between parts by name, then any notes. Two optional columns say more:
@@ -465,6 +499,12 @@ the knowledge base; the inbox draws it (ui/stack.js) as an FMC block diagram, a 
 pointer or the focus lighting its flows and naming them, and the technologies Clef saw in the
 customer's channels that it does not draw listed under it. Without one, the inbox draws what
 Clef saw, by layer.
+The agents are told to keep it current: every turn's system prompt has a `stack-drawing`
+section with the drawing's parts by layer and its hash (the `base` for `draw_stack`), or that
+there is none, and the technologies Clef saw in the channel (`channel_tech`, at 0.8 or above)
+that no part is; the prompt asks them to draw it once they know what serves the customer's
+pages, and again in the same turn a thread shows a part, flow or change it lacks, only from what
+someone said or showed. The day-later wrap-up asks again.
 
 How it is drawn: src/fmcstack.js makes the drawing DOT, Graphviz (`@viz-js/viz`, in the browser)
 places it, and src/fmc.js draws it after the
@@ -1541,8 +1581,12 @@ instead of from the Durable Object a moment after them. The agent writes it a mo
 answer (or a failed request), and whenever `status()` finds a finished turn it has not kept (one
 that stopped half way and counts as failed now). The page asks `GET /api/agent` when the thread
 opens or changes, and every few seconds while the agent works or a new message waits for it;
-what the agent says wins over the kept turn when it is about a later one. A turn in progress is
-only ever the agent's to say, so it comes in after the messages. Its avatar opens the sidebar
+what the agent says wins over the kept turn when it is about a later one. That answer is a copy
+too (`agent_live`, `keepLive`): the latest turn in any state, which the agent writes whenever it
+may have changed (work accepted, a round of tools, an answer), so asking does not start the
+agent's Durable Object, which took over a second for an agent that was not running, and most of
+the agents' CPU outside their turns. Only an agent that has not written one yet, or whose turn
+has said `working` for 15 minutes without a word, is asked itself. Its avatar opens the sidebar
 (below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
 thread's channel).
 
@@ -2305,6 +2349,20 @@ A list of partner domains is explicit and never wrong, where guessing from "not 
 the customer's domain" would call a customer's second domain a partner. The cards travel with
 the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
 request, and emails stay on the server.
+
+Below that, the card says who the person is in the thread's knowledge bases: the description
+of their Contact (`contacts/<first-last>.md`, see "Layout" under the knowledge bases) in its
+customer's and in its teams' (the one it is filed under, those it is shared with), each with a
+link to it in the editor, or that there is none yet. That is the one request a card makes
+(`GET /api/person`, `src/kbpeople.js`), once per thread and person in a page: the Worker finds
+the Contact by the account's mail address (`resource: mailto:`), else by any name it goes by
+(the platform's name, handle and display names; the Contact's file name, title and `aliases`,
+compared as `personSlug` makes them, so `Ops, Dana` is `dana-ops`), in the knowledge bases the
+viewer may read (src/kbaccess.js), and never sends the address. Contacts are parsed once per
+blob and isolate. Bots have none. A click on someone's picture in the thread or the list (or the
+card's *What should I know about …?*) opens the thread, enters its sidebar and asks its agent
+that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
+it did.
 
 ## Platform facts that shape the design
 

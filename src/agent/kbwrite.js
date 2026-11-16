@@ -14,8 +14,8 @@ import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
 import {
-  addLogEntry, asSystemPrompt, checkConcept, isEntry, renderIndex, RESERVED, splitFrontmatter,
-  stampGenerated, SYSTEM_PROMPT,
+  addLogEntry, asSystemPrompt, checkConcept, checkLayout, isEntry, renderIndex, RESERVED,
+  splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 
 /**
@@ -35,11 +35,16 @@ const MAX_SYSTEM_PROMPT = 16 * 1024;
 
 const enc = new TextEncoder();
 
+/** `org` or `team`: the kind of knowledge base an Artifacts repo is, or null. */
+export const kindOf = (artifact) => (/^kb-(org|team)-/.exec(String(artifact)) || [])[1] || null;
+
 /**
  * Checks a change set before anything is cloned; returns an error message or null. Only
  * `staff` writes (the admin team, in the knowledge-base editor) may touch `systemprompt.md`.
+ * The agents' concepts (not `staff`) of a knowledge base of `kind` go where their type goes
+ * (`checkLayout`); people file as they like.
  */
-export function checkChanges(changes, { staff = false } = {}) {
+export function checkChanges(changes, { staff = false, kind = null } = {}) {
   if (!Array.isArray(changes) || !changes.length) {
     return 'give at least one change';
   }
@@ -67,7 +72,8 @@ export function checkChanges(changes, { staff = false } = {}) {
         return `${c.path} is maintained automatically`;
       }
     } else {
-      const why = checkConcept(c.path, String(c.content ?? ''));
+      const why = checkConcept(c.path, String(c.content ?? ''))
+        || (!staff && kind ? checkLayout(c.path, String(c.content ?? ''), kind) : null);
       if (why) {
         return `${c.path}: ${why}`;
       }
@@ -273,7 +279,7 @@ const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward
 export async function writeKnowledge(env, artifact, changes, {
   message, by, at = new Date().toISOString(), logEntry, author, staff = false,
 }) {
-  const invalid = checkChanges(changes, { staff });
+  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) });
   if (invalid) {
     return { error: invalid };
   }

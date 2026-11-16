@@ -43,7 +43,9 @@ import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import {
   agentPerson, agentToolsExtension, opspileExtension, staffExtension,
 } from '../src/agent/tools.js';
-import { keepTurn, keptTurn } from '../src/agent/kept.js';
+import {
+  keepLive, keepTurn, keptTurn, liveDue, liveTurn,
+} from '../src/agent/kept.js';
 import { thread as inboxThread } from '../src/api.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
@@ -316,11 +318,19 @@ describe('thread agents', () => {
     assert.equal((await seedAgent(e, { ...me, readonly: true }, { thread: THREAD, text: 'x' }, inTeam)).status, 403);
     assert.equal((await seedAgent({ ...e, AGENT_CHANNELS: '' }, me, { thread: THREAD, text: 'x' }, inTeam)).status, 409);
 
-    assert.deepEqual(await (await agentStatus(e, THREAD, inTeam)).json(), {
+    // The inbox's question: one D1 query, and one call to the agent (`status` starts it).
+    calls.length = 0;
+    const asked = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => asked.push(sql) && prepare(sql) } };
+    assert.deepEqual(await (await agentStatus(counted, THREAD, inTeam)).json(), {
       enabled: true, name: THREAD, mark: null, pending: [],
     });
+    assert.equal(asked.length, 1);
+    assert.deepEqual(calls, []);
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+    assert.equal((await agentStatus(e, 'slack:E1:C1:9.9', inTeam)).status, 404);
   });
 
   it('talk to the team in the inbox\'s sidebar, which the thread shows and the channel never sees', async () => {
@@ -380,7 +390,8 @@ describe('thread agents', () => {
       state: 'done', text: 'Nothing to change.', startedAt: '2026-10-21T10:00:00.000Z', endedAt: '2026-10-21T10:01:00.000Z',
     };
     assert.equal(await turnOf(), null);
-    // A turn in progress is the agent's to say (GET /api/agent), and kb agents have no thread.
+    // A turn in progress is not the thread's (GET /api/agent has it, `agent_live`), and kb
+    // agents have no thread.
     assert.equal(await keepTurn(e, THREAD, { ...done, state: 'working', endedAt: null }), false);
     assert.equal(await keepTurn(e, 'kb:helix:acme', done), false);
     assert.equal(await turnOf(), null);
@@ -399,6 +410,92 @@ describe('thread agents', () => {
     // A reset transcript has no turn: nothing is kept.
     await keepTurn(e, THREAD, null);
     assert.equal(await turnOf(), null);
+  });
+
+  it('keep what they are doing in D1, which GET /api/agent answers with, without the agent', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const asked = [];
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async status() {
+          asked.push(id.name);
+          return { name: id.name, turn: { state: 'failed', text: 'The turn did not finish.' } };
+        },
+      }),
+    };
+    const inTeam = (t) => [].concat(t).includes('helix');
+    const now = Date.parse('2026-10-21T12:00:00.000Z');
+    const status = async () => (await agentStatus(e, THREAD, inTeam, { now })).json();
+    // Nothing kept yet (an agent that has not worked since this was deployed): it is asked.
+    assert.deepEqual(await status(), {
+      enabled: true, name: THREAD, turn: { state: 'failed', text: 'The turn did not finish.' },
+    });
+    assert.deepEqual(asked, [THREAD]);
+    // Working, as the agent kept it a minute ago: from D1, in one query, the agent not asked.
+    const working = {
+      state: 'working', text: 'Reading the thread', startedAt: '2026-10-21T11:58:00.000Z', endedAt: null,
+    };
+    assert.equal(await keepLive(e, THREAD, working, '2026-10-21T11:59:00.000Z'), true);
+    const queries = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => queries.push(sql) && prepare(sql) } };
+    assert.deepEqual(await (await agentStatus(counted, THREAD, inTeam, { now })).json(), {
+      enabled: true, turn: working,
+    });
+    assert.equal(queries.length, 1);
+    assert.deepEqual(asked, [THREAD]);
+    // An older reading does not replace a newer one; a newer one does.
+    const done = {
+      ...working, state: 'done', text: 'Nothing to change.', endedAt: '2026-10-21T11:59:30.000Z',
+    };
+    assert.equal(await keepLive(e, THREAD, done, '2026-10-21T11:58:30.000Z'), false);
+    assert.deepEqual((await status()).turn, working);
+    assert.equal(await keepLive(e, THREAD, done, '2026-10-21T11:59:30.000Z'), true);
+    assert.deepEqual(await status(), { enabled: true, turn: done });
+    // A finished turn stays the answer however old; one working for longer than a run takes
+    // without a word from the agent (its object stopped half way) is asked about.
+    const later = async (ms) => {
+      const res = await agentStatus(e, THREAD, inTeam, { now: now + ms });
+      return (await res.json()).turn;
+    };
+    assert.deepEqual(await later(86400000), done);
+    await keepLive(e, THREAD, working, '2026-10-21T12:00:00.000Z');
+    assert.equal((await later(16 * 60000)).state, 'failed');
+    assert.deepEqual(asked, [THREAD, THREAD]);
+    // Only where the channel has an agent; kb agents keep nothing.
+    assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
+    assert.equal(await keepLive(e, 'kb:helix:acme', done, '2026-10-21T12:00:00.000Z'), false);
+  });
+
+  it('keep what they are doing when it changed, and while it works, now and then', () => {
+    const working = { state: 'working', text: 'Reading the thread' };
+    const sig = JSON.stringify(working);
+    const at = '2026-10-21T12:00:00.000Z';
+    const plus = (min) => new Date(Date.parse(at) + min * 60000).toISOString();
+    assert.equal(liveDue(null, working, at), true);
+    // Nothing kept yet: no turn is kept too, so that GET /api/agent need not ask.
+    assert.equal(liveDue({ sig: null, at: null }, null, at), true);
+    assert.equal(liveDue({ sig: 'null', at }, null, plus(600)), false);
+    assert.equal(liveDue({ sig, at: null }, working, at), true);
+    assert.equal(liveDue({ sig, at }, working, plus(1)), false);
+    assert.equal(liveDue({ sig, at }, working, plus(5)), true);
+    assert.equal(liveDue({ sig, at }, { ...working, text: 'Updating the draft' }, plus(1)), true);
+    const done = JSON.stringify({ state: 'done' });
+    assert.equal(liveDue({ sig: done, at }, { state: 'done' }, plus(600)), false);
+  });
+
+  it('read a kept turn of what they are doing, or say to ask them', () => {
+    const at = '2026-10-21T12:00:00.000Z';
+    const now = Date.parse(at) + 60000;
+    assert.equal(liveTurn(null, now), undefined);
+    assert.equal(liveTurn({ turn: 'null', at }, now), null);
+    assert.equal(liveTurn({ turn: '{', at }, now), undefined);
+    assert.equal(liveTurn({ turn: '{"state":"working"}', at: null }, now), undefined);
+    assert.deepEqual(liveTurn({ turn: '{"state":"working"}', at }, now), { state: 'working' });
+    assert.equal(liveTurn({ turn: '{"state":"working"}', at }, now + 15 * 60000), undefined);
+    assert.deepEqual(liveTurn({ turn: '{"state":"done"}', at }, now + 86400000), { state: 'done' });
   });
 
   it('hear who discarded their draft, and only theirs', async () => {
@@ -1229,7 +1326,8 @@ describe('seeds with a chosen knowledge base', () => {
     assert.deepEqual(await seed({ ...agent, env: {} }, note), { error: 'missing AI_GATEWAY_ACCOUNT, AGENT_GATEWAY, AGENT_MODEL, BEDROCK_API_KEY' });
   });
 
-  const concept = (title) => `---\ntype: Playbook\ntitle: ${title}\ndescription: A made-up playbook.\n---\nDo it.\n`;
+  // Of the type its directory is for (src/agent/okf.js, LAYOUT).
+  const concept = (title) => `---\ntype: ${title.startsWith('sites/') ? 'Site' : 'Playbook'}\ntitle: ${title}\ndescription: A made-up concept.\n---\nDo it.\n`;
   const write = (kb, path) => ({ kb, message: 'x', changes: [{ path, content: concept(path) }] });
 
   /**
@@ -1394,12 +1492,15 @@ describe('seeds with a chosen knowledge base', () => {
       assert.match(unread, /kb-org has a stack drawing already: read it \(git_read kb-org stack\.md\)/);
       assert.match(wrong, /flows, row 1: From and To are the names of parts/);
       const file = srv.show('kb-org-acme', 'stack.md');
-      assert.match(file, /^---\ntype: Tech Stack\ntitle: Tech stack of ACME\ndescription: ACME runs its site on Edge Delivery, behind Akamai\.\n/);
+      assert.match(file, /^---\ntype: Stack Drawing\ntitle: Tech stack of ACME\ndescription: ACME runs its site on Edge Delivery, behind Akamai\.\n/);
       // Top to bottom, whatever order they came in.
       assert.match(file, /\| Layer \| Part \| Tech \| Note \|\n\| --- \| --- \| --- \| --- \|\n\| Edge \| Akamai \| akamai \| +\|\n\| Site \| Edge Delivery \| eds \| www and the shop \|/);
       assert.match(file, /## Flows\n\n\| From \| To \| What \|\n\| --- \| --- \| --- \|\n\| Akamai \| Edge Delivery \| every page \|/);
-      assert.match(srv.show('kb-org-acme', 'index.md'), /\[Tech stack of ACME\]\(stack\.md\) \(Tech Stack\)/);
+      assert.match(srv.show('kb-org-acme', 'index.md'), /\[Tech stack of ACME\]\(stack\.md\) \(Stack Drawing\)/);
       assert.match(h.system[0], /Keep the customer's stack drawing current \(draw_stack/);
+      // Every turn it is told the drawing as it is, with the base to draw it again from.
+      assert.match(h.system[0], /kb-org has no stack\.md yet\./);
+      assert.match(h.system.at(-1), /kb-org's stack\.md \(hash [0-9a-f]{40}, the base for draw_stack\): 2 parts, 1 flows\.\n- Edge: Akamai \(akamai\)\n- Site: Edge Delivery \(eds\)/);
 
       // Drawn again from what it read: the hash is its base.
       const hash = /^hash: (\S+)$/m.exec(read)[1];

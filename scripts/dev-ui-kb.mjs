@@ -118,6 +118,12 @@ const SEED = {
         '', '## Check', '', '1. The cache TTL: `curl -sI https://www.example.com/ | grep -i age`.',
         '2. A second CDN in front, see [the site](../sites/www.md).', '', '> Ask the customer before purging everything.', '',
       ].join('\n'),
+      // A partner the team works with across customers.
+      'contacts/ravi-kumar.md': [
+        '---', 'type: Contact', 'title: Ravi Kumar',
+        'description: Solution architect at Agency Co, the partner that builds several customers\' sites; reviews their CDN setups.',
+        '---', '', '# Ravi Kumar', '',
+      ].join('\n'),
     },
   },
   'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },
@@ -129,6 +135,18 @@ const SEED = {
     files: {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
       'stack.md': stackFile(ACME_STACK, { title: 'Tech stack of ACME', keep: 'status: stable' }),
+      // People, one Contact each (docs/ARCHITECTURE.md, "Layout"): the profile cards show them.
+      'contacts/sam-reyes.md': [
+        '---', 'type: Contact', 'title: Sam Reyes',
+        'description: ACME\'s web lead; owns the go-live date and signs off on DNS and CDN changes.',
+        'aliases: [sreyes]', 'resource: mailto:sam@acme.example', 'status: stable', '---', '',
+        '# Sam Reyes', '', 'Prefers a call over a long thread for anything that touches the launch.', '',
+      ].join('\n'),
+      'contacts/dana-ops.md': [
+        '---', 'type: Contact', 'title: Dana Ops',
+        'description: Adobe\'s site reliability engineer on the ACME account; set up their CDN and on call for the launch.',
+        '---', '', '# Dana Ops', '', 'Knows the Fastly setup of [www](/sites/www.md) best.', '',
+      ].join('\n'),
     },
   },
   // More customers, so that the list's sort (by activity: entries, then tools) has something to do.

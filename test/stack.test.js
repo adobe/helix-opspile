@@ -20,6 +20,7 @@ import { vocab } from '../src/label.js';
 import {
   checkStack, layerOf, LAYERS, parseStack, stackFile, stackView, techLayers,
 } from '../src/stack.js';
+import { stackNote } from '../src/agent/tools.js';
 import { d1 } from './d1.js';
 import { fakeRepo } from './fakes.js';
 import { SCRIPTS } from './ui.js';
@@ -50,7 +51,7 @@ describe('stack drawings', () => {
   it('are Markdown that reads as it is: a summary, the parts by layer, the flows', () => {
     const file = stackFile(DRAWING, { title: 'Tech stack of ACME' });
     assert.equal(file, `---
-type: Tech Stack
+type: Stack Drawing
 title: Tech stack of ACME
 description: ACME sells on Edge Delivery behind Akamai.
 ---
@@ -91,7 +92,7 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
   it('keep what else the file had: its frontmatter, and notes after the tables', () => {
     const keep = 'title: Old\ntags: [cdn]\nsources:\n  - id: t1\n    resource: https://chat.example/p1\ngenerated: { by: x, at: y }';
     const file = stackFile({ ...DRAWING, notes: '## Open questions\n\n- Which CDN for the B2B shop?' }, { keep });
-    assert.match(file, /^---\ntype: Tech Stack\ntitle: Tech stack\ndescription: [^\n]+\ntags: \[cdn\]\nsources:\n {2}- id: t1\n {4}resource: https:\/\/chat\.example\/p1\n---\n/);
+    assert.match(file, /^---\ntype: Stack Drawing\ntitle: Tech stack\ndescription: [^\n]+\ntags: \[cdn\]\nsources:\n {2}- id: t1\n {4}resource: https:\/\/chat\.example\/p1\n---\n/);
     assert.equal(parseStack(file).notes, '## Open questions\n\n- Which CDN for the B2B shop?');
     // Text a person put between a heading and its table is kept with the notes too.
     const edited = file.replace('## Flows\n', '## Flows\n\nAs of November.\n');
@@ -153,7 +154,7 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
   });
 
   it('are refused as stack.md when they cannot be drawn, by agents and people alike', () => {
-    const bad = '---\ntype: Tech Stack\n---\n\nNo tables.\n';
+    const bad = '---\ntype: Stack Drawing\n---\n\nNo tables.\n';
     assert.match(checkConcept('stack.md', bad), /^not a stack drawing: a stack drawing has a "## Parts" heading/);
     assert.match(checkChanges([{ path: 'stack.md', content: bad }], { staff: true }), /^stack\.md: not a stack drawing/);
     assert.equal(checkConcept('stack.md', stackFile(DRAWING)), null);
@@ -249,7 +250,7 @@ describe('GET /api/kb/stack', () => {
     const repos = {
       'kb-org-acme': { 'stack.md': drawn },
       'kb-org-globex': { 'sites/www.md': '---\ntype: Site\n---\n' },
-      'kb-org-initech': { 'stack.md': '---\ntype: Tech Stack\n---\n\nNo tables.\n' },
+      'kb-org-initech': { 'stack.md': '---\ntype: Stack Drawing\n---\n\nNo tables.\n' },
     };
     const env = { DB, ARTIFACTS: { get: async (name) => fakeRepo(repos[name]) } };
     const res = await (await call(env, ADMIN, '/api/kb/stack?org=acme')).json();
@@ -302,5 +303,18 @@ describe('ui/stack.js', () => {
     assert.doesNotMatch(html, /<b>CDN|<img|<i>/);
     assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
     assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% sure from their threads">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
+  });
+});
+
+describe('what an agent is told about the stack drawing', () => {
+  it('names its parts by layer and the base to draw it again from, or that there is none', () => {
+    const seen = [{ tech: 'akamai', name: 'Akamai', p: 0.97 }, { tech: 'fastly', name: 'Fastly', p: 0.84 }];
+    assert.equal(stackNote({ error: 'no such file: stack.md' }, seen), 'kb-org has no stack.md yet.\n'
+      + 'Clef saw in this channel, and the drawing has no part for: Akamai (akamai, 97%), Fastly (fastly, 84%). Clef can be wrong: draw a part only for what the thread or the knowledge base shows.');
+    const note = stackNote({ hash: 'h1', text: stackFile(DRAWING) }, seen);
+    assert.match(note, /^kb-org's stack\.md \(hash h1, the base for draw_stack\): 5 parts, 2 flows\.\n- Edge: Akamai \(akamai\)\n- Site: Edge Delivery \(eds\)\n/);
+    assert.match(note, /- Code: Order sync\n/);
+    assert.match(note, /has no part for: Fastly \(fastly, 84%\)\./);
+    assert.match(stackNote({ hash: 'h2', text: '---\ntype: Stack Drawing\n---\n\nNo tables.\n' }), /cannot be drawn: .*Draw it again\./);
   });
 });

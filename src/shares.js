@@ -133,7 +133,9 @@ export const inPersonalView = (alias, param) => `${alias}.channel_id IN (
 
 /**
  * Which of `people` (ids) posted or were mentioned in channel `place` (`source`, `channel_id`):
- * whose personal view has it. A Set of ids.
+ * whose personal view has it. A Set of ids. Their mentions first (`CROSS JOIN` keeps that order):
+ * a person has a few hundred at most, while an alert channel has tens of thousands of threads,
+ * which SQLite would otherwise go through one by one, for every event in that channel.
  */
 export async function inChannel(env, people, place) {
   const ids = [...new Set([].concat(people || []).filter(Boolean))];
@@ -142,7 +144,7 @@ export async function inChannel(env, people, place) {
   }
   const { results } = await env.DB.prepare(`SELECT person FROM messages
       WHERE person IN (SELECT value FROM json_each(?1)) AND source = ?2 AND channel_id = ?3
-    UNION SELECT n.person FROM mentions n JOIN threads c ON c.thread = n.thread
+    UNION SELECT n.person FROM mentions n CROSS JOIN threads c ON c.thread = n.thread
       WHERE n.person IN (SELECT value FROM json_each(?1)) AND c.source = ?2 AND c.channel_id = ?3`)
     .bind(JSON.stringify(ids), place.source, String(place.channel_id)).all();
   return new Set((results || []).map((r) => r.person));

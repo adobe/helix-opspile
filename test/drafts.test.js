@@ -16,11 +16,14 @@ import {
 } from 'node:test';
 import { api, inbox, MAX_READ_MEMBERS } from '../src/api.js';
 import { render } from '../src/channels.js';
-import { AGENT_EMAIL, discardDraft, saveDraft } from '../src/drafts.js';
+import {
+  AGENT_EMAIL, discardDraft, entryOf, saveDraft,
+} from '../src/drafts.js';
 import { changeOf, pruneDraftUndo, UNDO_SECONDS } from '../src/draftevents.js';
 import { seal } from '../src/post.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
+import { teamsOf } from '../src/shares.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -89,6 +92,32 @@ const call = (e, who, method, path, body) => api(
 const draftOf = async (e, who, thread = ROOT) => (await (await call(e, who, 'GET', `/api/draft?thread=${encodeURIComponent(thread)}`)).json()).draft;
 
 describe('shared drafts', () => {
+  it('finds a thread\'s entry, its members and teams in one query', async () => {
+    const e = env();
+    e.DB.sqlite.exec(`UPDATE threads SET logical_thread = '${ROOT}' WHERE thread = '${FOLLOW}';
+      INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'other', '2026-10-22'), ('slack', 'C2', 'other', '2026-10-22')`);
+    const asked = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => asked.push(sql) && prepare(sql) } };
+    const entry = await entryOf(counted, FOLLOW);
+    assert.equal(asked.length, 1);
+    assert.deepEqual(entry, {
+      key: ROOT,
+      org: 'acme',
+      team: 'helix',
+      source: 'slack',
+      tenant: 'E1',
+      channel_id: 'C1',
+      teams: await teamsOf(e, { team: 'helix', source: 'slack', channel_id: 'C1' }),
+      keys: [ROOT, FOLLOW],
+    });
+    assert.deepEqual(entry.teams, ['helix', 'other']);
+    assert.deepEqual((await entryOf(e, ROOT)).keys, [ROOT, FOLLOW]);
+    assert.equal(await entryOf(e, 'slack:E1:C1:9.9'), null);
+    assert.equal(await entryOf(e, null), null);
+  });
+
   it('keeps one draft per thread, which the whole team sees', async () => {
     const e = env();
     assert.equal(await draftOf(e, ADA), null);

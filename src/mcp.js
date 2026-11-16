@@ -15,6 +15,7 @@ import { personById, viewer } from './api.js';
 import { bearerPerson, challenge } from './oauth.js';
 import { isAdmin } from './review.js';
 import { mayUse, TOOLS, toolList } from './mcp-tools.js';
+import { batchedDatabase } from './d1batch.js';
 
 /**
  * `/mcp`: a Model Context Protocol server over Streamable HTTP, protocol 2026-07-28
@@ -193,8 +194,12 @@ async function dispatch(env, me, msg, ctx) {
   }
 }
 
-/** Serves `/mcp`. `viewer` can be injected by tests; in the Worker it comes from Access. */
-export async function mcp(request, env, { viewer: injected } = {}) {
+/**
+ * Serves `/mcp`. `viewer` can be injected by tests; in the Worker it comes from Access. The
+ * reads a tool asks D1 for at once go as one batch (src/d1batch.js), as for `/api/*`.
+ */
+export async function mcp(request, raw, { viewer: injected } = {}) {
+  const env = raw && raw.DB ? { ...raw, DB: batchedDatabase(raw.DB) } : raw;
   if (!allowedOrigin(request, env)) {
     return failure(403, undefined, ERR.invalidRequest, 'Origin not allowed');
   }

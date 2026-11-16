@@ -13,6 +13,7 @@
 import { accessEmail } from './access.js';
 import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
+import { personInKb } from './kbpeople.js';
 import {
   agentStatus, decideBash, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
@@ -61,6 +62,7 @@ import {
 } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
+import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 
@@ -439,17 +441,29 @@ export async function inbox(env, me, team, {
   roomsP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
-  const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
-      COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
-    -- The team's own channels, and the channels shared with it (migration 0024).
-    FROM threads WHERE ${inInbox('threads', personal, '?5')} AND kind != 'ignore'
+  const shown = (t) => `${t}.kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
-      AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
-        WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
-      ${only ? 'AND COALESCE(logical_thread, thread) IN (SELECT value FROM json_each(?6))' : ''}
-    GROUP BY g
-    HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
+      AND NOT (${t}.kind = 'channel' AND ${t}.last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
+        WHERE m.thread = ${t}.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
+      ${only ? `AND COALESCE(${t}.logical_thread, ${t}.thread) IN (SELECT value FROM json_each(?6))` : ''}`;
+  const sums = `COALESCE(t.logical_thread, t.thread) AS g, COUNT(*) AS n, SUM(t.messages) AS total,
+      MAX(COALESCE(t.last_at, t.any_at)) AS latest`;
+  // A team's inbox: the team's own channels' threads group by group from `threads_inbox`
+  // (migration 0069), which has all this needs, then those of the channels shared with it
+  // (migration 0024). An alert channel files tens of thousands of threads under its team: as
+  // one `team = ? OR <shared channel>`, every one of them was read from the table and sorted.
+  const grouped = personal
+    ? `SELECT ${sums} FROM threads t WHERE ${inInbox('t', personal, '?5')} AND ${shown('t')}
+      GROUP BY g`
+    : `SELECT g, SUM(n) AS n, SUM(total) AS total, MAX(latest) AS latest FROM (
+        SELECT ${sums} FROM threads t WHERE t.team = ?1 AND ${shown('t')}
+          GROUP BY COALESCE(t.logical_thread, t.thread)
+        UNION ALL SELECT ${sums} FROM threads t
+          WHERE t.team != ?1 AND ${sharedWith('t', '?1')} AND ${shown('t')} GROUP BY 1)
+      GROUP BY g`;
+  const { results: groups } = await env.DB.prepare(`SELECT g, n, total, latest FROM (${grouped})
+    WHERE ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
     ORDER BY latest DESC, g DESC LIMIT ?4`)
     .bind(...[scope.value, only ? null : beforeAt, beforeG, only ? only.length + 1 : size + 1]
       .concat(personal || only ? [personal ? me.id : null] : [])
@@ -462,7 +476,15 @@ export async function inbox(env, me, team, {
   const last = (groups || [])[groups.length - 1];
   const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
-  const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
+  // Each group's first thread and its five latest members, these by index (migration 0068): an
+  // alert channel folds thousands of posts into one entry, and ranking every thread of the
+  // inbox to find them was the query D1 spent the most time on.
+  const { results: threads } = await env.DB.prepare(`WITH g(k) AS (SELECT value FROM json_each(?2)),
+      c(thread) AS (SELECT k FROM g
+        UNION SELECT x.thread FROM g JOIN threads x ON x.thread IN (SELECT y.thread FROM threads y
+          WHERE y.logical_thread = g.k AND ${inInbox('y', personal, '?3')} AND y.kind != 'ignore'
+          ORDER BY COALESCE(y.last_at, y.any_at) DESC LIMIT 5))
+    SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
       messages,
       root_at IS NOT NULL AS root_known, logical_thread,
@@ -471,10 +493,10 @@ export async function inbox(env, me, team, {
         AS permalink
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
-        FROM threads t
+        FROM c JOIN threads t ON t.thread = c.thread
         WHERE ${inInbox('t', personal, '?3')} AND t.kind != 'ignore'
-          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
-    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
+          AND COALESCE(t.logical_thread, t.thread) IN g) r
+    WHERE r.rn <= 5 OR r.thread IN g`)
     .bind(...[scope.value, groupKeys, personal ? me.id : []].flat()).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
@@ -1211,6 +1233,14 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/channels') {
     return postableChannels(env, me);
   }
+  // Who someone on the thread is in its knowledge bases, for their profile card.
+  if (url.pathname === '/api/person') {
+    return personInKb(env, me, {
+      thread: url.searchParams.get('thread'),
+      key: url.searchParams.get('p'),
+      name: url.searchParams.get('name'),
+    }, seeing);
+  }
   if (url.pathname === '/api/experts') {
     return experts(env, url.searchParams.get('thread'), seeing, {
       me, waitUntil, suggestedOnly: url.searchParams.has('suggested'),
@@ -1386,12 +1416,15 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
 
 /**
  * Routes `/api/*`. Returns null for paths it does not own. Every answer says where its time
- * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only).
+ * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only). The reads it
+ * asks D1 for at once go as one batch (src/d1batch.js), each batch one D1 call there.
  */
 export async function api(request, env, url, options = {}) {
   if (!url.pathname.startsWith('/api/')) {
     return null;
   }
   const timing = new Timing();
-  return withTiming(await route(request, timing.wrap(env), url, options, timing), timing);
+  const timed = timing.wrap(env);
+  const batched = timed && timed.DB ? { ...timed, DB: batchedDatabase(timed.DB) } : timed;
+  return withTiming(await route(request, batched, url, options, timing), timing);
 }

@@ -12,7 +12,7 @@
 
 /**
  * A customer's stack drawing: `stack.md` at the root of its knowledge base (`kb-org-<slug>`), a
- * concept of type `Tech Stack` that the thread agents keep (draw_stack, src/agent/tools.js) and
+ * concept of type `Stack Drawing` that the thread agents keep (draw_stack, src/agent/tools.js) and
  * people edit in the knowledge-base editor. It is Markdown that reads as it is: a summary, then
  * two tables, the parts of the stack by layer and the flows between them, then any notes.
  *
@@ -50,7 +50,7 @@
 import { readMarkdown, writeMarkdown } from './mdast.js';
 
 export const STACK_PATH = 'stack.md';
-export const STACK_TYPE = 'Tech Stack';
+export const STACK_TYPE = 'Stack Drawing';
 
 export const LAYERS = [
   { id: 'edge', name: 'Edge', hint: 'in front of the site: CDN, WAF and bot protection, code at the edge' },

@@ -179,8 +179,21 @@ that stopped half way with no run pending counts as failed after 15 minutes. A f
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
-progress is never kept. A turn that answers a sidebar message is kept as its answer instead
+progress is never kept there. A turn that answers a sidebar message is kept as its answer instead
 (`sidebar_messages`, below), and the row stays the turn before it.
+
+**Agent live turn.** absent → kept, then replaced by every newer reading (`agent_live`, one row per
+entry, `keepLive` in `src/agent/kept.js`): the latest turn as `latestTurn` reads it, in any state,
+sidebar turns included, `null` before the first. The agent writes it a moment after it accepts work
+(`harness.submit`), after each round of tools, after an answer or a failed request, and from
+`status()`; only when it changed since the last one kept (`live-turn` in the agent's storage), and a
+working one again a third of the stuck time after the last, so a long turn stays fresh. `at` is when
+the transcript was read, and the write is conditional on it being newer, so readings that cross keep
+the latest. `GET /api/agent` answers from the row, without the agent's object. It asks the agent
+instead when there is no row (an agent that has not worked since migration 0070) or the row has said
+`working` for 15 minutes without being written again (its object stopped half way): the agent's
+answer, `failed` once the transcript says so, is kept again then. A row is never deleted; a thread
+whose channel's agent is turned off is answered `enabled: false` before it is read.
 
 **Expert suggestion.** suggested → withdrawn, or fulfilled (`expert_suggestions`, `suggestExpert`
 in `src/experts.js`). Withdrawing deletes the row; suggesting the person again replaces it, with
@@ -418,7 +431,7 @@ reduced motion removes it at once.
 **Thread pane (phones).** the thread → leaving → "Pick a thread.", or the thread again (`inert` on
 `#pane`, `paneLeave`, `emptyPane` in `ui/inbox.js`). Under 700px, closing the open thread (‹, Back, another
 view) slides the pane away; until its slide ends it shows what it showed, inert, and is emptied
-once it is out. Nothing renders into it meanwhile: what renders the thread renders the open one
+once it is out, or once the slide is cut short (the screen grown past the phone's). Nothing renders into it meanwhile: what renders the thread renders the open one
 (`state.open`), and there is none. Opening something before then (`syncReading`) takes the pane
 over, and `paneLeave` tells the slide that ended it is not the latest. No slide (reduced motion,
 `main.instant`, a wider screen): emptied at once.

@@ -89,6 +89,21 @@ export async function agentStates(env, ids, { teams = new Map() } = {}) {
 }
 
 /**
+ * Whether channel `channelId` has an agent, by what its switches say (`{ channel, team }`: the
+ * `enabled` of its `agent_channels` row and of its team's `agent_teams` row, null without one),
+ * as `agentEnabled` decides.
+ */
+export function switchedOn(env, channelId, row) {
+  if (!env.AGENTS || !channelId) {
+    return false;
+  }
+  if (row && row.channel !== null && row.channel !== undefined) {
+    return row.channel === 1;
+  }
+  return agentChannels(env).has(String(channelId)) || Boolean(row && row.team === 1);
+}
+
+/**
  * Whether a message in this channel gets an agent: agents are bound, and the channel's is on.
  * `team` is the team that owns the channel, when the caller knows it; otherwise it is the team
  * of the channel's latest thread.
@@ -106,10 +121,7 @@ export async function agentEnabled(env, channelId, team) {
       (SELECT enabled FROM agent_teams WHERE team = COALESCE(?2, (SELECT team FROM threads
         WHERE channel_id = ?1 ORDER BY COALESCE(last_at, any_at) DESC LIMIT 1))) AS team`)
     .bind(id, team || null).first();
-  if (row && row.channel !== null && row.channel !== undefined) {
-    return row.channel === 1;
-  }
-  return agentChannels(env).has(id) || Boolean(row && row.team === 1);
+  return switchedOn(env, id, row);
 }
 
 /** Turns the agent of a channel on or off, as `by` (a name), now. */

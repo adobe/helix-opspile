@@ -14,10 +14,14 @@
  * The thread agent's latest finished turn, kept in D1 (`agent_turns`) so that it comes with the
  * thread (GET /api/thread, and the inbox's prefetch of threads) instead of from the agent's
  * Durable Object after it: opening a thread then shows the agent's note with the messages, not
- * a moment later, pushing them up. A turn in progress is not kept: the inbox asks the agent
- * about it (GET /api/agent). The transcript stays the record: this is a copy of what
- * `latestTurn` (src/agent/turn.js) reads from it. No Agents SDK import here.
+ * a moment later, pushing them up. What the agent is doing now, a turn in progress or one that
+ * answers a sidebar message too, is kept apart (`agent_live`, `keepLive`): GET /api/agent answers
+ * with it, so asking does not start the agent's Durable Object. The transcript stays the record:
+ * both are copies of what `latestTurn` (src/agent/turn.js) reads from it. No Agents SDK import
+ * here.
  */
+
+import { STUCK_MS } from './turn.js';
 
 const FINISHED = new Set(['done', 'failed']);
 
@@ -64,4 +68,57 @@ export async function keptTurn(env, key) {
   return row ? {
     state: row.state, text: row.text, startedAt: row.started_at, endedAt: row.ended_at,
   } : null;
+}
+
+/**
+ * Keeps `turn` (`latestTurn`'s answer, any state, null before the first) as what entry `key`'s
+ * agent is doing, as it read its transcript at `at` (ISO): GET /api/agent answers with it, without
+ * the agent. A reading older than the one kept does not replace it. Whether it was written.
+ */
+export async function keepLive(env, key, turn, at) {
+  if (!env.DB || !key || String(key).startsWith('kb:')) {
+    return false;
+  }
+  const { meta } = await env.DB.prepare(`INSERT INTO agent_live (thread, turn, at) VALUES (?, ?, ?)
+    ON CONFLICT (thread) DO UPDATE SET turn = excluded.turn, at = excluded.at
+    WHERE excluded.at >= agent_live.at`).bind(key, JSON.stringify(turn || null), at).run();
+  return Boolean(meta && meta.changes);
+}
+
+/**
+ * Whether `turn`, read at `at` (ISO), is to be kept as what the agent is doing, after `last`
+ * (`{ sig, at }`: the JSON of the turn kept last, and when it was read, either unknown): when it
+ * changed, or a working one was kept a third of STUCK_MS ago, so that `liveTurn` does not take
+ * it for one that stopped while the turn still works.
+ */
+export function liveDue(last, turn, at) {
+  if (!last || last.sig !== JSON.stringify(turn || null)) {
+    return true;
+  }
+  if (!(turn && turn.state === 'working')) {
+    return false;
+  }
+  return !last.at || !(Date.parse(at) - Date.parse(last.at) < STUCK_MS / 3);
+}
+
+/**
+ * The turn GET /api/agent answers with from a kept `agent_live` row (`{ turn, at }`, or null for
+ * none), or undefined when the agent has to be asked: there is no row, or the turn has been
+ * working for longer than a turn's run takes without the agent writing (STUCK_MS: its object
+ * stopped half way, and the agent's answer, `failed`, is what the inbox should hear).
+ */
+export function liveTurn(row, now = Date.now()) {
+  if (!row || typeof row.turn !== 'string' || !row.at) {
+    return undefined;
+  }
+  let turn;
+  try {
+    turn = JSON.parse(row.turn);
+  } catch {
+    return undefined;
+  }
+  if (turn && turn.state === 'working' && !(now - Date.parse(row.at) < STUCK_MS)) {
+    return undefined;
+  }
+  return turn || null;
 }
