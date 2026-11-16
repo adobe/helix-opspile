@@ -133,7 +133,8 @@ the team's members post, react or are members (listed from Slack, or from the Te
 channels (an admin, say) counts for little and a member active in a few counts the most, and the
 ones Clef gives the team. The cron asks Clef about a batch of the admin
 team's channels every run, one question set per channel (`channel_labels`): which ops team should
-follow it (each described by its rules, some of its channels and its members, or none of them),
+follow it (each described by its rules, some of the channels it holds or follows through a share,
+and its members, or none of them),
 and whether it is a conversation, an alert feed or not worth following. Clef is told the channel's
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
