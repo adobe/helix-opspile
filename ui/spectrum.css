@@ -487,6 +487,31 @@ header .note { white-space: nowrap; }
 @starting-style {
   .spectrum [popover]:popover-open { opacity: 0; translate: 0px calc(-1 * var(--spectrum-spacing-75)); }
 }
+/* The floating panels that are not in the top layer (`.s2-float`: a person's card, a list of
+   suggestions, a dropdown, the emoji picker) come and go as a Popover does. One shown with
+   `hidden` turned off, or put on the page, fades in as it settles 4px away from what it belongs
+   to, down when it is below it, up (`.s2-up`) when above; `hidden` fades it out faster, and it is
+   displayed until it has. It takes no pointer as it leaves, so a click goes through it. */
+.spectrum .s2-float {
+  --s2-settle: calc(-1 * var(--spectrum-spacing-75));
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in), display var(--s2-pop-in) allow-discrete;
+}
+.spectrum .s2-float.s2-up { --s2-settle: var(--spectrum-spacing-75); }
+.spectrum .s2-float[hidden] {
+  display: none;
+  opacity: 0;
+  translate: 0px var(--s2-settle);
+  pointer-events: none;
+  transition: opacity var(--s2-out), translate var(--s2-out), display var(--s2-out) allow-discrete;
+}
+@starting-style {
+  .spectrum .s2-float { opacity: 0; translate: 0px var(--s2-settle); }
+}
+/* Drawn again while open (ui/inbox.js, `stayShown`): it is where it was, it does not arrive. */
+.spectrum .s2-float.s2-still { transition: none; }
+/* Laid out unseen to be measured (ui/inbox.js, `measureFloat`): a card that has to know its
+   height before it knows which way it opens. */
+.spectrum .s2-float.s2-measure[hidden] { display: block; visibility: hidden; transition: none; }
 .spectrum dialog:not(.lightbox) {
   opacity: 0;
   translate: 0px calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-75));
