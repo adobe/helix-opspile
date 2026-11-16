@@ -132,6 +132,8 @@ describe('the layout of a knowledge base', () => {
   it('has one Contact per person, named after them', () => {
     assert.equal(checkLayout('contacts/dana-ops.md', contact('Dana Ops'), 'org'), null);
     assert.match(checkLayout('contacts/people.md', contact('Customer contacts'), 'org'), /one file per person/);
+    assert.match(checkLayout('contacts/customer-contacts.md', contact('ACME customer contacts'), 'org'), /one file per person/);
+    assert.equal(checkLayout('contacts/dana-ops.md', contact('Dana Ops (Platform team lead)'), 'org'), null);
     assert.match(checkLayout('contacts/dana.md', contact('Dana Ops'), 'org'), /contacts\/dana-ops\.md/);
     assert.match(checkLayout('contacts/adobe/dana-ops.md', contact('Dana Ops'), 'team'), /contacts\/dana-ops\.md/);
     assert.match(checkLayout('people/dana-ops.md', contact('Dana Ops'), 'org'), /goes in contacts\//);

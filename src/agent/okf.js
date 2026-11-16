@@ -180,7 +180,9 @@ export function checkLayout(path, content, kind) {
   if (row.type === 'Contact') {
     const name = p.slice(row.dir.length + 1).replace(/\.md$/, '');
     const slug = personSlug(scalar(fm.yaml, 'title'));
-    if (ROSTERS.has(name) || !slug) {
+    // A list of people, whatever its file is called: "Customer contacts", "ACME people".
+    const title = scalar(fm.yaml, 'title') || '';
+    if (ROSTERS.has(name) || !slug || /\b(contacts|people|roster|stakeholders|team)\b/i.test(title.replace(/\([^)]*\)/g, ''))) {
       return `a Contact is one person, with their full name as its title: one file per person (${CONTACTS}/dana-ops.md for "Dana Ops"), never a list of people in one file`;
     }
     if (name !== slug) {
