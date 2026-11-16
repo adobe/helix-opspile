@@ -72,16 +72,8 @@ jobs:
           [ "$status" = 0 ] && [ -n "$url" ] || { echo "the deploy failed, or named no workers.dev address"; exit 1; }
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for it to answer
-        env:
-          URL: ${{ steps.deploy.outputs.url }}
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf -H "x-opspile-computer-token: $COMPUTER_TOKEN" "$URL/health" > /dev/null && exit 0
-            sleep 2
-          done
-          echo "the stage computer did not answer"; exit 1
-
+      # check.mjs waits for the Worker to answer with this run's token first (two minutes at
+      # most), and tries a request again when the network or Cloudflare fails it.
       - name: Put the images, and run their programs
         env:
           URL: ${{ steps.deploy.outputs.url }}

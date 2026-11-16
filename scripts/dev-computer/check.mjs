@@ -28,7 +28,11 @@
  * (`syncImages`, as `npm run computer:images` does for a deployment). `COMPUTER_TOKEN` is sent
  * in `x-opspile-computer-token`, which the deployed Worker requires. Each run's agents are new
  * (`thread=check-<run>-…`), so a computer boots from nothing, as an agent's first command does.
- * Exits 1 when a check fails; with GITHUB_STEP_SUMMARY, writes the results there too.
+ * First it waits for the computer to answer (`waitForReady`, two minutes at most: on stage it has
+ * just been deployed). A request the network fails, or Cloudflare answers for a Worker not there
+ * yet, is tried again a few times (`request`); a check fails only on what its command did, or
+ * when that does not stop, and names the request. Exits 1 when a check fails, or a request does;
+ * with GITHUB_STEP_SUMMARY, writes the results there too.
  */
 
 import { spawn } from 'node:child_process';
@@ -218,27 +222,132 @@ export const commandsCheck = (image) => ({
 const headersOf = (token) => (token ? { 'x-opspile-computer-token': token } : {});
 
 /**
- * Puts the objects of `built` (scripts/computer-images.mjs `build`) that the Worker at
- * `origin` lacks into its bucket, in upload order: how many it put.
+ * What a request to the computer is tried again on: Cloudflare's own answers while a Worker is
+ * not there yet or is busy (429, 502–504, 520–530), and 403, which the Worker answers for an
+ * old token while a deploy has not reached every isolate yet (the run before put an unknown one
+ * there). Never 500, which is the Worker's own answer when a command throws, nor the answer of
+ * a command that ran: what a check says of a program is its result, not a reason to try again.
  */
-export async function syncImages(origin, built, { token, log = console.log } = {}) {
+export const TRANSIENT = new Set([403, 408, 425, 429, 502, 503, 504,
+  520, 521, 522, 523, 524, 525, 526, 527, 530]);
+
+/** Whether `e` is fetch's own failure: the connection, not the request (undici's messages). */
+export const isNetworkError = (e) => e instanceof TypeError
+  && (e.message === 'fetch failed' || e.message === 'terminated');
+
+/** `fetch failed (ECONNRESET)`: the error, and what undici says caused it. */
+export function reasonOf(e) {
+  const cause = e?.cause;
+  const why = cause && (cause.code || cause.message);
+  return why ? `${e.message} (${why})` : String(e?.message || e);
+}
+
+const pause = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+/**
+ * Fetches `url` and reads the answer with `read` (`(res) => …`, the response itself when not
+ * given), trying again on a network error, also one while reading the body, and on a TRANSIENT
+ * status: `tries` times at most, `delay` ms after the first, twice as long after each next one
+ * up to `maxDelay`. Every failure names `what` (`PUT /images/…`, never the origin: the stage
+ * Worker's address names the account). The last answer, when it is a status still, is an error.
+ */
+export async function request(what, url, init = {}, {
+  read = (res) => res, tries = 6, delay = 1000, maxDelay = 8000, sleep = pause,
+  log = console.log,
+} = {}) {
+  for (let i = 1; ; i += 1) {
+    let why;
+    let cause;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(url, init);
+      if (!TRANSIENT.has(res.status)) {
+        // eslint-disable-next-line no-await-in-loop
+        return await read(res);
+      }
+      why = `HTTP ${res.status}`;
+      // eslint-disable-next-line no-await-in-loop
+      await res.body?.cancel().catch(() => {});
+    } catch (e) {
+      if (!isNetworkError(e)) {
+        throw e;
+      }
+      why = reasonOf(e);
+      cause = e;
+    }
+    if (i >= tries) {
+      throw new Error(`${what}: ${why}, ${tries} tries`, { cause });
+    }
+    const ms = Math.min(delay * 2 ** (i - 1), maxDelay);
+    log(`  ${what}: ${why}, again in ${ms} ms`);
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(ms);
+  }
+}
+
+/**
+ * Waits until the computer at `origin` answers `GET /health` with `ok` for `token`, for
+ * `limit` ms at most: the Worker just deployed may not answer yet, or only with the old token.
+ */
+export async function waitForReady(origin, {
+  token, limit = 120_000, every = 2000, sleep = pause, now = Date.now, log = console.log,
+} = {}) {
+  const until = now() + limit;
+  let why;
+  for (;;) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${origin}/health`, { headers: headersOf(token) });
+      // eslint-disable-next-line no-await-in-loop
+      const text = await res.text();
+      if (res.ok && text.trim() === 'ok') {
+        return;
+      }
+      why = `HTTP ${res.status}`;
+    } catch (e) {
+      if (!isNetworkError(e)) {
+        throw e;
+      }
+      why = reasonOf(e);
+    }
+    if (now() + every > until) {
+      throw new Error(`GET /health: ${why}, still after ${Math.round(limit / 1000)} s`);
+    }
+    log(`  GET /health: ${why}, again in ${every} ms`);
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(every);
+  }
+}
+
+/**
+ * Puts the objects of `built` (scripts/computer-images.mjs `build`) that the Worker at
+ * `origin` lacks into its bucket, in upload order: how many it put. `retry` is `request`'s.
+ */
+export async function syncImages(origin, built, { token, log = console.log, retry = {} } = {}) {
   const objects = objectsOf(built);
-  const read = async (key) => {
-    const res = await fetch(`${origin}/images/${key}`, { headers: headersOf(token) });
-    if (res.status === 404) {
-      return null;
-    }
-    if (!res.ok) {
-      throw new Error(`could not read ${key}: ${res.status}`);
-    }
-    return res.text();
-  };
+  const read = (key) => request(`GET /images/${key}`, `${origin}/images/${key}`, {
+    headers: headersOf(token),
+  }, {
+    log,
+    ...retry,
+    read: async (res) => {
+      if (res.status === 404) {
+        return null;
+      }
+      if (!res.ok) {
+        throw new Error(`could not read ${key}: ${res.status}`);
+      }
+      return res.text();
+    },
+  });
   const missing = await missingFrom(objects, read);
   for (const o of missing) {
     // eslint-disable-next-line no-await-in-loop
-    const res = await fetch(`${origin}/images/${o.key}`, {
+    const res = await request(`PUT /images/${o.key}`, `${origin}/images/${o.key}`, {
       method: 'PUT', body: o.body, headers: headersOf(token),
-    });
+    }, { log, ...retry });
     if (!res.ok) {
       throw new Error(`could not put ${o.key}: ${res.status}`);
     }
@@ -247,8 +356,12 @@ export async function syncImages(origin, built, { token, log = console.log } = {
   return missing.length;
 }
 
-/** Runs `check` on the computer at `origin`: `{ name, ok, ms, output, exitCode, error }`. */
-export async function runCheck(origin, check, { token, run }) {
+/**
+ * Runs `check` on the computer at `origin`: `{ name, ok, ms, output, exitCode, error }`. A
+ * request the network failed is tried again (`request`), and the command with it: none of them
+ * fails because it ran before.
+ */
+export async function runCheck(origin, check, { token, run, retry = {} }) {
   const image = check.image || 'base';
   const runtime = check.runtime || 'slicc-kernel';
   const thread = `check-${run}-${check.thread || (runtime === 'slicc-kernel' ? image : runtime)}`;
@@ -256,14 +369,15 @@ export async function runCheck(origin, check, { token, run }) {
   const started = Date.now();
   try {
     if (check.uploads) {
-      const put = await fetch(`${origin}/uploads?thread=${thread}`, {
+      const path = `/uploads?thread=${thread}`;
+      const put = await request(`POST ${path}`, `${origin}${path}`, {
         method: 'POST', headers, body: JSON.stringify(check.uploads),
-      });
+      }, retry);
       if (!put.ok) {
         throw new Error(`could not put the uploads: ${put.status}`);
       }
     }
-    const res = await fetch(`${origin}/?thread=${thread}`, {
+    const { res, body } = await request(`POST /?thread=${thread}`, `${origin}/?thread=${thread}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -272,8 +386,18 @@ export async function runCheck(origin, check, { token, run }) {
         ...(runtime === 'slicc-kernel' ? { image } : {}),
         timeout: check.timeout || 60,
       }),
+    }, {
+      ...retry,
+      // The body is read here, so that a connection lost while it comes is tried again too.
+      read: async (r) => {
+        const text = await r.text();
+        try {
+          return { res: r, body: JSON.parse(text) };
+        } catch {
+          return { res: r, body: { error: `HTTP ${r.status}` } };
+        }
+      },
     });
-    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     const output = `${body.stdout || ''}${body.stderr || ''}`;
     const ok = res.ok && !body.error && body.exitCode === 0 && check.match.test(output);
     return {
@@ -344,6 +468,7 @@ async function startDev() {
 async function checkAll(origin, argv) {
   const token = process.env.COMPUTER_TOKEN;
   const built = await build();
+  await waitForReady(origin, { token });
   if (argv.includes('--images')) {
     await syncImages(origin, built, { token });
   }
@@ -373,6 +498,10 @@ async function main(argv) {
   const dev = given ? null : await startDev();
   try {
     await checkAll(dev ? dev.origin : given, argv);
+  } catch (e) {
+    // What failed, by its request, not an uncaught rejection (and not the origin it went to).
+    console.log(`FAIL ${e.message}`);
+    process.exitCode = 1;
   } finally {
     if (dev) {
       dev.stop();

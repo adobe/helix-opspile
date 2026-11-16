@@ -14,11 +14,41 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { build, objectsOf } from '../scripts/computer-images.mjs';
 import {
-  CHECKS, commandsCheck, runCheck, summaryOf, syncImages,
+  CHECKS, commandsCheck, request, runCheck, summaryOf, syncImages, waitForReady,
 } from '../scripts/dev-computer/check.mjs';
 
 const ORIGIN = 'https://computer.example';
 const realFetch = globalThis.fetch;
+
+/** What undici throws when a connection is reset. */
+const reset = () => Object.assign(new TypeError('fetch failed'), {
+  cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+});
+
+/** `request`'s options for a test: no waiting, and the pauses it would have made in `slept`. */
+const quick = (slept = [], lines = []) => ({
+  sleep: async (ms) => {
+    slept.push(ms);
+  },
+  log: (line) => lines.push(line),
+});
+
+/**
+ * Wraps the fetch so that the calls `fails` numbers (from 1) answer what its function returns
+ * instead, or throw it when that is an error.
+ */
+function failing(fails) {
+  const inner = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (...args) => {
+    calls += 1;
+    const res = fails[calls]?.();
+    if (res instanceof Error) {
+      throw res;
+    }
+    return res || inner(...args);
+  };
+}
 
 /** A fetch that answers as the computer's Worker does, from `bucket` (a Map). */
 function fakeWorker(bucket, { token, exec } = {}) {
@@ -58,7 +88,29 @@ describe('the checks of the stage computer', () => {
     seen.length = 0;
     assert.equal(await syncImages(ORIGIN, built, { token: 't', log }), 0);
     assert.ok(seen.every((r) => r.method === 'GET' && !r.pathname.startsWith('/images/blobs/')));
-    await assert.rejects(syncImages(ORIGIN, built, { token: 'wrong', log }), /could not put .*: 403/);
+    const retry = quick();
+    await assert.rejects(
+      syncImages(ORIGIN, built, { token: 'wrong', log, retry }),
+      /^Error: PUT \/images\/\S+: HTTP 403, 6 tries$/,
+    );
+  });
+
+  it('put the images through connection resets and a Worker not there yet', async () => {
+    const built = await build();
+    const bucket = new Map();
+    fakeWorker(bucket, { token: 't' });
+    // Cloudflare's 503 before the Worker is there, then resets: at the start, and halfway.
+    failing({ 1: () => new Response('', { status: 503 }), 2: reset, 20: reset });
+    const slept = [];
+    const lines = [];
+    const retry = quick(slept, lines);
+    const put = await syncImages(ORIGIN, built, { token: 't', log: () => {}, retry });
+    assert.equal(put, objectsOf(built).length);
+    assert.deepEqual([...bucket.keys()].sort(), objectsOf(built).map((o) => o.key).sort());
+    assert.deepEqual(slept, [1000, 2000, 1000]);
+    assert.ok(lines.some((l) => /^ {2}GET \/images\/\S+: HTTP 503, again in 1000 ms$/.test(l)));
+    assert.ok(lines.some((l) => /: fetch failed \(ECONNRESET\), again in/.test(l)));
+    assert.ok(lines.every((l) => !l.includes(ORIGIN)));
   });
 
   it('pass on exit 0 with the output they expect, on a computer of their image', async () => {
@@ -72,9 +124,92 @@ describe('the checks of the stage computer', () => {
     assert.equal((await run()).ok, false);
     assert.deepEqual([(await run()).error, seen[0].thread], ['timeout: too slow', 'check-r1-base']);
     globalThis.fetch = async () => {
-      throw new Error('fetch failed');
+      throw reset();
     };
-    assert.equal((await run()).error, 'fetch failed');
+    const retry = quick();
+    const failed = await runCheck(ORIGIN, check, { run: 'r1', retry });
+    assert.deepEqual(
+      [failed.ok, failed.error],
+      [false, 'POST /?thread=check-r1-base: fetch failed (ECONNRESET), 6 tries'],
+    );
+  });
+
+  it('try a command again when the network fails it, but not when it fails', async () => {
+    const check = CHECKS.find((c) => c.name === 'qjs');
+    const answers = [{ exitCode: 0, stdout: '42\n' }, { exitCode: 3, stdout: '' }];
+    const seen = fakeWorker(new Map(), { exec: () => answers.shift() });
+    failing({ 1: reset, 2: reset });
+    const retry = quick();
+    assert.equal((await runCheck(ORIGIN, check, { run: 'r1', retry })).ok, true);
+    // A broken program: one answer, and the check fails on it.
+    const broken = await runCheck(ORIGIN, check, { run: 'r1', retry });
+    assert.deepEqual([broken.ok, broken.exitCode, seen.length], [false, 3, 2]);
+    // The Worker's 500 is what the command did: not tried again either.
+    let posts = 0;
+    globalThis.fetch = async () => {
+      posts += 1;
+      return Response.json({ error: 'EIO' }, { status: 500 });
+    };
+    const threw = await runCheck(ORIGIN, check, { run: 'r1', retry });
+    assert.deepEqual([threw.ok, threw.error, posts], [false, 'EIO', 1]);
+  });
+
+  it('try a request again a bounded number of times, with a bounded backoff', async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response('busy', { status: 429 });
+    };
+    const slept = [];
+    await assert.rejects(
+      request('GET /x', `${ORIGIN}/x`, {}, { ...quick(slept), tries: 7 }),
+      /^Error: GET \/x: HTTP 429, 7 tries$/,
+    );
+    assert.deepEqual([calls, slept], [7, [1000, 2000, 4000, 8000, 8000, 8000]]);
+    // A body cut off while it comes is tried again, an error of its reader is not.
+    let left = 1;
+    globalThis.fetch = async () => new Response('ok');
+    const read = async (res) => {
+      if (left > 0) {
+        left -= 1;
+        throw new TypeError('terminated');
+      }
+      return res.text();
+    };
+    assert.equal(await request('GET /y', `${ORIGIN}/y`, {}, { ...quick(), read }), 'ok');
+    await assert.rejects(request('GET /y', `${ORIGIN}/y`, {}, {
+      ...quick(),
+      read: () => {
+        throw new Error('bad');
+      },
+    }), /^Error: bad$/);
+  });
+
+  it('wait for a Worker just deployed to answer with the token, for a while at most', async () => {
+    let t = 0;
+    const now = () => t;
+    const sleep = async (ms) => {
+      t += ms;
+    };
+    const answers = [() => {
+      throw reset();
+    }, () => new Response('', { status: 404 }),
+    () => new Response('forbidden\n', { status: 403 }), () => new Response('ok\n')];
+    const seen = [];
+    globalThis.fetch = async (url, init) => {
+      seen.push([new URL(url).pathname, new Headers(init.headers).get('x-opspile-computer-token')]);
+      return answers.shift()();
+    };
+    await waitForReady(ORIGIN, {
+      token: 't', now, sleep, log: () => {},
+    });
+    assert.deepEqual([t, seen.length, seen[0]], [6000, 4, ['/health', 't']]);
+    globalThis.fetch = async () => new Response('forbidden\n', { status: 403 });
+    t = 0;
+    await assert.rejects(waitForReady(ORIGIN, {
+      token: 'old', now, sleep, limit: 10_000, log: () => {},
+    }), /^Error: GET \/health: HTTP 403, still after 10 s$/);
+    assert.ok(t <= 10_000);
   });
 
   it('run on a computer of their own when they name a thread, before grep runs anywhere', async () => {
