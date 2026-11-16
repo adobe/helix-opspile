@@ -41,8 +41,8 @@ import { build, missingFrom, objectsOf } from '../computer-images.mjs';
 /**
  * The checks: `command` runs in `runtime` (the kernel by default) with `image` (base by
  * default), on a computer of its own per runtime and image (so a check does not reboot
- * another's kernel), with `uploads` (`{ name: text }`) put there first, and passes when its
- * output matches `match` (stdout, then stderr) and its exit code is 0.
+ * another's kernel) or of its own `thread`, with `uploads` (`{ name: text }`) put there first,
+ * and passes when its output matches `match` (stdout, then stderr) and its exit code is 0.
  */
 const ORIGINAL = 'line 1\nERROR boom\n';
 
@@ -102,6 +102,18 @@ export const CHECKS = [
     match: /^3\n$/,
   },
   { name: 'qjs', command: "qjs -e 'console.log(6 * 7)'", match: /^42\n$/ },
+  {
+    // On a computer of its own, where grep has not run yet: a clone makes the kernel wait with
+    // a timeout many times in one request, which once raised the request's subrequest depth
+    // each time (the kernel's clock, a call into this object), until reading grep from the
+    // images bucket failed (EIO).
+    name: 'a program read for the first time after git, in a pipeline',
+    thread: 'first-read',
+    command: 'cd /tmp && git clone -q --depth 3 https://github.com/adobe/helix-opspile c'
+      + ' && git -C c log --oneline | wc -l && git -C c blame -L1,1 package.json | grep -c "{"',
+    match: /^[1-9]\d*\n1\n$/,
+    timeout: 120,
+  },
   { name: 'grep', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
   { name: 'dig', command: 'dig +short a www.aem.live', match: /^(\S+\.\n)*(\d+\.){3}\d+\n/ },
   {
@@ -221,7 +233,7 @@ export async function syncImages(origin, built, { token, log = console.log } = {
 export async function runCheck(origin, check, { token, run }) {
   const image = check.image || 'base';
   const runtime = check.runtime || 'slicc-kernel';
-  const thread = `check-${run}-${runtime === 'slicc-kernel' ? image : runtime}`;
+  const thread = `check-${run}-${check.thread || (runtime === 'slicc-kernel' ? image : runtime)}`;
   const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const started = Date.now();
   try {

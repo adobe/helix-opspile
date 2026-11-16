@@ -77,6 +77,15 @@ describe('the checks of the stage computer', () => {
     assert.equal((await run()).error, 'fetch failed');
   });
 
+  it('run on a computer of their own when they name a thread, before grep runs anywhere', async () => {
+    const check = CHECKS.find((c) => c.thread === 'first-read');
+    assert.ok(check.command.includes('git clone') && check.command.endsWith('grep -c "{"'));
+    assert.ok(CHECKS.indexOf(check) < CHECKS.findIndex((c) => /\bgrep\b/.test(c.command) && !c.thread));
+    const seen = fakeWorker(new Map(), { exec: () => ({ exitCode: 0, stdout: '3\n1\n' }) });
+    assert.equal((await runCheck(ORIGIN, check, { run: 'r1' })).ok, true);
+    assert.equal(seen[0].thread, 'check-r1-first-read');
+  });
+
   it('look for every command of an image, and say where the computer is nowhere', async () => {
     const { images } = await build();
     const check = commandsCheck(images[0]);
