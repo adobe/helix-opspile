@@ -96,16 +96,31 @@ describe('content swaps', () => {
     assert.equal(p.fades.length, 1);
   });
 
-  it('counts a placeholder as a subject of its own, and restarts a fade under way', () => {
+  it('shows a placeholder at once, and fades in what replaces it', () => {
     const p = page();
     let subject = 'a';
     p.Swap.watch(p.region, () => subject);
     subject = 'b';
     p.show('Loading…', true);
+    assert.equal(p.fades.length, 0);
     p.show('thread b');
+    assert.equal(p.fades.length, 1);
+  });
+
+  it('stops a fade under way when another subject or a placeholder comes', () => {
+    const p = page();
+    let subject = 'a';
+    p.Swap.watch(p.region, () => subject);
+    subject = 'b';
+    p.show('thread b');
+    subject = 'c';
+    p.show('thread c');
     assert.equal(p.fades.length, 2);
     assert.equal(p.fades[0].cancelled, true);
-    assert.equal(p.fades[1].cancelled, false);
+    subject = 'd';
+    p.show('Loading…', true);
+    assert.equal(p.fades.length, 2);
+    assert.equal(p.fades[1].cancelled, true);
   });
 
   it('does not fade with reduced motion, in a tab in the background, or where told to skip', () => {

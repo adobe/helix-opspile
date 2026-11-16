@@ -155,8 +155,9 @@ window.Dialog = (() => {
  * in, quickly (S2: what arrives eases out). `Swap.watch(region, subject)` watches the region's
  * children: when they are replaced and `subject()` names another subject than it did for what
  * was there, the region fades in. A placeholder ("Loading…", alone in the region as `.empty`)
- * counts as a subject of its own, so what replaces it fades in too. Re-rendering the same
- * subject (a live update, a save) does not fade, and nothing waits for the fade: the content
+ * is shown at once, not faded, and counts as a subject of its own, so the content that
+ * replaces it fades in: a thread that has to be loaded fades in once, when it arrives.
+ * Re-rendering the same subject (a live update, a save) does not fade, and nothing waits for the fade: the content
  * is in the page, focusable and clickable, from its first frame. `skip()` says when not to
  * (where the region slides in already); with reduced motion, or in a tab in the background,
  * nothing fades.
@@ -176,17 +177,20 @@ window.Swap = (() => {
   const watch = (region, subject, { skip = () => false } = {}) => {
     if (!region || region.__swap) return;
     region.__swap = true;
-    const now = () => {
+    const loading = () => {
       const only = region.children.length === 1 && region.firstElementChild;
-      return `${subject() ?? ''}\n${only && only.classList.contains('empty') ? only.textContent : ''}`;
+      return only && only.classList.contains('empty') ? only : null;
     };
+    const now = () => `${subject() ?? ''}\n${loading()?.textContent ?? ''}`;
     let shown = now();
     let fade = null;
     new MutationObserver(() => {
       const was = shown;
       shown = now();
-      if (was === shown || still() || document.visibilityState !== 'visible' || skip()) return;
+      if (was === shown) return;
       fade?.cancel();
+      fade = null;
+      if (loading() || still() || document.visibilityState !== 'visible' || skip()) return;
       const { duration, easing } = timing(region);
       if (duration) fade = region.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
     }).observe(region, { childList: true });
