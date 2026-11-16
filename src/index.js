@@ -60,7 +60,7 @@ import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fromPreview, highlightScript, inboxPage, page,
+  fmcScript, fromPreview, highlightScript, inboxPage, page,
 } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
@@ -255,6 +255,11 @@ const handlers = {
     const highlighter = highlightScript(request, pathname);
     if (highlighter) {
       return highlighter;
+    }
+    // The stack drawing's layout (ELK), which it imports with the first stack it draws.
+    const fmc = fmcScript(request, pathname);
+    if (fmc) {
+      return fmc;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);

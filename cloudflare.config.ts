@@ -24,11 +24,11 @@ import {
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-// The inbox's markdown renderer, the knowledge-base editor and the code highlighter, bundled
-// for the browser (src/ui-markdown.bundle.js, src/ui-editor.bundle.js and
-// src/ui-highlight.bundle.js, not committed), and Spectrum 2's tokens for the pages
-// (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages match
-// src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights and tokens.
+// The inbox's markdown renderer, the knowledge-base editor, the code highlighter and the stack
+// drawing's layout, bundled for the browser (src/ui-markdown.bundle.js, src/ui-editor.bundle.js,
+// src/ui-highlight.bundle.js and src/ui-fmc.bundle.js, not committed), and Spectrum 2's tokens
+// for the pages (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages
+// match src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights, elkjs and tokens.
 execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {

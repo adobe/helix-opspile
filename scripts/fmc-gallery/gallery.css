@@ -1,0 +1,28 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+/* The gallery (scripts/fmc-gallery.mjs): pairs of figures, Spectrum 2 tokens only. */
+body { margin: 0; background: var(--spectrum-background-base-color); color: var(--ink); font-family: var(--s2-font); }
+main { max-width: 90em; margin: 0 auto; padding: var(--spectrum-spacing-400); }
+h1 { margin: 0 0 var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-500); }
+h2 { margin: var(--spectrum-spacing-600) 0 var(--spectrum-spacing-200); font-size: var(--spectrum-font-size-300); }
+.lead { max-width: 60em; color: var(--mute); line-height: 1.5; }
+.fig { margin: 0 0 var(--spectrum-spacing-400); padding: var(--spectrum-spacing-300); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-500); }
+.fig h3 { margin: 0 0 var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); }
+.fig .note { margin: 0 0 var(--spectrum-spacing-200); color: var(--mute); font-size: var(--spectrum-font-size-100); }
+.pair { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--spectrum-spacing-500); }
+.pair > div { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); min-width: 0; }
+.pair .cap { color: var(--faint); font-size: var(--spectrum-font-size-75); }
+.pair .orig img { display: block; max-width: 100%; background: var(--spectrum-gray-50); }
+.pair .ours { padding: var(--spectrum-spacing-100); background: var(--spectrum-background-base-color); }
+.pair .ours svg { max-width: 100%; height: auto; }
+.err { color: var(--spectrum-negative-content-color-default); }

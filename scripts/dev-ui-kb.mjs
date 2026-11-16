@@ -23,7 +23,93 @@ import { stackFile } from '../src/stack.js';
  */
 
 const DIR = '/kb';
-const SEED = {
+
+/** A made-up customer's stack, as the thread agents draw it (draw_stack). */
+export const ACME_STACK = {
+  summary: 'ACME sells on an Edge Delivery storefront behind Akamai, with Adobe Commerce for the catalog, cart and checkout. Orders go on to their ERP through an App Builder action; authors write in SharePoint.',
+  parts: [
+    { layer: 'edge', name: 'Visitors', kind: 'person' },
+    {
+      layer: 'edge', name: 'Akamai', tech: 'akamai', note: 'www.acme.example; /checkout bypasses the cache',
+    },
+    {
+      layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'storefront and PDPs, `acme/storefront`',
+    },
+    {
+      layer: 'site', name: 'Legacy shop', tech: 'aem65', note: 'the B2B pages, until they move',
+    },
+    {
+      layer: 'content', name: 'Authors', kind: 'person', note: 'marketing, in SharePoint',
+    },
+    {
+      layer: 'content', name: 'SharePoint', kind: 'storage', tech: 'sharepoint', note: 'pages and the redirects sheet',
+    },
+    {
+      layer: 'content', name: 'Assets', kind: 'storage', tech: 'assets', note: 'product images',
+    },
+    {
+      layer: 'code', name: 'GitHub', kind: 'storage', tech: 'github', note: '`acme/storefront`, `acme/order-sync`',
+    },
+    {
+      layer: 'code', name: 'App Builder', tech: 'appbuilder', note: 'order sync every 5 minutes',
+    },
+    {
+      layer: 'commerce', name: 'Adobe Commerce', tech: 'commerce', note: 'catalog, cart, checkout',
+    },
+    {
+      layer: 'commerce', name: 'Payments', kind: 'external', note: 'hosted payment page',
+    },
+    {
+      layer: 'commerce', name: 'ERP', tech: 'erp', note: 'fulfilment and invoices',
+    },
+    {
+      layer: 'martech', name: 'Adobe Analytics', tech: 'analytics', note: 'through Launch',
+    },
+    {
+      layer: 'identity', name: 'Okta', tech: 'sso', note: 'authors sign in to SharePoint and the Sidekick',
+    },
+  ],
+  flows: [
+    { from: 'Visitors', to: 'Akamai', kind: 'request' },
+    {
+      from: 'Akamai', to: 'Edge Delivery', label: 'every page but /b2b', kind: 'request',
+    },
+    {
+      from: 'Akamai', to: 'Legacy shop', label: '/b2b', kind: 'request',
+    },
+    {
+      from: 'Authors', to: 'SharePoint', label: 'pages', kind: 'modify',
+    },
+    {
+      from: 'SharePoint', to: 'Edge Delivery', label: 'preview and publish', kind: 'read',
+    },
+    {
+      from: 'GitHub', to: 'Edge Delivery', label: 'code', kind: 'read',
+    },
+    {
+      from: 'Edge Delivery', to: 'Adobe Commerce', label: 'cart and checkout', kind: 'request',
+    },
+    {
+      from: 'Adobe Commerce', to: 'Payments', label: 'payment', kind: 'request',
+    },
+    {
+      from: 'App Builder', to: 'ERP', label: 'orders, every 5 minutes', kind: 'send',
+    },
+    {
+      from: 'Adobe Commerce', to: 'App Builder', label: 'new orders', kind: 'send',
+    },
+  ],
+  notes: '## Open questions\n\n- When the B2B pages move to Edge Delivery.',
+};
+
+/** The same drawing as one written before parts and flows had kinds (no people either). */
+export const withoutKinds = (d) => ({
+  ...d,
+  parts: d.parts.filter((p) => p.kind !== 'person').map((p) => ({ ...p, kind: undefined })),
+  flows: d.flows.filter((f) => !['Visitors', 'Authors'].includes(f.from))
+    .map((f) => ({ ...f, kind: undefined })),
+});
+export const SEED = {
   'kb-team-platform': {
     name: 'Platform ops',
     kind: 'team',
@@ -47,58 +133,10 @@ const SEED = {
     kind: 'org',
     files: {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
-      // The stack drawing (src/stack.js) the inbox shows from ACME's heading; Globex has none,
-      // so its heading shows what Clef saw instead.
-      'stack.md': stackFile({
-        summary: 'ACME sells on an Edge Delivery storefront behind Akamai, with Adobe Commerce for the catalog, cart and checkout. Orders go on to their ERP through an App Builder action; authors write in SharePoint.',
-        parts: [
-          {
-            layer: 'edge', name: 'Akamai', tech: 'akamai', note: 'www.acme.example; /checkout bypasses the cache',
-          },
-          {
-            layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'storefront and PDPs, `acme/storefront`',
-          },
-          {
-            layer: 'site', name: 'Legacy shop', tech: 'aem65', note: 'the B2B pages, until they move',
-          },
-          {
-            layer: 'content', name: 'SharePoint', tech: 'sharepoint', note: 'pages and the redirects sheet',
-          },
-          {
-            layer: 'content', name: 'Assets', tech: 'assets', note: 'product images',
-          },
-          {
-            layer: 'code', name: 'GitHub', tech: 'github', note: '`acme/storefront`, `acme/order-sync`',
-          },
-          {
-            layer: 'code', name: 'App Builder', tech: 'appbuilder', note: 'order sync every 5 minutes',
-          },
-          {
-            layer: 'commerce', name: 'Adobe Commerce', tech: 'commerce', note: 'catalog, cart, checkout',
-          },
-          { layer: 'commerce', name: 'Payments', note: 'hosted payment page' },
-          {
-            layer: 'commerce', name: 'ERP', tech: 'erp', note: 'fulfilment and invoices',
-          },
-          {
-            layer: 'martech', name: 'Adobe Analytics', tech: 'analytics', note: 'through Launch',
-          },
-          {
-            layer: 'identity', name: 'Okta', tech: 'sso', note: 'authors sign in to SharePoint and the Sidekick',
-          },
-        ],
-        flows: [
-          { from: 'Akamai', to: 'Edge Delivery', label: 'every page but /b2b' },
-          { from: 'Akamai', to: 'Legacy shop', label: '/b2b' },
-          { from: 'SharePoint', to: 'Edge Delivery', label: 'preview and publish' },
-          { from: 'GitHub', to: 'Edge Delivery', label: 'code' },
-          { from: 'Edge Delivery', to: 'Adobe Commerce', label: 'cart and checkout' },
-          { from: 'Adobe Commerce', to: 'Payments', label: 'payment' },
-          { from: 'App Builder', to: 'ERP', label: 'orders, every 5 minutes' },
-          { from: 'Adobe Commerce', to: 'App Builder', label: 'new orders' },
-        ],
-        notes: '## Open questions\n\n- When the B2B pages move to Edge Delivery.',
-      }, { title: 'Tech stack of ACME', keep: 'status: stable' }),
+      // The stack drawing (src/stack.js) the inbox shows from ACME's heading, with kinds of
+      // parts and flows (the FMC notation, src/fmc-stack.js); Umbrella's is one written before
+      // kinds, and Globex has none, so its heading shows what Clef saw instead.
+      'stack.md': stackFile(ACME_STACK, { title: 'Tech stack of ACME', keep: 'status: stable' }),
     },
   },
   // More customers, so that the list's sort (by activity: entries, then tools) has something to do.
@@ -111,7 +149,11 @@ const SEED = {
     },
   },
   'kb-org-globex': { name: 'globex', kind: 'org', files: {} },
-  'kb-org-umbrella': { name: 'umbrella', kind: 'org', files: {} },
+  'kb-org-umbrella': {
+    name: 'umbrella',
+    kind: 'org',
+    files: { 'stack.md': stackFile(withoutKinds(ACME_STACK), { title: 'Tech stack of Umbrella' }) },
+  },
 };
 
 export async function createKnowledgeBases() {

@@ -36,6 +36,9 @@
  * `POST /__dev/rethread?into=<key>&after=<ms>` starts a thread in the channel of `into` and
  * folds it into `into`'s group `after` ms later (30 s by default), as re-threading does.
  *
+ * `/__dev/fmc` is the FMC visualization runner's gallery (scripts/fmc-gallery.mjs): the
+ * guidelines' figures next to the runner's drawings of them, and the fake stack drawings.
+ *
  * What is shared with the Worker: the pages of ui/ and their scripts (ui/*.js), served from
  * disk on every request (the Worker imports the same files) as src/page.js puts them together,
  * and the pure helpers `readState`, `waitingOn`, `titleOf`, `previewOf`
@@ -72,7 +75,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
-  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -89,6 +92,7 @@ import {
   fold, orgStacks, readMembers, threadTech,
 } from '../src/api.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
+import { galleryPage } from './fmc-gallery.mjs';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -2005,19 +2009,25 @@ const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:c
   width(); apply();
 })();</script>`;
 
+/**
+ * UI_SCHEME=light or dark: a page in that color scheme, whatever the browser prefers (for
+ * screenshots of both).
+ */
+function inScheme(served) {
+  const scheme = process.env.UI_SCHEME;
+  if (scheme !== 'light' && scheme !== 'dark') {
+    return served;
+  }
+  const other = scheme === 'light' ? 'dark' : 'light';
+  return served.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
+    .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
+    .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
+}
+
 /** ui/<name>.html as the Worker serves it, with the banner and live reload. */
 async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
-  let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
-  // UI_SCHEME=light or dark: the pages in that color scheme, whatever the browser prefers
-  // (for screenshots of both).
-  const scheme = process.env.UI_SCHEME;
-  if (scheme === 'light' || scheme === 'dark') {
-    const other = scheme === 'light' ? 'dark' : 'light';
-    served = served.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
-      .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
-      .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
-  }
+  const served = inScheme((name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts()));
   const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
@@ -2194,6 +2204,12 @@ const server = createServer(async (req, res) => {
       res.end(await uiPage('inbox.html'));
       return;
     }
+    // The FMC visualization runner's gallery (scripts/fmc-gallery.mjs).
+    if (url.pathname === '/__dev/fmc') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(inScheme(await galleryPage(await scripts())));
+      return;
+    }
     // The Spectrum 2 preview's addresses, as the Worker redirects them.
     const preview = fromPreview(url.pathname, url.search);
     if (preview) {
@@ -2205,9 +2221,9 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': type }).end(Buffer.from(base64, 'base64'));
       return;
     }
-    // The code highlighter, as the Worker serves it.
+    // The code highlighter and the stack drawing's layout, as the Worker serves them.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

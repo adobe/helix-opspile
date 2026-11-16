@@ -32,8 +32,12 @@ describe('Spectrum 2', () => {
       const its = html.indexOf(SCRIPTS[`spectrum-${name}.css`]);
       assert.ok(fonts > 0 && shared > fonts && its > shared, name);
       assert.ok(its < html.indexOf('</head>'), name);
-      // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
-      const tokens = spectrumTokens(`${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets:
+      // the page's own, and those it shares with another (the inbox's FMC drawings').
+      const linked = [...PAGES[`${name}.html`].matchAll(/<link rel="stylesheet" href="([a-z-]+\.css)">/g)]
+        .map((m) => m[1]).filter((f) => f !== 'spectrum-tokens.css');
+      assert.deepEqual(linked.slice(0, 3), ['spectrum-fonts.css', 'spectrum.css', `spectrum-${name}.css`], name);
+      const tokens = spectrumTokens(linked.map((f) => SCRIPTS[f]).join('\n'));
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);

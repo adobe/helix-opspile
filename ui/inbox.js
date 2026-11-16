@@ -1493,6 +1493,8 @@ function stackPopEl() {
   const el = document.createElement('section');
   el.className = 'stkpop s2-float';
   el.hidden = true;
+  // The drawing replaces the list it starts as: the popover takes its new size where it is.
+  el.addEventListener('stack-drawn', () => { if (!el.hidden && stackPop.anchor) placeStack(el, stackPop.anchor); });
   el.setAttribute('role', 'dialog');
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideStack(true); } });
   el.addEventListener('click', (e) => { if (e.target.closest('[data-stack-close]')) hideStack(true); });
@@ -1544,6 +1546,14 @@ function stackFoot(res) {
   else if (since) when = ` on ${since}`;
   return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit it in Agents' : 'Open it in Agents'}</a>`;
 }
+// The stack drawing's layout (src/ui-fmc.js with ELK, served at /inbox/fmc.js), imported with
+// the first stack shown; until it is there, and should it not load, the parts are listed.
+const FMC_MODULE = '/inbox/fmc.js';
+let fmcModule = null;
+const loadFmc = () => {
+  fmcModule = fmcModule || import(FMC_MODULE).catch((e) => { fmcModule = null; throw e; });
+  return fmcModule;
+};
 /** Shows the customer's stack under `anchor`; a second click on the same one closes it. */
 async function showStack(org, anchor) {
   const el = stackPopEl();
@@ -1571,7 +1581,9 @@ async function showStack(org, anchor) {
     el.classList.toggle('guess', !res?.drawing);
     placeStack(el, anchor);
     if (stackPop.stop) stackPop.stop();
-    stackPop.stop = Stack.wire(el, view, { md: (s) => md(s) });
+    stackPop.stop = Stack.wire(el, view, {
+      md: (s) => md(s), load: loadFmc, detected: res?.drawing ? detected : [],
+    });
   };
   const asked = stackOf(org);
   const pending = stackPop.asked.get(org);

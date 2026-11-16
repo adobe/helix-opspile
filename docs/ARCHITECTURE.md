@@ -455,12 +455,55 @@ writes the whole drawing from parts and flows (they read it first and give its h
 its other frontmatter, such as `sources`, and its notes stay), and people edit it in the editor
 like any concept. A write of `stack.md` that cannot be drawn (no parts table, an unknown layer,
 a flow between parts that are not there, more than 40 parts or 60 flows) is refused whoever
-writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
+writes it (`checkConcept`), so the inbox can always draw it; so is an unknown Kind. `GET /api/kb/stack?org=` answers
 it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
-the knowledge base; the inbox draws it (ui/stack.js): each layer a row of its parts, the flows
-as arrows, a part under the pointer lighting its flows and naming them, and the technologies
-Clef saw in the customer's channels that it does not draw listed under it. Without one, the
-inbox draws what Clef saw, by layer.
+the knowledge base; the inbox draws it (ui/stack.js) as an FMC block diagram
+(src/fmc-stack.js), a part under the pointer or the focus lighting its flows and naming them,
+and the technologies Clef saw in the customer's channels that it does not draw listed under it.
+Without one, the inbox draws what Clef saw, by layer, as a layer model.
+
+Parts may say what they are in an optional Kind column (`agent`, the default, `storage`,
+`channel`, `person`, `external`) and belong to a Group of their layer; flows may say how they go
+in a Kind column of theirs (`request`, `send`, `read`, `write`, `modify`; without one, read or
+write where a part is a storage, else send). The columns are written only when something has
+one, so files written before them read and are written as they were. The drawing follows the
+FMC visualization guidelines' standard arrangement: the people (or, without any, the
+visitors) at the top, the site in a grey frame of its layers in the middle, someone else's
+systems outside it; an agent above what it asks, reads or writes (many at the top, few at the
+bottom), the arrows the way the data goes; storages rounded, channels small circles (R and an
+arrow for request/response), modify access the double arrow.
+
+**The FMC visualization runner** (src/fmc.js) lays a diagram of nodes, groups and edges out
+with ELK's layered algorithm (elkjs) and draws it as SVG in the FMC notation; `npm run ui:dev`
+shows the guidelines' figures next to its drawings of them at `/__dev/fmc`
+(scripts/fmc-gallery.mjs). elkjs is some 1.5 MB, so it is not in the page: the inbox imports
+src/ui-fmc.bundle.js from `/inbox/fmc.js` with the first stack it shows, and lists the parts by
+layer until then (and for good, should it not load). What the runner does about each
+guideline, and what wins where they disagree:
+
+- Crossings: ELK's layer sweep, and of five layouts (model order kept or not, forced, two node
+  placements) the one with the fewest crossings, then the most symmetric (a node in the middle
+  of what hangs off it), the fewest siblings out of the diagram's order, bends, length, area.
+- Orthogonal edges with rounded corners; the edges into or out of a node that end the same
+  way (an arrowhead or none, a channel or an access) share an ELK port, so they merge into an
+  edge tree. A modify access never merges.
+- Distance: ELK's spacing between edges, and between edges and nodes; layers are apart by a
+  fixed gap, and a channel is a node of its own, so no edge is too short to show its arrows.
+  Edges are long only where the layering makes them so.
+- Harmonization over text: every node of a kind is one size, from a grid of cells; a label that
+  does not fit wraps, then gets a step smaller, then is cut, and never grows its node. A node is
+  larger only to show importance (a stack's hubs, the parts with the most flows, are two cells
+  wide), never to avoid a crossing: the guidelines' own example of a conflict, where the
+  runner keeps the crossing.
+- Nodes' lines twice the edges' (`--spectrum-border-width-200` and `-100`), horizontal labels
+  in one font, code in monospace, few muted colors: groups grey, darker inside one another, the
+  accent only for what is lit. All of it is classes in ui/spectrum-fmc.css.
+- Layout direction: top to bottom (n-tier) unless the edges form one chain, a real flow, which
+  goes left to right. In a stack, a flow from a later layer to an earlier one is laid out from
+  the earlier one, so the layers keep their order.
+- ELK's layers cannot hold an edge between two nodes of one layer, which the guidelines draw
+  side by side: the runner draws such an edge (`same`) straight between them after the layout,
+  and an edge to a U-shaped node around others (Figure 21) out to its inner wall.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`

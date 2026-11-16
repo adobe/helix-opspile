@@ -2772,8 +2772,8 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum #threads .rows > .grp > .stk-line:focus-visible { outline: var(--s2-focus); }
 .spectrum #pane .hmpop .stk-open { width: 100%; border: 0; background: none; color: var(--link); font: inherit; text-align: left; cursor: pointer; }
 
-/* The stack's drawing (ui/stack.js): its layers, top to bottom, each a row of its parts, and the
-   flows between them as arrows behind the parts. A part under the pointer lights its flows. */
+/* The stack's drawing (ui/stack.js): an FMC block diagram (ui/spectrum-fmc.css), its parts
+   listed by layer until it is drawn. A part under the pointer lights its flows. */
 .stkpop { position: fixed; z-index: 7; display: flex; flex-direction: column; width: min(calc(100vw - var(--spectrum-spacing-300)), 60em); max-height: calc(100vh - var(--spectrum-spacing-400));
   overflow: auto; background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: var(--s2-elevated); font-family: var(--s2-font); }
 .stkpop .stk-head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300) 0; }
@@ -2784,42 +2784,27 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .stkpop .stk-sum, .stkpop .stk-notes { font-size: var(--spectrum-font-size-100); line-height: 1.5; color: var(--mute); }
 .stkpop .stk-sum p, .stkpop .stk-notes p { margin: 0 0 var(--spectrum-spacing-100); }
 .stkpop .stk-notes { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); }
-.stkpop .stk-draw { position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-400); padding: var(--spectrum-spacing-200) 0; }
-.stkpop .stk-flows { position: absolute; inset: 0px auto auto 0px; pointer-events: none; overflow: visible; }
-.stkpop .stk-flows path[data-flow] { fill: none; stroke: var(--spectrum-gray-400); stroke-width: var(--spectrum-border-width-200); marker-end: url(#stk-a); }
-.stkpop .stk-arrow path { fill: var(--spectrum-gray-400); }
-.stkpop .stk-arrow.on path { fill: var(--accent); }
-/* A lit part's flows go over the parts, and the others away, so they read across the rows. */
-.stkpop .stk.lit .stk-flows { z-index: 1; }
-.stkpop .stk.lit .stk-flows path[data-flow] { opacity: 0; }
-.stkpop .stk.lit .stk-flows path[data-flow].on { opacity: 1; stroke: var(--accent); marker-end: url(#stk-a-on); }
-.stkpop .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
-.stkpop .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-transform: uppercase; letter-spacing: 0.04em; }
-.stkpop .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
-.stkpop .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
-  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
-  border-left: var(--spectrum-border-width-400) solid var(--layer); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-100);
-  transition: opacity var(--s2-ease), border-color var(--s2-ease); }
-.stkpop .stk-part:focus-visible { outline: var(--s2-focus); }
-.stkpop .stk-part b { font-weight: var(--spectrum-bold-font-weight); }
-.stkpop .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.4; }
-.stkpop .stk-part small code { font-size: var(--spectrum-font-size-50); }
-.stkpop .stk.lit .stk-part { opacity: 0.45; }
-.stkpop .stk.lit .stk-part.on { opacity: 1; border-color: var(--accent); border-left-color: var(--layer); }
-.stkpop .stk-layer[data-layer="edge"] .stk-part { --layer: var(--cyan); }
-.stkpop .stk-layer[data-layer="site"] .stk-part { --layer: var(--accent); }
-.stkpop .stk-layer[data-layer="content"] .stk-part { --layer: var(--lime); }
-.stkpop .stk-layer[data-layer="code"] .stk-part { --layer: var(--slate); }
-.stkpop .stk-layer[data-layer="commerce"] .stk-part { --layer: var(--orange); }
-.stkpop .stk-layer[data-layer="martech"] .stk-part { --layer: var(--purple); }
-.stkpop .stk-layer[data-layer="identity"] .stk-part { --layer: var(--pink); }
+/* The drawing as large as it was laid out, smaller only where the popover is narrower. */
+.stkpop .stk-draw { display: flex; justify-content: center; overflow-x: auto; }
+.stkpop .stk-draw > svg.fmc { flex: none; max-width: 100%; height: auto; }
+/* Until then: the parts by layer, a line each. */
+.stkpop .stk-list { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); width: 100%; }
+.stkpop .stk-layer { display: grid; grid-template-columns: 10em 1fr; gap: var(--spectrum-spacing-200); }
+.stkpop .stk-ln { color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.stkpop .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); margin: 0; padding: 0; list-style: none; font-size: var(--spectrum-font-size-100); }
+.stkpop .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); }
+.stkpop .stk-draw[aria-busy="true"] .stk-list { opacity: 0.7; }
 .stkpop .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
 .stkpop .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
 .stkpop .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
 .stkpop .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
 .stkpop .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
-.stkpop.guess .stk-part { background: var(--col); }
 .stkpop .stk-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
   border-top: var(--spectrum-border-width-100) solid var(--line); color: var(--faint); font-size: var(--spectrum-font-size-75); }
 .stkpop .stk-foot a { margin-left: auto; color: var(--link); }
 @media (max-width: 640px) { .stkpop .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
+/* A part under the pointer or the focus, and its flows: the others step back. */
+.stkpop .stk.lit .fmc-node:not(.on), .stkpop .stk.lit .fmc-group { opacity: 0.4; }
+.stkpop .stk.lit .fmc-edge:not(.on) { opacity: 0.15; }
+.stkpop .stk .fmc-node[data-part] { cursor: default; transition: opacity var(--s2-ease); }
+.stkpop .stk .fmc-edge { transition: opacity var(--s2-ease); }

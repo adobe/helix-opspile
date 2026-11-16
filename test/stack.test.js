@@ -18,7 +18,7 @@ import { api, orgStacks } from '../src/api.js';
 import { checkTech, saveTech } from '../src/extract.js';
 import { vocab } from '../src/label.js';
 import {
-  checkStack, layerOf, LAYERS, parseStack, stackFile, stackView, techLayers,
+  checkStack, FLOW_KINDS, layerOf, LAYERS, PART_KINDS, parseStack, stackFile, stackView, techLayers,
 } from '../src/stack.js';
 import { d1 } from './d1.js';
 import { fakeRepo } from './fakes.js';
@@ -86,6 +86,42 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
     ]);
     assert.deepEqual(read.flows, DRAWING.flows);
     assert.equal(stackFile(read, { title: 'Tech stack of ACME' }), file);
+  });
+
+  it('may say what a part is, where it belongs and how a flow goes, in columns of their own', () => {
+    const drawing = {
+      summary: 'S.',
+      parts: [
+        { layer: 'edge', name: 'Visitors', kind: 'person' },
+        { layer: 'edge', name: 'Akamai', tech: 'akamai' },
+        {
+          layer: 'content', name: 'SharePoint', kind: 'storage', group: 'Authoring', note: 'pages',
+        },
+      ],
+      flows: [
+        { from: 'Visitors', to: 'Akamai', kind: 'request' },
+        { from: 'SharePoint', to: 'Akamai', label: 'pages' },
+      ],
+    };
+    const file = stackFile(drawing);
+    assert.match(file, /\| Layer \| Part \| Kind \| Group \| Tech \| Note \|\n\| --- \| --- \| --- \| --- \| --- \| --- \|\n\| Edge \| Visitors \| person \| +\| +\| +\|\n\| Edge \| Akamai \| +\| +\| akamai \| +\|\n\| Content \| SharePoint \| storage \| Authoring \| +\| pages \|/);
+    assert.match(file, /\| From \| To \| What \| Kind \|\n\| --- \| --- \| --- \| --- \|\n\| Visitors \| Akamai \| +\| request \|\n\| SharePoint \| Akamai \| pages \| +\|/);
+    const read = parseStack(file);
+    assert.deepEqual(read.parts.map((p) => [p.name, p.kind, p.group]), [
+      ['Visitors', 'person', undefined], ['Akamai', undefined, undefined], ['SharePoint', 'storage', 'Authoring'],
+    ]);
+    assert.deepEqual(read.flows.map((f) => f.kind), ['request', undefined]);
+    assert.equal(stackFile(read), file);
+    // Without kinds or groups, the tables are as they always were (the test above).
+    assert.doesNotMatch(stackFile(DRAWING), /Kind|Group/);
+    // A kind is one of the kinds, in any case; an unknown one is refused, whoever writes it.
+    assert.equal(parseStack(file.replace('| storage |', '| Storage |')).parts[2].kind, 'storage');
+    assert.match(checkStack(file.replace('| storage |', '| database |')), /parts, row 3: Kind is one of agent, storage, channel, person, external/);
+    assert.match(checkStack(file.replace('| request |', '| push |')), /flows, row 1: Kind is one of request, send, read, write, modify/);
+    assert.match(checkConcept('stack.md', file.replace('| person |', '| robot |')), /^not a stack drawing: parts, row 1: Kind/);
+    assert.match(checkStack(file.replace('| Authoring |', `| ${'g'.repeat(61)} |`)), /a group has a name of at most 60/);
+    assert.deepEqual(PART_KINDS, ['agent', 'storage', 'channel', 'person', 'external']);
+    assert.deepEqual(FLOW_KINDS, ['request', 'send', 'read', 'write', 'modify']);
   });
 
   it('keep what else the file had: its frontmatter, and notes after the tables', () => {
@@ -251,6 +287,7 @@ describe('ui/stack.js', () => {
       ['edge', ['Akamai 90% sure']], ['site', ['Edge Delivery 100% sure']], ['other', ['Nope 85% sure']],
     ]);
     assert.deepEqual(view.flows, []);
+    assert.equal(view.guess, true);
   });
 
   it('writes everything it is given as text, and lists what Clef saw that it does not draw', () => {
@@ -264,7 +301,9 @@ describe('ui/stack.js', () => {
       detected: [{ tech: 'akamai', name: 'Akamai', p: 0.9 }, { tech: 'da', name: 'Document <i>Authoring</i>', p: 0.8 }],
     });
     assert.doesNotMatch(html, /<b>CDN|<img|<i>/);
-    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
+    // Listed by layer until the drawing is there (or for good, should it not load).
+    assert.match(html, /<div class="stk-draw" aria-busy="true"><div class="stk-list"><div class="stk-layer" data-layer="edge">/);
+    assert.match(html, /<li class="stk-part stk-seen" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
     assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% sure from their threads">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
   });
 });

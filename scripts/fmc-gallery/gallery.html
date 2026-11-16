@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" class="spectrum">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMC visualization runner · gallery</title>
+<!-- npm run ui:dev at /__dev/fmc (scripts/fmc-gallery.mjs): the FMC visualization guidelines'
+     good examples, each original next to the runner's drawing of its structure, then the stack
+     drawings of the fake data. -->
+<link rel="stylesheet" href="spectrum-fonts.css">
+<link rel="stylesheet" href="spectrum-tokens.css">
+<link rel="stylesheet" href="spectrum.css">
+<link rel="stylesheet" href="spectrum-fmc.css">
+<link rel="stylesheet" href="fmc-gallery.css">
+</head>
+<body>
+<main>
+  <h1>FMC visualization runner</h1>
+  <p class="lead">ELK's layered layout (elkjs) and a renderer of the FMC block diagram notation
+    (<code>src/fmc.js</code>). On the left of each pair, the original from the
+    <a href="https://www.fmc-modeling.org/visualization_guidelines">FMC visualization guidelines</a>
+    (its good side, where it shows a good and a bad one); on the right, the runner's drawing of
+    the same structure. <span id="total"></span></p>
+  <section id="stacks" aria-label="Stack drawings"></section>
+  <section id="figures" aria-label="Figures"></section>
+</main>
+<script type="module" src="fmc-gallery.js"></script>
+</body>
+</html>

@@ -645,7 +645,10 @@ their changes. The COGS dashboard is at <http://localhost:8787/inbox/cogs>, over
 of made-up usage in the same D1 ([scripts/dev-ui-cogs.mjs](scripts/dev-ui-cogs.mjs)), and the
 topic map at <http://localhost:8787/inbox/topics>, over a made-up map of a few hundred threads
 ([scripts/dev-ui-topics.mjs](scripts/dev-ui-topics.mjs); the preview has no vectors, so it cannot
-build one). On all of them, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
+build one). The FMC visualization runner's gallery, which draws a customer's stack in the inbox,
+is at <http://localhost:8787/__dev/fmc>: the FMC visualization guidelines' figures next to its
+drawings of them ([scripts/fmc-figures.mjs](scripts/fmc-figures.mjs)), and the fake stacks. On
+all of them, Dana counts as a member of the admin team. `npm run ui:dev -- --admin`
 makes her one in the inbox too, with what admins see there: the switch to the editor and the
 admin pages, "View as" (read-only) and label review. `npm run ui:dev -- --manager` signs her in as
 the manager of Edge ops instead, in no admin team: what a team manager sees. `--member` signs her
@@ -859,9 +862,9 @@ is live.
 To deploy by hand instead: deploys go through the new Cloudflare CLI,
 [`cf`](https://developers.cloudflare.com/cf/), which reads `cloudflare.config.ts` (`--mode
 prod` or `--mode stage` selects the Worker). `cf deploy` and `cf dev` also build the inbox's
-markdown bundle, the knowledge-base editor's and the code highlighter's
-(`src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` and `src/ui-highlight.bundle.js`, not
-committed; `npm run build` by hand). The images of the agents' computers on the SLICC kernel
+markdown bundle, the knowledge-base editor's, the code highlighter's and the stack drawing's
+(`src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js`, `src/ui-highlight.bundle.js` and
+`src/ui-fmc.bundle.js`, not committed; `npm run build` by hand). The images of the agents' computers on the SLICC kernel
 are not part of the Worker: after the first deploy, and whenever
 [scripts/computer-images.mjs](scripts/computer-images.mjs) or a package it uses changes,
 `npm run computer:images -- --mode prod` uploads what is new to the `IMAGES` bucket.
