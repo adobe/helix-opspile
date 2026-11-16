@@ -172,6 +172,12 @@ after the answer, or by `status()` when it differs from the last one kept (in th
 progress is never kept. A turn that answers a sidebar message is kept as its answer instead
 (`sidebar_messages`, below), and the row stays the turn before it.
 
+**Expert suggestion.** suggested → withdrawn, or fulfilled (`expert_suggestions`, `suggestExpert`
+in `src/experts.js`). Withdrawing deletes the row; suggesting the person again replaces it, with
+the new reason. Fulfilled is not stored: the person is in the thread (a message or a mention of
+theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
+toward the three a thread may have. Both go by the person, whichever of their accounts was named.
+
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
 asks again; after five in a row the spinner goes.
 
