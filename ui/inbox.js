@@ -7755,6 +7755,8 @@ function wireHeadAway() {
 // own one-key ones (/, j, k, e, a) beside them. They are written for a Mac; elsewhere ⌘ is Ctrl
 // and ⌥ Alt, and the sheet and your menu say so.
 const MAC = /mac|iphone|ipad/i.test(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
+// Chrome's own ⌘⇧M (switching people) comes first: there, as in Slack's web app, it is not ours.
+const CHROME = /Chrome\//.test(globalThis.navigator?.userAgent || '');
 /** A shortcut as this computer's keyboard names it: `⌘⇧K`, or `Ctrl+Shift+K`. */
 const keyLabel = (s, mac = MAC) => (mac ? s : s.replace(/[⌘⌥⇧]/g, (c) => `${{ '⌘': 'Ctrl', '⌥': 'Alt', '⇧': 'Shift' }[c]}+`).replace(/\+$/, ''));
 /**
@@ -7773,7 +7775,7 @@ const SHORTCUTS = [
   ['Views', [
     ['Personal, then your teams, as they are listed', MAC ? '⌃1…9' : '⌘⇧1…9'],
     ['Unread threads only, or all again', '⌘⇧A'],
-    ['Only threads that mention you (your own view)', '⌘⇧M'],
+    ...(CHROME ? [] : [['Only threads that mention you (your own view)', '⌘⇧M']]),
     ['Start a new thread', '⌘⇧K'],
     ['Exclude a filter value', '⇧ click'],
     ['Mark every thread in the list read', '⇧Esc'],
@@ -8125,7 +8127,7 @@ function globalKey(e) {
   }
   if (k === 'k' && e.shiftKey && !state.as) return run(() => { if (!state.compose) openCompose(); });
   if (k === 'a' && e.shiftKey) return run(() => { setUnread(!state.unread); render(); toUrl(); });
-  if (k === 'm' && e.shiftKey && personal()) return run(() => { state.mentions = !state.mentions; render(); toUrl(); });
+  if (k === 'm' && e.shiftKey && personal() && !CHROME) return run(() => { state.mentions = !state.mentions; render(); toUrl(); });
   if (k === '.' && !e.shiftKey && state.open) {
     return run(() => { if (side.key === state.open) exitSide(); else enterSide(); });
   }
