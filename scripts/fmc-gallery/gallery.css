@@ -1,0 +1,21 @@
+/* The gallery of the FMC renderer (scripts/dev-ui-fmc.mjs), in Spectrum 2 tokens. */
+html.spectrum { height: auto; overflow: auto; }
+.spectrum body { display: block; height: auto; min-height: 0px; margin: 0; overflow: auto; background: var(--content); color: var(--ink); font-family: var(--s2-font); }
+.gal { max-width: 90em; margin: 0 auto; padding: var(--spectrum-spacing-400); }
+.gal h1 { font-size: var(--spectrum-font-size-500); margin: 0 0 var(--spectrum-spacing-200); }
+.gal h2 { font-size: var(--spectrum-font-size-300); margin: var(--spectrum-spacing-600) 0 var(--spectrum-spacing-200); }
+.gal .lede { color: var(--mute); max-width: 60em; }
+.gal .fig { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: var(--spectrum-spacing-400); align-items: start;
+  padding: var(--spectrum-spacing-300); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-500); background: var(--card); }
+.gal .fig.stack { grid-template-columns: minmax(0, 1fr); }
+.gal figure { margin: 0; }
+.gal figure img { max-width: 100%; image-rendering: auto; background: var(--spectrum-gray-50); }
+.gal figcaption { margin-top: var(--spectrum-spacing-100); color: var(--mute); font-size: var(--spectrum-font-size-75); }
+.gal .host { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; overflow: auto; }
+.gal .host svg.fmc { min-width: 0px; max-width: 100%; height: auto; }
+.gal details { grid-column: 1 / -1; font-size: var(--spectrum-font-size-75); }
+.gal pre { overflow: auto; max-height: 24em; padding: var(--spectrum-spacing-200); background: var(--code); border-radius: var(--spectrum-corner-radius-100); }
+.gal .ms { font-variant-numeric: tabular-nums; }
+.gal .err { color: var(--spectrum-negative-content-color-default); }
+.gal .plain { max-width: 100%; overflow: auto; }
+.gal .plain svg { max-width: 100%; height: auto; }

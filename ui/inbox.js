@@ -1571,7 +1571,8 @@ async function showStack(org, anchor) {
     el.classList.toggle('guess', !res?.drawing);
     placeStack(el, anchor);
     if (stackPop.stop) stackPop.stop();
-    stackPop.stop = Stack.wire(el, view, { md: (s) => md(s) });
+    // The drawing comes in once the renderer has drawn it (ui/stack.js): placed again then.
+    stackPop.stop = Stack.wire(el, view, { md: (s) => md(s), detected: res?.drawing ? detected : [], onDraw: () => placeStack(el, anchor) });
   };
   const asked = stackOf(org);
   const pending = stackPop.asked.get(org);

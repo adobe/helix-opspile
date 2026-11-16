@@ -1404,9 +1404,23 @@ describe('seeds with a chosen knowledge base', () => {
       // Drawn again from what it read: the hash is its base.
       const hash = /^hash: (\S+)$/m.exec(read)[1];
       await seed(h.agent, { by: 'Ada', text: 'Their authors write in Document Authoring.' });
-      await h.run(h.call('draw_stack', { ...drawing, parts: more, base: hash }));
-      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 1 flows/);
-      assert.match(srv.show('kb-org-acme', 'stack.md'), /\| Content \| Document Authoring \| da \| +\|/);
+      // What a part is and how a flow goes, for the inbox's FMC drawing: the Group and Kind
+      // columns are written once a row has one.
+      await h.run(h.call('draw_stack', {
+        ...drawing,
+        parts: [...more, {
+          layer: 'content', name: 'Content bus', kind: 'storage', group: 'Authoring',
+        }],
+        flows: [...drawing.flows, { from: 'Edge Delivery', to: 'Content bus', kind: 'read' }],
+        base: hash,
+      }));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 4 parts, 2 flows/);
+      const again = srv.show('kb-org-acme', 'stack.md');
+      assert.match(again, /\| Layer \| Group \| Part \| Kind \| Tech \| Note \|/);
+      assert.match(again, /\| Content \| +\| Document Authoring \| +\| da \| +\|/);
+      assert.match(again, /\| Content \| Authoring \| Content bus \| storage \| +\| +\|/);
+      assert.match(again, /\| From \| To \| Kind \| What \|\n[^\n]+\n\| Akamai \| Edge Delivery \| +\| every page \|\n\| Edge Delivery \| Content bus \| read \| +\|/);
+      assert.match(h.system[0], /the inbox draws it as an FMC block diagram/);
     } finally {
       await h.close();
       await srv.close();

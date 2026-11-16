@@ -45,8 +45,9 @@ code and docs, is the decision model that labels threads and channels.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
   `src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
   editor's text field) and `src/ui-highlight.bundle.js` (@pierre/highlights, the code
-  highlighter the Worker serves at `/inbox/highlight.js`; all from `scripts/ui-markdown.mjs`,
-  not committed), and
+  highlighter the Worker serves at `/inbox/highlight.js`) and `src/ui-fmc.bundle.js` (Mermaid
+  and ELK, flowcharts only, the stack drawing's renderer at `/inbox/fmc.js`; all from
+  `scripts/ui-markdown.mjs`, not committed), and
   `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
   way). `npm run build` builds the bundles, and so do `npm test`, `npm run lint`,
   `npm run ui:dev`, `cf deploy` and `cf dev`. Run `npm ci` first in a fresh checkout.
@@ -68,6 +69,12 @@ code and docs, is the decision model that labels threads and channels.
   that have the layer.
 - `ui/rank.js` is the team order's model; its `MODEL` block is written by `npm run rank -- train`
   (README, "Train the team order"), not by hand. `.rank/` holds production threads: never commit it.
+- The stack drawing is an FMC block diagram: `src/fmc.js` turns `stack.md` into one and writes
+  it as Mermaid text (which GitHub draws too), `src/ui-fmc.js` draws that text with Mermaid and
+  its ELK layout, sizing and shaping the nodes before the layout and taking Mermaid's styles
+  out after it, so `ui/spectrum-inbox.css` styles it by its `fmc-*` classes. Its gallery, FMC's
+  guidelines' figures beside its drawings, is `/__dev/fmc` in `npm run ui:dev`
+  (`scripts/dev-ui-fmc.mjs`).
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
 

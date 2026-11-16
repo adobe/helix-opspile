@@ -24,6 +24,7 @@
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
+ *   http://localhost:8787/__dev/fmc    # the gallery of the stack drawing's renderer
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
@@ -72,7 +73,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
-  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -90,6 +91,7 @@ import {
 } from '../src/api.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin } from './dev-ui-admin.mjs';
+import { gallery } from './dev-ui-fmc.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
 
@@ -2148,6 +2150,14 @@ const server = createServer(async (req, res) => {
   vocabNames = await vocab(adminApi.env);
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    // The FMC renderer's gallery (scripts/dev-ui-fmc.mjs).
+    const shown = url.pathname.startsWith('/__dev/fmc') && await gallery(url.pathname, {
+      scripts: await scripts(), page: servedPage, acme: async () => (await kb.read('kb-org-acme', STACK_PATH)).text,
+    });
+    if (shown) {
+      res.writeHead(200, { 'content-type': shown.type, 'cache-control': 'no-cache' }).end(shown.body);
+      return;
+    }
     if (url.pathname === '/__dev/source-page') {
       res.writeHead(200, { 'content-type': 'text/html' }).end(store.sourcePage);
       return;
@@ -2207,7 +2217,7 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

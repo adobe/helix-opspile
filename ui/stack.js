@@ -11,48 +11,45 @@
  */
 
 /*
- * A customer's stack drawing, as the global `Stack`: its layers top to bottom (src/stack.js
- * LAYERS), each with its parts, and the flows between them as arrows. `html` writes it (the
- * drawing from GET /api/kb/stack, or one made of what Clef saw in the customer's threads when it
- * has none), `wire` draws the arrows once it is on the page and again when it changes size, and
- * shows a part's flows while the pointer or the focus is on it. Everything in it is text the
- * agents or people wrote: written escaped, the notes through the page's Markdown renderer.
+ * A customer's stack drawing, as the global `Stack`: an FMC block diagram of its parts, by
+ * layer, and the flows between them, drawn by the renderer the Worker serves at /inbox/fmc.js
+ * (src/ui-fmc.js, with Mermaid and ELK), which `wire` imports when it first draws one. `html`
+ * writes the frame (the drawing from GET /api/kb/stack, or one made of what Clef saw in the
+ * customer's threads when it has none), `wire` draws into it and shows a part's note and flows
+ * while the pointer or the focus is on it. Everything in it is text the agents or people wrote:
+ * written escaped, the notes through the page's Markdown renderer; Mermaid gets it as text.
  */
 globalThis.Stack = (() => {
+  const RENDERER = '/inbox/fmc.js';
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
-  const NS = 'http://www.w3.org/2000/svg';
   const pct = (p) => `${Math.round(p * 100)}%`;
+  let renderer = null;
 
   /** Markdown on one line, without the paragraph around it. */
   const inline = (md, src) => (src ? md(src).replace(/^\s*<p>([\s\S]*)<\/p>\s*$/, '$1') : '');
 
+  /** The parts of `view`, numbered as the drawing numbers them (`data-part`). */
+  const partsOf = (view) => view.layers.flatMap((l) => l.parts);
+
+  /** The parts by layer, as a list: what shows when the renderer cannot be loaded. */
+  const list = (view) => `<dl class="stk-list">${view.layers.map((l) => `<dt>${esc(l.name)}</dt><dd>${l.parts.map((p) => esc(p.name)).join(', ')}</dd>`).join('')}</dl>`;
+
   /**
-   * The drawing as HTML. `view` is `{ summary, layers: [{ id, name, parts }], flows, notes }`;
-   * `detected` the customer's technologies `[{ tech, name, p }]`, likeliest first: the parts that
-   * are one of them say how sure Clef is, and the others are listed under the drawing. `md`
-   * renders Markdown.
+   * The drawing's frame as HTML. `view` is `{ summary, layers: [{ id, name, parts }], flows,
+   * notes }`; `detected` the customer's technologies `[{ tech, name, p }]`, likeliest first:
+   * the parts that are one of them say how sure Clef is, and the others are listed under the
+   * drawing. `md` renders Markdown.
    */
   function html(view, { detected = [], md = esc } = {}) {
-    const seen = new Map(detected.map((t) => [t.tech, t]));
-    let n = 0;
-    const part = (p) => {
-      const i = n;
-      n += 1;
-      const t = p.tech && seen.get(p.tech);
-      const tip = [p.name, t ? `${t.name}: ${pct(t.p)} sure from their threads` : ''].filter(Boolean).join('\n');
-      return `<div class="stk-part${t ? ' stk-seen' : ''}" tabindex="0" data-part="${i}" title="${esc(tip)}"><b>${esc(p.name)}</b>`
-        + `${p.note ? `<small>${inline(md, p.note)}</small>` : ''}</div>`;
-    };
-    const layers = view.layers.map((l) => `<div class="stk-layer" data-layer="${esc(l.id)}"><div class="stk-ln">${esc(l.name)}</div>`
-      + `<div class="stk-parts">${l.parts.map(part).join('')}</div></div>`).join('');
-    const drawn = new Set(view.layers.flatMap((l) => l.parts.map((p) => p.tech)).filter(Boolean));
+    const drawn = new Set(partsOf(view).map((p) => p.tech).filter(Boolean));
     const rest = detected.filter((t) => !drawn.has(t.tech));
     const more = rest.length ? `<div class="stk-more"><span class="stk-mh">Also in their threads</span>${rest.map((t) => `<span class="stk-chip" title="${esc(`${pct(t.p)} sure from their threads`)}">${esc(t.name)}</span>`).join('')}</div>` : '';
     return `<div class="stk">${view.summary ? `<div class="stk-sum">${md(view.summary)}</div>` : ''}`
-      + `<div class="stk-draw"><svg class="stk-flows" aria-hidden="true"></svg>${layers}</div>`
+      + `<div class="stk-draw" role="img" aria-label="${esc(`The stack: ${partsOf(view).map((p) => p.name).join(', ')}`)}"><span class="stk-wait">Drawing…</span></div>`
       + `<div class="stk-cap" aria-live="polite"></div>${more}`
+      + '<button type="button" class="stk-copy" hidden title="The drawing as Mermaid, which GitHub draws too">Copy as Mermaid</button>'
       + `${view.notes ? `<div class="stk-notes">${md(view.notes)}</div>` : ''}</div>`;
   }
 
@@ -69,101 +66,97 @@ globalThis.Stack = (() => {
     return { summary: '', layers: [...by.values()].filter((l) => l.parts.length), flows: [], notes: '' };
   }
 
-  /** A path from one box to another, both relative to the drawing. */
-  function route(a, b) {
-    const ax = a.left + a.width / 2;
-    const bx = b.left + b.width / 2;
-    if (b.top >= a.bottom - 1) {
-      const dy = Math.max(12, (b.top - a.bottom) / 2);
-      return `M${ax},${a.bottom} C${ax},${a.bottom + dy} ${bx},${b.top - dy} ${bx},${b.top}`;
-    }
-    if (a.top >= b.bottom - 1) {
-      const dy = Math.max(12, (a.top - b.bottom) / 2);
-      return `M${ax},${a.top} C${ax},${a.top - dy} ${bx},${b.bottom + dy} ${bx},${b.bottom}`;
-    }
-    // In the same row: an arc over it, from one top to the other.
-    const lift = Math.min(28, 10 + Math.abs(bx - ax) / 8);
-    return `M${ax},${a.top} C${ax},${a.top - lift} ${bx},${b.top - lift} ${bx},${b.top}`;
+  /** The renderer, imported once; a failed import is tried again with the next drawing. */
+  function load() {
+    renderer = renderer || import(RENDERER).catch((e) => {
+      renderer = null;
+      throw e;
+    });
+    return renderer;
   }
 
   /**
-   * Draws the arrows of `view.flows` in the drawing under `root`, and again whenever it changes
-   * size; a part under the pointer or the focus lights its flows and names them under the
-   * drawing. Returns a function that stops it.
+   * Draws `view` into the frame under `root`; a part under the pointer or the focus lights its
+   * flows and says its note and them under the drawing. `detected` names how sure Clef is of a
+   * part's technology, in its tooltip; `onDraw` is told when the drawing is in. Returns a
+   * function that stops it.
    */
-  function wire(root, view, { md = esc } = {}) {
+  function wire(root, view, { md = esc, detected = [], onDraw = () => {} } = {}) {
     const draw = root.querySelector('.stk-draw');
-    const svg = root.querySelector('.stk-flows');
     const cap = root.querySelector('.stk-cap');
-    if (!draw || !svg) return () => {};
-    const parts = [...draw.querySelectorAll('.stk-part')];
-    const names = view.layers.flatMap((l) => l.parts.map((p) => p.name));
-    const at = new Map(names.map((name, i) => [name.toLowerCase(), i]));
+    const copy = root.querySelector('.stk-copy');
+    if (!draw) return () => {};
+    const parts = partsOf(view);
+    const seen = new Map(detected.map((t) => [t.tech, t]));
+    const at = new Map(parts.map((p, i) => [p.name.toLowerCase(), i]));
     const flows = (view.flows || []).map((f) => ({
       ...f, a: at.get(String(f.from).toLowerCase()), b: at.get(String(f.to).toLowerCase()),
-    })).filter((f) => f.a != null && f.b != null);
-    let current = null;
-    let light = () => {};
-    const paint = () => {
-      const box = draw.getBoundingClientRect();
-      const rel = (el) => {
-        const r = el.getBoundingClientRect();
-        return {
-          left: r.left - box.left, top: r.top - box.top, right: r.right - box.left,
-          bottom: r.bottom - box.top, width: r.width, height: r.height,
-        };
-      };
-      svg.setAttribute('width', String(draw.scrollWidth));
-      svg.setAttribute('height', String(draw.scrollHeight));
-      svg.setAttribute('viewBox', `0 0 ${draw.scrollWidth} ${draw.scrollHeight}`);
-      const defs = '<defs><marker id="stk-a" class="stk-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker>'
-        + '<marker id="stk-a-on" class="stk-arrow on" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>';
-      svg.innerHTML = defs;
-      for (const [i, f] of flows.entries()) {
-        const p = document.createElementNS(NS, 'path');
-        p.setAttribute('d', route(rel(parts[f.a]), rel(parts[f.b])));
-        p.setAttribute('data-flow', String(i));
-        svg.append(p);
-      }
-      // Drawn again (it changed size) while a part is lit: its flows stay lit.
-      if (current != null) light(current);
-    };
-    const stack = root.querySelector('.stk') || root;
-    light = (i) => {
-      current = i;
-      const mine = i == null ? [] : flows.filter((f) => f.a === i || f.b === i);
+    }));
+    let stopped = false;
+    let svg = null;
+    let text = '';
+    const light = (i) => {
+      if (!svg) return;
+      const mine = i == null ? [] : flows.map((f, k) => ({ ...f, k })).filter((f) => f.a === i || f.b === i);
       const lit = new Set(mine.flatMap((f) => [f.a, f.b]));
-      stack.classList.toggle('lit', i != null);
-      parts.forEach((el, k) => el.classList.toggle('on', lit.has(k) || k === i));
-      svg.querySelectorAll('path[data-flow]').forEach((el) => {
-        const f = flows[Number(el.dataset.flow)];
-        el.classList.toggle('on', f.a === i || f.b === i);
-      });
+      const ks = new Set(mine.map((f) => String(f.k)));
+      svg.classList.toggle('lit', i != null);
+      svg.querySelectorAll('[data-part]').forEach((el) => el.classList.toggle('on', lit.has(Number(el.dataset.part)) || Number(el.dataset.part) === i));
+      svg.querySelectorAll('[data-flow]').forEach((el) => el.classList.toggle('on', ks.has(el.dataset.flow)));
       if (!cap) return;
-      cap.innerHTML = mine.map((f) => `<div><b>${esc(names[f.a])}</b> → <b>${esc(names[f.b])}</b>${f.label ? `: ${inline(md, f.label)}` : ''}</div>`).join('');
+      const p = i == null ? null : parts[i];
+      cap.innerHTML = p ? [
+        `<div><b>${esc(p.name)}</b>${p.note ? `: ${inline(md, p.note)}` : ''}</div>`,
+        ...mine.map((f) => `<div>${esc(parts[f.a].name)} → ${esc(parts[f.b].name)}${f.label ? `: ${inline(md, f.label)}` : ''}</div>`),
+      ].join('') : '';
     };
     const on = (e) => {
-      const el = e.target.closest?.('.stk-part');
+      const el = e.target.closest?.('[data-part]');
       if (el && draw.contains(el)) light(Number(el.dataset.part));
     };
     const off = (e) => {
-      if (!e.relatedTarget || !e.relatedTarget.closest?.('.stk-part')) light(null);
+      if (!e.relatedTarget || !e.relatedTarget.closest?.('[data-part]')) light(null);
+    };
+    const copied = () => {
+      navigator.clipboard?.writeText(text).then(() => {
+        copy.textContent = 'Copied';
+      }, () => {});
     };
     draw.addEventListener('pointerover', on);
     draw.addEventListener('pointerout', off);
     draw.addEventListener('focusin', on);
     draw.addEventListener('focusout', off);
-    paint();
-    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(paint) : null;
-    if (watch) watch.observe(draw);
+    copy?.addEventListener('click', copied);
+    load().then((m) => (stopped ? null : m.drawStack(draw, view))).then((res) => {
+      if (!res || stopped) return;
+      svg = draw.querySelector('svg');
+      text = res.text;
+      if (copy) copy.hidden = false;
+      // A part's tooltip: its name, and how sure Clef is of what it is.
+      svg.querySelectorAll('[data-part]').forEach((el) => {
+        const p = parts[Number(el.dataset.part)];
+        const t = p && p.tech && seen.get(p.tech);
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        title.textContent = [p?.name, t ? `${t.name}: ${pct(t.p)} sure from their threads` : ''].filter(Boolean).join('\n');
+        el.prepend(title);
+      });
+      onDraw();
+    }).catch(() => {
+      if (stopped) return;
+      draw.innerHTML = list(view);
+      onDraw();
+    });
     return () => {
-      if (watch) watch.disconnect();
+      stopped = true;
       draw.removeEventListener('pointerover', on);
       draw.removeEventListener('pointerout', off);
       draw.removeEventListener('focusin', on);
       draw.removeEventListener('focusout', off);
+      copy?.removeEventListener('click', copied);
     };
   }
 
-  return { html, fromDetected, wire };
+  return {
+    html, fromDetected, wire, list,
+  };
 })();

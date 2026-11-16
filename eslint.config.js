@@ -103,6 +103,15 @@ export default [
     },
   },
   {
+    // The FMC renderer runs in the browser, bundled (scripts/ui-markdown.mjs, which resolves
+    // Mermaid's own ELK layout as `mermaid-elk-render`).
+    files: ['src/ui-fmc.js'],
+    languageOptions: { globals: { ...globals.browser } },
+    rules: {
+      'import/no-unresolved': ['error', { ignore: ['^mermaid-elk-render$'] }],
+    },
+  },
+  {
     files: ['ui/app.js', 'ui/header.js'],
     languageOptions: { sourceType: 'script' },
   },

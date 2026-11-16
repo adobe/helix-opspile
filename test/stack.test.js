@@ -116,6 +116,53 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
     assert.equal(layerOf('cdn'), null);
   });
 
+  it('say what their parts are and how their flows go, in columns written only when used', () => {
+    const file = stackFile({
+      summary: 'S.',
+      parts: [
+        { layer: 'site', name: 'Shop', tech: 'eds' },
+        {
+          layer: 'commerce', group: 'Backend', name: 'Catalog', kind: 'storage',
+        },
+        { layer: 'content', name: 'Authors', kind: 'Person' },
+      ],
+      flows: [
+        {
+          from: 'Shop', to: 'Catalog', kind: 'read', label: 'prices',
+        },
+        { from: 'Authors', to: 'Shop' },
+      ],
+    });
+    assert.match(file, /\| Layer \| Group \| Part \| Kind \| Tech \| Note \|\n\| --- \| --- \| --- \| --- \| --- \| --- \|\n\| Site \| +\| Shop \| +\| eds \| +\|\n\| Content \| +\| Authors \| person \| +\| +\|\n\| Commerce and data \| Backend \| Catalog \| storage \| +\| +\|/);
+    assert.match(file, /\| From \| To \| Kind \| What \|\n\| --- \| --- \| --- \| --- \|\n\| Shop \| Catalog \| read \| prices \|\n\| Authors \| Shop \| +\| +\|/);
+    const read = parseStack(file);
+    assert.deepEqual(read.parts.map((p) => [p.name, p.kind, p.group]), [
+      ['Shop', undefined, undefined], ['Authors', 'person', undefined], ['Catalog', 'storage', 'Backend'],
+    ]);
+    assert.deepEqual(read.flows, [
+      {
+        from: 'Shop', to: 'Catalog', label: 'prices', kind: 'read',
+      },
+      { from: 'Authors', to: 'Shop', label: '' },
+    ]);
+    assert.equal(stackFile(read), file);
+    // In any order, in any case; what is not a kind is refused, with the kinds there are.
+    const body = (parts, flows) => `S.\n\n## Parts\n\n| Kind | Part | Layer |\n| --- | --- | --- |\n${parts}\n\n## Flows\n\n| What | Kind | To | From |\n| --- | --- | --- | --- |\n${flows}\n`;
+    assert.equal(checkStack(body('| STORAGE | DB | Site |\n| | App | Site |', '| x | Read | DB | App |')), null);
+    assert.match(checkStack(body('| database | DB | Site |', '')), /parts, row 1: Kind is one of agent, storage, channel, person, external, or empty for an agent/);
+    assert.match(checkStack(body('| | DB | Site |\n| | App | Site |', '| x | push | DB | App |')), /flows, row 1: Kind is one of flow, request, read, write, modify, or empty for a flow/);
+    assert.match(checkStack(`S.\n\n## Parts\n\n| Layer | Group | Part |\n| --- | --- | --- |\n| Site | ${'g'.repeat(61)} | DB |\n`), /a group has a name of at most 60 characters/);
+  });
+
+  it('written before the Kind and Group columns still draw, and are written again the same', () => {
+    const old = '---\ntype: Tech Stack\ntitle: Tech stack\ndescription: S.\n---\n\nS.\n\n## Parts\n\n| Layer | Part | Tech | Note |\n| --- | --- | --- | --- |\n| Edge | CDN | akamai | |\n| Site | Shop | eds | the shop |\n\n## Flows\n\n| From | To | What |\n| --- | --- | --- |\n| CDN | Shop | every page |\n';
+    const read = parseStack(old);
+    assert.equal(read.error, undefined);
+    assert.deepEqual(read.flows, [{ from: 'CDN', to: 'Shop', label: 'every page' }]);
+    assert.ok(read.parts.every((p) => !('kind' in p) && !('group' in p)));
+    assert.equal(stackFile(read), old);
+  });
+
   it('are refused as stack.md when they cannot be drawn, by agents and people alike', () => {
     const bad = '---\ntype: Tech Stack\n---\n\nNo tables.\n';
     assert.match(checkConcept('stack.md', bad), /^not a stack drawing: a stack drawing has a "## Parts" heading/);
@@ -264,7 +311,36 @@ describe('ui/stack.js', () => {
       detected: [{ tech: 'akamai', name: 'Akamai', p: 0.9 }, { tech: 'da', name: 'Document <i>Authoring</i>', p: 0.8 }],
     });
     assert.doesNotMatch(html, /<b>CDN|<img|<i>/);
-    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
+    // The drawing comes from the renderer (src/ui-fmc.js); until then, its frame says so.
+    assert.match(html, /<div class="stk-draw" role="img" aria-label="The stack: A &lt;b&gt;CDN&lt;\/b&gt;"><span class="stk-wait">Drawing…<\/span><\/div>/);
     assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% sure from their threads">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
+    assert.match(html, /<button type="button" class="stk-copy" hidden [^>]*>Copy as Mermaid<\/button>/);
+    // Without the renderer, the parts by layer.
+    assert.equal(Stack.list(view), '<dl class="stk-list"><dt>Edge</dt><dd>A &lt;b&gt;CDN&lt;/b&gt;</dd></dl>');
+  });
+
+  it('shows the parts by layer when the renderer does not load', async () => {
+    const calls = [];
+    const el = (tag) => ({
+      tag,
+      children: [],
+      classList: { toggle: () => {} },
+      addEventListener: (type) => calls.push(type),
+      removeEventListener: () => {},
+    });
+    const draw = {
+      ...el('div'), innerHTML: '', querySelector: () => null, contains: () => true,
+    };
+    const root = { querySelector: (sel) => ({ '.stk-draw': draw, '.stk-cap': el('div'), '.stk-copy': el('button') }[sel]) };
+    const view = { layers: [{ id: 'edge', name: 'Edge', parts: [{ name: 'CDN' }] }], flows: [] };
+    // The renderer did not load: the list instead.
+    // eslint-disable-next-line no-new-func
+    const failing = new Function('globalThis', `${SCRIPTS['stack.js'].replace(/import\(RENDERER\)/, 'Promise.reject(new Error("offline"))')}\nreturn globalThis.Stack;`)({});
+    const drawn = new Promise((resolve) => {
+      failing.wire(root, view, { onDraw: resolve });
+    });
+    await drawn;
+    assert.match(draw.innerHTML, /^<dl class="stk-list">/);
+    assert.deepEqual(calls.slice(0, 4), ['pointerover', 'pointerout', 'focusin', 'focusout']);
   });
 });

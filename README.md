@@ -35,6 +35,7 @@ still answer.
 | `GET /manifest.webmanifest`, `/sw.js` | The installable app (`src/pwa.js`): web app manifest (start `/inbox`, standalone, shortcuts to the editor and admin pages) and a service worker that caches nothing and only answers a page load made offline. Public, outside Access. |
 | `GET /inbox` | The inbox UI (one static page), behind Cloudflare Access. |
 | `GET /inbox/highlight.js` | The inbox's code highlighter (`src/ui-highlight.js` with [`@pierre/highlights`](https://diffs.com/highlights), an ES module with its lexers in WebAssembly), which the page imports with the first code block it shows; with an `etag`, so the browser keeps it until a deploy changes it. Behind Access, as `/inbox`. |
+| `GET /inbox/fmc.js` | The renderer of the stack drawing (`src/ui-fmc.js` with [Mermaid](https://mermaid.js.org) and its ELK layout: an FMC block diagram), an ES module of some 2.4 MB (700 KB compressed), which the inbox imports when it first shows a customer's stack; with an `etag`, as the highlighter. Behind Access, as `/inbox`. |
 | `GET /spectrum`, `/spectrum/kb`, `/spectrum/admin`, `/spectrum/cogs` | Where the Spectrum 2 preview was: redirects (301) to the same page under `/inbox`, with its query. |
 | `GET /inbox/admin` | Teams, members, rules and manual assignments; customers, partners and vendors (name, icon, type, manual assignments). One static page, for the admin team; team managers see their teams' members there (add, remove, promote, demote). |
 | `/api/admin/*` | Its API, for the admin team (team managers: `teams`, `team`, `people` and `members` of their teams only): `teams` (PUT `{ slug, name?, selfManaged? }`), `team?slug=`, `members`, `people?q=` (to add as members), `members` (POST adds, PUT `{ team, person, role }` promotes or demotes, DELETE removes), `rules`, `assign` (POST `{ target, source, channelId, value, move? }`: a team added to a channel the admin team or nobody holds gets it filed under it; added to a channel another team holds, it is shared with it instead, answered as `shared`, and nothing moves; `move: true`, or the admin team, moves it), `share` (DELETE `{ source, channelId, team }`: the team stops following a channel shared with it), `channels?q=` (every word in the channel's name, Teams team name, org slug or name, or id; the answer says which `match`ed), `orgs` (each with `domain`, its usual mail domain), `org?slug=` (GET, and POST/PUT/DELETE with JSON bodies), `org-icons?slug=[&fresh=1]` (icons for an org, ranked by Clef, `src/favicons.js`), `favicon?domain=` (Google's favicon of a domain, 404 when it has none), and `classify` (POST `{ limit? }`: Clef classifies up to 25 of the admin team's channels now). Rule changes take `dryRun: true` and answer with the channels they would move; applied, they queue `refile` jobs. For the admin team, `team?slug=` also answers with `suggestions`: the admin team's channels where the team's members post, react or are members, and the ones Clef gives the team (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#2-channel-folders)). |
@@ -859,9 +860,9 @@ is live.
 To deploy by hand instead: deploys go through the new Cloudflare CLI,
 [`cf`](https://developers.cloudflare.com/cf/), which reads `cloudflare.config.ts` (`--mode
 prod` or `--mode stage` selects the Worker). `cf deploy` and `cf dev` also build the inbox's
-markdown bundle, the knowledge-base editor's and the code highlighter's
-(`src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` and `src/ui-highlight.bundle.js`, not
-committed; `npm run build` by hand). The images of the agents' computers on the SLICC kernel
+markdown bundle, the knowledge-base editor's, the code highlighter's and the stack drawing's
+(`src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js`, `src/ui-highlight.bundle.js` and
+`src/ui-fmc.bundle.js`, not committed; `npm run build` by hand). The images of the agents' computers on the SLICC kernel
 are not part of the Worker: after the first deploy, and whenever
 [scripts/computer-images.mjs](scripts/computer-images.mjs) or a package it uses changes,
 `npm run computer:images -- --mode prod` uploads what is new to the `IMAGES` bucket.

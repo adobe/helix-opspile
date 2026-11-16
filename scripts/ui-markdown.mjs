@@ -17,7 +17,9 @@
  * src/ui-editor.js and CodeMirror, the knowledge-base editor's text field, the same way;
  * src/ui-highlight.bundle.js, src/ui-highlight.js and @pierre/highlights as an ES module, which
  * the Worker serves at /inbox/highlight.js (with its hash, `etag`), for the inbox to import
- * with the first code block it shows; and src/ui-spectrum.bundle.js, Spectrum 2's design
+ * with the first code block it shows; src/ui-fmc.bundle.js, src/ui-fmc.js with Mermaid and ELK
+ * (flowcharts only, `flowchartOnly`), which the Worker serves at /inbox/fmc.js for the inbox to
+ * import when it first draws a stack; and src/ui-spectrum.bundle.js, Spectrum 2's design
  * tokens (@spectrum-css/tokens) by name, of which src/page.js puts those ui/spectrum*.css use
  * into the pages under /spectrum.
  *
@@ -28,6 +30,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -53,10 +56,52 @@ export const BUNDLES = [{
   name: 'ui-highlight',
   credits: `Includes @pierre/highlights, (c) The Pierre Computer Company, Apache License 2.0:
  * https://diffs.com/highlights`,
+}, {
+  name: 'ui-fmc',
+  credits: `Includes Mermaid, (c) Knut Sveidqvist and others, MIT License: https://mermaid.js.org;
+ * and ELK (elkjs), (c) Kiel University and others, Eclipse Public License 2.0:
+ * https://github.com/kieler/elkjs`,
+  // eslint-disable-next-line no-use-before-define -- defined below, called at build time
+  plugins: () => [flowchartOnly()],
 }];
 
+const MERMAID = join(root, 'node_modules', 'mermaid', 'dist');
+/** Mermaid's chunks that a flowchart drawn with ELK needs, of those it imports when asked. */
+const KEEP = /^(flowDiagram|elk|sizeCapture)-/;
+
+/**
+ * Mermaid as src/ui-fmc.js uses it: flowcharts laid out with ELK. Mermaid imports every other
+ * diagram, layout and KaTeX when a text asks for it; here those imports fail instead, which
+ * keeps the bundle to Mermaid's core, its flowchart and ELK (some 2.4 MB rather than 5.4 MB).
+ * `mermaid-elk-render` is Mermaid's ELK layout, which src/ui-fmc.js wraps.
+ */
+export function flowchartOnly() {
+  return {
+    name: 'mermaid-flowchart-only',
+    setup(b) {
+      b.onResolve({ filter: /^mermaid-elk-render$/ }, () => {
+        const dir = join(MERMAID, 'chunks', 'mermaid.core');
+        const file = readdirSync(dir).find((f) => /^elk-[A-Z0-9]+\.mjs$/.test(f));
+        if (!file) {
+          throw new Error(`no ELK layout in ${dir}`);
+        }
+        return { path: join(dir, file) };
+      });
+      b.onLoad({ filter: /[\\/]mermaid[\\/]dist[\\/].*\.mjs$/ }, async (args) => {
+        const code = await readFile(args.path, 'utf8');
+        return {
+          loader: 'js',
+          contents: code.replace(/import\("(?:\.\/chunks\/mermaid\.core\/|\.\/)?([^"/]+?)(?:\.mjs)?"\)/g, (m, name) => (KEEP.test(name) ? m : 'Promise.reject(new Error("not in this build"))')),
+        };
+      });
+    },
+  };
+}
+
 /** A bundle, as the module that src/page.js imports (the markdown renderer by default). */
-export async function bundle({ name, global, credits } = BUNDLES[0]) {
+export async function bundle({
+  name, global, credits, plugins,
+} = BUNDLES[0]) {
   const result = await build({
     entryPoints: [join(root, 'src', `${name}.js`)],
     bundle: true,
@@ -67,6 +112,7 @@ export async function bundle({ name, global, credits } = BUNDLES[0]) {
     legalComments: 'none',
     write: false,
     logLevel: 'silent',
+    plugins: plugins ? plugins() : [],
   });
   // In an inline <script>, `</script` would end it.
   const code = result.outputFiles[0].text.trim().replace(/<\/(script)/gi, '<\\/$1');

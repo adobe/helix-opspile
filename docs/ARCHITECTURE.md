@@ -449,18 +449,56 @@ prompt injection cannot change what later agents are told.
 type `Tech Stack`, src/stack.js): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
 name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
-`| From | To | What |` between parts by name, then any notes. The tables are read and written
+`| From | To | What |` between parts by name, then any notes. Two more columns are optional,
+and written only once a row has one: a part's Kind (agent, the default; storage, channel,
+person or external) and Group (the parts of a layer that belong together), and a flow's Kind
+(flow, the default; request, or read, write or modify access to a storage), so every file
+written before them reads and writes the same. The tables are read and written
 through a markdown tree (src/mdast.js). The thread agents keep it with `draw_stack`, which
 writes the whole drawing from parts and flows (they read it first and give its hash as `base`;
 its other frontmatter, such as `sources`, and its notes stay), and people edit it in the editor
 like any concept. A write of `stack.md` that cannot be drawn (no parts table, an unknown layer,
-a flow between parts that are not there, more than 40 parts or 60 flows) is refused whoever
-writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
-it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
-the knowledge base; the inbox draws it (ui/stack.js): each layer a row of its parts, the flows
-as arrows, a part under the pointer lighting its flows and naming them, and the technologies
-Clef saw in the customer's channels that it does not draw listed under it. Without one, the
-inbox draws what Clef saw, by layer.
+kind of part or kind of flow, a flow between parts that are not there, more than 40 parts or
+60 flows) is refused whoever writes it (`checkConcept`), so the inbox can always draw it.
+`GET /api/kb/stack?org=` answers it parsed, by layer, with who wrote it and when (its
+`generated` stamp), for whoever may read the knowledge base.
+
+The inbox draws it as an FMC block diagram (the Fundamental Modeling Concepts'
+[notation](https://www.fmc-modeling.org/notation_reference), laid out as their
+[visualization guidelines](https://www.fmc-modeling.org/visualization_guidelines) have it):
+src/fmc.js makes the drawing a diagram and writes it as a Mermaid flowchart, which a person can
+paste into GitHub ("Copy as Mermaid"), and src/ui-fmc.js draws that with Mermaid and its ELK
+layout (the Worker serves it at `/inbox/fmc.js`, some 700 KB compressed, which ui/stack.js
+imports when it first draws a stack; without it, the parts are listed by layer). Each layer is a
+grey area, top to bottom in the order of `LAYERS`; a group of parts an area in it; the visitors
+and the people on top, asking the parts in front. Parts are agents (rectangles) or storages
+(rounded); a flow between agents runs through a channel (a small circle, R and an arrow for a
+request), one to a storage is an access (an arrow, or FMC's pair of arcs to modify it). How the
+guidelines are kept, and where they give way to each other:
+
+- Crossings: ELK's layered layout minimizes them (layer sweeps, thorough); the layers' order
+  wins over fewer crossings, since the reading order is the drawing's point. A flow from a lower
+  layer up into a higher one is laid out downwards, arrow and all, so it does not reorder them.
+- Edges: orthogonal, with rounded corners; edges into the same side of a node merged into edge
+  trees; ELK keeps them apart from each other and from nodes. Their length is the gap between
+  layers, the same everywhere; a channel is a node of its own between them, which makes the
+  drawing taller but keeps every circle on its edge.
+- Nodes: sized by importance, never by their label: the parts with the most flows (three or
+  more, and three quarters of the most any part has) are larger, all others the same size; a
+  label that does not fit wraps, and the nodes of its size and kind all grow with it, so they
+  stay alike. Nodes are not enlarged to avoid a crossing: that would say they matter more.
+- Lines: nodes twice as thick as edges (Spectrum 2's border widths), labels horizontal in the
+  page's font, code in the code font; the only colors are the text's, the background's and two
+  greys for areas (darker as they nest), and the accent for a lit part and its flows.
+- Arrangement: users on top, many above few (client/server, n-tier: the layers' order), left
+  to right only where the diagram says so (a drawing of a stack has no such flow).
+- Enumeration and groups: a part of many is a stack of the same; a group of parts is framed.
+
+A part under the pointer or the focus lights its flows, and its note and its flows are named
+under the drawing. The technologies Clef saw in the customer's channels that the drawing does
+not have are listed under it. Without a drawing, the inbox draws what Clef saw, by layer, each
+layer under the one above. The renderer's gallery, the guidelines' figures beside its drawings
+of them, is `/__dev/fmc` in `npm run ui:dev` (scripts/dev-ui-fmc.mjs).
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
@@ -1605,7 +1643,7 @@ written by people outside its control.
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
-| `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
+| `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer (what each is, and its group) and the flows between them (how each goes). One that exists is drawn again only from its `base` |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone
