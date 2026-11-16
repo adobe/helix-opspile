@@ -434,15 +434,26 @@ export function slackBlocksToMarkdown(blocks, names = {}) {
   return md || null;
 }
 
-/** The ids of the users a message's blocks mention. */
+/**
+ * The ids of the users a message's blocks mention: rich text's `user` elements, and `<@…>` in
+ * the mrkdwn of text objects (sections, fields, context), anywhere in the blocks (tables too).
+ */
 export function blockUsers(blocks) {
   const ids = new Set();
-  const walk = (e) => {
-    if (e && e.type === 'user' && e.user_id) {
-      ids.add(e.user_id);
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      for (const [, id] of v.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)) {
+        ids.add(id);
+      }
+    } else if (Array.isArray(v)) {
+      v.forEach(walk);
+    } else if (v && typeof v === 'object') {
+      if (v.type === 'user' && v.user_id) {
+        ids.add(v.user_id);
+      }
+      Object.values(v).forEach(walk);
     }
-    (e && Array.isArray(e.elements) ? e.elements : []).forEach(walk);
   };
-  (Array.isArray(blocks) ? blocks : []).forEach(walk);
+  walk(Array.isArray(blocks) ? blocks : []);
   return [...ids];
 }

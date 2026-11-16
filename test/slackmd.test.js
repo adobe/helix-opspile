@@ -158,6 +158,16 @@ describe('slackBlocksToMarkdown', () => {
     );
   });
 
+  it('finds the users the mrkdwn of apps\' blocks mentions, for their names', () => {
+    const blocks = [
+      { type: 'section', text: { type: 'mrkdwn', text: 'Assigned to <@U1>' }, fields: [{ type: 'mrkdwn', text: 'cc <@U2|bo>' }] },
+      { type: 'context', elements: [{ type: 'mrkdwn', text: 'by <@W3>' }] },
+      { type: 'table', rows: [[{ type: 'raw_text', text: 'x' }, { type: 'rich_text', elements: [section({ type: 'user', user_id: 'U4' })] }]] },
+    ];
+    assert.deepEqual(blockUsers(blocks), ['U1', 'U2', 'W3', 'U4']);
+    assert.match(slackBlocksToMarkdown(blocks, { user }), /^Assigned to @Ada\n\ncc @bo/);
+  });
+
   it('shows nothing for blocks that show nothing, so the text is read', () => {
     assert.equal(slackBlocksToMarkdown([{ type: 'actions', elements: [] }]), null);
     assert.equal(slackBlocksToMarkdown([]), null);

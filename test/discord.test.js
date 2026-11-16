@@ -204,6 +204,14 @@ describe('discordToMarkdown', () => {
     );
   });
 
+  it('leaves `>>>` in a code block alone', () => {
+    const src = 'run:\n```python\n>>> print("hello")\nhello\n```\n>>> and quote\nthis';
+    assert.equal(
+      discordToMarkdown(src),
+      'run:\n\n```python\n>>> print("hello")\nhello\n```\n\n> and quote\n> this',
+    );
+  });
+
   it('keeps as text what Discord shows as text', () => {
     assert.equal(
       discordToMarkdown('a\n---\n| x | y |\n|---|---|\n<b>hi</b> &amp; ![i](https://x.example/i.png)'),

@@ -46,10 +46,24 @@ const NOT_DISCORD = [
 const HOLD = '\uE010';
 const HELD = /\uE010(\d+)\uE010/g;
 
-/** `>>> ` quotes the line it starts and every line after it. */
+/** `>>> ` quotes the line it starts and every line after it; in a code block it is code. */
 function quoteRest(src) {
   const lines = src.split('\n');
-  const at = lines.findIndex((l) => /^>>> /.test(l));
+  let fence = null;
+  const at = lines.findIndex((l) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(l);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
+        fence = null;
+      }
+      return false;
+    }
+    if (f) {
+      [, fence] = f;
+      return false;
+    }
+    return /^>>> /.test(l);
+  });
   return at < 0 ? src : [
     ...lines.slice(0, at),
     ...lines.slice(at).map((l, i) => `> ${i ? l : l.slice(4)}`),
