@@ -19,7 +19,7 @@ import { parse } from '../src/channels.js';
 import {
   discordKey, newer, snowflakeAt, snowflakeMs,
 } from '../src/discord.js';
-import { discordToMarkdown } from '../src/markdown.js';
+import { discordToMarkdown } from '../src/discordmd.js';
 import { discordEmbeds, normalizeDiscord } from '../src/normalize.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -157,10 +157,10 @@ describe('normalizeDiscord', () => {
         }, { type: 'link', title: 'a preview' }],
       }),
     });
-    assert.match(op.message.text, /\*\*\[v1\.2\.3\]\(https:\/\/example\.com\/r\)\*\*\n\nFixes\n\n\*\*Repo:\*\* acme\/site/);
-    assert.ok(!op.message.text.includes('a preview'));
-    assert.match(op.message.text, /!\[shot\.png\]\(https:\/\/cdn\.discordapp\.com\/attachments\/1\/2\/shot\.png\?ex=1 "640x480"\)/);
-    assert.match(op.message.text, /- \[log\.txt\]/);
+    assert.match(op.message.after, /\*\*\[v1\.2\.3\]\(https:\/\/example\.com\/r\)\*\*\n\nFixes\n\n\*\*Repo:\*\* acme\/site/);
+    assert.ok(!op.message.after.includes('a preview'));
+    assert.match(op.message.after, /!\[shot\.png\]\(https:\/\/cdn\.discordapp\.com\/attachments\/1\/2\/shot\.png\?ex=1 "640x480"\)/);
+    assert.match(op.message.after, /- \[log\.txt\]/);
     assert.equal(op.message.authorRef.bot, true);
   });
 
@@ -195,6 +195,30 @@ describe('discordToMarkdown', () => {
     });
     assert.equal(out, 'Hi @Ada and @Cy, ask @mods in #help-desk :party: at 2026-10-22 00:10 UTC\nsmall\n`<@1>`');
     assert.deepEqual(discordEmbeds([]), '');
+  });
+
+  it('reads Discord\'s markdown: no underline, `>>>` quotes the rest, quotes end with their lines', () => {
+    assert.equal(
+      discordToMarkdown('**bold** __underlined__ *it* ~~gone~~ [docs](https://x.example/a_b)\n> quote\nreply\n>>> rest\nof it'),
+      '**bold** underlined *it* ~~gone~~ [docs](https://x.example/a_b)\n\n> quote\n\nreply\n\n> rest\n> of it',
+    );
+  });
+
+  it('leaves `>>>` in a code block alone', () => {
+    const src = 'run:\n```python\n>>> print("hello")\nhello\n```\n>>> and quote\nthis';
+    assert.equal(
+      discordToMarkdown(src),
+      'run:\n\n```python\n>>> print("hello")\nhello\n```\n\n> and quote\n> this',
+    );
+  });
+
+  it('keeps as text what Discord shows as text', () => {
+    assert.equal(
+      discordToMarkdown('a\n---\n| x | y |\n|---|---|\n<b>hi</b> &amp; ![i](https://x.example/i.png)'),
+      'a\n\\---\n\\| x | y |\n\\|---|---|\n\\<b>hi\\</b> \\&amp; \\![i](https://x.example/i.png)',
+    );
+    // A name is text, whatever is in it.
+    assert.equal(discordToMarkdown('<@1> said', { user: () => '*star*' }), '@\\*star\\* said');
   });
 });
 

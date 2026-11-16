@@ -69,6 +69,11 @@ code and docs, is the decision model that labels threads and channels.
 - `scripts/dev-ui-fixtures.mjs` is the fake data of `npm run ui:dev`. Add the case a UI change
   is about, so the preview (and its screenshot) shows it.
 
+- Message bodies become markdown through a syntax tree, never by regular expressions on
+  markdown: `src/html.js` (Teams), `src/slackmd.js` (Slack blocks and mrkdwn) and
+  `src/discordmd.js` build mdast, and `src/mdast.js` writes it. A platform's quirk goes into its
+  module's tree; what every platform needs (spacing around bold, link form) into `src/mdast.js`.
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.

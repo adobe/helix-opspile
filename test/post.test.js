@@ -19,7 +19,7 @@ import {
   mentionable, post,
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
-import { htmlToMarkdown } from '../src/markdown.js';
+import { htmlToMarkdown } from '../src/html.js';
 import { suggestMentions } from '../src/mention-match.js';
 import { d1 } from './d1.js';
 

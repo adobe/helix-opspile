@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import {
   channelPath, FORMAT, merge, parse, render,
 } from '../src/channels.js';
-import { htmlToMarkdown } from '../src/markdown.js';
+import { htmlToMarkdown } from '../src/html.js';
 import {
   durationText, normalize, slackLinkIn, slackVersion, teamsEventText, teamsEventUsers,
 } from '../src/normalize.js';

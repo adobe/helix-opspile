@@ -38,7 +38,7 @@ import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
-import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
+import { CHANNEL_REF, QUOTE_TITLE, unlazy } from './markdown.js';
 import { slackMessageKey } from './slackurl.js';
 import { channelUrlKey } from './channelurl.js';
 
@@ -158,28 +158,6 @@ const repair = (src) => src.replace(
   /\]\((https?:\/\/[^()"\n]*?\s[^()"\n]*?)\)/g,
   (_, url) => `](${url.trim().replace(/\s/g, '%20')})`,
 );
-
-/**
- * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
- * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
- */
-const unlazy = (src) => {
-  let fence = null;
-  let quoted = false;
-  return src.split('\n').flatMap((line) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
-        fence = null;
-      }
-      return [line];
-    }
-    const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
-    quoted = /^ {0,3}>/.test(line);
-    fence = f && !quoted ? f[1] : null;
-    return out;
-  }).join('\n');
-};
 
 /** Markdown to HTML, before anything of the page's: `br` for each line break. */
 const toHtml = (src, br) => micromark(unlazy(repair(src)), OPTIONS)

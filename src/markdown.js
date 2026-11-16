@@ -11,8 +11,9 @@
  */
 
 /**
- * Message bodies to markdown: Slack mrkdwn and Teams HTML. Both converters are small and
- * conservative; anything they do not understand is kept as text.
+ * What the converters of message bodies to markdown share (Teams HTML is src/html.js, Slack
+ * src/slackmd.js, Discord src/discordmd.js; src/mdast.js writes their trees), quotes, and
+ * markdown to Slack mrkdwn.
  */
 
 const ENTITIES = {
@@ -31,7 +32,8 @@ export function decodeEntities(s) {
 
 /**
  * A URL as a markdown link destination. CommonMark ends a destination at a space or an
- * unbalanced parenthesis, and htmlToMarkdown would strip `<…>`: those are percent-encoded.
+ * unbalanced parenthesis, and what reads links in messages takes them without `<…>`: those
+ * are percent-encoded.
  */
 export function mdUrl(url) {
   const s = String(url || '');
@@ -70,6 +72,28 @@ export const QUOTE_TITLE = 'Quoted message';
 
 /** A quote's first line: `> [author](link "Quoted message, <ISO time>")`. */
 export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:, ([^"\n]*))?"\)[ \t]*$/;
+
+/**
+ * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
+ * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
+ */
+export const unlazy = (src) => {
+  let fence = null;
+  let quoted = false;
+  return src.split('\n').flatMap((line) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
+        fence = null;
+      }
+      return [line];
+    }
+    const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
+    quoted = /^ {0,3}>/.test(line);
+    fence = f && !quoted ? f[1] : null;
+    return out;
+  }).join('\n');
+};
 
 /**
  * A message that a message quotes (Slack: one forwarded, or the preview under a link to it), as
@@ -123,194 +147,6 @@ export function quotesAsText(body) {
     `> ${head[1].replace(/\\(.)/g, '$1')} wrote:`,
     ...rest.filter((l, k) => k > 0 || l.trim() !== '>'),
   ]);
-}
-
-/**
- * Slack mrkdwn to markdown.
- *
- * @param {string} text
- * @param {(id: string) => string|undefined} userName resolves `<@U…>` mentions
- */
-/**
- * Slack's markup inside code: Slack links URLs and mentions in `text` even within backticks,
- * but shows what the person typed, so code keeps the label (or the bare URL, or @name).
- */
-function unlinkCode(code, userName) {
-  return code
-    .replace(/<((?:https?|mailto):[^|>\s]+)(?:\|([^>]*))?>/g, (_, url, label) => label || url)
-    .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`);
-}
-
-export function slackToMarkdown(text, userName = () => undefined) {
-  if (!text) {
-    return '';
-  }
-  const blocks = String(text).split(/(```[\s\S]*?```)/);
-  return blocks.map((part, i) => {
-    if (i % 2 === 1) {
-      const code = part.slice(3, -3).replace(/^\n|\n$/g, '');
-      return `\n\`\`\`\n${decodeEntities(unlinkCode(code, userName))}\n\`\`\`\n`;
-    }
-    return part
-      .split(/(`[^`\n]+`)/)
-      .map((seg, j) => {
-        if (j % 2 === 1) {
-          return decodeEntities(unlinkCode(seg, userName));
-        }
-        return seg
-          .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`)
-          .replace(/<#([CG][A-Z0-9]+)(?:\|([^>]*))?>/g, (_, id, label) => `#${label || id}`)
-          .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]+))?>/g, (_, label) => (label || '@group'))
-          .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, '@$1')
-          .replace(/<!date\^\d+\^[^|>]*\|([^>]+)>/g, '$1')
-          .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_, url, label) => mdLink(label, url))
-          .replace(/<((?:https?|mailto):[^>]+)>/g, '<$1>')
-          .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1**$2**')
-          .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, '$1*$2*')
-          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, '$1~~$2~~')
-          .replace(/^&gt;\s?/gm, '> ')
-          .replace(/&(lt|gt|amp);/g, (m) => decodeEntities(m));
-      })
-      .join('');
-  }).join('').trim();
-}
-
-/** A list with no list inside it. */
-const INNER_LIST = /<(ul|ol)(?:\s[^>]*)?>((?:(?!<\/?(?:ul|ol)[\s>])[\s\S])*)<\/\1>/gi;
-
-/** One list, in a line each item: what an item holds on further lines is indented under it. */
-function listToMarkdown(tag, items) {
-  let n = 0;
-  return `\n\n${items.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => {
-    n += 1;
-    const marker = tag.toLowerCase() === 'ol' ? `${n}. ` : '- ';
-    const text = t.trim().replace(/\n+(?=- |\d+\. )/g, '\n').replace(/\n/g, `\n${' '.repeat(marker.length)}`);
-    return `${marker}${text}\n`;
-  })}\n`;
-}
-
-/** HTML lists to markdown, the innermost first, so a list in an item stays in the item. */
-function listsToMarkdown(html) {
-  let before;
-  let s = html;
-  do {
-    before = s;
-    s = s.replace(INNER_LIST, (_, tag, items) => listToMarkdown(tag, items));
-  } while (s !== before);
-  return s;
-}
-
-const TABLE_RULE = {
-  left: ':---', right: '---:', center: ':---:',
-};
-
-/** An HTML table to markdown: its first row is the header, each cell on one line. */
-function tableToMarkdown(table) {
-  const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
-    .map(([, row]) => [...row.matchAll(/<t[dh]([^>]*)>([\s\S]*?)<\/t[dh]>/gi)]);
-  if (!rows.length || !rows[0].length) {
-    return table;
-  }
-  const line = (cells) => `| ${cells.join(' | ')} |`;
-  const text = (html) => html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ')
-    .trim()
-    .replace(/(?<!\\)\|/g, '\\|');
-  const rule = rows[0].map(([, attrs]) => TABLE_RULE[(/\balign="(\w+)"/i.exec(attrs) || [])[1]] || '---');
-  const [head, ...body] = rows.map((cells) => line(cells.map(([, , cell]) => text(cell))));
-  return `\n\n${[head, line(rule), ...body].join('\n')}\n\n`;
-}
-
-/**
- * Teams message HTML to markdown. Handles the tags Teams produces: paragraphs, breaks,
- * emphasis, links, lists, tables, code, quotes, mentions (`<at>`) and images.
- */
-export function htmlToMarkdown(html) {
-  if (!html) {
-    return '';
-  }
-  let s = String(html).replace(/\r\n?/g, '\n');
-  s = s.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_, code) => {
-    const inner = code.replace(/<\/?code[^>]*>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
-    return `\n\n\`\`\`\n${decodeEntities(inner).replace(/\n+$/, '')}\n\`\`\`\n\n`;
-  });
-  s = s
-    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_, c) => `\`${c.replace(/<[^>]+>/g, '')}\``)
-    .replace(/<at[^>]*>([\s\S]*?)<\/at>/gi, (_, name) => `@${name.replace(/<[^>]+>/g, '')}`)
-    .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
-      const text = label.replace(/<[^>]+>/g, '').trim();
-      // Never `<href>`: the tag stripping below would remove it as if it were a tag.
-      return mdLink(!text || text === href ? href : text, href);
-    })
-    .replace(/<img\s[^>]*>/gi, (tag) => {
-      const attr = (name) => (new RegExp(`\\s${name}="([^"]*)"`, 'i').exec(tag) || [])[1] || '';
-      // Teams gives an image's size as attributes (and in its style).
-      const px = (name) => attr(name) || (new RegExp(`${name}:\\s*(\\d+)px`, 'i').exec(attr('style')) || [])[1];
-      return mdLink(attr('alt') || 'image', attr('src'), true, sizeTitle(px('width'), px('height')));
-    })
-    .replace(/<(b|strong)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '**$3**')
-    .replace(/<(i|em)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '*$3*')
-    .replace(/<(s|strike|del)(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, '~~$3~~')
-    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, q) => `\n\n${q.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
-      .split('\n')
-      .map((l) => `> ${l}`)
-      .join('\n')}\n\n`)
-    .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, tableToMarkdown)
-    .replace(/<hr\s*\/?>/gi, '\n\n---\n\n');
-  s = listsToMarkdown(s)
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, t) => `- ${t.trim()}\n`)
-    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '');
-  return decodeEntities(s)
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-const pad2 = (n) => String(n).padStart(2, '0');
-
-/** A Discord `<t:…>` timestamp as text: date and time in UTC. */
-function discordTime(seconds, style) {
-  const d = new Date(Number(seconds) * 1000);
-  if (Number.isNaN(d.getTime())) {
-    return seconds;
-  }
-  const date = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-  return /^[dD]$/.test(style || '') ? date : `${date} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
-}
-
-/**
- * Discord message content to markdown. Discord writes markdown already; what is left are its
- * tokens: user, role and channel mentions, custom emoji, timestamps, and `-#` small text.
- * Code keeps what was typed.
- *
- * @param {string} text
- * @param {{ user?: (id: string) => string|undefined, role?: (id: string) => string|undefined,
- *   channel?: (id: string) => string|undefined }} names
- */
-export function discordToMarkdown(text, names = {}) {
-  if (!text) {
-    return '';
-  }
-  const user = names.user || (() => undefined);
-  const role = names.role || (() => undefined);
-  const channel = names.channel || (() => undefined);
-  return String(text).split(/(```[\s\S]*?```|`[^`\n]+`)/).map((part, i) => {
-    if (i % 2 === 1) {
-      return part;
-    }
-    return part
-      .replace(/<@!?(\d+)>/g, (_, id) => `@${user(id) || 'unknown'}`)
-      .replace(/<@&(\d+)>/g, (_, id) => `@${role(id) || 'role'}`)
-      .replace(/<#(\d+)>/g, (_, id) => `#${channel(id) || 'channel'}`)
-      .replace(/<a?:(\w+):\d+>/g, ':$1:')
-      .replace(/<t:(-?\d+)(?::([tTdDfFR]))?>/g, (_, s, style) => discordTime(s, style))
-      .replace(/<\/([\w -]+):\d+>/g, '/$1')
-      .replace(/^-# /gm, '');
-  }).join('')
-    .trim();
 }
 
 // Placeholders while markdownToMrkdwn works: kept spans (code, links), bold markers.
