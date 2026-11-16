@@ -52,7 +52,8 @@ import {
 } from './repos.js';
 import { MAX_SOURCES } from '../sources.js';
 import {
-  checkStack, LAYERS, MAX_FLOWS, MAX_PARTS, parseStack, STACK_PATH, stackFile,
+  checkStack, FLOW_KINDS, LAYERS, MAX_FLOWS, MAX_PARTS, PART_KINDS, parseStack, STACK_PATH,
+  stackFile,
 } from '../stack.js';
 
 /**
@@ -112,7 +113,7 @@ What you do:
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Do it in your first turn when no Adobe staff have answered yet and the thread is more than you can settle with the draft (an incident, an error, a question about how the product works inside), alongside the draft rather than instead of it. Once you know what the thread is really about, pass that to list_experts as \`about\`, in a sentence with the product's own names ("the AI assistant panel of Experience Workspace is missing"): its title and first message often say it vaguely. list_topics shows the topics of the whole inbox and who works on each, for when the list does not convince you. Suggest only someone the evidence backs (similar threads they worked on, a topic they work on, what they know), say it in the reason, and leave it when Adobe staff are handling the thread.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team. When your channel is shared with other ops teams, their knowledge bases (kb-team-<slug>, marked "you can write it" under repositories) are yours to write too: file there what that team's work needs. The other teams' knowledge bases are listed read only: look things up in them, never file into them.
-- Keep the customer's stack drawing current (draw_stack, \`stack.md\` in kb-org): the team opens it from the inbox to see at a glance how the customer's site is put together, from the CDN in front to what serves the pages, where authors write, the code, and the systems behind it, and what flows between them. When a thread or the knowledge base shows a part it lacks or has wrong, draw it again; leave it alone when nothing about the stack changed. It is the one place for the customer's stack: no other concept repeats it.
+- Keep the customer's stack drawing current (draw_stack, \`stack.md\` in kb-org): the team opens it from the inbox to see at a glance how the customer's site is put together, from the CDN in front to what serves the pages, where authors write, the code, and the systems behind it, and what flows between them, drawn as an FMC block diagram (people at the top, then the layers; the agents that do something, the storages that keep it, requests and reads). When a thread or the knowledge base shows a part it lacks or has wrong, draw it again; leave it alone when nothing about the stack changed. It is the one place for the customer's stack: no other concept repeats it.
 - Look things up: the knowledge bases first (the other teams' too, when the thread touches their work), then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
 - Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
@@ -345,12 +346,15 @@ export function opspileExtension(ctx) {
         parts: Type.Array(Type.Object({
           layer: Type.Union(LAYERS.map((l) => Type.Literal(l.id)), { description: LAYERS.map((l) => `${l.id}: ${l.hint}`).join('; ') }),
           name: Type.String({ description: 'As the customer runs it, e.g. Akamai, Edge Delivery, Oracle EBS; once per drawing' }),
+          kind: Type.Optional(Type.Union(PART_KINDS.map((k) => Type.Literal(k)), { description: 'agent (the default): it does something, as a CDN, a site or a job does; storage: it keeps what is written to it, as a repository, a content store or a database does; channel: what passes through, as a queue; person: the people who use it (visitors, authors); external: a system outside the customer\'s site' })),
+          group: Type.Optional(Type.String({ description: 'A name the parts of a layer that belong together share, framed together (e.g. Checkout)' })),
           tech: Type.Optional(Type.String({ description: 'The id of the tech stack\'s technology it is, when one fits (akamai, eds, da, commerce, …)' })),
           note: Type.Optional(Type.String({ description: 'A few words: what it does for them, hosts, repositories (Markdown, one line)' })),
         }), { minItems: 1, maxItems: MAX_PARTS }),
         flows: Type.Optional(Type.Array(Type.Object({
           from: Type.String({ description: 'A part\'s name' }),
           to: Type.String({ description: 'A part\'s name' }),
+          kind: Type.Optional(Type.Union(FLOW_KINDS.map((k) => Type.Literal(k)), { description: 'Leave out when what is named goes from `from` to `to`; read: `from` reads `to` (a storage); write: `from` writes `to`; modify: both; request: `from` asks `to`, which answers (as a CDN asks the site for pages)' })),
           label: Type.Optional(Type.String({ description: 'What goes from one to the other, in a few words: "every page but /checkout", "orders, every 5 minutes"' })),
         }), { maxItems: MAX_FLOWS })),
         notes: Type.Optional(Type.String({ description: 'Markdown after the tables (open questions, what is changing); replaces the notes there are' })),

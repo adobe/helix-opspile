@@ -449,7 +449,11 @@ prompt injection cannot change what later agents are told.
 type `Tech Stack`, src/stack.js): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
 name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
-`| From | To | What |` between parts by name, then any notes. The tables are read and written
+`| From | To | What |` between parts by name, then any notes. Two optional columns say more:
+a part's Kind (an agent, the default, a storage, a channel, a person or an external system)
+and Group (a frame in its layer), and a flow's Kind (by default what is named goes from From to
+To; `read`, `write`, `modify` or `request`); they are written only when a row has one, so a file
+without them reads and writes as before. The tables are read and written
 through a markdown tree (src/mdast.js). The thread agents keep it with `draw_stack`, which
 writes the whole drawing from parts and flows (they read it first and give its hash as `base`;
 its other frontmatter, such as `sources`, and its notes stay), and people edit it in the editor
@@ -457,10 +461,33 @@ like any concept. A write of `stack.md` that cannot be drawn (no parts table, an
 a flow between parts that are not there, more than 40 parts or 60 flows) is refused whoever
 writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
 it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
-the knowledge base; the inbox draws it (ui/stack.js): each layer a row of its parts, the flows
-as arrows, a part under the pointer lighting its flows and naming them, and the technologies
-Clef saw in the customer's channels that it does not draw listed under it. Without one, the
-inbox draws what Clef saw, by layer.
+the knowledge base; the inbox draws it (ui/stack.js) as an FMC block diagram, a part under the
+pointer or the focus lighting its flows and naming them, and the technologies Clef saw in the
+customer's channels that it does not draw listed under it. Without one, the inbox draws what
+Clef saw, by layer.
+
+How it is drawn: src/fmcstack.js makes the drawing DOT, Graphviz (`@viz-js/viz`, in the browser)
+places it, and src/fmc.js draws it after the
+[FMC visualization guidelines](https://www.fmc-modeling.org/visualization_guidelines). The layers
+are rows in their order, top to bottom (the n-tier layout), each a grey frame with its name in a
+column at its left, as wide as the others; people above them, and then the layers are in a frame
+of their own, the system of interest, with external parts beside it (the standard arrangement).
+Agents are rectangles, storages rounded, people human agents; a flow between two agents passes
+a channel, labeled with what passes, and a request's channel has the R, pointing from the part
+that asks; a flow to or from a storage is its read, write or modify access. Edges run across and
+down only, with rounded corners, each on a track of its own in the corridor between two rows;
+the tracks are ordered to cross as few edges as they can and spread evenly, and a corridor that
+is too narrow (or narrower than the others) gets the room it lacks there, not every corridor
+more. Edges that leave or enter a node's side the same way share a port, an edge tree with one
+arrowhead; an edge to a channel keeps a port of its own. Node lines are twice as thick as edges.
+Where the guidelines pull apart, the drawing decides so: a node's size says how important it is
+(the parts with the most flows are larger, two sizes only), never how long its label is (it is
+wrapped, then cut) nor how to dodge an edge; the layers' order wins over fewer crossings, which
+only the order within a row may reduce; flows within a row run left to right, the rows top to
+bottom; the corridors are as wide as each other unless one needs more, so edges are as far from
+their nodes everywhere, at the cost of some being longer than they need. The renderer takes any
+FMC block diagram as DOT (`fmc` on the nodes and clusters); `npm run ui:dev` shows the
+guidelines' figures drawn by it at `/__dev/fmc`.
 
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`

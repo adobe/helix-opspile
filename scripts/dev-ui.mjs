@@ -72,7 +72,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
-  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -2194,6 +2194,14 @@ const server = createServer(async (req, res) => {
       res.end(await uiPage('inbox.html'));
       return;
     }
+    // The FMC gallery: the guidelines' figures and the stacks, as the inbox draws them.
+    if (url.pathname === '/__dev/fmc') {
+      const { galleryPage } = await import(`./fmc-gallery.mjs?${Date.now()}`);
+      const html = galleryPage(servedPage, await scripts());
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(html);
+      return;
+    }
     // The Spectrum 2 preview's addresses, as the Worker redirects them.
     const preview = fromPreview(url.pathname, url.search);
     if (preview) {
@@ -2207,7 +2215,7 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

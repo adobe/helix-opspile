@@ -29,6 +29,14 @@
  *   | --- | --- | --- |
  *   | Akamai | Edge Delivery | every page but /checkout |
  *
+ * Optional columns say more, for the inbox to draw it as an FMC block diagram (src/fmcstack.js):
+ * a part's Kind (`PART_KINDS`: an agent, the default, does something; a storage keeps what is
+ * written to it; a person uses the site; an external part is outside the customer's site) and
+ * Group (a frame around the parts of its layer that have the same), and a flow's Kind
+ * (`FLOW_KINDS`: by default what is named goes from From to To; `read` is From reading To,
+ * `write` From writing To, `modify` both, `request` From asking To, which answers). A file
+ * without them reads as it always did.
+ *
  * The tables are read and written through a markdown tree (src/mdast.js), never by regular
  * expressions. A write of `stack.md` that is not a drawing is refused (src/agent/okf.js
  * `checkConcept`), whoever writes it, so the inbox can always draw it (GET /api/kb/stack,
@@ -55,6 +63,11 @@ export const LAYERS = [
   { id: 'other', name: 'Other', hint: 'anything else the team works with' },
 ];
 export const LAYER_IDS = LAYERS.map((l) => l.id);
+
+/** What a part is (FMC: agents, storages and channels; people and the world outside). */
+export const PART_KINDS = ['agent', 'storage', 'channel', 'person', 'external'];
+/** What a flow is: data from From to To (empty), or one of these. */
+export const FLOW_KINDS = ['read', 'write', 'modify', 'request'];
 
 export const MAX_PARTS = 40;
 export const MAX_FLOWS = 60;
@@ -157,6 +170,8 @@ export function parseStack(text) {
     const name = textOf(c[p.part]).trim();
     const tech = p.tech === undefined ? '' : textOf(c[p.tech]).trim().toLowerCase();
     const note = p.note === undefined || !c[p.note] ? '' : cellMarkdown(c[p.note]);
+    const kind = p.kind === undefined ? '' : key(textOf(c[p.kind]));
+    const group = p.group === undefined ? '' : textOf(c[p.group]).trim();
     if (!layer) {
       return { error: `${line}: the layer is one of ${LAYERS.map((l) => l.name).join(', ')}` };
     }
@@ -172,9 +187,20 @@ export function parseStack(text) {
     if (note.length > MAX_NOTE) {
       return { error: `${line}: a note has at most ${MAX_NOTE} characters` };
     }
+    if (kind && !PART_KINDS.includes(kind)) {
+      return { error: `${line}: Kind is one of ${PART_KINDS.join(', ')}, or empty (an agent)` };
+    }
+    if (group.length > MAX_NAME) {
+      return { error: `${line}: a group has a name of at most ${MAX_NAME} characters` };
+    }
     names.set(key(name), name);
     parts.push({
-      layer: layer.id, name, tech: tech || null, note,
+      layer: layer.id,
+      name,
+      tech: tech || null,
+      note,
+      ...(kind && kind !== 'agent' ? { kind } : {}),
+      ...(group ? { group } : {}),
     });
   }
   if (!parts.length) {
@@ -195,6 +221,7 @@ export function parseStack(text) {
       const from = names.get(key(textOf(c[f.from])));
       const to = names.get(key(textOf(c[f.to])));
       const label = f.what === undefined || !c[f.what] ? '' : cellMarkdown(c[f.what]);
+      const kind = f.kind === undefined ? '' : key(textOf(c[f.kind]));
       if (!from || !to) {
         return { error: `${line}: From and To are the names of parts of the parts table` };
       }
@@ -204,7 +231,12 @@ export function parseStack(text) {
       if (label.length > MAX_NOTE) {
         return { error: `${line}: What has at most ${MAX_NOTE} characters` };
       }
-      flows.push({ from, to, label });
+      if (kind && !FLOW_KINDS.includes(kind)) {
+        return { error: `${line}: Kind is one of ${FLOW_KINDS.join(', ')}, or empty (what is named goes from From to To)` };
+      }
+      flows.push({
+        from, to, label, ...(kind ? { kind } : {}),
+      });
     }
     if (flows.length > MAX_FLOWS) {
       return { error: `a drawing has at most ${MAX_FLOWS} flows` };
@@ -224,7 +256,8 @@ export function checkStack(text) {
 
 /**
  * A drawing as the body of `stack.md`: the summary, the parts and flows tables, the notes. Parts
- * are `{ layer, name, tech?, note? }` (`layer` an id or a name), flows `{ from, to, label? }`.
+ * are `{ layer, name, kind?, group?, tech?, note? }` (`layer` an id or a name), flows
+ * `{ from, to, kind?, label? }`. The Kind and Group columns are written only when a row has one.
  */
 export function stackBody({
   summary = '', parts = [], flows = [], notes = '',
@@ -232,19 +265,30 @@ export function stackBody({
   const order = (x) => LAYER_IDS.indexOf((layerOf(x.layer) || {}).id);
   const sorted = parts.map((x, i) => ({ ...x, i }))
     .sort((a, b) => order(a) - order(b) || a.i - b.i);
+  const kindOf = (x) => {
+    const k = key(x.kind);
+    return k === 'agent' ? '' : k;
+  };
+  const kinds = sorted.some((x) => kindOf(x));
+  const groups = sorted.some((x) => String(x.group || '').trim());
+  const partCols = ['Layer', 'Part', ...(kinds ? ['Kind'] : []), ...(groups ? ['Group'] : []), 'Tech', 'Note'];
   const partsTable = {
     type: 'table',
-    align: [null, null, null, null],
+    align: partCols.map(() => null),
     children: [
-      row(['Layer', 'Part', 'Tech', 'Note'].map(textCell)),
+      row(partCols.map(textCell)),
       ...sorted.map((x) => row([
         textCell((layerOf(x.layer) || { name: x.layer }).name),
         textCell(String(x.name || '').trim()),
+        ...(kinds ? [textCell(kindOf(x))] : []),
+        ...(groups ? [textCell(String(x.group || '').trim())] : []),
         textCell(String(x.tech || '').trim()),
         cell(inline(x.note)),
       ])),
     ],
   };
+  const flowKinds = flows.some((x) => key(x.kind));
+  const flowCols = ['From', 'To', ...(flowKinds ? ['Kind'] : []), 'What'];
   const children = [
     ...readMarkdown(String(summary || '').trim()).children,
     { type: 'heading', depth: 2, children: [{ type: 'text', value: 'Parts' }] },
@@ -255,12 +299,13 @@ export function stackBody({
       { type: 'heading', depth: 2, children: [{ type: 'text', value: 'Flows' }] },
       {
         type: 'table',
-        align: [null, null, null],
+        align: flowCols.map(() => null),
         children: [
-          row(['From', 'To', 'What'].map(textCell)),
+          row(flowCols.map(textCell)),
           ...flows.map((x) => row([
             textCell(String(x.from || '').trim()),
             textCell(String(x.to || '').trim()),
+            ...(flowKinds ? [textCell(key(x.kind))] : []),
             cell(inline(x.label)),
           ])),
         ],

@@ -1451,7 +1451,8 @@ function groupHtml(x) {
  * technology in its layer (`vocab.layers`, `vocab.stack`, src/stack.js). Under the customer's
  * heading, the likeliest technology of each layer, top to bottom, is its stack at a glance;
  * a click on it shows the stack's drawing from the customer's knowledge base (GET
- * /api/kb/stack, ui/stack.js), or, without one, what Clef saw, by layer.
+ * /api/kb/stack, ui/stack.js, as an FMC block diagram), or, without one, what Clef saw, by
+ * layer.
  */
 /** The customer's technologies, likeliest first: `[{ tech, name, p, layer }]`. */
 function orgStack(org) {
@@ -1571,7 +1572,10 @@ async function showStack(org, anchor) {
     el.classList.toggle('guess', !res?.drawing);
     placeStack(el, anchor);
     if (stackPop.stop) stackPop.stop();
-    stackPop.stop = Stack.wire(el, view, { md: (s) => md(s) });
+    // The diagram replaces the list of parts once the renderer has drawn it (ui/stack.js).
+    stackPop.stop = Stack.wire(el, view, {
+      md: (s) => md(s), detected, title: name, drawn: () => { if (!el.hidden) placeStack(el, anchor); },
+    });
   };
   const asked = stackOf(org);
   const pending = stackPop.asked.get(org);

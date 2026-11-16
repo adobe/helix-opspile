@@ -1407,6 +1407,24 @@ describe('seeds with a chosen knowledge base', () => {
       await h.run(h.call('draw_stack', { ...drawing, parts: more, base: hash }));
       assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 1 flows/);
       assert.match(srv.show('kb-org-acme', 'stack.md'), /\| Content \| Document Authoring \| da \| +\|/);
+
+      // What the parts and flows are, for the FMC diagram: a Kind column each, and groups.
+      await seed(h.agent, { by: 'Ada', text: 'Edge Delivery reads the pages from Document Authoring.' });
+      await h.run(h.call('git_read', { repo: 'kb-org', path: 'stack.md' }));
+      const again = /^hash: (\S+)$/m.exec(h.results.at(-1))[1];
+      await seed(h.agent, { by: 'Ada', text: 'Akamai asks Edge Delivery for every page.' });
+      await h.run(h.call('draw_stack', {
+        ...drawing,
+        parts: [...more.slice(0, 2), {
+          layer: 'content', name: 'Document Authoring', tech: 'da', kind: 'storage', group: 'Authoring',
+        }],
+        flows: [{ from: 'Akamai', to: 'Edge Delivery', kind: 'request' }, { from: 'Edge Delivery', to: 'Document Authoring', kind: 'read' }],
+        base: again,
+      }));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 2 flows/);
+      const kinds = srv.show('kb-org-acme', 'stack.md');
+      assert.match(kinds, /\| Content \| Document Authoring \| storage \| Authoring \| da \| +\|/);
+      assert.match(kinds, /\| Akamai \| Edge Delivery \| request \| +\|\n\| Edge Delivery \| Document Authoring \| read \| +\|/);
     } finally {
       await h.close();
       await srv.close();

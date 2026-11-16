@@ -116,6 +116,42 @@ ACME sells on Edge Delivery behind Akamai. Orders go to their ERP.
     assert.equal(layerOf('cdn'), null);
   });
 
+  it('say what kind a part and a flow are, and in which group a part is, when they say', () => {
+    const drawing = {
+      ...DRAWING,
+      parts: [
+        { layer: 'edge', name: 'Visitors', kind: 'person' },
+        ...DRAWING.parts.map((p) => (p.name === 'Document Authoring' ? { ...p, kind: 'Storage', group: 'Authoring' } : p)),
+      ],
+      flows: [
+        ...DRAWING.flows.map((f) => (f.from === 'Akamai' ? { ...f, kind: 'request' } : f)),
+        {
+          from: 'Edge Delivery', to: 'Document Authoring', kind: 'read', label: 'pages',
+        },
+      ],
+    };
+    const file = stackFile(drawing);
+    assert.match(file, /\| Layer \| Part \| Kind \| Group \| Tech \| Note \|\n/);
+    assert.ok(file.includes('| Edge | Visitors | person | | | |\n'));
+    assert.ok(file.includes('| Content | Document Authoring | storage | Authoring | da | |\n'));
+    assert.ok(file.includes('| From | To | Kind | What |\n'));
+    assert.ok(file.includes('| Order sync | Their ERP | | orders |\n'));
+    const read = parseStack(file);
+    const marked = read.parts.filter((p) => p.kind || p.group);
+    assert.deepEqual(marked.map((p) => [p.name, p.kind, p.group]), [
+      ['Visitors', 'person', undefined], ['Document Authoring', 'storage', 'Authoring'],
+    ]);
+    assert.deepEqual(read.flows.map((f) => f.kind || ''), ['request', '', 'read']);
+    assert.equal(stackFile(read), file);
+    // Agents are the default, and say nothing.
+    assert.equal(parseStack(stackFile({ ...DRAWING, parts: DRAWING.parts.map((p) => ({ ...p, kind: 'agent' })) })).parts.some((p) => p.kind), false);
+    assert.doesNotMatch(stackFile(DRAWING), /Kind|Group/);
+    const body = (parts, flows = '') => `## Parts\n\n| Layer | Part | Kind |\n| --- | --- | --- |\n${parts}\n${flows ? `\n## Flows\n\n| From | To | Kind |\n| --- | --- | --- |\n${flows}\n` : ''}`;
+    assert.match(checkStack(body('| Edge | Akamai | cdn |')), /parts, row 1: Kind is one of agent, storage, channel, person, external/);
+    assert.match(checkStack(body('| Edge | A | |\n| Site | B | |', '| A | B | push |')), /flows, row 1: Kind is one of read, write, modify, request/);
+    assert.equal(checkStack(body('| Edge | A | external |\n| Site | B | |', '| A | B | Modify |')), null);
+  });
+
   it('are refused as stack.md when they cannot be drawn, by agents and people alike', () => {
     const bad = '---\ntype: Tech Stack\n---\n\nNo tables.\n';
     assert.match(checkConcept('stack.md', bad), /^not a stack drawing: a stack drawing has a "## Parts" heading/);

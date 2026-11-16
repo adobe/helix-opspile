@@ -11,19 +11,23 @@
  */
 
 /*
- * A customer's stack drawing, as the global `Stack`: its layers top to bottom (src/stack.js
- * LAYERS), each with its parts, and the flows between them as arrows. `html` writes it (the
- * drawing from GET /api/kb/stack, or one made of what Clef saw in the customer's threads when it
- * has none), `wire` draws the arrows once it is on the page and again when it changes size, and
- * shows a part's flows while the pointer or the focus is on it. Everything in it is text the
- * agents or people wrote: written escaped, the notes through the page's Markdown renderer.
+ * A customer's stack drawing, as the global `Stack`: an FMC block diagram of its parts, by
+ * layer, and the flows between them (src/fmcstack.js, src/fmc.js). `html` writes the frame
+ * around it (the drawing from GET /api/kb/stack, or one made of what Clef saw in the customer's
+ * threads when it has none) with the parts as a list by layer, and `wire` draws the diagram in
+ * place of the list once the renderer (/inbox/fmc.js, Graphviz) has loaded, which it imports
+ * the first time; the list stays when it cannot. A part under the pointer or the focus lights
+ * its flows and names them under the drawing. Everything in it is text the agents or people
+ * wrote: written escaped, the notes through the page's Markdown renderer.
  */
 globalThis.Stack = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
-  const NS = 'http://www.w3.org/2000/svg';
   const pct = (p) => `${Math.round(p * 100)}%`;
+  const RENDERER = '/inbox/fmc.js';
+  const RETRY_MS = 60_000;
+  const renderer = { p: null, failedAt: 0 };
 
   /** Markdown on one line, without the paragraph around it. */
   const inline = (md, src) => (src ? md(src).replace(/^\s*<p>([\s\S]*)<\/p>\s*$/, '$1') : '');
@@ -51,7 +55,7 @@ globalThis.Stack = (() => {
     const rest = detected.filter((t) => !drawn.has(t.tech));
     const more = rest.length ? `<div class="stk-more"><span class="stk-mh">Also in their threads</span>${rest.map((t) => `<span class="stk-chip" title="${esc(`${pct(t.p)} sure from their threads`)}">${esc(t.name)}</span>`).join('')}</div>` : '';
     return `<div class="stk">${view.summary ? `<div class="stk-sum">${md(view.summary)}</div>` : ''}`
-      + `<div class="stk-draw"><svg class="stk-flows" aria-hidden="true"></svg>${layers}</div>`
+      + `<div class="stk-draw" aria-busy="true"><div class="stk-svg"></div><div class="stk-rows">${layers}</div></div>`
       + `<div class="stk-cap" aria-live="polite"></div>${more}`
       + `${view.notes ? `<div class="stk-notes">${md(view.notes)}</div>` : ''}</div>`;
   }
@@ -69,95 +73,75 @@ globalThis.Stack = (() => {
     return { summary: '', layers: [...by.values()].filter((l) => l.parts.length), flows: [], notes: '' };
   }
 
-  /** A path from one box to another, both relative to the drawing. */
-  function route(a, b) {
-    const ax = a.left + a.width / 2;
-    const bx = b.left + b.width / 2;
-    if (b.top >= a.bottom - 1) {
-      const dy = Math.max(12, (b.top - a.bottom) / 2);
-      return `M${ax},${a.bottom} C${ax},${a.bottom + dy} ${bx},${b.top - dy} ${bx},${b.top}`;
+  /** The renderer module, imported once; a failed import is tried again a minute later. */
+  function load() {
+    if (!renderer.p && Date.now() - renderer.failedAt > RETRY_MS) {
+      renderer.p = import(RENDERER).catch((e) => {
+        renderer.p = null;
+        renderer.failedAt = Date.now();
+        throw e;
+      });
     }
-    if (a.top >= b.bottom - 1) {
-      const dy = Math.max(12, (a.top - b.bottom) / 2);
-      return `M${ax},${a.top} C${ax},${a.top - dy} ${bx},${b.bottom + dy} ${bx},${b.bottom}`;
-    }
-    // In the same row: an arc over it, from one top to the other.
-    const lift = Math.min(28, 10 + Math.abs(bx - ax) / 8);
-    return `M${ax},${a.top} C${ax},${a.top - lift} ${bx},${b.top - lift} ${bx},${b.top}`;
+    return renderer.p || Promise.reject(new Error('the stack renderer did not load'));
   }
 
   /**
-   * Draws the arrows of `view.flows` in the drawing under `root`, and again whenever it changes
-   * size; a part under the pointer or the focus lights its flows and names them under the
-   * drawing. Returns a function that stops it.
+   * Draws `view` as a diagram in the drawing under `root`, in place of its list of parts, then
+   * calls `drawn`; a part under the pointer or the focus lights its flows and names them under
+   * the drawing. `detected` marks the parts Clef saw, `title` names the system of interest.
+   * Returns a function that stops it.
    */
-  function wire(root, view, { md = esc } = {}) {
+  function wire(root, view, {
+    md = esc, detected = [], title = '', drawn = () => {},
+  } = {}) {
     const draw = root.querySelector('.stk-draw');
-    const svg = root.querySelector('.stk-flows');
     const cap = root.querySelector('.stk-cap');
-    if (!draw || !svg) return () => {};
-    const parts = [...draw.querySelectorAll('.stk-part')];
-    const names = view.layers.flatMap((l) => l.parts.map((p) => p.name));
-    const at = new Map(names.map((name, i) => [name.toLowerCase(), i]));
+    if (!draw) return () => {};
+    const parts = view.layers.flatMap((l) => l.parts);
+    const at = new Map(parts.map((p, i) => [p.name.toLowerCase(), i]));
     const flows = (view.flows || []).map((f) => ({
       ...f, a: at.get(String(f.from).toLowerCase()), b: at.get(String(f.to).toLowerCase()),
-    })).filter((f) => f.a != null && f.b != null);
-    let current = null;
-    let light = () => {};
-    const paint = () => {
-      const box = draw.getBoundingClientRect();
-      const rel = (el) => {
-        const r = el.getBoundingClientRect();
-        return {
-          left: r.left - box.left, top: r.top - box.top, right: r.right - box.left,
-          bottom: r.bottom - box.top, width: r.width, height: r.height,
-        };
-      };
-      svg.setAttribute('width', String(draw.scrollWidth));
-      svg.setAttribute('height', String(draw.scrollHeight));
-      svg.setAttribute('viewBox', `0 0 ${draw.scrollWidth} ${draw.scrollHeight}`);
-      const defs = '<defs><marker id="stk-a" class="stk-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker>'
-        + '<marker id="stk-a-on" class="stk-arrow on" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>';
-      svg.innerHTML = defs;
-      for (const [i, f] of flows.entries()) {
-        const p = document.createElementNS(NS, 'path');
-        p.setAttribute('d', route(rel(parts[f.a]), rel(parts[f.b])));
-        p.setAttribute('data-flow', String(i));
-        svg.append(p);
-      }
-      // Drawn again (it changed size) while a part is lit: its flows stay lit.
-      if (current != null) light(current);
-    };
-    const stack = root.querySelector('.stk') || root;
-    light = (i) => {
-      current = i;
-      const mine = i == null ? [] : flows.filter((f) => f.a === i || f.b === i);
+    }));
+    let stopped = false;
+    load().then((m) => m.drawStack(view, { detected, title })).then(({ svg }) => {
+      if (stopped) return;
+      draw.querySelector('.stk-svg').innerHTML = svg;
+      draw.classList.add('drawn');
+      draw.removeAttribute('aria-busy');
+      drawn();
+    }, () => {
+      if (stopped) return;
+      draw.classList.add('failed');
+      draw.removeAttribute('aria-busy');
+    });
+    const light = (i) => {
+      const mine = i == null ? [] : flows.map((f, k) => ({ ...f, k })).filter((f) => f.a === i || f.b === i);
       const lit = new Set(mine.flatMap((f) => [f.a, f.b]));
-      stack.classList.toggle('lit', i != null);
-      parts.forEach((el, k) => el.classList.toggle('on', lit.has(k) || k === i));
-      svg.querySelectorAll('path[data-flow]').forEach((el) => {
-        const f = flows[Number(el.dataset.flow)];
-        el.classList.toggle('on', f.a === i || f.b === i);
-      });
+      const on = new Set(mine.map((f) => String(f.k)));
+      draw.classList.toggle('lit', i != null);
+      draw.querySelectorAll('[data-part]').forEach((el) => el.classList.toggle('on', lit.has(Number(el.dataset.part)) || Number(el.dataset.part) === i));
+      draw.querySelectorAll('[data-flow]').forEach((el) => el.classList.toggle('on', on.has(el.dataset.flow)));
+      draw.querySelectorAll('[data-flows]').forEach((el) => el.classList.toggle('on', el.dataset.flows.split(' ').some((k) => on.has(k))));
+      // The lit edges over the others where they share a line.
+      draw.querySelectorAll('.fmc-edge.on, .fmc-arrow.on').forEach((el) => el.parentNode.append(el));
       if (!cap) return;
-      cap.innerHTML = mine.map((f) => `<div><b>${esc(names[f.a])}</b> → <b>${esc(names[f.b])}</b>${f.label ? `: ${inline(md, f.label)}` : ''}</div>`).join('');
+      const p = i == null ? null : parts[i];
+      const head = p && draw.classList.contains('drawn') ? `<div><b>${esc(p.name)}</b>${p.note ? `: ${inline(md, p.note)}` : ''}</div>` : '';
+      cap.innerHTML = head + mine.map((f) => `<div><b>${esc(parts[f.a].name)}</b> → <b>${esc(parts[f.b].name)}</b>${f.kind ? ` (${esc(f.kind)})` : ''}${f.label ? `: ${inline(md, f.label)}` : ''}</div>`).join('');
     };
     const on = (e) => {
-      const el = e.target.closest?.('.stk-part');
+      const el = e.target.closest?.('[data-part]');
       if (el && draw.contains(el)) light(Number(el.dataset.part));
     };
     const off = (e) => {
-      if (!e.relatedTarget || !e.relatedTarget.closest?.('.stk-part')) light(null);
+      if (!e.relatedTarget || !e.relatedTarget.closest?.('[data-part]')) light(null);
     };
     draw.addEventListener('pointerover', on);
     draw.addEventListener('pointerout', off);
     draw.addEventListener('focusin', on);
     draw.addEventListener('focusout', off);
-    paint();
-    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(paint) : null;
-    if (watch) watch.observe(draw);
     return () => {
-      if (watch) watch.disconnect();
+      stopped = true;
       draw.removeEventListener('pointerover', on);
       draw.removeEventListener('pointerout', off);
       draw.removeEventListener('focusin', on);
@@ -165,5 +149,7 @@ globalThis.Stack = (() => {
     };
   }
 
-  return { html, fromDetected, wire };
+  return {
+    html, fromDetected, wire, RENDERER,
+  };
 })();

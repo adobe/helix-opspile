@@ -17,7 +17,9 @@
  * src/ui-editor.js and CodeMirror, the knowledge-base editor's text field, the same way;
  * src/ui-highlight.bundle.js, src/ui-highlight.js and @pierre/highlights as an ES module, which
  * the Worker serves at /inbox/highlight.js (with its hash, `etag`), for the inbox to import
- * with the first code block it shows; and src/ui-spectrum.bundle.js, Spectrum 2's design
+ * with the first code block it shows; src/ui-fmc.bundle.js, src/ui-fmc.js and Graphviz
+ * (@viz-js/viz) the same way, served at /inbox/fmc.js, which draws a customer's stack; and
+ * src/ui-spectrum.bundle.js, Spectrum 2's design
  * tokens (@spectrum-css/tokens) by name, of which src/page.js puts those ui/spectrum*.css use
  * into the pages under /spectrum.
  *
@@ -53,6 +55,11 @@ export const BUNDLES = [{
   name: 'ui-highlight',
   credits: `Includes @pierre/highlights, (c) The Pierre Computer Company, Apache License 2.0:
  * https://diffs.com/highlights`,
+}, {
+  name: 'ui-fmc',
+  credits: `Includes Graphviz, (c) AT&T and the Graphviz authors, Eclipse Public License 2.0:
+ * https://graphviz.org, compiled to WebAssembly by @viz-js/viz, (c) Michael Daines, MIT
+ * License: https://github.com/mdaines/viz-js`,
 }];
 
 /** A bundle, as the module that src/page.js imports (the markdown renderer by default). */
