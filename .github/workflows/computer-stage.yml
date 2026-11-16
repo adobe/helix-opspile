@@ -4,8 +4,9 @@ name: Computer on stage
 # with its shells, without a model, an inbox or D1) to Cloudflare as
 # helix-opspile-computer-stage, puts the images of scripts/computer-images.mjs into its bucket,
 # and runs their programs there (scripts/dev-computer/check.mjs): where local workerd does not
-# hold them to Dynamic Workers' limits (128 MB of memory, module sizes, 10 at once). On every
-# branch but main, which deploys production instead (ci.yml).
+# hold them to Dynamic Workers' limits (128 MB of memory, module sizes, 10 at once). On a push
+# to any branch but main (which deploys production instead, ci.yml) that changes the computer:
+# not the pages, nor what the Worker does not import.
 #
 # The Worker is a shell on the internet: it answers only requests with the secret
 # COMPUTER_TOKEN, which each run makes, masks and keeps nowhere, and replaces with one nobody
@@ -14,7 +15,76 @@ name: Computer on stage
 on:
   push:
     branches-ignore: [main]
-    paths-ignore: ['docs/**', 'ui/**', '**/*.md']
+    # What the computer is made of: this workflow, the packages (the kernel, the images'
+    # programs), the images and the checks, and every file of src/ that the Worker imports.
+    # test/computer-stage-paths.test.js keeps the list to the imports, both ways.
+    paths:
+      - '.github/workflows/computer-stage.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/computer-images.mjs'
+      - 'scripts/dev-computer/**'
+      - 'src/agent/**'
+      - '!src/agent/stub.js'
+      - 'src/accounts.js'
+      - 'src/attach.js'
+      - 'src/bashrequests.js'
+      - 'src/channels.js'
+      - 'src/channelurl.js'
+      - 'src/clickhouse.js'
+      - 'src/cogs/meter.js'
+      - 'src/cogs/prices.js'
+      - 'src/deadjobs.js'
+      - 'src/discord.js'
+      - 'src/draftevents.js'
+      - 'src/drafts.js'
+      - 'src/emoji.js'
+      - 'src/emojinames.js'
+      - 'src/experiments.js'
+      - 'src/expertevents.js'
+      - 'src/expertise.js'
+      - 'src/experts.js'
+      - 'src/extract.js'
+      - 'src/favicons.js'
+      - 'src/filecache.js'
+      - 'src/fulltext.js'
+      - 'src/github.js'
+      - 'src/graph.js'
+      - 'src/har.js'
+      - 'src/http.js'
+      - 'src/ico.js'
+      - 'src/invite.js'
+      - 'src/kb.js'
+      - 'src/label.js'
+      - 'src/like.js'
+      - 'src/lookup.js'
+      - 'src/markdown.js'
+      - 'src/mention-match.js'
+      - 'src/messagelinks.js'
+      - 'src/notify.js'
+      - 'src/platforms.js'
+      - 'src/post.js'
+      - 'src/products.js'
+      - 'src/profiles.js'
+      - 'src/raw.js'
+      - 'src/refile.js'
+      - 'src/resolve.js'
+      - 'src/rethread.js'
+      - 'src/review.js'
+      - 'src/rules.js'
+      - 'src/shares.js'
+      - 'src/shortcodes.js'
+      - 'src/sidebar.js'
+      - 'src/slackurl.js'
+      - 'src/sources.js'
+      - 'src/suggest.js'
+      - 'src/teamsbot.js'
+      - 'src/teamsfiles.js'
+      - 'src/threadfiles.js'
+      - 'src/threads.js'
+      - 'src/topicindex.js'
+      - 'src/ui-markdown.js'
+      - 'src/vectors.js'
   workflow_dispatch:
 
 permissions:
