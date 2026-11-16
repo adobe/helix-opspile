@@ -445,6 +445,23 @@ before each model request; HTML comments in them are left out. Only people write
 whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
+**Stack drawing.** A customer's knowledge base may have a `stack.md` at its root (a concept of
+type `Tech Stack`, src/stack.js): how their site is put together, as Markdown that reads as it
+is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
+name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
+`| From | To | What |` between parts by name, then any notes. The tables are read and written
+through a markdown tree (src/mdast.js). The thread agents keep it with `draw_stack`, which
+writes the whole drawing from parts and flows (they read it first and give its hash as `base`;
+its other frontmatter, such as `sources`, and its notes stay), and people edit it in the editor
+like any concept. A write of `stack.md` that cannot be drawn (no parts table, an unknown layer,
+a flow between parts that are not there, more than 40 parts or 60 flows) is refused whoever
+writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
+it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
+the knowledge base; the inbox draws it (ui/stack.js): each layer a row of its parts, the flows
+as arrows, a part under the pointer lighting its flows and naming them, and the technologies
+Clef saw in the customer's channels that it does not draw listed under it. Without one, the
+inbox draws what Clef saw, by layer.
+
 **Editor.** Members of the admin team, and team managers for the knowledge bases of their
 teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
 and the concepts. The members of every ops team see every team's knowledge base there read-only (its
@@ -604,6 +621,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   and it stays at the end of the column, struck through and out of the red badge of **All
   customers**, with or without threads, until a click brings it back. **All customers** drops
   the pick and what is excluded.
+  Beside each customer's heading in the list by customer are the key parts of its **stack**:
+  the likeliest technology of each layer of the stack (`tech_stack.layer`, see "Labels and
+  facts"), top to bottom, Other's left out, over the customer's channels on the pages loaded
+  (`stacks` of `/api/inbox`, `orgStacks` in src/api.js: each technology at the highest
+  probability of any of its channels there, at 0.8 or above; pages merge the same way). A click
+  on them shows the customer's [stack drawing](#3-knowledge-bases) (`GET /api/kb/stack`,
+  ui/stack.js) under the heading, or, without one, what Clef saw, by layer; the thread's tech
+  stack dropdown has a link to the same.
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones the red badge counts. The
@@ -855,6 +880,12 @@ and an unchanged thread is never labeled twice):
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM
   Sidekick was an alias of Edge Delivery until migration 0061, so Clef never asked about it, the
   Topics page drew it as Edge Delivery, and a thread about it showed nothing of its own.
+  Every entry is in a **layer** of the customer's stack (`tech_stack.layer`, migration 0068,
+  src/stack.js `LAYERS`): edge (CDN, WAF, code at the edge), site (what serves the pages), content
+  (authoring and assets), code, commerce and data, marketing and insights, identity, or other. A
+  team's own entry of an admin team's id without one takes the admin team's. The list by
+  customer names the likeliest of each layer beside the customer, and the stack drawings are
+  drawn in the same layers.
   Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
   it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
   (Edge Delivery, Document Authoring, the AEM Sidekick, Universal Editor, Experience Workspace,
@@ -1558,6 +1589,7 @@ written by people outside its control.
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
+| `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
 **Mentions of people who are not in.** When a message the agent is told about mentions someone

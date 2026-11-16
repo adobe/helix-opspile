@@ -90,7 +90,7 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount, youBadge', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
     state,
     esc,
     notButton: views.notButton,
@@ -298,11 +298,40 @@ describe('the simple personal view', () => {
       assert.ok(!outline().includes('x1'));
       assert.doesNotMatch(rowOf('a2'), /class="cust"/);
       const head = page.groupHtml(list()[0]);
-      assert.match(head, /^<button type="button" class="grp new sticky" data-group="acme" title="Only ACME">/);
+      assert.match(head, /^<div class="grp new sticky" data-group="acme"><button type="button" class="gn" data-group="acme" title="Only ACME">/);
       assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" loading="lazy"><\/span>/);
       assert.match(head, /<span class="nm">ACME<\/span>/);
       // A customer without an icon has its initial.
       assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span class="logo"><span class="ico av">I<\/span><\/span>/);
+    });
+
+    it('names the key parts of the customer\'s stack beside it: the likeliest of each layer', () => {
+      state.data.vocab = {
+        tech: {
+          akamai: 'Akamai', fastly: 'Fastly', eds: 'Edge Delivery', da: 'Document Authoring', opspile: 'Enterprise Support inbox', github: 'GitHub',
+        },
+        layers: {
+          akamai: 'edge', fastly: 'edge', eds: 'site', da: 'content', opspile: 'other', github: 'code',
+        },
+        stack: [{ id: 'edge', name: 'Edge' }, { id: 'site', name: 'Site' }, { id: 'content', name: 'Content' }, { id: 'code', name: 'Code' }, { id: 'other', name: 'Other' }],
+      };
+      state.data.stacks = {
+        acme: [{ tech: 'eds', p: 1 }, { tech: 'opspile', p: 0.99 }, { tech: 'da', p: 0.97 }, { tech: 'fastly', p: 0.9 }, { tech: 'akamai', p: 0.85 }, { tech: 'nope', p: 0.9 }],
+      };
+      // Top to bottom, one per layer, the likeliest; what is in no layer, or in Other, is not.
+      assert.deepEqual(page.stackLine('acme'), ['Fastly', 'Edge Delivery', 'Document Authoring']);
+      const head = page.groupHtml(list()[0]);
+      assert.match(head, /<\/button><button type="button" class="stk-line" data-stack="acme" aria-haspopup="dialog" title="ACME&#39;s tech stack: Fastly, Edge Delivery, Document Authoring. Show the drawing"><span>Fastly<\/span><span>Edge Delivery<\/span><span>Document Authoring<\/span><\/button><\/div>$/);
+      assert.match(head, /class="grp new sticky stacked"/);
+      // A customer Clef saw nothing of has none.
+      assert.doesNotMatch(page.groupHtml(list().find((x) => x.head === 'initech')), /stk-line/);
+      // Pages merge: each technology at the highest probability of any.
+      const merged = page.mergeStacks(state.data.stacks, { acme: [{ tech: 'akamai', p: 0.95 }, { tech: 'github', p: 0.9 }], initech: [{ tech: 'da', p: 1 }] });
+      assert.deepEqual(merged.acme.slice(0, 3), [{ tech: 'eds', p: 1 }, { tech: 'opspile', p: 0.99 }, { tech: 'da', p: 0.97 }]);
+      assert.deepEqual(merged.acme.find((t) => t.tech === 'akamai'), { tech: 'akamai', p: 0.95 });
+      assert.deepEqual(merged.initech, [{ tech: 'da', p: 1 }]);
+      state.data.stacks = merged;
+      assert.deepEqual(page.stackLine('acme'), ['Akamai', 'Edge Delivery', 'Document Authoring', 'GitHub']);
     });
 
     it('sets apart the customers with unread threads, and carries no badge on the heading', () => {
@@ -340,7 +369,7 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline(), ['# globex', 'g1', 'g2']);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /title="Back to all customers"/);
-      assert.match(head, /<span class="back">All customers<\/span><\/button>$/);
+      assert.match(head, /<button type="button" class="back" data-group="globex" title="Back to all customers">All customers<\/button><\/div>$/);
       assert.match(columnRow('globex'), /^<div class="fr on"/);
       assert.match(columnRow(''), /^<div class="fr all"/);
     });

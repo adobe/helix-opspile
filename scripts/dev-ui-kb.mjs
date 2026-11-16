@@ -14,6 +14,7 @@ import git from 'isomorphic-git';
 import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
 import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
+import { stackFile } from '../src/stack.js';
 
 /**
  * Fake knowledge bases for `npm run ui:dev`: real git repos in memory, written by the same
@@ -46,6 +47,58 @@ const SEED = {
     kind: 'org',
     files: {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
+      // The stack drawing (src/stack.js) the inbox shows from ACME's heading; Globex has none,
+      // so its heading shows what Clef saw instead.
+      'stack.md': stackFile({
+        summary: 'ACME sells on an Edge Delivery storefront behind Akamai, with Adobe Commerce for the catalog, cart and checkout. Orders go on to their ERP through an App Builder action; authors write in SharePoint.',
+        parts: [
+          {
+            layer: 'edge', name: 'Akamai', tech: 'akamai', note: 'www.acme.example; /checkout bypasses the cache',
+          },
+          {
+            layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'storefront and PDPs, `acme/storefront`',
+          },
+          {
+            layer: 'site', name: 'Legacy shop', tech: 'aem65', note: 'the B2B pages, until they move',
+          },
+          {
+            layer: 'content', name: 'SharePoint', tech: 'sharepoint', note: 'pages and the redirects sheet',
+          },
+          {
+            layer: 'content', name: 'Assets', tech: 'assets', note: 'product images',
+          },
+          {
+            layer: 'code', name: 'GitHub', tech: 'github', note: '`acme/storefront`, `acme/order-sync`',
+          },
+          {
+            layer: 'code', name: 'App Builder', tech: 'appbuilder', note: 'order sync every 5 minutes',
+          },
+          {
+            layer: 'commerce', name: 'Adobe Commerce', tech: 'commerce', note: 'catalog, cart, checkout',
+          },
+          { layer: 'commerce', name: 'Payments', note: 'hosted payment page' },
+          {
+            layer: 'commerce', name: 'ERP', tech: 'erp', note: 'fulfilment and invoices',
+          },
+          {
+            layer: 'martech', name: 'Adobe Analytics', tech: 'analytics', note: 'through Launch',
+          },
+          {
+            layer: 'identity', name: 'Okta', tech: 'sso', note: 'authors sign in to SharePoint and the Sidekick',
+          },
+        ],
+        flows: [
+          { from: 'Akamai', to: 'Edge Delivery', label: 'every page but /b2b' },
+          { from: 'Akamai', to: 'Legacy shop', label: '/b2b' },
+          { from: 'SharePoint', to: 'Edge Delivery', label: 'preview and publish' },
+          { from: 'GitHub', to: 'Edge Delivery', label: 'code' },
+          { from: 'Edge Delivery', to: 'Adobe Commerce', label: 'cart and checkout' },
+          { from: 'Adobe Commerce', to: 'Payments', label: 'payment' },
+          { from: 'App Builder', to: 'ERP', label: 'orders, every 5 minutes' },
+          { from: 'Adobe Commerce', to: 'App Builder', label: 'new orders' },
+        ],
+        notes: '## Open questions\n\n- When the B2B pages move to Edge Delivery.',
+      }, { title: 'Tech stack of ACME', keep: 'status: stable' }),
     },
   },
   // More customers, so that the list's sort (by activity: entries, then tools) has something to do.

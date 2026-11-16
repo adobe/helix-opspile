@@ -17,6 +17,8 @@
  * always complete and never contradict the files.
  */
 
+import { checkStack, STACK_PATH } from '../stack.js';
+
 export const OKF_VERSION = '0.2';
 export const RESERVED = new Set(['index.md', 'log.md']);
 
@@ -97,6 +99,13 @@ export function checkConcept(path, content) {
   }
   if (!scalar(fm.yaml, 'type')) {
     return 'the frontmatter needs a non-empty `type`';
+  }
+  // The stack drawing (src/stack.js) is one the inbox can always draw.
+  if (p === STACK_PATH) {
+    const why = checkStack(fm.body);
+    if (why) {
+      return `not a stack drawing: ${why}`;
+    }
   }
   return null;
 }

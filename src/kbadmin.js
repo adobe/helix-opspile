@@ -14,7 +14,9 @@ import {
   agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
 } from './agent/enabled.js';
 import { writeKnowledge } from './agent/kbwrite.js';
-import { isEntry, SYSTEM_PROMPT } from './agent/okf.js';
+import {
+  isEntry, scalar, splitFrontmatter, SYSTEM_PROMPT,
+} from './agent/okf.js';
 import {
   commitLog, countFiles, listFiles, readBlobs, readText,
 } from './agent/repos.js';
@@ -24,6 +26,8 @@ import { access, mayEdit, mayRead } from './kbaccess.js';
 import { isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
+import { repoName } from './kb.js';
+import { parseStack, STACK_PATH, stackView } from './stack.js';
 
 /**
  * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
@@ -383,6 +387,39 @@ async function switchAgent(env, me, body) {
   return json({ ok: true, channel, agent });
 }
 
+/**
+ * GET /api/kb/stack?org=: the customer's stack drawing (`stack.md` of its knowledge base,
+ * src/stack.js) as the inbox draws it, `{ org, repo, path, hash, drawing, by, at, may }`;
+ * `drawing` is null while it has none, `error` says why one cannot be drawn. For whoever may
+ * read the knowledge base; anyone else, or a customer without one, gets a 404.
+ */
+async function stack(env, me, org) {
+  const repo = repoName('org', String(org || ''));
+  const base = repo && await knownRepo(env, repo);
+  if (!base || !await mayRead(env, me, base)) {
+    return json({ error: 'no such knowledge base' }, 404);
+  }
+  const out = {
+    org: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
+  };
+  const file = env.ARTIFACTS ? await readText(env, repo, STACK_PATH, { full: true })
+    .catch(() => ({ error: 'unreadable' })) : { error: 'knowledge bases are not configured' };
+  if (file.error) {
+    return json({ ...out, drawing: null });
+  }
+  const parsed = parseStack(file.text);
+  // `generated: { by: …, at: … }`, stamped by every write (src/agent/okf.js stampGenerated).
+  const fm = splitFrontmatter(file.text);
+  const stamp = /\{\s*by:\s*([^,}]+),\s*at:\s*([^}\s]+)\s*\}/.exec((fm && scalar(fm.yaml, 'generated')) || '');
+  return json({
+    ...out,
+    hash: file.hash,
+    by: stamp ? stamp[1].trim() : null,
+    at: stamp ? stamp[2].trim() : null,
+    ...(parsed.error ? { drawing: null, error: parsed.error } : { drawing: stackView(parsed) }),
+  });
+}
+
 /** Routes `/api/kb*` (see src/kbaccess.js). Returns null for other paths. */
 export async function kbAdmin(request, env, url, me) {
   if (url.pathname === '/api/kb' && request.method === 'GET') {
@@ -405,6 +442,9 @@ export async function kbAdmin(request, env, url, me) {
   const extraction = await extractionAdmin(request, env, url, me);
   if (extraction) {
     return extraction;
+  }
+  if (url.pathname === '/api/kb/stack' && request.method === 'GET') {
+    return stack(env, me, url.searchParams.get('org'));
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

@@ -28,6 +28,7 @@ import {
 } from './extract.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
 import { mayWork, memberOf, teamless } from './shares.js';
+import { LAYERS } from './stack.js';
 
 /**
  * The tools of the MCP server (src/mcp.js). Each one runs as the signed-in person, through
@@ -1063,6 +1064,7 @@ export const TOOLS = [
         description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
         product: { type: 'string', description: 'The product it is part of: an Adobe product by its name on business.adobe.com/products (e.g. "Experience Manager Sites"), or a category for other companies\' (e.g. "CDN")' },
         aliases: { type: 'string', description: 'Other names it goes by in threads, comma-separated (e.g. "EdgeWorkers, Property Manager"): for matching the products the threads name, not asked of Clef' },
+        layer: { type: 'string', enum: LAYERS.map((l) => l.id), description: `Where in a customer's stack it is (the list by customer names the likeliest of each layer): ${LAYERS.map((l) => `${l.id}, ${l.hint}`).join('; ')}` },
         enabled: { type: 'boolean' },
       },
       required: ['team', 'tech'],

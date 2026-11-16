@@ -131,8 +131,9 @@ const CHANNELS = {
     team: 'platform',
     members: ['kira'],
     appPosting: true,
-    // The channel's tech stack (channel_tech), for the Tech stack filter.
-    tech: ['eds', 'akamai', 'sharepoint'],
+    // The channel's tech stack (channel_tech), for the Tech stack filter, and the key parts of
+    // ACME's stack beside its heading in the list by customer.
+    tech: ['eds', 'akamai', 'sharepoint', 'github', 'commerce', 'appbuilder', 'analytics', 'consent', 'opspile'],
   },
   aemGlobex: {
     source: 'slack', channelId: 'C0GLOBEX01', name: 'aem-globex', org: 'globex', team: 'platform', tech: ['eds', 'da', 'fastly'],

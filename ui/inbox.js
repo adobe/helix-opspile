@@ -1423,8 +1423,150 @@ function groupHtml(x) {
     return `<button type="button" class="grp-more" data-group="${esc(x.more)}">${x.n} more from ${esc(customerName(x.more))}</button>`;
   }
   const name = customerName(x.head);
-  const back = x.picked ? '<span class="back">All customers</span>' : '';
-  return `<button type="button" class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}${back}</button>`;
+  const back = x.picked ? `<button type="button" class="back" data-group="${esc(x.head)}" title="Back to all customers">All customers</button>` : '';
+  const keys = stackLine(x.head);
+  const stack = keys.length
+    ? `<button type="button" class="stk-line" data-stack="${esc(x.head)}" aria-haspopup="dialog" title="${esc(`${name}'s tech stack: ${keys.join(', ')}. Show the drawing`)}">${keys.map((k) => `<span>${esc(k)}</span>`).join('')}</button>`
+    : '';
+  return `<div class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}${keys.length ? ' stacked' : ''}" data-group="${esc(x.head)}"><button type="button" class="gn" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}</button>${stack}${back}</div>`;
+}
+
+/*
+ * A customer's tech stack: what Clef saw in its channels (`stacks`, src/api.js orgStacks), each
+ * technology in its layer (`vocab.layers`, `vocab.stack`, src/stack.js). Under the customer's
+ * heading, the likeliest technology of each layer, top to bottom, is its stack at a glance;
+ * a click on it shows the stack's drawing from the customer's knowledge base (GET
+ * /api/kb/stack, ui/stack.js), or, without one, what Clef saw, by layer.
+ */
+/** The customer's technologies, likeliest first: `[{ tech, name, p, layer }]`. */
+function orgStack(org) {
+  const v = state.data?.vocab || {};
+  return (state.data?.stacks?.[org] || []).map((t) => ({
+    tech: t.tech, p: t.p, name: v.tech?.[t.tech] || t.tech, layer: v.layers?.[t.tech] || null,
+  }));
+}
+/** The names of the key parts of a customer's stack: each layer's likeliest, but Other's. */
+function stackLine(org) {
+  const by = new Map();
+  for (const t of orgStack(org)) if (t.layer && t.layer !== 'other' && !by.has(t.layer)) by.set(t.layer, t.name);
+  return (state.data?.vocab?.stack || []).map((l) => by.get(l.id)).filter(Boolean);
+}
+/** Pages of the inbox, merged: each customer's technologies at the highest probability of any. */
+function mergeStacks(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [org, list] of Object.entries(b || {})) {
+    const best = new Map((out[org] || []).map((t) => [t.tech, t.p]));
+    for (const t of list) if (!(best.get(t.tech) >= t.p)) best.set(t.tech, t.p);
+    out[org] = [...best].map(([tech, p]) => ({ tech, p })).sort((x, y) => y.p - x.p);
+  }
+  return out;
+}
+const STACK_FRESH_MS = 60 * 1000;
+const stackPop = {
+  el: null, org: null, anchor: null, stop: null, asked: new Map(),
+};
+/** GET /api/kb/stack for a customer, kept for a minute; null when it cannot be read. */
+function stackOf(org) {
+  const hit = stackPop.asked.get(org);
+  if (hit && Date.now() - hit.at < STACK_FRESH_MS) return hit.p;
+  const p = get(`/api/kb/stack?org=${encodeURIComponent(org)}`).catch(() => null);
+  stackPop.asked.set(org, { at: Date.now(), p });
+  return p;
+}
+function stackPopEl() {
+  if (stackPop.el) return stackPop.el;
+  const el = document.createElement('section');
+  el.className = 'stkpop s2-float';
+  el.hidden = true;
+  el.setAttribute('role', 'dialog');
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideStack(true); } });
+  el.addEventListener('click', (e) => { if (e.target.closest('[data-stack-close]')) hideStack(true); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!el.hidden && !el.contains(e.target) && !e.target.closest('[data-stack]')) hideStack();
+  }, true);
+  addEventListener('resize', () => hideStack());
+  document.body.append(el);
+  stackPop.el = el;
+  return el;
+}
+function hideStack(refocus = false) {
+  const el = stackPop.el;
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  if (stackPop.stop) stackPop.stop();
+  stackPop.stop = null;
+  stackPop.anchor?.setAttribute('aria-expanded', 'false');
+  if (refocus && stackPop.anchor?.isConnected) stackPop.anchor.focus();
+  stackPop.org = null;
+}
+/** Under `anchor` (or above it, where there is no room), on screen; as wide as it may be. */
+function placeStack(el, anchor) {
+  const r = anchor.getBoundingClientRect();
+  measureFloat(el, ({ w, h }) => {
+    let top = r.bottom + 6;
+    const up = top + h > window.innerHeight - 8 && r.top - h - 6 > 8;
+    // Too tall for either side: as low as it fits, over its button if need be (it scrolls).
+    if (up) top = r.top - h - 6;
+    else if (top + h > window.innerHeight - 8) top = Math.max(8, window.innerHeight - h - 8);
+    el.classList.toggle('s2-up', up);
+    el.style.top = `${top}px`;
+    el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  });
+}
+/** The drawing's frame: who drew it and when, and where to change it. */
+function stackFoot(res) {
+  if (!res) return '<span>Only the ops teams that work with this customer see its knowledge base.</span>';
+  const edit = `/inbox/kb?${new URLSearchParams({ repo: res.repo, path: res.path })}`;
+  if (!res.drawing) {
+    const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet: this is what Clef saw in their threads. The thread agents draw one as they learn the stack.';
+    return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix it in Agents</a>` : ''}`;
+  }
+  const who = /^human:/.test(res.by || '') ? res.by.slice(6) : 'a thread agent';
+  const since = res.at ? ago(res.at) : '';
+  let when = '';
+  if (since === 'now') when = ' just now';
+  else if (/^\d+[mhd]$/.test(since)) when = ` ${since} ago`;
+  else if (since) when = ` on ${since}`;
+  return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit it in Agents' : 'Open it in Agents'}</a>`;
+}
+/** Shows the customer's stack under `anchor`; a second click on the same one closes it. */
+async function showStack(org, anchor) {
+  const el = stackPopEl();
+  if (!el.hidden && stackPop.org === org && stackPop.anchor === anchor) { hideStack(); return; }
+  hideStack();
+  stackPop.org = org;
+  stackPop.anchor = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
+  const name = customerName(org);
+  el.setAttribute('aria-label', `${name}'s tech stack`);
+  const head = `<div class="stk-head"><h3>${esc(name)}'s tech stack</h3><button type="button" class="stk-x" data-stack-close title="Close (Esc)" aria-label="Close"><span class="s2-cross" aria-hidden="true"></span></button></div>`;
+  // The list's, else the open thread's channel's (a customer the list does not show).
+  let detected = orgStack(org);
+  const open = state.cache.get(state.open)?.data;
+  if (!detected.length && open?.thread?.org === org) {
+    const v = open.vocab || state.data?.vocab || {};
+    detected = (open.tech || []).map((t) => ({
+      tech: t.tech, p: t.p, name: v.tech?.[t.tech] || t.tech, layer: v.layers?.[t.tech] || null,
+    }));
+  }
+  const vocab = { ...(state.data?.vocab || {}), ...(open?.vocab || {}) };
+  const draw = (res) => {
+    const view = res?.drawing || Stack.fromDetected(detected, vocab.layers || {}, vocab.stack || []);
+    el.innerHTML = `${head}${Stack.html(view, { detected: res?.drawing ? detected : [], md: (s) => md(s) })}<div class="stk-foot">${stackFoot(res)}</div>`;
+    el.classList.toggle('guess', !res?.drawing);
+    placeStack(el, anchor);
+    if (stackPop.stop) stackPop.stop();
+    stackPop.stop = Stack.wire(el, view, { md: (s) => md(s) });
+  };
+  const asked = stackOf(org);
+  const pending = stackPop.asked.get(org);
+  // What Clef saw shows at once when the drawing is not here yet; the drawing replaces it.
+  if (!pending?.done) draw(null);
+  const res = await asked;
+  if (pending) pending.done = true;
+  if (stackPop.org !== org || stackPop.anchor !== anchor) return;
+  draw(res);
+  el.querySelector('[data-stack-close]')?.focus({ preventScroll: true });
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -2553,9 +2695,12 @@ function techMenu(data) {
   if (!count) return '';
   const item = (t) => `<div class="hmi"><span>${esc(t.name)}</span>${t.p != null ? `<small>${pct(t.p)}</small>` : ''}</div>`;
   const customer = orgName(data.thread) && !String(orgName(data.thread)).startsWith('_') ? orgName(data.thread) : 'the customer';
+  const org = data.thread.org && !String(data.thread.org).startsWith('_') ? data.thread.org : null;
+  // The customer's whole stack, drawn (showStack).
+  const drawing = org ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
   const list = hmSection('In this thread', here.map(item))
     + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
-    + hmSection('Topics of the thread', topics.map(item));
+    + hmSection('Topics of the thread', topics.map(item)) + drawing;
   const more = count > 1 ? `<span class="n">+${count - 1}</span>` : '';
   return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
 }
@@ -6717,6 +6862,7 @@ async function loadInbox(early = null) {
     first.threads = [...first.threads,
       ...prev.threads.filter((t) => !keys.has(t.thread) && !folded.has(t.thread))];
     first.people = { ...prev.people, ...first.people };
+    first.stacks = mergeStacks(prev.stacks, first.stacks);
     // The deepest page loaded so far is where the next one starts.
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
     // The first page is not the last one: keep the counts the last page brought.
@@ -6748,6 +6894,7 @@ function addPage(p) {
   settleFolds();
   keepReads(added);
   state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
+  state.data.stacks = mergeStacks(state.data.stacks, p.stacks);
   state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
   if (p.elsewhere) state.data.elsewhere = p.elsewhere;
   mergeProfiles(p.profiles);
@@ -7834,6 +7981,8 @@ async function start() {
       switchView(view.dataset.view || null);
       return;
     }
+    const stack = e.target.closest('[data-stack]');
+    if (stack) { showStack(stack.dataset.stack, stack); return; }
     const group = e.target.closest('[data-group]');
     if (group) {
       toggleFilter('customer', group.dataset.group, false);
@@ -7876,6 +8025,14 @@ async function start() {
       return;
     }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
+    // The customer's stack drawing, from the tech stack's dropdown: under the dropdown's button.
+    const stk = e.target.closest('[data-stack]');
+    if (stk) {
+      const anchor = document.querySelector('#pane > .ph [data-hm-toggle="tech"]') || stk;
+      closeHeadMenus();
+      showStack(stk.dataset.stack, anchor);
+      return;
+    }
     const hm = e.target.closest('[data-hm-toggle]');
     if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
     // A link picked from a dropdown opens in a new tab; the dropdown closes.

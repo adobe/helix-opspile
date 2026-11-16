@@ -11,6 +11,7 @@
  */
 
 import { sha256 } from './raw.js';
+import { LAYER_IDS, techLayers } from './stack.js';
 
 /**
  * Extraction rules and the tech stack, as configuration of the ops teams (D1, migration 0043):
@@ -367,6 +368,7 @@ const techOut = (t) => ({
   description: t.description,
   product: t.product || null,
   aliases: t.aliases || null,
+  layer: t.layer || null,
   enabled: Boolean(t.enabled),
   by: t.changed_by || null,
   at: t.changed_at || null,
@@ -427,6 +429,20 @@ export async function techNames(env, team = null) {
     out[r.tech] = out[r.tech] || r.name;
   }
   return out;
+}
+
+/**
+ * The layer of every technology any team has, by id (src/stack.js), as techNames names them:
+ * `team`'s own, else the admin team's, else another team's; a row without one takes the next.
+ */
+export async function techLayerMap(env, team = null) {
+  if (!env || !env.DB) {
+    return {};
+  }
+  const { results: rows } = await env.DB.prepare(`SELECT tech, layer FROM tech_stack
+    WHERE layer IS NOT NULL ORDER BY team = ? DESC, team = ? DESC, team`)
+    .bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all();
+  return techLayers(rows);
 }
 
 /** A rule from what someone gave, checked: `{ rule }` or `{ error }`. `old` for an update. */
@@ -510,8 +526,13 @@ export function checkTech(input, old = {}) {
     product: clean(get('product'), MAX_NAME) || null,
     // Other names it goes by, for matching the products the threads name (migration 0057).
     aliases: aliasList(get('aliases')) || null,
+    // Where in a customer's stack it is (src/stack.js LAYERS, migration 0068): none when not given.
+    layer: clean(get('layer'), 16) || null,
     enabled: get('enabled') === undefined ? true : Boolean(get('enabled')),
   };
+  if (tech.layer && !LAYER_IDS.includes(tech.layer)) {
+    return { error: `layer is one of ${LAYER_IDS.join(', ')}, or empty` };
+  }
   if (!ID.test(tech.tech)) {
     return { error: 'give the technology an id: lower case letters, digits and _, such as akamai' };
   }
@@ -625,10 +646,10 @@ export async function saveTech(env, team, input, by) {
     }
   }
   await env.DB.prepare(`INSERT INTO tech_stack (team, tech, name, description, product, aliases,
-      enabled, changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      layer, enabled, changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (team, tech) DO UPDATE SET name = excluded.name,
       description = excluded.description, product = excluded.product,
-      aliases = excluded.aliases, enabled = excluded.enabled,
+      aliases = excluded.aliases, layer = excluded.layer, enabled = excluded.enabled,
       changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
     .bind(
       team,
@@ -637,6 +658,7 @@ export async function saveTech(env, team, input, by) {
       tech.description,
       tech.product,
       tech.aliases,
+      tech.layer,
       tech.enabled ? 1 : 0,
       by,
       new Date().toISOString(),

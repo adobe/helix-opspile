@@ -42,7 +42,7 @@ import {
 } from './history.js';
 import { writeKnowledge } from './kbwrite.js';
 import { findMember } from './members.js';
-import { SYSTEM_PROMPT, systemPromptBody } from './okf.js';
+import { splitFrontmatter, SYSTEM_PROMPT, systemPromptBody } from './okf.js';
 import { writtenMentions } from '../post.js';
 import { MAX_POST, postAsApp, reactAsApp } from './posting.js';
 import { MAX_PEOPLE, requestedNote, requestMembership } from './membership.js';
@@ -51,6 +51,9 @@ import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
 } from './repos.js';
 import { MAX_SOURCES } from '../sources.js';
+import {
+  checkStack, LAYERS, MAX_FLOWS, MAX_PARTS, parseStack, STACK_PATH, stackFile,
+} from '../stack.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -109,6 +112,7 @@ What you do:
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Do it in your first turn when no Adobe staff have answered yet and the thread is more than you can settle with the draft (an incident, an error, a question about how the product works inside), alongside the draft rather than instead of it. Once you know what the thread is really about, pass that to list_experts as \`about\`, in a sentence with the product's own names ("the AI assistant panel of Experience Workspace is missing"): its title and first message often say it vaguely. list_topics shows the topics of the whole inbox and who works on each, for when the list does not convince you. Suggest only someone the evidence backs (similar threads they worked on, a topic they work on, what they know), say it in the reason, and leave it when Adobe staff are handling the thread.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
 - Learn. Put what is worth remembering into the knowledge bases (kb_write): facts about this customer (sites, setup, contacts' roles, decisions, recurring problems and their fixes) go to kb-org; knowledge about the product and how the team works, true for every customer, goes to kb-team. Read before you write (git_read) and extend an existing concept instead of creating a near-duplicate. Never put one customer's details into kb-team. When your channel is shared with other ops teams, their knowledge bases (kb-team-<slug>, marked "you can write it" under repositories) are yours to write too: file there what that team's work needs. The other teams' knowledge bases are listed read only: look things up in them, never file into them.
+- Keep the customer's stack drawing current (draw_stack, \`stack.md\` in kb-org): the team opens it from the inbox to see at a glance how the customer's site is put together, from the CDN in front to what serves the pages, where authors write, the code, and the systems behind it, and what flows between them. When a thread or the knowledge base shows a part it lacks or has wrong, draw it again; leave it alone when nothing about the stack changed. It is the one place for the customer's stack: no other concept repeats it.
 - Look things up: the knowledge bases first (the other teams' too, when the thread touches their work), then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
 - Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
@@ -331,6 +335,76 @@ export function opspileExtension(ctx) {
           return text('nothing changed');
         }
         return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${res.files.join(', ')}`);
+      },
+    }),
+    defineTool({
+      name: 'draw_stack',
+      description: `Draw the customer's tech stack: writes ${STACK_PATH} at the root of kb-org, the drawing the team sees when they open the customer's stack in the inbox. It replaces the whole drawing, so read the current one first (git_read kb-org ${STACK_PATH}) and give its hash as \`base\`; its notes and sources stay unless you give new ones. Draw what the threads and knowledge bases show, not what is usual.`,
+      parameters: Type.Object({
+        summary: Type.String({ description: 'One to three sentences: how the customer\'s site is put together, from the visitor to the systems behind it' }),
+        parts: Type.Array(Type.Object({
+          layer: Type.Union(LAYERS.map((l) => Type.Literal(l.id)), { description: LAYERS.map((l) => `${l.id}: ${l.hint}`).join('; ') }),
+          name: Type.String({ description: 'As the customer runs it, e.g. Akamai, Edge Delivery, Oracle EBS; once per drawing' }),
+          tech: Type.Optional(Type.String({ description: 'The id of the tech stack\'s technology it is, when one fits (akamai, eds, da, commerce, …)' })),
+          note: Type.Optional(Type.String({ description: 'A few words: what it does for them, hosts, repositories (Markdown, one line)' })),
+        }), { minItems: 1, maxItems: MAX_PARTS }),
+        flows: Type.Optional(Type.Array(Type.Object({
+          from: Type.String({ description: 'A part\'s name' }),
+          to: Type.String({ description: 'A part\'s name' }),
+          label: Type.Optional(Type.String({ description: 'What goes from one to the other, in a few words: "every page but /checkout", "orders, every 5 minutes"' })),
+        }), { maxItems: MAX_FLOWS })),
+        notes: Type.Optional(Type.String({ description: 'Markdown after the tables (open questions, what is changing); replaces the notes there are' })),
+        base: Type.Optional(Type.String({ description: `The hash of ${STACK_PATH} from git_read; leave out only when there is none yet` })),
+        message: Type.Optional(Type.String({ description: 'What you changed and why, in one line' })),
+      }),
+      executionMode: 'sequential',
+      async execute(args, api) {
+        const pin = await pinnedTo(api.conversationId);
+        let r;
+        try {
+          r = await repo('kb-org');
+        } catch (e) {
+          return fail(`${e.message}. Nothing was written.`);
+        }
+        if ((pin && r.id !== `kb-${pin}`) || !r.writable) {
+          return fail('You cannot write the customer\'s knowledge base here. Nothing was written.');
+        }
+        const t = await ctx.target();
+        const old = await readText(env, r.artifact, STACK_PATH, { full: true }).catch(() => ({ error: 'unreadable' }));
+        if (!old.error && !args.base) {
+          return fail(`kb-org has a stack drawing already: read it (git_read kb-org ${STACK_PATH}), then draw it again with its hash as base. Nothing was written.`);
+        }
+        const earlier = old.error ? null : parseStack(old.text);
+        const fm = old.error ? null : splitFrontmatter(old.text);
+        const content = stackFile({
+          summary: args.summary,
+          parts: args.parts,
+          flows: args.flows || [],
+          notes: args.notes ?? (earlier && !earlier.error ? earlier.notes : ''),
+        }, { title: `Tech stack of ${t.orgName || t.org || 'the customer'}`, keep: fm ? fm.yaml : '' });
+        const why = checkStack(content);
+        if (why) {
+          return fail(`${why}. Nothing was written.`);
+        }
+        let from = 'knowledge shared by staff';
+        if (t.key) {
+          from = t.permalink ? `[thread](${t.permalink})` : `thread ${t.key}`;
+        }
+        const message = String(args.message || '').split('\n')[0].slice(0, 200) || 'Draw the tech stack';
+        const res = await writeKnowledge(env, r.artifact, [{
+          path: STACK_PATH, content, base: args.base || null, create: !args.base,
+        }], {
+          message: `${message}\n\n${t.key ? `Opspile-Thread: ${t.key}\n` : ''}Opspile-Agent: ${by()}`,
+          by: by(),
+          logEntry: `**Update**: ${message} (${from})`,
+        });
+        if (res.error || res.conflict) {
+          return fail(res.error || res.conflict);
+        }
+        if (res.unchanged) {
+          return text('nothing changed');
+        }
+        return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${STACK_PATH}, ${args.parts.length} parts, ${(args.flows || []).length} flows`);
       },
     }),
   ];
@@ -791,6 +865,7 @@ function extractionTools(ctx) {
         tech: Type.String({ description: 'Id: lower case letters, digits and _' }),
         name: Type.Optional(Type.String()),
         description: Type.Optional(Type.String()),
+        layer: Type.Optional(Type.Union(LAYERS.map((l) => Type.Literal(l.id)), { description: `Where in a customer's stack it is: ${LAYERS.map((l) => `${l.id} (${l.hint})`).join('; ')}` })),
         enabled: Type.Optional(Type.Boolean()),
       }),
       executionMode: 'sequential',

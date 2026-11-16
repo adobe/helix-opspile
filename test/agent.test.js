@@ -1363,6 +1363,56 @@ describe('seeds with a chosen knowledge base', () => {
     }
   });
 
+  it('draw the customer\'s stack into kb-org, and draw it again from what they read', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', orgName: 'ACME', threads: [],
+    });
+    const drawing = {
+      summary: 'ACME runs its site on Edge Delivery, behind Akamai.',
+      parts: [
+        {
+          layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'www and the shop',
+        },
+        { layer: 'edge', name: 'Akamai', tech: 'akamai' },
+      ],
+      flows: [{ from: 'Akamai', to: 'Edge Delivery', label: 'every page' }],
+    };
+    const more = [...drawing.parts, { layer: 'content', name: 'Document Authoring', tech: 'da' }];
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      await seed(h.agent, { by: 'Ada', text: 'Akamai is in front of their Edge Delivery site.' });
+      await h.run(
+        h.call('draw_stack', drawing),
+        h.call('draw_stack', { ...drawing, parts: more }),
+        h.call('draw_stack', { ...drawing, flows: [{ from: 'Akamai', to: 'Fastly' }], base: 'x' }),
+        h.call('git_read', { repo: 'kb-org', path: 'stack.md' }),
+      );
+      const [drawn, unread, wrong, read] = h.results;
+      assert.match(drawn, /^committed [0-9a-f]{12} to kb-org: stack\.md, 2 parts, 1 flows/);
+      assert.match(unread, /kb-org has a stack drawing already: read it \(git_read kb-org stack\.md\)/);
+      assert.match(wrong, /flows, row 1: From and To are the names of parts/);
+      const file = srv.show('kb-org-acme', 'stack.md');
+      assert.match(file, /^---\ntype: Tech Stack\ntitle: Tech stack of ACME\ndescription: ACME runs its site on Edge Delivery, behind Akamai\.\n/);
+      // Top to bottom, whatever order they came in.
+      assert.match(file, /\| Layer \| Part \| Tech \| Note \|\n\| --- \| --- \| --- \| --- \|\n\| Edge \| Akamai \| akamai \| +\|\n\| Site \| Edge Delivery \| eds \| www and the shop \|/);
+      assert.match(file, /## Flows\n\n\| From \| To \| What \|\n\| --- \| --- \| --- \|\n\| Akamai \| Edge Delivery \| every page \|/);
+      assert.match(srv.show('kb-org-acme', 'index.md'), /\[Tech stack of ACME\]\(stack\.md\) \(Tech Stack\)/);
+      assert.match(h.system[0], /Keep the customer's stack drawing current \(draw_stack/);
+
+      // Drawn again from what it read: the hash is its base.
+      const hash = /^hash: (\S+)$/m.exec(read)[1];
+      await seed(h.agent, { by: 'Ada', text: 'Their authors write in Document Authoring.' });
+      await h.run(h.call('draw_stack', { ...drawing, parts: more, base: hash }));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 1 flows/);
+      assert.match(srv.show('kb-org-acme', 'stack.md'), /\| Content \| Document Authoring \| da \| +\|/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
   it('with no customer have no kb-org to reach at all', { skip: !hasGit() && 'git is not installed' }, async () => {
     const srv = await gitServer();
     const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {

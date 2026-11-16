@@ -85,7 +85,10 @@ import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
-import { fold, readMembers, threadTech } from '../src/api.js';
+import {
+  fold, orgStacks, readMembers, threadTech,
+} from '../src/api.js';
+import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -483,6 +486,10 @@ function elsewhereCounts() {
   })).filter((t) => t.unread > 0);
 }
 
+/** The channel's tech stack (channel_tech), likeliest first. */
+const channelTech = (entry) => (entry.ch.tech || [])
+  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -564,6 +571,9 @@ function inbox(team, before = null, personal = false, only = null) {
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
     vocab: vocabNames,
+    // Each customer's stack over its channels here, as src/api.js `orgStacks` makes it.
+    stacks: orgStacks(threads.flatMap((t) => channelTech(store.threads.get(t.thread))
+      .map((x) => ({ org: t.org, ...x })))),
     threads,
     page,
     ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
@@ -811,10 +821,6 @@ function agentTurn(entry, { asked = false } = {}) {
  */
 const DEV_READ_MEMBERS = 8;
 
-/** The channel's tech stack (channel_tech), likeliest first. */
-const channelTech = (entry) => (entry.ch.tech || [])
-  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
-
 function thread(asked) {
   const own = store.threads.get(asked);
   const entry = own && store.threads.get(own.row.logical_thread || asked);
@@ -1002,6 +1008,30 @@ async function kbApi(req, res, url) {
       out.bases = out.bases.map((b) => ({ ...b, name: names.get(b.repo) || b.name }));
     }
     return json(res, out, r.status);
+  }
+  // A customer's stack drawing, as src/kbadmin.js draws it.
+  if (url.pathname === '/api/kb/stack') {
+    const repo = `kb-org-${url.searchParams.get('org')}`;
+    const listing = kb.has(repo) && await listed(repo);
+    if (!listing) {
+      return json(res, { error: 'no such knowledge base' }, 404);
+    }
+    const out = {
+      org: listing.slug, repo, path: STACK_PATH, may: listing.may,
+    };
+    const file = await kb.read(repo, STACK_PATH);
+    if (file.error) {
+      return json(res, { ...out, drawing: null });
+    }
+    const parsed = parseStack(file.text);
+    const stamp = /generated: \{ by: ([^,]+), at: ([^ }]+) \}/.exec(file.text);
+    return json(res, {
+      ...out,
+      hash: file.hash,
+      by: stamp ? stamp[1] : null,
+      at: stamp ? stamp[2] : null,
+      ...(parsed.error ? { drawing: null, error: parsed.error } : { drawing: stackView(parsed) }),
+    });
   }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
   const listing = kb.has(repo) && await listed(repo);
