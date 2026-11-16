@@ -348,6 +348,17 @@ dialog.confirm p { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-
 dialog.confirm .bubble { max-height: 40vh; overflow: auto; }
 dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); }
 dialog.confirm .send { border-radius: var(--spectrum-corner-radius-100); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); background: var(--me); color: var(--spectrum-white); border: 0; }
+/* Keyboard shortcuts (⌘/ or your menu): their groups side by side where they fit, the sheet
+   scrolling under its title where they do not. */
+dialog.keysheet { width: min(calc(var(--spectrum-spacing-100) * 110), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog.keysheet form { display: flex; flex-direction: column; max-height: 86vh; }
+dialog.keysheet .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog.keysheet .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+dialog.keysheet .groups { overflow: auto; columns: 2 calc(var(--spectrum-spacing-100) * 40); }
+dialog.keysheet section { break-inside: avoid; }
+dialog.keysheet .keys { display: grid; grid-template-columns: 1fr auto; margin: 0; }
+dialog.keysheet .keys dd { margin: 0; text-align: right; white-space: nowrap; }
+.menu .item kbd.end { margin-left: auto; }
 .toast { position: fixed; bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
   border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); z-index: 10; }
 kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
@@ -2454,6 +2465,19 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); }
 .spectrum dialog.confirm p { margin-bottom: var(--spectrum-spacing-200); }
 .spectrum dialog.confirm .apply { margin-top: var(--spectrum-spacing-400); }
+/* The keyboard shortcuts: S2's Dialog, its groups headed as a Menu's sections are. */
+.spectrum dialog.keysheet { color: var(--ink); background: var(--spectrum-background-layer-2-color); border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); }
+.spectrum dialog.keysheet::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.keysheet .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.keysheet h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.keysheet .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.keysheet .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.keysheet .groups { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-400); column-gap: var(--spectrum-spacing-500); }
+.spectrum dialog.keysheet section { padding-top: var(--spectrum-spacing-200); }
+.spectrum dialog.keysheet h3 { margin: 0 0 var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum dialog.keysheet .keys { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); font-size: var(--spectrum-font-size-100); }
+.spectrum dialog.keysheet .keys dd { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum dialog.keysheet kbd { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: var(--spectrum-corner-radius-75); font-size: var(--spectrum-font-size-75); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
    action an outline Button for static white. */

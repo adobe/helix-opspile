@@ -1836,7 +1836,7 @@ function listHead(box) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); runSearch(input.value); }
     if (e.key === 'Escape') { e.preventDefault(); if (input.value || searching()) clearSearch(); else input.blur(); }
-    if (e.key === 'ArrowDown' && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
+    if (e.key === 'ArrowDown' && !e.altKey && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
   });
 }
 /** Teams that still have unread threads: fewest members first, the admin team last. */
@@ -3728,6 +3728,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     grow();
     box.onkeydown = (e) => {
       if (mentionKey(e, key)) return;
+      if (e.key === 'ArrowUp' && !box.value && !(e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) && editLast(key)) { e.preventDefault(); return; }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); send(key, thread); }
       if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value, undefined, { fromBox: true }); }
     };
@@ -6480,7 +6481,7 @@ function readHere(ev) {
   const at = memberLast(m, t.kind);
   return Boolean(at) && ev.at >= at;
 }
-function markRead(t) {
+function markRead(t, { quiet = false } = {}) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
   // A folded entry is several platform threads: each one is read up to its own end.
   for (const m of t.members || [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }]) {
@@ -6495,7 +6496,7 @@ function markRead(t) {
     readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
   seeRead(t);
-  render();
+  if (!quiet) render();
 }
 /**
  * Your reads this page sent, by platform thread, until the inbox has them. The room writes a read
@@ -7743,6 +7744,305 @@ function wireHeadAway() {
   }, true);
 }
 
+// ---------------------------------------------------------------- keyboard
+// Slack's shortcuts where the inbox has the same thing (see SHORTCUTS, which ⌘/ shows), its
+// own one-key ones (/, j, k, e, a) beside them. They are written for a Mac; elsewhere ⌘ is Ctrl
+// and ⌥ Alt, and the sheet and your menu say so.
+const MAC = /mac|iphone|ipad/i.test(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
+/** A shortcut as this computer's keyboard names it: `⌘⇧K`, or `Ctrl+Shift+K`. */
+const keyLabel = (s, mac = MAC) => (mac ? s : s.replace(/[⌘⌥⇧]/g, (c) => `${{ '⌘': 'Ctrl', '⌥': 'Alt', '⇧': 'Shift' }[c]}+`).replace(/\+$/, ''));
+/**
+ * The shortcuts, by what they are for: what each does, then its keys, one or more ways to
+ * press it (keys pressed one after the other are apart; `click` is the pointer's).
+ */
+const SHORTCUTS = [
+  ['Move around', [
+    ['Search, on every platform', '/', '⌘K'],
+    ['Next / previous thread', 'j k', '⌥↓ ⌥↑'],
+    ['Next / previous unread thread', '⌥⇧↓ ⌥⇧↑'],
+    ['Back / forward', MAC ? '⌘[ ⌘]' : '⌥← ⌥→'],
+    ['Next / previous part of the page', 'F6 ⇧F6'],
+    ['These shortcuts', '⌘/', '?'],
+  ]],
+  ['Views', [
+    ['Unread threads only, or all again', '⌘⇧A'],
+    ['Only threads that mention you (your own view)', '⌘⇧M'],
+    ['Start a new thread', '⌘⇧K'],
+    ['Exclude a filter value', '⇧ click'],
+    ['Mark every thread in the list read', '⇧Esc'],
+  ]],
+  ['The open thread', [
+    ['Resolve it, or take your ✅ off again', 'e'],
+    ['Ask the Thread Agent, in the sidebar', 'a'],
+    ['Show or hide the sidebar', '⌘.'],
+    ['React to the last message', '⌘⇧\\'],
+    ['Edit your last message (from an empty reply box)', '↑'],
+  ]],
+  ['Writing', [
+    ['Send / new line', 'Enter ⇧Enter'],
+    ['Save the reply as the thread\'s draft', '⌘S'],
+    ['Bold / italic', '⌘B ⌘I'],
+    ['Strikethrough', '⌘⇧X'],
+    ['Code / code block', '⌘⇧C ⌘⌥⇧C'],
+    ['Link (or paste a link over the text)', '⌘⇧U'],
+    ['Quote', '⌘⇧9'],
+    ['Bulleted / numbered list', '⌘⇧8 ⌘⇧7'],
+  ]],
+];
+const keysHtml = (ways) => ways.map((w) => w.split(' ')
+  .map((k) => (k === 'click' ? 'click' : `<kbd>${esc(keyLabel(k))}</kbd>`)).join(' ')).join(' or ');
+const sheetHtml = () => SHORTCUTS.map(([group, rows]) => `<section><h3>${esc(group)}</h3><dl class="keys">${rows
+  .map(([what, ...ways]) => `<dt>${esc(what)}</dt><dd>${keysHtml(ways)}</dd>`).join('')}</dl></section>`).join('');
+
+/** The sheet of every shortcut, as Slack's ⌘/ shows it; ⌘/ again or Escape closes it. */
+function toggleShortcuts() {
+  const open = document.querySelector('dialog.keysheet[open]');
+  if (open) { open.close(); return; }
+  $('menu')?.hidePopover?.();
+  const dlg = toNode(`<dialog class="keysheet" aria-labelledby="keysheet-title"><form method="dialog">
+    <div class="top"><h2 id="keysheet-title">Keyboard shortcuts</h2><button class="close" aria-label="Close" title="Close (Esc)"><span class="s2-cross" aria-hidden="true"></span></button></div>
+    <div class="groups">${sheetHtml()}</div></form></dialog>`);
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key === '/' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); dlg.close(); }
+  });
+  dlg.addEventListener('close', () => Dialog.remove(dlg));
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+/**
+ * Markdown formatting of the text between `start` and `end` of `value`, as Slack's ⌘B and the
+ * like do it: `kind` wraps the words (`bold`, `italic`, `strike`, `code`) or takes the marks off
+ * them again, makes them a `link` or a `block` of code, or starts their lines as a `quote`, a
+ * `bullet` or a `number`ed list (or stops). The replacement of `from`…`to` with `insert`, and
+ * the selection after it.
+ */
+function formatText(value, selStart, selEnd, kind) {
+  const sel = value.slice(selStart, selEnd);
+  const WRAP = {
+    bold: '**', italic: '_', strike: '~~', code: '`',
+  };
+  const mark = WRAP[kind];
+  if (mark) {
+    const n = mark.length;
+    // Already marked, inside the selection or around it: the marks come off.
+    if (sel.length >= 2 * n && sel.startsWith(mark) && sel.endsWith(mark)) {
+      const inner = sel.slice(n, -n);
+      return {
+        from: selStart, to: selEnd, insert: inner, start: selStart, end: selStart + inner.length,
+      };
+    }
+    if (value.slice(selStart - n, selStart) === mark && value.slice(selEnd, selEnd + n) === mark) {
+      return {
+        from: selStart - n, to: selEnd + n, insert: sel, start: selStart - n, end: selEnd - n,
+      };
+    }
+    // Markdown wants the marks next to the words: spaces at the ends stay outside.
+    const lead = /^\s*/.exec(sel)[0].length;
+    const trail = sel.length > lead ? /\s*$/.exec(sel)[0].length : 0;
+    const a = selStart + lead;
+    const b = selEnd - trail;
+    return {
+      from: a, to: b, insert: `${mark}${value.slice(a, b)}${mark}`, start: a + n, end: b + n,
+    };
+  }
+  if (kind === 'link') {
+    const url = /^(?:https?:\/\/|mailto:)\S+$/.test(sel.trim());
+    const insert = url ? `[](${sel.trim()})` : `[${sel}]()`;
+    // The caret where the missing part goes: the label for a URL, the URL for words.
+    const at = url || !sel ? selStart + 1 : selStart + insert.length - 1;
+    return {
+      from: selStart, to: selEnd, insert, start: at, end: at,
+    };
+  }
+  if (kind === 'block') {
+    const before = selStart > 0 && value[selStart - 1] !== '\n' ? '\n' : '';
+    const after = selEnd < value.length && value[selEnd] !== '\n' ? '\n' : '';
+    const body = sel.replace(/\n$/, '');
+    const at = selStart + before.length + 4;
+    return {
+      from: selStart, to: selEnd, insert: `${before}\`\`\`\n${body}\n\`\`\`${after}`, start: at, end: at + body.length,
+    };
+  }
+  // Lines: from the selStart of the first one selected to the selEnd of the last.
+  const from = value.lastIndexOf('\n', selStart - 1) + 1;
+  const last = selEnd > selStart && value[selEnd - 1] === '\n' ? selEnd - 1 : selEnd;
+  const to = value.indexOf('\n', last) < 0 ? value.length : value.indexOf('\n', last);
+  const lines = value.slice(from, to).split('\n');
+  const PREFIX = { quote: /^> ?/, bullet: /^[-*+] /, number: /^\d+\. / };
+  const has = PREFIX[kind];
+  const filled = lines.filter((l) => l.trim());
+  const off = filled.length > 0 && filled.every((l) => has.test(l));
+  let i = 0;
+  const out = lines.map((l) => {
+    if (off) return l.replace(has, '');
+    if (!l.trim() && lines.length > 1) return l;
+    i += 1;
+    // A list of the other kind becomes this one.
+    const bare = kind === 'quote' ? l : l.replace(/^(?:[-*+]|\d+\.) /, '');
+    return `${{ quote: '> ', bullet: '- ', number: `${i}. ` }[kind]}${bare}`;
+  });
+  const insert = out.join('\n');
+  if (selStart === selEnd) {
+    const at = Math.max(from, selStart + out[0].length - lines[0].length);
+    return {
+      from, to, insert, start: at, end: at,
+    };
+  }
+  return {
+    from, to, insert, start: from, end: from + insert.length,
+  };
+}
+
+/** What a formatting shortcut in a text box is (`formatText`'s kind), else null. */
+function formatKind(e) {
+  if (!(e.metaKey || e.ctrlKey) || (e.metaKey && e.ctrlKey)) return null;
+  // Letters as the layout names them (⌥ changes them on a Mac), digits as on the keyboard (⇧
+  // changes those).
+  const letter = !e.altKey && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : '';
+  const k = letter || (/^(?:Key|Digit)(.)$/.exec(e.code || '')?.[1] || '').toLowerCase();
+  if (e.altKey) return e.shiftKey && k === 'c' ? 'block' : null;
+  if (!e.shiftKey) return { b: 'bold', i: 'italic' }[k] || null;
+  return {
+    x: 'strike', c: 'code', u: 'link', 9: 'quote', 8: 'bullet', 7: 'number',
+  }[k] || null;
+}
+
+/** The text boxes formatting works in: replies, a new thread, an edit, the sidebar. */
+const writable = (el) => el?.tagName === 'TEXTAREA' && Boolean(el.closest('#pane, #side'));
+
+/** Replaces what `r` (formatText) says in `box`, so Undo takes it back, and selects as it says. */
+function applyText(box, r) {
+  box.focus();
+  box.setSelectionRange(r.from, r.to);
+  // The browser's own edit keeps Undo; where there is none, the text is set (and said so).
+  if (!document.execCommand?.('insertText', false, r.insert)) {
+    box.setRangeText(r.insert, r.from, r.to, 'end');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  box.setSelectionRange(r.start, r.end);
+}
+
+function wireFormatting() {
+  // Your menu's shortcuts, as this keyboard names them.
+  for (const k of document.querySelectorAll('#menu kbd')) k.textContent = keyLabel(k.textContent);
+  $('keysAll')?.addEventListener('click', toggleShortcuts);
+  document.addEventListener('keydown', (e) => {
+    if (!writable(e.target) || e.isComposing) return;
+    const kind = formatKind(e);
+    if (!kind) return;
+    e.preventDefault();
+    const box = e.target;
+    applyText(box, formatText(box.value, box.selectionStart, box.selectionEnd, kind));
+  });
+  // A link pasted over words makes them its label, as in Slack.
+  document.addEventListener('paste', (e) => {
+    const box = e.target;
+    if (e.defaultPrevented || !writable(box) || box.selectionStart === box.selectionEnd) return;
+    if (e.clipboardData?.files?.length) return;
+    const url = (e.clipboardData?.getData('text/plain') || '').trim();
+    const sel = box.value.slice(box.selectionStart, box.selectionEnd);
+    if (!/^https?:\/\/\S+$/.test(url) || /\n/.test(sel) || /^\s*https?:\/\//.test(sel)) return;
+    e.preventDefault();
+    const insert = `[${sel}](${url})`;
+    const at = box.selectionStart + insert.length;
+    applyText(box, {
+      from: box.selectionStart, to: box.selectionEnd, insert, start: at, end: at,
+    });
+  });
+}
+
+/** The next (`step` 1) or previous (-1) unread thread in the list, as Slack's ⌥⇧↓ and ⌥⇧↑. */
+function moveUnread(step) {
+  const i = state.order.indexOf(state.open);
+  for (let j = (i < 0 && step < 0 ? state.order.length : i) + step; j >= 0 && j < state.order.length; j += step) {
+    const key = state.order[j];
+    if (key !== state.open && searchEntry(key)?.unread) {
+      if (searching()) openHit(key); else openThread(key);
+      document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"]:not(.leaving)`)?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+  }
+  toast(step > 0 ? 'No unread threads below this one.' : 'No unread threads above this one.');
+}
+
+/** Every thread in the list read, as Slack's ⇧Esc: the list as it is, its filters and all. */
+function markAllRead() {
+  if (state.as || state.data?.me?.readonly) return;
+  const unread = state.order.map(searchEntry).filter((t) => t?.unread);
+  if (!unread.length) { toast('Nothing unread in this list.'); return; }
+  for (const t of unread) markRead(t, { quiet: true });
+  render();
+  toast(`Marked ${unread.length} ${unread.length === 1 ? 'thread' : 'threads'} read.`);
+}
+
+/**
+ * Focus to the next (`step` 1) or previous (-1) part of the page that shows, as F6 in Slack: the
+ * filters, the threads (where j and k go on), the open thread's reply box, the sidebar's.
+ */
+function cycleSection(step) {
+  const parts = ['filters', 'threads', 'pane', 'side'].map($)
+    .filter((s) => s && !s.hidden && s.getClientRects().length && getComputedStyle(s).visibility !== 'hidden');
+  if (!parts.length) return;
+  const i = parts.findIndex((s) => s.contains(document.activeElement));
+  const to = parts[(i + step + parts.length) % parts.length] || parts[0];
+  const into = { pane: '#reply', side: '#side-reply', filters: 'button, [tabindex="0"]' }[to.id];
+  const el = (into && to.querySelector(into)) || to;
+  if (el === to) to.tabIndex = -1;
+  el.focus();
+}
+
+/** Slack's ⌘⇧\: the emoji picker of the open thread's last message one may react to. */
+function reactLast() {
+  const buttons = $('pane').querySelectorAll('.msg [data-picker]');
+  const button = buttons[buttons.length - 1];
+  if (button) openPicker(button);
+}
+
+/** ↑ in an empty reply box, as in Slack: your last message in the thread, to edit. */
+function editLast(key) {
+  const m = [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
+  if (!m) return false;
+  // The editor takes the focus: the reply box, drawn again with it, would take it back.
+  $('reply')?.blur();
+  startEdit(`${m.thread}|${m.id}`);
+  return true;
+}
+
+/**
+ * The shortcuts that work in text boxes too, as they do in Slack, and those with ⌘ or F6:
+ * whether `e` was one.
+ */
+function globalKey(e) {
+  if (e.defaultPrevented || document.querySelector('dialog[open]') || e.isComposing) return false;
+  const field = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
+  const mod = (e.metaKey || e.ctrlKey) && !(e.metaKey && e.ctrlKey);
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const run = (fn) => { e.preventDefault(); fn(); return true; };
+  if (e.key === 'F6' && !mod && !e.altKey) return run(() => cycleSection(e.shiftKey ? -1 : 1));
+  // ⌥↑ ⌥↓: from the thread's reply box too, which keeps what was typed; not from a new thread,
+  // an edit or a menu.
+  if (e.altKey && !mod && /^Arrow(Up|Down)$/.test(e.key)) {
+    const here = !field || ['reply', 'side-reply', 'q'].includes(e.target.id);
+    if (!here || state.compose || state.awaiting) return false;
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    return run(() => (e.shiftKey ? moveUnread(step) : move(step)));
+  }
+  if (!mod || e.altKey) return false;
+  if (k === '/' && !e.shiftKey) return run(toggleShortcuts);
+  if (k === 'k' && !e.shiftKey && $('q')) {
+    return run(() => { if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); });
+  }
+  if (k === 'k' && e.shiftKey && !state.as) return run(() => { if (!state.compose) openCompose(); });
+  if (k === 'a' && e.shiftKey) return run(() => { setUnread(!state.unread); render(); toUrl(); });
+  if (k === 'm' && e.shiftKey && personal()) return run(() => { state.mentions = !state.mentions; render(); toUrl(); });
+  if (k === '.' && !e.shiftKey && state.open) {
+    return run(() => { if (side.key === state.open) exitSide(); else enterSide(); });
+  }
+  if (e.shiftKey && e.code === 'Backslash' && state.open) return run(reactLast);
+  return false;
+}
+
 // ---------------------------------------------------------------- wiring
 function move(step) {
   if (!state.order.length) return;
@@ -7949,9 +8249,12 @@ async function start() {
       button?.focus();
       return;
     }
+    if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
     if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
+    if (e.key === '?') { e.preventDefault(); toggleShortcuts(); return; }
+    if (e.key === 'Escape' && e.shiftKey) { e.preventDefault(); markAllRead(); return; }
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
@@ -7963,6 +8266,7 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
+  wireFormatting();
   wireFiles();
   wireDrop();
   window.addEventListener('popstate', async (e) => {
