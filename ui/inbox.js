@@ -6976,8 +6976,11 @@ function listen(team, live, { again = false } = {}) {
     // The open thread keeps what it shows until it is fetched again: its cards say what a
     // click just did, and the fetch replaces them.
     if (ev.type === 'bash') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
-    // Someone talked to the agent in the sidebar, or it answered there.
-    if (ev.type === 'sidebar') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // Someone talked to the agent in the sidebar, or it answered there. The open thread keeps
+    // what it shows until it is fetched again, as with `bash`: your own message arrives here
+    // before the inbox answers its POST, which shows it as sent in the thread it has (askSide),
+    // and a tab in the background does not fetch it again until it is shown.
+    if (ev.type === 'sidebar') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
