@@ -239,6 +239,12 @@ thread's column changes its width; not from the thread's own, which the panel ch
 (`sidePaneled`), which someone who may not talk to the agent can open too, to read; without, it is
 the thread's reply box turned into the sidebar's (`sideInline`), only for who may talk to it. The
 panel is the open thread's: it goes whenever `side.key` is not the open thread (`syncReading`).
+The panel's motion is not a state either: as you enter or leave the sidebar (`side.motion`, only
+while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
+line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
+else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
+Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
+short, and entering again turns it around.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned

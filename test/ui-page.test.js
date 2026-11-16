@@ -942,7 +942,11 @@ describe('inbox page', () => {
         const shown = sideGroup('t', run, { last: true, trailing: true });
         assert.match(shown, /class="sidechat {3}paneled /);
         assert.match(shown, /aria-expanded="true" aria-controls="side">/);
-        assert.doesNotMatch(shown, /sc-body|Seen before\?|aria-disabled/);
+        assert.doesNotMatch(shown, /sc-body|Seen before\?|aria-disabled|joined/);
+        // The line that opened the panel is one shape with it.
+        const picked = sidebar({ wide: true, key: 't', joined: 'sb1' }, { may });
+        assert.match(picked.sideGroup('t', run, { last: true, trailing: true }), /class="sidechat {3}paneled {2}joined" data-side="sb1">/);
+        assert.doesNotMatch(sidebar({ wide: true, key: null, joined: 'sb1' }, { may }).sideGroup('t', run, { last: true, trailing: true }), /joined/);
       }
       // No thread, no panel.
       assert.equal(sidebar({ wide: true, key: null }).sidePaneled(null), false);
@@ -996,7 +1000,7 @@ describe('inbox page', () => {
       const css = SCRIPTS['spectrum-inbox.css'];
       // The list: 3 of the 11, of what the filters (or their rail) leave, not under its least.
       const least = 'calc\\(var\\(--spectrum-spacing-100\\) \\* 47 \\+ var\\(--spectrum-spacing-75\\)\\)';
-      assert.match(css, new RegExp(`main\\.siding \\{ grid-template-columns: var\\(--nav-w\\) minmax\\(${least}, calc\\(\\(100% - var\\(--nav-w\\)\\) \\* 3 / 11\\)\\) 1fr; \\}`));
+      assert.match(css, new RegExp(`main\\.siding \\{ grid-template-columns: var\\(--nav-w\\) minmax\\(${least}, calc\\(34% \\+ \\(\\(100% - var\\(--nav-w\\)\\) \\* 3 / 11 - 34%\\) \\* var\\(--side-open, 1\\)\\)\\) 1fr; \\}`));
       assert.match(css, new RegExp(`\\nmain \\{ flex: 1; display: grid; grid-template-columns: var\\(--filters-w\\) minmax\\(${least}, 34%\\) 1fr;`));
       assert.match(css, /main \{ --nav-w: var\(--filters-w\); --side-w: /);
       assert.match(css, /main\.rail \{ --nav-w: var\(--rail\); \}/);
@@ -1007,10 +1011,16 @@ describe('inbox page', () => {
 
     it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
       const css = SCRIPTS['spectrum-inbox.css'];
-      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n<\/main>/);
+      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n<\/main>/);
       assert.match(css, /#side \{ grid-row: 1; grid-column: 3; justify-self: end; width: var\(--side-w\);/);
       assert.match(css, /#side\[hidden\] \{ display: none; \}/);
-      assert.match(css, /main\.siding #pane \{ margin-right: var\(--side-w\); \}/);
+      // It comes out of the line that opened it, and goes back into it.
+      assert.match(PAGES['inbox.html'], /<div id="side-join" aria-hidden="true" hidden><svg><clipPath id="side-join-clip"><rect><\/rect><rect><\/rect><\/clipPath><path clip-path="url\(#side-join-clip\)"><\/path><\/svg><\/div>/);
+      assert.match(css, /#side-join \{ position: absolute; z-index: 2; overflow: hidden; pointer-events: none; \}/);
+      assert.match(css, /main\.side-veiled #side \{ opacity: 0; pointer-events: none; \}/);
+      assert.match(css, /main \{ --side-motion: var\(--spectrum-animation-duration-1000\); \}/);
+      assert.match(css, /\.spectrum #side \{[^}]*background: var\(--spectrum-purple-subtle-background-color-default\);/);
+      assert.match(css, /main\.siding #pane \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
       // The thread's reply box is the sidebar's only in the thread itself.
       assert.match(html, /const reply = sideInline\(key\) \? sideComposer\(key, thread\)\s*: composer\(/);
       // The panel is the open thread's: gone with it, and with the room.
