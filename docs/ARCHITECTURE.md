@@ -627,7 +627,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   platform (`src/channelurl.js`, the `channel_links` of `/api/thread`): a Teams channel's link
   in a Slack message, or a Slack channel's in a Teams post, opens the channel's threads in the
   inbox, and a bare link shows `#name`. A link to a channel that is in none of your inboxes
-  stays a link to its platform.
+  stays a link to its platform. A link names the channel's workspace, and only a channel there
+  is the one it means; Slack's app links (`app.slack.com/client/T…/C…`) name a workspace, which
+  under Enterprise Grid is one of the org's that channels are filed under (`channels.group_id`,
+  their `tenant` being the org).
 - **The list stays put** while it is the same list (the same view, filters, unread only and
   Mentions):
   reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
