@@ -497,9 +497,13 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
   letter-spacing: normal;
   text-transform: none;
   border-radius: var(--spectrum-corner-radius-75);
+  transition: margin-bottom var(--s2-out);
 }
 .spectrum details.card > summary::marker { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum details.card[open] > summary { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum details.card[open] > summary {
+  margin-bottom: var(--spectrum-spacing-200);
+  transition: margin-bottom var(--s2-pop-in); /* with the fold (spectrum.css) */
+}
 .spectrum .prices td { font-size: var(--spectrum-font-size-75); }
 .spectrum .prices a { font-weight: var(--spectrum-medium-font-weight); }
 
