@@ -146,6 +146,14 @@ open line grows upwards from the pane's bottom edge, so it stays under the point
 only ever holds what you typed or took in: a source shown beside the draft leaves it alone (it used
 to show the draft too, a second copy next to an opened line).
 
+**Reply box's rows.** hidden → growing → shown → folding → hidden (`foldRow`, `ui/inbox.js`; the
+row's `__fold` holds its running animations): the tray of files, the draft line and the command
+cards. A change within the open thread grows or folds a row, and a later change takes over from
+where it is; a row that comes with the thread (a new element, its `__html` unset) is there at once,
+as it is with reduced motion and in the phone's drawer. A folding row still holds what it held,
+inert, and is emptied once it is hidden; a page in the background, which draws no frames, gets
+there a moment after the animation would have ended (`settled`).
+
 **New-thread composer.** editing → posting → awaiting → opened, or still awaited after five minutes
 (`state.compose`, `state.awaiting`, `started`). From posting on, the pane shows the thread as it will
 look (`renderStarted`), with a reply box whose replies wait for the platform's id of the thread
