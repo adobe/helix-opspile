@@ -2430,6 +2430,21 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-large-default);
   box-shadow: var(--s2-elevated);
 }
+/* A toast rises a little as it fades in, and fades out faster than it came: S2's Toast. One that
+   replaces it fades in where it was, so the two cross-fade rather than stack. */
+.spectrum .toast {
+  opacity: 1;
+  translate: 0px 0px;
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in);
+}
+@starting-style {
+  .spectrum .toast { opacity: 0; translate: 0px var(--spectrum-spacing-200); }
+}
+.spectrum .toast.leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--s2-out), translate var(--s2-out);
+}
 .spectrum .toast :is(button, a) {
   margin-left: 0;
   min-height: var(--s2-ctl);

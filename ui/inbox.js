@@ -5957,7 +5957,7 @@ const missedMention = (data) => Boolean(data?.uninvited?.length);
  * stays until it is dismissed (or the next note), for what someone has to read and act on.
  */
 function toast(text, action, { stay = false } = {}) {
-  document.querySelector('.toast')?.remove();
+  document.querySelectorAll('.toast:not(.leaving)').forEach(toastOut);
   const el = document.createElement('div');
   el.className = 'toast';
   el.setAttribute('role', stay ? 'alert' : 'status');
@@ -5966,16 +5966,34 @@ function toast(text, action, { stay = false } = {}) {
     const a = document.createElement(action.href ? 'a' : 'button');
     a.textContent = action.label;
     if (action.href) a.href = action.href;
-    else a.onclick = () => { el.remove(); action.run(); };
+    else a.onclick = () => { toastOut(el); action.run(); };
     el.append(a);
   }
   if (stay) {
     const close = document.createElement('button');
     close.textContent = 'Dismiss';
-    close.onclick = () => el.remove();
+    close.onclick = () => toastOut(el);
     el.append(close);
-  } else setTimeout(() => el.remove(), action ? 8000 : 5000);
+  } else setTimeout(() => toastOut(el), action ? 8000 : 5000);
   document.body.append(el);
+}
+
+/**
+ * Lets a toast fade out (`.leaving`, faster than it came), then removes it. It is inert while it
+ * goes, so its action cannot run twice; with less motion it has no transition and goes at once,
+ * and in a page in the background, which draws no frames, a little after it should have.
+ */
+function toastOut(el) {
+  if (el.classList.contains('leaving')) return;
+  el.classList.add('leaving');
+  el.inert = true;
+  const going = el.getAnimations?.() || []; // after the style that starts them
+  if (!going.length) { el.remove(); return; }
+  const end = Math.max(...going.map((a) => a.effect.getComputedTiming().endTime));
+  let done = false;
+  const gone = () => { if (!done) { done = true; el.remove(); } };
+  Promise.allSettled(going.map((a) => a.finished)).then(gone);
+  setTimeout(gone, end + 100);
 }
 
 // ---------------------------------------------------------------- reactions, resolving
