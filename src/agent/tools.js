@@ -661,7 +661,12 @@ function kernelShell(shell) {
   const js = shell.commands && shell.commands.includes('qjs')
     ? ' qjs runs JavaScript (QuickJS: qjs file.js, qjs -e, or a script on stdin; ES modules by relative path; files through its own qjs:std and qjs:os modules, as globals with --std). It is not node: no require, no npm packages, no fetch (use curl, and pipe to it), no child processes. There is no npm, node or python'
     : ' There is no npm, node or python';
-  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  // dig, where the image has it: whom it asks, as its prompt forbids sending a customer's
+  // names to a site that is not the customer's or Adobe's.
+  const dig = shell.commands && shell.commands.includes('dig')
+    ? ' dig asks Cloudflare\'s resolver, over DNS over HTTPS (cloudflare-dns.com): this computer runs on Cloudflare, which resolves every name curl reaches from it anyway, so dig may look up a customer\'s names. It cannot ask a name server itself (no @server, no +trace, no UDP).'
+    : '';
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**
