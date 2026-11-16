@@ -539,7 +539,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   (`src/previews.js`, from the latest message's file in pile 2).
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
-  them back to D1 in batches.
+  them back to D1 in batches, a couple of seconds later (`FLUSH_MS`). Once a batch is written,
+  the room says which reads it had (`reads`); the inboxes reload on that, since one that reloaded
+  on the read itself would still have the thread unread.
   New messages, reactions and drafts are announced in the room of every team whose inbox
   has the thread (a shared channel's are in several). A message posted in the last hour that
   mentions people it did not mention before (a new message, or an edit that adds a mention)

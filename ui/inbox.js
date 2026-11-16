@@ -5893,6 +5893,17 @@ function keepReads(threads) {
     if (ms.some((m) => readsSent.has(m.thread)) && ms.every(read)) seeRead(t);
   }
 }
+/**
+ * A read a room announced. It says `read` at once and writes it to D1 a few seconds later
+ * (FLUSH_MS, src/room.js), then says `reads`: an inbox reloaded on `read` still had the thread
+ * unread (and its readers without the reader), so it reloads on `reads`. Your own read, from this
+ * tab (already shown) or another tab or device: only a read that makes something here read
+ * reloads, so another device's reads show here too.
+ */
+function heardRead(ev) {
+  if (ev.type !== 'reads') return;
+  for (const r of ev.reads || []) if (r.person !== state.me.id || readHere(r)) reloadSoon(r.thread);
+}
 // Live updates reload the inbox (and the open thread, when it changed) half a second after the
 // room's announcement. A tab in the background does not: most inbox loads were tabs nobody was
 // looking at, several per person, each reloading on every message. It keeps the threads that
@@ -6224,13 +6235,7 @@ function listen(team, live, { again = false } = {}) {
     if (ev.type === 'thread' && ev.thread && ev.thread === state.awaiting) awaitStarted(ev.thread, { now: true });
     // A room only the notifications listen to: the inbox on screen is not its.
     if (!screenTeams().includes(team)) return;
-    // Your own read, from this tab (already shown) or another tab or device: only a read that
-    // makes something here read reloads, so another device's reads show here too.
-    if (ev.type === 'read' && ev.person === state.me.id) {
-      if (readHere(ev)) reloadSoon(ev.thread);
-      return;
-    }
-    if (ev.type === 'read') reloadSoon(ev.thread);
+    heardRead(ev);
     // Threads folded into a group (re-threading): the open one, if it is among them, reopens as
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {

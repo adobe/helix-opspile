@@ -499,7 +499,7 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['b', 'gap']);
   });
 
-  it('shows your reads from another tab or device, and not this tab\'s own again', () => {
+  it('shows your reads from another tab or device once the room has written them, and not this tab\'s own again', () => {
     const at = (h) => `2026-11-05T${String(h).padStart(2, '0')}:00:00Z`;
     const state = {
       sockets: [],
@@ -522,31 +522,38 @@ describe('inbox page', () => {
       },
     };
     const memberLast = (m) => m.last_at || m.any_at;
-    const { readHere } = piece('function readHere(', 'function markRead(', 'readHere', { state, memberLast });
     const sockets = [];
     const reloads = [];
+    const reloadSoon = (k) => reloads.push(k);
+    const { heardRead } = piece('function readHere(', '// Live updates reload the inbox', 'heardRead', { state, memberLast, reloadSoon });
     const { listen } = piece('function listen(', '// ---------------------------------------------------------------- notifications', 'listen', {
       WebSocket: function FakeSocket() { sockets.push(this); },
       location: { protocol: 'https:', host: 'x' },
       state,
-      reloadSoon: (k) => reloads.push(k),
+      reloadSoon,
       noteEvent: () => {},
       screenTeams: () => ['helix'],
-      readHere,
+      heardRead,
     });
     listen('helix', 1);
-    const send = (ev) => sockets[0].onmessage({ data: JSON.stringify({ type: 'read', ...ev }) });
-    send({ person: 1, thread: 'b', at: at(9) });
+    const send = (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) });
+    // Said at once, before D1 has it: an inbox loaded now would still have it unread.
+    send({
+      type: 'read', person: 1, thread: 'a', at: at(9),
+    });
+    send({
+      type: 'read', person: 2, thread: 'b', at: at(9),
+    });
+    assert.deepEqual(reloads, [], 'not written yet');
+    const flushed = (...reads) => send({ type: 'reads', reads: reads.map(([person, thread, h]) => ({ person, thread, at: at(h) })) });
+    flushed([1, 'b', 9]);
     assert.deepEqual(reloads, [], 'read here already (this tab marked it)');
-    send({ person: 1, thread: 'a', at: at(8) });
+    flushed([1, 'a', 8]);
     assert.deepEqual(reloads, [], 'not up to its last message');
-    send({ person: 1, thread: 'a', at: at(9) });
+    flushed([1, 'a', 9]);
     assert.deepEqual(reloads, ['a'], 'read on another device');
-    send({ person: 1, thread: 'g', at: at(8) });
-    assert.deepEqual(reloads, ['a', 'g'], 'a member of a folded entry, read to its end');
-    send({ person: 1, thread: 'elsewhere', at: at(9) });
-    send({ person: 2, thread: 'b', at: at(9) });
-    assert.deepEqual(reloads, ['a', 'g', 'b'], 'a teammate\'s read, as before');
+    flushed([1, 'g', 8], [1, 'elsewhere', 9], [2, 'b', 9]);
+    assert.deepEqual(reloads, ['a', 'g', 'b'], 'a member of a folded entry, read to its end, and a teammate\'s read');
   });
 
   describe('a thread folded into a group (re-threading)', () => {
@@ -611,6 +618,7 @@ describe('inbox page', () => {
         noteEvent: () => {},
         stalePools: () => {},
         screenTeams: () => ['helix'],
+        heardRead: () => {},
         foldInto,
         splitFrom,
       });
