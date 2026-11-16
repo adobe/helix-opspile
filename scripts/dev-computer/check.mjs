@@ -12,11 +12,15 @@
  */
 
 /**
- * `npm run computer:check -- <origin>`: runs the programs of the images of
- * scripts/computer-images.mjs on an agent's computer (scripts/dev-computer/worker.mjs), the
- * local one of `npm run computer:dev` or the one deployed to Cloudflare, where the limits of
- * Dynamic Workers are real (.github/workflows/computer-stage.yml).
+ * `npm run computer:check`: what Node's tests cannot run, checked on an agent's computer
+ * (scripts/dev-computer/worker.mjs): the programs of the images of scripts/computer-images.mjs,
+ * and that both shells refuse every change to the uploads with an exit code and an error. Without
+ * an origin it starts `npm run computer:dev` on a free port and stops it after; with one it
+ * checks that computer, the local one or the one deployed to Cloudflare, where the limits of
+ * Dynamic Workers are real (.github/workflows/computer-stage.yml). Run it after updating
+ * `@ai-ecoverse/slicc-kernel`, `@cloudflare/computer` or the images.
  *
+ *   npm run computer:check
  *   npm run computer:check -- http://localhost:8788
  *   COMPUTER_TOKEN=… npm run computer:check -- --images https://<stage worker>
  *
@@ -27,15 +31,64 @@
  * Exits 1 when a check fails; with GITHUB_STEP_SUMMARY, writes the results there too.
  */
 
+import { spawn } from 'node:child_process';
 import { appendFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:net';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build, missingFrom, objectsOf } from '../computer-images.mjs';
 
 /**
- * The checks: `command` runs on the kernel with `image` (base by default), on the computer of
- * `thread` (one per image, so a check does not reboot another's kernel), and passes when its
- * output matches `match` (stdout and stderr together) and its exit code is 0.
+ * The checks: `command` runs in `runtime` (the kernel by default) with `image` (base by
+ * default), on a computer of its own per runtime and image (so a check does not reboot
+ * another's kernel), with `uploads` (`{ name: text }`) put there first, and passes when its
+ * output matches `match` (stdout, then stderr) and its exit code is 0.
  */
+const ORIGINAL = 'line 1\nERROR boom\n';
+
+/** Commands that change an upload, or the uploads, each of which the shell must refuse. */
+export const CHANGES = [
+  'echo overwrite > uploads/sample.log',
+  ': > uploads/sample.log',
+  'echo more >> uploads/sample.log',
+  'exec 3>uploads/sample.log',
+  'echo new > uploads/new.log',
+  'rm uploads/sample.log',
+];
+
+/**
+ * The uploads, in `runtime`: every change refused, with an exit code and an error, and the file
+ * as it was; read, with the files next to them written; and read-only still once they change,
+ * which takes a new Workspace. Each change runs in a subshell, whose exit code is printed.
+ */
+export function uploadChecks(runtime) {
+  const uploads = { 'sample.log': ORIGINAL };
+  return [
+    ...CHANGES.map((change) => ({
+      name: `${runtime}: the uploads refuse \`${change}\``,
+      runtime,
+      uploads,
+      command: `( ${change} ); s=$?; cat uploads/sample.log; echo "exit $s"`,
+      match: /^line 1\nERROR boom\nexit [1-9]\d*\n[\s\S]*read-only/i,
+    })),
+    {
+      name: `${runtime}: the uploads are read, and the files next to them written`,
+      runtime,
+      uploads,
+      command: 'cat uploads/sample.log && echo ok > notes.txt && cat notes.txt',
+      match: /^line 1\nERROR boom\nok\n$/,
+    },
+    {
+      name: `${runtime}: the uploads are read-only still once they change`,
+      runtime,
+      uploads: { ...uploads, 'other.log': 'other\n' },
+      command: '( echo overwrite > uploads/other.log ); s=$?'
+        + '; cat uploads/other.log uploads/sample.log notes.txt; echo "exit $s"',
+      match: /^other\nline 1\nERROR boom\nok\nexit [1-9]\d*\n[\s\S]*read-only/i,
+    },
+  ];
+}
+
 export const CHECKS = [
   { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
   {
@@ -119,6 +172,8 @@ export const CHECKS = [
       + ' && printf "\\0\\0hello\\0" | strings',
     match: /^1\n42\nhello\n$/,
   },
+  ...uploadChecks('just-bash'),
+  ...uploadChecks('slicc-kernel'),
 ];
 
 /** Every command of `image` (a manifest) the computer has in /usr/bin. */
@@ -165,13 +220,27 @@ export async function syncImages(origin, built, { token, log = console.log } = {
 /** Runs `check` on the computer at `origin`: `{ name, ok, ms, output, exitCode, error }`. */
 export async function runCheck(origin, check, { token, run }) {
   const image = check.image || 'base';
+  const runtime = check.runtime || 'slicc-kernel';
+  const thread = `check-${run}-${runtime === 'slicc-kernel' ? image : runtime}`;
+  const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const started = Date.now();
   try {
-    const res = await fetch(`${origin}/?thread=check-${run}-${image}`, {
+    if (check.uploads) {
+      const put = await fetch(`${origin}/uploads?thread=${thread}`, {
+        method: 'POST', headers, body: JSON.stringify(check.uploads),
+      });
+      if (!put.ok) {
+        throw new Error(`could not put the uploads: ${put.status}`);
+      }
+    }
+    const res = await fetch(`${origin}/?thread=${thread}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...headersOf(token) },
+      headers,
       body: JSON.stringify({
-        command: check.command, runtime: 'slicc-kernel', image, timeout: check.timeout || 60,
+        command: check.command,
+        runtime,
+        ...(runtime === 'slicc-kernel' ? { image } : {}),
+        timeout: check.timeout || 60,
       }),
     });
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -206,13 +275,43 @@ export function summaryOf(results) {
     '| --- | --- | --- |', ...rows, ...failed, ''].join('\n');
 }
 
-async function main(argv) {
-  const origin = argv.find((a) => /^https?:\/\//.test(a));
-  if (!origin) {
-    console.error('npm run computer:check -- [--images] <origin>');
-    process.exitCode = 2;
-    return;
-  }
+const freePort = () => new Promise((resolve, reject) => {
+  const server = createServer();
+  server.once('error', reject);
+  server.listen(0, 'localhost', () => {
+    const { port } = server.address();
+    server.close(() => resolve(port));
+  });
+});
+
+/** Starts `npm run computer:dev` on a free port: `{ origin, stop }`, once its images are in. */
+async function startDev() {
+  const port = await freePort();
+  const dev = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'dev.mjs')], {
+    env: { ...process.env, PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let log = '';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`computer:dev did not start:\n${log}`)), 120_000);
+    const seen = (chunk) => {
+      log += chunk;
+      if (log.includes('image objects are in the local bucket')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    dev.stdout.on('data', seen);
+    dev.stderr.on('data', seen);
+    dev.once('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`computer:dev exited (${code}):\n${log}`));
+    });
+  });
+  return { origin: `http://localhost:${port}`, stop: () => dev.kill('SIGTERM') };
+}
+
+async function checkAll(origin, argv) {
   const token = process.env.COMPUTER_TOKEN;
   const built = await build();
   if (argv.includes('--images')) {
@@ -237,6 +336,18 @@ async function main(argv) {
   const failed = results.filter((r) => !r.ok).length;
   console.log(`${results.length - failed} of ${results.length} checks passed`);
   process.exitCode = failed ? 1 : 0;
+}
+
+async function main(argv) {
+  const given = argv.find((a) => /^https?:\/\//.test(a));
+  const dev = given ? null : await startDev();
+  try {
+    await checkAll(dev ? dev.origin : given, argv);
+  } finally {
+    if (dev) {
+      dev.stop();
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

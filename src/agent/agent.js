@@ -46,7 +46,7 @@ import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, overWorkspace, shellFor,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, shellFor,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -463,13 +463,12 @@ export class ThreadAgent extends Agent {
   /** The shell of the computer, as a backend of its Workspace: the one its team chose. */
   backend() {
     if (this.runtime === 'slicc-kernel') {
-      // A file is in the Workspace when its program closed it, not a second later: writing
-      // into the read-only uploads fails where it happens.
-      return overWorkspace(sliccBackend({
+      // A file is in the Workspace when its program closed it, not a second later.
+      return sliccBackend({
         kernel: () => this.kernel(),
         mountPoint: COMPUTER_CWD,
         writeBehind: false,
-      }));
+      });
     }
     return new WorkerShellBackend({
       id: 'shell',

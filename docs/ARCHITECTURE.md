@@ -133,7 +133,8 @@ the team's members post, react or are members (listed from Slack, or from the Te
 channels (an admin, say) counts for little and a member active in a few counts the most, and the
 ones Clef gives the team. The cron asks Clef about a batch of the admin
 team's channels every run, one question set per channel (`channel_labels`): which ops team should
-follow it (each described by its rules, some of its channels and its members, or none of them),
+follow it (each described by its rules, some of the channels it holds or follows through a share,
+and its members, or none of them),
 and whether it is a conversation, an alert feed or not worth following. Clef is told the channel's
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
@@ -340,7 +341,8 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   was folded is split back out (`dethread`, on that reply): its row loses `logical_thread`
   and gets `logical_via = 'split'`, which re-threading (forced, or a burst before it) leaves
   alone for good, its root file loses `logicalThread`, the roots that followed it in a burst go
-  with it, and the open inboxes reload the group (`split` in the room's `thread` event). So the
+  with it, and the open inboxes reload the group (`split` in the room's `thread` event); until
+  all of that is done, `split_from` names the group it left, so a retry finishes it. So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
   platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
   reply (`logical_via = 'reply'`, above) and alerts stay in their group.
@@ -538,7 +540,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   (`src/previews.js`, from the latest message's file in pile 2).
 - **One Durable Object per ops team** holds live read state. UI clients connect over
   WebSocket, read events fan out to everyone on the team immediately, and the object writes
-  them back to D1 in batches.
+  them back to D1 in batches, a couple of seconds later (`FLUSH_MS`). Once a batch is written,
+  the room says which reads it had (`reads`); the inboxes reload on that, since one that reloaded
+  on the read itself would still have the thread unread.
   New messages, reactions and drafts are announced in the room of every team whose inbox
   has the thread (a shared channel's are in several). A message posted in the last hour that
   mentions people it did not mention before (a new message, or an edit that adds a mention)
@@ -626,7 +630,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   platform (`src/channelurl.js`, the `channel_links` of `/api/thread`): a Teams channel's link
   in a Slack message, or a Slack channel's in a Teams post, opens the channel's threads in the
   inbox, and a bare link shows `#name`. A link to a channel that is in none of your inboxes
-  stays a link to its platform.
+  stays a link to its platform. A link names the channel's workspace, and only a channel there
+  is the one it means; Slack's app links (`app.slack.com/client/T…/C…`) name a workspace, which
+  under Enterprise Grid is one of the org's that channels are filed under (`channels.group_id`,
+  their `tenant` being the org).
 - **The list stays put** while it is the same list (the same view, filters, unread only and
   Mentions):
   reading a thread neither moves nor hides its row. Every thread it has shown stays in it,
@@ -1231,10 +1238,11 @@ channels of every team, which neither the viewer nor a thread agent may read. It
 minutes per version of the thread, per isolate.
 
 A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
-puts a colleague at the top of it, with its reason (`expert_suggestions`, migration 0045; user
-state, like drafts). Nobody is told or mentioned; a person decides. It takes only staff with an
-account on the thread's platform, three per thread at most, and a suggestion goes away once the
-person is in the thread. It tells the open inboxes (a room event `experts`), and the header shows
+suggests a colleague to the team, with its reason (`expert_suggestions`, migration 0045; user
+state, like drafts), and puts them first in its own `list_experts`. Nobody is told or mentioned;
+a person decides. It takes only staff with an account on the thread's platform, three per thread
+at most, and a suggestion goes away once the person is in the thread, which frees its place for
+another (docs/STATE-MACHINES.md, "Expert suggestion"). It tells the open inboxes (a room event `experts`), and the header shows
 it as "Agent suggests …": clicking it mentions them in the reply box, as picking them after `@`
 does, and ▾ lists each suggestion with its reason when there are several. Nothing is sent: the
 reply stays the person's to write.
@@ -1768,10 +1776,12 @@ the default. An agent follows its team's choice before each delivery, as it foll
   Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
   tables of its own (`slicc_*`). Output that was too long is saved under
   `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
-  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`), so
-  writing into the read-only uploads fails where it happens. The kernel's driver makes its
-  mount point with `mkdir -p`, which the Workspace refuses in a directory with a read-only
-  mount: `patientFs` answers it when the directory is there.
+  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
+  The kernel's driver of `/workspace` knows the Workspace's read-only mounts (the uploads):
+  files below them are read-only to the kernel too, so it refuses any change there when it
+  starts, as Linux does: `Read-only file system`, and a non-zero exit code. `npm run
+  computer:check` checks both shells on the uploads in local workerd, and on Cloudflare in the
+  `Computer on stage` workflow.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
@@ -2087,7 +2097,9 @@ agent's draft a person sent is **accepted**: as it was (`changed` 0) or edited (
 or saved over by a colleague first). One a person discarded is **discarded**, one the agent
 discarded itself (`discard_draft`) **withdrawn**. An Undo saves the same text again: a save with no
 draft, by the person who discarded one with that text (its hash, never the text) in the minute
-before, deletes the discard's event and goes on as that draft, with its origin. The agent's
+before, deletes the discard's event and goes on as that draft, with its origin and what the origin
+proposed: a draft somebody else changed and discarded keeps that text in `draft_undo` (migration
+0065) for the minute, so the Undo is compared with it, not with the text that came back. The agent's
 `post_message` that used no draft up is recorded as `posted`. The report reads the events as they
 are (they are few), per customer and team; nothing is rolled up.
 

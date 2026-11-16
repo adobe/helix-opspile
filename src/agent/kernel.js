@@ -20,8 +20,8 @@ import { DEFAULT_IMAGE, isImageName } from './image.js';
  * The kernel runs in the ThreadAgent object, its processes in Dynamic Workers (env.LOADER)
  * that have no network of their own. It is a backend of the same Workspace as just-bash
  * (`sliccBackend`), so the thread's files are the same ones, mounted at /workspace, the
- * uploads among them. The kernel's own root (/root, /tmp, /etc, and its programs under
- * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
+ * read-only uploads among them. The kernel's own root (/root, /tmp, /etc, and its programs
+ * under /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
  * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageSpec`).
@@ -154,51 +154,6 @@ export function imageSpec(image, target) {
     source: `${image.name}@${image.digest.slice(0, 12)}`,
     target,
     options: { ro: '' },
-  };
-}
-
-/**
- * `fs` (a Workspace's) whose `mkdir -p` of a directory that is there does nothing. The
- * kernel's driver makes its mount point that way with every connection, and a Workspace
- * refuses any change to a directory a read-only mount is in, even that one (EROFS): the
- * uploads are such a mount in /workspace (see `ensureCwd`, src/agent/computer.js).
- */
-export function patientFs(fs) {
-  const mkdir = async (path, options) => {
-    if (options && options.recursive) {
-      try {
-        if ((await fs.stat(path)).isDirectory) {
-          return undefined;
-        }
-      } catch (e) {
-        if (e.code !== 'ENOENT') {
-          throw e;
-        }
-      }
-    }
-    return fs.mkdir(path, options);
-  };
-  return new Proxy(fs, {
-    get(target, prop) {
-      if (prop === 'mkdir') {
-        return mkdir;
-      }
-      const value = Reflect.get(target, prop);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-}
-
-/** `backend` (the kernel's `sliccBackend`), connected to a Workspace through `patientFs`. */
-export function overWorkspace(backend) {
-  return {
-    id: backend.id,
-    type: backend.type,
-    callable: backend.callable,
-    description: backend.description,
-    connect: (host) => backend.connect(new Proxy(host, {
-      get: (target, prop) => (prop === 'fs' ? patientFs(target.fs) : Reflect.get(target, prop)),
-    })),
   };
 }
 

@@ -68,6 +68,7 @@ function env() {
   channel('slack', 'C4', 'test-sandbox', null);
   thread('slack', 'C4', 'r4', 'admin', '_unassigned', 'test');
   db.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('globex', 'Globex Corporation', 'customer', '${T0}');
+    INSERT INTO channel_teams (source, channel_id, team, added_at) VALUES ('teams', 'CE', 'helix', '${T0}');
     INSERT INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at) VALUES
       ('slack', 'X1', 'UB', 'person', 'Bo', 'bo@staff.example', 2, '${T0}'),
       ('slack', 'X1', 'UC', 'person', 'Cy', 'cy@staff.example', 3, '${T0}'),
@@ -168,6 +169,8 @@ describe('channel suggestions', () => {
     const { questions, state } = e.AI.calls.find((c) => /globex/.test(c.body.state)).body;
     assert.deepEqual(Object.keys(questions.team.criteria), ['edge', 'helix', NONE]);
     assert.match(questions.team.criteria.edge, /Teams team or Discord server name starts with ex- \(Microsoft Teams only\).*ex-acme \/ Main.*Bo, Cy/);
+    // Helix holds no channel, but follows edge's: Clef hears of it.
+    assert.match(questions.team.criteria.helix, /Channels it follows include: ex-acme \/ Main\./);
     assert.match(state, /Adobe people who posted: Bo \(Edge ops\), 2 messages/);
     assert.match(state, /Adobe staff in the channel: Cy \(Edge ops\)/);
     assert.deepEqual(e.DB.rows("SELECT user_id, email, name FROM channel_members WHERE channel_id = 'C3' ORDER BY user_id"), [

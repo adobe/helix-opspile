@@ -498,7 +498,7 @@ export function opspileExtension(ctx) {
       }),
       defineTool({
         name: 'suggest_expert',
-        description: `Suggest a colleague to pull into your thread: the inbox shows them, with your reason, at the top of the thread's expert finder, and a person decides whether to mention them. Nobody is told or mentioned. A thread keeps ${MAX_SUGGESTED} suggestions at most; they go away once the person is in the thread. With \`withdraw\`, takes your suggestion back.`,
+        description: `Suggest a colleague to pull into your thread: the inbox shows them in the thread's header, as "Agent suggests <their name>", with your reason, and a person decides whether to mention them. Nobody is told or mentioned. A thread keeps ${MAX_SUGGESTED} suggestions at most; one goes away, and makes room for another, once the person is in the thread. With \`withdraw\`, takes your suggestion back.`,
         parameters: Type.Object({
           id: Type.String({ description: 'Their id from list_experts' }),
           reason: Type.Optional(Type.String({ description: 'Why them, in one short line for the team (up to 200 characters)' })),

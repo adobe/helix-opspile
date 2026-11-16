@@ -133,4 +133,49 @@ describe('the Topics graph (ui/topicgraph.js)', () => {
     assert.equal(g.threads.length, 1);
     assert.deepEqual(lines(g), ['person:1 person:2 1']);
   });
+
+  it('leaves out what has no line with several shown, but not a topic', () => {
+    const map = mapOf([
+      [0, 'acme', [1, 2], ['cdn']], [0, 'acme', [1, 2], ['cdn']],
+      // Topic 1's one thread: under the cutoff, so none of it has a line.
+      [1, 'beta', [3], ['seo']],
+    ]);
+    const g = TopicGraph.build(map, { shown: ALL, min: 2 });
+    assert.deepEqual(drawn(g), [
+      'org:acme', 'person:1', 'person:2', 'tag:cdn', 'topic:0', 'topic:1',
+    ]);
+    // Every node is there to point at and find, drawn or not.
+    assert.ok(g.all.has('person:3') && g.all.has('org:beta') && g.all.has('tag:seo'));
+    // Without the topics, the rest goes too.
+    assert.deepEqual(drawn(TopicGraph.build(map, { shown: ['person', 'org'], min: 2 })), [
+      'org:acme', 'person:1', 'person:2',
+    ]);
+  });
+
+  it('needs min threads for a line between kinds too', () => {
+    const map = mapOf([[0, 'acme', [1, 2]], [0, 'acme', [1]], [0, 'beta', [2]]]);
+    assert.deepEqual(lines(TopicGraph.build(map, { shown: ALL, min: 2 })), [
+      'org:acme person:1 2', 'org:acme topic:0 2', 'person:1 topic:0 2', 'person:2 topic:0 2',
+    ]);
+    const g = TopicGraph.build(map, { shown: ALL, min: 3 });
+    assert.deepEqual(lines(g), []);
+    assert.deepEqual(drawn(g), ['topic:0']);
+  });
+
+  it('names the people, customers and products of most threads, and only them', () => {
+    const people = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [i + 1, `P${i + 1}`]));
+    // Person n is on n threads, all in topic 0, with customer acme.
+    const threads = [];
+    for (let n = 1; n <= 16; n += 1) {
+      for (let i = 0; i < n; i += 1) {
+        threads.push([0, 'acme', [n]]);
+      }
+    }
+    const map = { ...mapOf(threads), people };
+    const g = TopicGraph.build(map, { shown: ALL, min: 1 });
+    const named = g.nodes.filter((n) => n.named).map((n) => n.id).sort();
+    const top = Array.from({ length: 14 }, (_, i) => `person:${i + 3}`);
+    assert.deepEqual(named, ['org:acme', ...top].sort());
+    assert.equal(g.all.get('topic:0').named, undefined);
+  });
 });

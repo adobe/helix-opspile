@@ -584,9 +584,10 @@ export async function consume(batch, baseEnv, meter = null) {
       } else if (body.rethread) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await rethread(env, body.rethread, { force: Boolean(body.force) }) };
-        // The group it joined (or pulled in) is exported again.
+        // The group it joined (or pulled in) is exported again, or the one a split it finished
+        // left, with the roots it took.
         // eslint-disable-next-line no-await-in-loop
-        await queueExport(env, body.rethread);
+        await queueExport(env, r.split ? [r.group, ...r.split] : body.rethread);
         if (body.poke) {
           // eslint-disable-next-line no-await-in-loop
           await env.NORMALIZE.send({ agent: body.rethread });

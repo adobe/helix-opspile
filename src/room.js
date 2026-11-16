@@ -21,8 +21,9 @@ export const FLUSH_MS = 2000;
 /**
  * One room per ops team. Inboxes of the team's members connect over WebSocket (with
  * hibernation); a read event from one member is fanned out to everyone at once and
- * written to D1 in batches. The normalizer posts new activity and inferred reads to
- * `/notify`, which is only fanned out (it has already written D1).
+ * written to D1 in batches, which are announced once they are written (`reads`). The
+ * normalizer posts new activity and inferred reads to `/notify`, which is only fanned out
+ * (it has already written D1).
  *
  * People who are not on the team connect too (`x-opspile-scoped`), for the channels of the
  * team's that are in their personal view: they hear only about those (src/shares.js,
@@ -48,13 +49,39 @@ export class TeamRoom extends DurableObject {
 
   async send(event) {
     const data = JSON.stringify(event);
-    const sockets = this.ctx.getWebSockets().map((ws) => {
+    for (const { ws } of await recipients(this.env, event, this.sockets())) {
+      try {
+        ws.send(data);
+      } catch {
+        // closed sockets are dropped by the runtime
+      }
+    }
+  }
+
+  sockets() {
+    return this.ctx.getWebSockets().map((ws) => {
       const [person, , scope] = this.ctx.getTags(ws);
       return { ws, person: Number(person), scoped: scope === 'scoped' };
     });
-    for (const { ws } of await recipients(this.env, event, sockets)) {
+  }
+
+  /**
+   * Announces reads that are in D1 now, `{ type: 'reads', reads: [{ person, thread, at }] }`:
+   * the inboxes reload on it, since one reloaded on the `read` itself would still have the
+   * thread unread. A scoped socket hears only of the threads it hears about.
+   */
+  async flushed(reads) {
+    const all = this.sockets();
+    const heard = new Map();
+    for (const r of reads) {
+      // eslint-disable-next-line no-await-in-loop
+      for (const { ws } of await recipients(this.env, { thread: r.thread }, all)) {
+        heard.set(ws, [...(heard.get(ws) || []), r]);
+      }
+    }
+    for (const [ws, theirs] of heard) {
       try {
-        ws.send(data);
+        ws.send(JSON.stringify({ type: 'reads', reads: theirs }));
       } catch {
         // closed sockets are dropped by the runtime
       }
@@ -80,10 +107,12 @@ export class TeamRoom extends DurableObject {
 
   async alarm() {
     const pending = await this.ctx.storage.list({ prefix: 'read:' });
+    const written = [];
     let newer = false;
     for (const [key, r] of pending) {
       // eslint-disable-next-line no-await-in-loop
       await advanceWatermark(this.env.DB, r.person, r.thread, r.at, 'open');
+      written.push({ person: r.person, thread: r.thread, at: r.at });
       // D1 lets other events in: a newer read of the same thread may be waiting by now.
       // eslint-disable-next-line no-await-in-loop
       const now = await this.ctx.storage.get(key);
@@ -97,7 +126,13 @@ export class TeamRoom extends DurableObject {
     if (newer && !(await this.ctx.storage.getAlarm())) {
       await this.ctx.storage.setAlarm(Date.now() + FLUSH_MS);
     }
-    await this.cogs.meter.flush();
+    try {
+      if (written.length) {
+        await this.flushed(written);
+      }
+    } finally {
+      await this.cogs.meter.flush();
+    }
   }
 
   async fetch(request) {

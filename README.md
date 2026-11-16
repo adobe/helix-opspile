@@ -667,13 +667,15 @@ curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another 
 ```
 
 Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, layer or program
-(`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `cf dev` runs the whole
-Worker with its own local bucket, which `node scripts/computer-images.mjs --upload --local`
-fills.
+(`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `npm run computer:check`
+([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)) starts it on a free port and
+checks what they cannot: every program of every image, and that both shells refuse every change
+to the uploads with an exit code and an error, and read them. Add a check for a program you
+add. `npm run computer:check -- http://localhost:8788` checks a computer that is running
+already. `cf dev` runs the whole Worker with its own local bucket, which
+`node scripts/computer-images.mjs --upload --local` fills.
 
-`npm run computer:check -- http://localhost:8788` runs every program of every image there
-([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)): add a check for a program you
-add. Local workerd does not hold a computer to Cloudflare's limits (128 MB per Dynamic Worker,
+Local workerd does not hold a computer to Cloudflare's limits (128 MB per Dynamic Worker,
 module sizes, 10 Dynamic Workers at once), so on every branch but main
 [.github/workflows/computer-stage.yml](.github/workflows/computer-stage.yml) deploys the same
 computer to Cloudflare as `helix-opspile-computer-stage` (`wrangler deploy --env stage`, buckets

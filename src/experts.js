@@ -741,11 +741,12 @@ export async function suggestExpert(env, key, {
   if (!person || !person.staff) {
     return { error: `${account} is not an Adobe colleague on this platform: use an id from list_experts` };
   }
-  const { results } = await env.DB.prepare(`SELECT user_id FROM expert_suggestions
-    WHERE thread IN (SELECT value FROM json_each(?))
-      AND user_id NOT IN (SELECT value FROM json_each(?))`)
-    .bind(JSON.stringify(e.keys), accountsOf).all();
-  if ((results || []).length >= MAX_SUGGESTED) {
+  // Only the suggestions that still stand take a place: once a person is in the thread, theirs
+  // is not shown any more (`suggested`), and it does not count either.
+  const mine = JSON.parse(accountsOf);
+  const standing = (await suggested(env, t, e.keys, e.keys)).filter((s) => (person.person == null
+    ? !mine.includes(s.id) : s.person !== person.person));
+  if (standing.length >= MAX_SUGGESTED) {
     return { error: `this thread has ${MAX_SUGGESTED} suggestions already: withdraw one first` };
   }
   const chosen = kept(await keptAccounts(env, t, { ids: [account] }), account);

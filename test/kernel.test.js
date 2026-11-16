@@ -20,8 +20,8 @@ import {
   isImageName, listImages, readImage,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, overWorkspace, patientFs, runtimeFor,
-  RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
+  setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
@@ -31,8 +31,6 @@ import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
 // Made-up teams, packages and hosts only.
-
-const fsError = (code, message) => Object.assign(new Error(`${code}: ${message}`), { code });
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const put = (bucket, key, body) => bucket.objects.set(key, { body, options: {}, version: 'v' });
@@ -624,87 +622,5 @@ describe('the kernel\'s way to the network', () => {
     assert.equal(await request.text(), 'a=1');
     await fetch('http://example.com/');
     assert.equal(seen[1].method, 'GET');
-  });
-});
-
-describe('the kernel on a Workspace', () => {
-  /** A Workspace's fs with a read-only mount: no change to a directory the mount is in. */
-  function workspaceFs({ dirs = [], files = [], readOnly = [] } = {}) {
-    const made = [];
-    return {
-      made,
-      name: 'fs',
-      async stat(path) {
-        if (dirs.includes(path)) {
-          return { isDirectory: true, isFile: false };
-        }
-        if (files.includes(path)) {
-          return { isDirectory: false, isFile: true };
-        }
-        throw fsError('ENOENT', path);
-      },
-      async mkdir(path, options) {
-        const root = readOnly.find((r) => r === path || r.startsWith(`${path}/`));
-        if (root) {
-          throw fsError('EROFS', `read-only mount at ${root}: cannot modify: ${path}`);
-        }
-        if (files.includes(path)) {
-          throw fsError('EEXIST', path);
-        }
-        made.push([path, options]);
-      },
-      async readdir() {
-        return [this.name];
-      },
-    };
-  }
-
-  it('leaves a directory that is there alone, where the kernel makes its mount point', async () => {
-    const fs = workspaceFs({ dirs: ['/workspace'], readOnly: ['/workspace/uploads'] });
-    await assert.rejects(fs.mkdir('/workspace', { recursive: true }), { code: 'EROFS' });
-    const patient = patientFs(fs);
-    await patient.mkdir('/workspace', { recursive: true });
-    assert.deepEqual(fs.made, []);
-    // One that is not there is made, and a plain mkdir is the Workspace's to answer.
-    await patient.mkdir('/workspace/out', { recursive: true });
-    await patient.mkdir('/workspace/new');
-    assert.deepEqual(fs.made, [['/workspace/out', { recursive: true }], ['/workspace/new', undefined]]);
-    await assert.rejects(patient.mkdir('/workspace'), { code: 'EROFS' });
-    // Everything else is the Workspace's own, on the Workspace.
-    assert.deepEqual(await patient.readdir('/'), ['fs']);
-    assert.equal(patient.name, 'fs');
-  });
-
-  it('lets a file in the way, and a failing stat, come through', async () => {
-    const fs = workspaceFs({ files: ['/workspace'] });
-    await assert.rejects(patientFs(fs).mkdir('/workspace', { recursive: true }), { code: 'EEXIST' });
-    const broken = {
-      stat: async () => {
-        throw fsError('EIO', 'gone');
-      },
-      mkdir: async () => undefined,
-    };
-    await assert.rejects(patientFs(broken).mkdir('/workspace', { recursive: true }), { code: 'EIO' });
-  });
-
-  it('connects the kernel\'s backend to the Workspace through it', async () => {
-    const fs = workspaceFs({ dirs: ['/workspace'], readOnly: ['/workspace/uploads'] });
-    const host = { fs, db: 'db' };
-    const backend = overWorkspace({
-      id: 'slicc',
-      type: 'slicc-kernel',
-      callable: false,
-      description: 'GNU bash',
-      async connect(h) {
-        await h.fs.mkdir('/workspace', { recursive: true });
-        return { db: h.db, close: async () => undefined };
-      },
-    });
-    assert.equal(backend.id, 'slicc');
-    assert.equal(backend.type, 'slicc-kernel');
-    assert.equal(backend.callable, false);
-    assert.equal(backend.description, 'GNU bash');
-    assert.equal((await backend.connect(host)).db, 'db');
-    assert.deepEqual(fs.made, []);
   });
 });

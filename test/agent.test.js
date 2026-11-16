@@ -829,7 +829,7 @@ describe('the earlier conversations of the channel', () => {
       const res = await tools[name].execute(args, {});
       return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
     };
-    return { e, run };
+    return { e, run, tools };
   }
 
   it('says who is a member of the channel, and when it cannot tell', async () => {
@@ -881,6 +881,14 @@ describe('the earlier conversations of the channel', () => {
     assert.match((await run('list_experts', {})).text, /^- UEXP \| Exa \| you suggested them: Wrote the purge docs/);
     assert.equal((await run('suggest_expert', { id: 'UEXP', withdraw: true })).text, 'withdrawn');
     assert.equal((await run('suggest_expert', { id: 'U-nobody', reason: 'x' })).error, true);
+  });
+
+  it('tells the agent where the team sees its suggestion: the thread\'s header', async () => {
+    const { tools } = await setup();
+    // The inbox shows no expert finder (#354), only "Agent suggests <name>" in the header.
+    const { description } = tools.suggest_expert;
+    assert.doesNotMatch(description, /expert finder/);
+    assert.match(description, /thread's header, as "Agent suggests <their name>", with your reason/);
   });
 
   it('lists the topics of the inbox, and who works one', async () => {

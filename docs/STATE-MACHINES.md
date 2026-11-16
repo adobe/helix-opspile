@@ -35,20 +35,27 @@ to a newer `version`, and a tombstone is final, so a replay in any order comes o
 
 **Room read flush.** idle → pending → flushed (`read:*` and the alarm, `src/room.js`). The flush
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
-have arrived. Until then the inbox has the thread unread, so the page that sent a read holds it for
-30 seconds (`readsSent`, `keepReads` in `ui/inbox.js`): a reload meanwhile shows the thread read
-unless something came in after the read.
+have arrived. The room announces a read twice: `read` when it is pending, `reads` once it is
+flushed. Until then the inbox has the thread unread, so the other pages reload on `reads`, not on
+`read` (`heardRead` in `ui/inbox.js`), and the page that sent a read holds it for 30 seconds
+(`readsSent`, `keepReads`): a reload meanwhile shows the thread read unless something came in after
+the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
-conversation's root folded by Clef that gets a person's reply in its own platform thread) split
-(`threads.logical_*`, `src/rethread.js`). `skeleton_hash` is written before the work that can fail,
-and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
+conversation's root folded by Clef that gets a person's reply in its own platform thread) splitting
+→ split (`threads.logical_*` and `split_from`, `src/rethread.js`). `skeleton_hash` is written
+before the work that can fail, and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
 hash. One that is skipped after a job died on it (its file is gone, or an edit emptied it) gets
 `rethreaded_at`, since asking again finds the same. Split is final: `logical_via = 'split'`,
 `logical_thread` cleared and `rethreaded_at` moved to the split (for the export sweep), and neither
 a forced re-threading nor a burst pulls it in again. The split is conditional on the group the root
-is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. A fold as an addressed reply
+is in (`WHERE logical_thread = ?`), so it only undoes the fold it saw. Since that write is its guard
+and comes first, it writes what is left with it: `split_from`, the group it left. While that is set,
+the split is unfinished (its root file, the burst roots that go along, the open inboxes), and the
+reply's retry, a later reply, or re-threading (which `sweepRethreads` sends out for it an hour
+after `rethreaded_at`) finishes it; each step can be done again, a burst root that moved already is
+moved again, and `split_from` is cleared last. A fold as an addressed reply
 (`logical_via = 'reply'`: the root @-mentions somebody of the conversation, minutes after its latest
 message) is never split either, like a burst member's: the conversation went on in that platform
 thread, so the replies there are the group's. Routed is final the other way:
@@ -112,7 +119,9 @@ discarded (by a person, or by the agent: withdrawn). Undo is a save of the same 
 draft, by the person who discarded it, within a minute (`UNDO_SECONDS`): it deletes the discard's
 event and the draft goes on with its `created_at` and `origin`, as if it had not been discarded.
 `origin` (who saved the first version) stays through every version and every move into a group;
-`origin_body` follows only that person's saves.
+`origin_body` follows only that person's saves, and an Undo too: a discard by somebody else of a
+draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
+minute is over (pruned at the next discard and by the cron).
 
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
@@ -162,6 +171,12 @@ after the answer, or by `status()` when it differs from the last one kept (in th
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
 progress is never kept. A turn that answers a sidebar message is kept as its answer instead
 (`sidebar_messages`, below), and the row stays the turn before it.
+
+**Expert suggestion.** suggested → withdrawn, or fulfilled (`expert_suggestions`, `suggestExpert`
+in `src/experts.js`). Withdrawing deletes the row; suggesting the person again replaces it, with
+the new reason. Fulfilled is not stored: the person is in the thread (a message or a mention of
+theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
+toward the three a thread may have. Both go by the person, whichever of their accounts was named.
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
 asks again; after five in a row the spinner goes.
@@ -230,6 +245,12 @@ thread's column changes its width; not from the thread's own, which the panel ch
 (`sidePaneled`), which someone who may not talk to the agent can open too, to read; without, it is
 the thread's reply box turned into the sidebar's (`sideInline`), only for who may talk to it. The
 panel is the open thread's: it goes whenever `side.key` is not the open thread (`syncReading`).
+The panel's motion is not a state either: as you enter or leave the sidebar (`side.motion`, only
+while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
+line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
+else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
+Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
+short, and entering again turns it around.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
