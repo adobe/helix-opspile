@@ -237,6 +237,52 @@ describe('personal view', () => {
     assert.equal(same.unreadMentions, 2);
   });
 
+  it('counts what is new for me as Slack\'s badge does: mentions, and replies in my threads', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    const mention = async (thread, minute) => {
+      const m = await say(DB, {
+        thread, channelId: 'C1', team: 'helix', person: 2, at: at(minute),
+      });
+      await recordMentions(DB, { thread, message: m, at: at(minute) }, [{ person: 1, via: 'id' }]);
+    };
+    // Posted in: the replies since my last read count, mine do not.
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', at: at(1),
+    });
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', person: 1, at: at(2),
+    });
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', person: 2, at: at(3),
+    });
+    await say(DB, {
+      thread: 'posted', channelId: 'C1', team: 'helix', at: at(4),
+    });
+    // Mentioned in: what came before the mention does not count, the mention once, the rest.
+    await say(DB, {
+      thread: 'mentioned', channelId: 'C1', team: 'helix', at: at(5),
+    });
+    await mention('mentioned', 6);
+    await say(DB, {
+      thread: 'mentioned', channelId: 'C1', team: 'helix', at: at(7),
+    });
+    // Neither: unread, but not for me.
+    await say(DB, {
+      thread: 'other', channelId: 'C1', team: 'helix', person: 2, at: at(8),
+    });
+    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
+      .threads.map((t) => [t.thread, [t.unread, t.unreadMentions, t.unreadForYou]]));
+    assert.deepEqual(await count(), {
+      posted: [true, 0, 2], mentioned: [true, 1, 2], other: [true, 0, 0],
+    });
+    await advanceWatermark(DB, 1, 'posted', at(3), 'open');
+    await advanceWatermark(DB, 1, 'mentioned', at(7), 'open');
+    assert.deepEqual(await count(), {
+      posted: [true, 0, 1], mentioned: [false, 0, 0], other: [true, 0, 0],
+    });
+  });
+
   it('counts unread threads the personal view does not show, for each of your teams', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;

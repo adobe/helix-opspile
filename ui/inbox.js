@@ -1008,7 +1008,8 @@ const single = (id) => personal() && id === 'customer';
  * Mentions (`state.mentions`, `mentions=1` in the address): the personal view's one switch past
  * the customers, beside unread only. It keeps the threads that mention you, read or not (a
  * mention you have read, too: `mentioned` has everyone ever mentioned in the thread); with
- * unread only, the ones the red badge counts. It is not a card, and team views do not have it
+ * unread only, the ones with unread mentions of you (the red badge also counts what is new in
+ * the threads you are in, which this does not keep). It is not a card, and team views do not have it
  * (their Involves card has "me"), so it filters nothing there.
  */
 const mentionsOn = () => personal() && state.mentions;
@@ -1098,12 +1099,13 @@ function facetRows(f) {
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
-  const mentions = new Map(); // value -> messages mentioning the viewer they have not read
+  const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
   for (const t of pool) {
     for (const v of valuesOf(f, t)) {
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
-      if (t.unreadMentions) mentions.set(v, (mentions.get(v) || 0) + t.unreadMentions);
+      const you = youCount(t);
+      if (you) mentions.set(v, (mentions.get(v) || 0) + you);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
@@ -1143,30 +1145,38 @@ function facetRows(f) {
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
 }
 
-/** How many messages mention the viewer that they have not read, as Slack and Teams show it. */
-const mentionBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">${n > 99 ? '99+' : n}</b>` : '');
+/** How many messages for the viewer they have not read (youCount), as Slack's badge shows it. */
+const mentionBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
 /*
  * The simple personal view: a column of customers beside the list, and the list by customer
- * until one is picked. Its one mark is red: the badge counts the messages that mention you
- * and that you have not read, beside a customer, and the threads it counts are marked in the
+ * until one is picked. Its one mark is red: the badge counts the messages for you that you have
+ * not read (youCount: those that mention you, and what is new in the threads you are in),
+ * beside a customer, and the threads it counts are marked in the
  * same red. Unread is bold. GROUPS says how the list by customer goes:
  * - `fold`: what a customer shows of its threads: 'three' (its unread ones, and its latest up
  *   to three), 'all', or 'new' (its unread ones; customers with none are named at the end);
- * - `mark`: a thread that mentions you has a red 'dot' before its title, or the red 'badge';
+ * - `mark`: a thread the badge counts has a red 'dot' before its title, or the red 'badge';
  * - `headBadge`: whether a customer's heading carries the badge too;
  * - `sticky`: whether the heading stays at the top while its threads scroll under it.
  */
 const GROUPS = {
   fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
-const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** The red badge's tooltip: `n` messages for you (youCount). */
+const youTitle = (n) => `${n} unread ${n === 1 ? 'message' : 'messages'} for you: mentions, and replies in threads you are in`;
+const youBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 /** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
 const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
-/** A thread's unread mentions of you, as the badge counts them. */
-const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * What the red badge counts of a thread you have not read, as Slack's does: the messages that
+ * mention you, and in a thread you posted or were mentioned in, the others' since
+ * (`unreadForYou`, src/threads.js unreadInYours); at least one while it mentions you.
+ */
+const youCount = (t) => (t.unread
+  ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0);
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
@@ -1181,7 +1191,7 @@ function wireLogos() {
   addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
 }
 /**
- * The customers' order in the column: those with unread mentions of you first, most mentions
+ * The customers' order in the column: those the red badge counts first (youCount), most
  * first, then those with unread threads, then the rest, then the excluded ones; by name within
  * each. `c.name` is looked up once per customer, not in every comparison.
  */
@@ -1281,14 +1291,15 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
-// What a row sets apart, in its classes: resolved, an unread mention of you, critical or hot.
+// What a row sets apart, in its classes: resolved, something unread for you (the red badge's,
+// youCount), critical or hot.
 const isResolved = (t) => checked(t) || resolvedOf(t) === 'resolved';
 const mentionsMe = (t) => t.unread && (t.unreadMentions > 0 || t.mentionedMe);
 function flags(t) {
   const status = statusOf(t);
   let out = '';
   if (isResolved(t)) out += ' resolved';
-  if (mentionsMe(t)) out += ' mention';
+  if (youCount(t)) out += ' mention';
   if (status === 'critical' || status === 'hot') out += ' urgent';
   return out;
 }
@@ -1336,8 +1347,12 @@ function row(t, hit = null) {
   let count = '';
   if (n > 1) count = `${n}×`;
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
-  const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
-  const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
+  // The red badge's count: mentions of you, or with replies in a thread of yours, what is new.
+  const m = youCount(t);
+  const only = m && mentionsMe(t) && m <= (t.unreadMentions || 1);
+  let what = 'new';
+  if (only) what = m === 1 ? 'mention' : 'mentions';
+  const mentions = m ? `<b class="men" title="${esc(only ? 'Unread mentions of you' : youTitle(m))}">${count ? ', ' : ''}${m} ${what}</b>` : '';
   // The latest reply: the inbox sends it (see `preview`). Not for a thread without replies (its
   // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
@@ -1362,7 +1377,7 @@ function row(t, hit = null) {
 const grouped = () => simple() && !searching();
 /**
  * A thread's row in the simple personal view: its title (bold while unread) and how long ago,
- * then the latest reply, and the red mark (GROUPS.mark) when it mentions you. The
+ * then the latest reply, and the red mark (GROUPS.mark) when it has something for you. The
  * customer is its heading, or picked; only a search result names it. No status, drafts, people,
  * counts or reactions: the expert view has them.
  */
@@ -1371,7 +1386,7 @@ function simpleRow(t, hit = null) {
   const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
   const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
-  const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you"` : ''}></span>` : '';
+  const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${esc(youTitle(n))}"` : ''}></span>` : '';
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
@@ -6562,7 +6577,7 @@ const readsSent = new Map();
 function seeRead(t) {
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
   Object.assign(t, {
-    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
+    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0, unreadForYou: 0,
   });
   if (lastOf(t)) t.unseenByAdobe = false;
   const applies = { 'mentioned-team': t.mentionedTeam.length > 0 };
