@@ -877,6 +877,11 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .pv { grid-area: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: var(--spectrum-spacing-100); }
 /* Viewed: all of it, rendered as the message it will be (its Markdown), on the card, not a bubble. */
 .draftbar.open .pv { white-space: normal; max-height: 30vh; overflow: auto; }
+/* Opening and closing, it grows and shrinks (`resizeDraft`): opening settles, closing is faster,
+   and all of the draft shows as it goes, cut off below. */
+.draftbar { --draft-open: var(--spectrum-animation-duration-500); --draft-open-ease: var(--spectrum-animation-ease-out);
+  --draft-close: var(--spectrum-animation-duration-200); --draft-close-ease: var(--spectrum-animation-ease-in); }
+.draftbar .pv.resizing { white-space: normal; overflow: hidden; }
 .draftbar .pv .md.bubble { max-width: none; padding: 0; border-radius: 0; background: none; color: inherit; }
 /* Closed: how it starts, still rendered, on one line: its blocks run on as text, a space (or a
    list's number) between them, and what has no place in a line of text is left out. */

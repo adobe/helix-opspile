@@ -142,7 +142,9 @@ when the platform refused it, or after a minute. A second click on the same emoj
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
 too (`draftPeek` names the thread it opened), and leaving closes only what it opened. Hide draft and
 Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
-open line grows upwards from the pane's bottom edge, so it stays under the pointer. The reply box
+open line grows upwards from the pane's bottom edge, so it stays under the pointer. The state changes
+at once; only the line's height follows, growing or shrinking (`resizeDraft`), and a re-render while
+it moves goes on from where it is. The reply box
 only ever holds what you typed or took in: a source shown beside the draft leaves it alone (it used
 to show the draft too, a second copy next to an opened line).
 
