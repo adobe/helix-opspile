@@ -247,8 +247,18 @@ function renderBases() {
   }
 }
 
-/** Phones show one column at a time: `bases`, `files` or `editor`. */
+/**
+ * Phones show one column at a time: `bases`, `files` or `editor`, each sliding in over the one
+ * before and back out (see the styles), but while `main.instant` (the first load, and Back that
+ * the browser has animated already).
+ */
 const showPane = (pane) => { document.querySelector('main').dataset.pane = pane; };
+/** The slide is back: what changed while `main.instant` is applied, without it. */
+function slideAgain() {
+  const main = document.querySelector('main');
+  main.getBoundingClientRect();
+  main.classList.remove('instant');
+}
 const UP = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
 const up = (pane, label) => `<button class="up" data-up="${pane}">${UP}${label}</button>`;
 
@@ -2112,7 +2122,16 @@ document.querySelector('main').addEventListener('click', (e) => {
 });
 
 // Back and Forward within the editor: show what the URL names, after the same check as a click.
-window.addEventListener('popstate', async () => {
+window.addEventListener('popstate', async (e) => {
+  // Safari's edge swipe has already slid the column before into view: no second slide.
+  if (e.hasUAVisualTransition) document.querySelector('main').classList.add('instant');
+  try {
+    await popped();
+  } finally {
+    slideAgain();
+  }
+});
+async function popped() {
   const q = new URLSearchParams(location.search);
   const repo = q.get('repo');
   const view = VIEWS.includes(q.get('view')) ? q.get('view') : 'file';
@@ -2124,8 +2143,12 @@ window.addEventListener('popstate', async () => {
       Object.assign(state, { repo: null, file: null, view: 'file' });
       showPane('bases');
       renderBases();
-      $('files').innerHTML = '';
-      $('editor').innerHTML = '<div class="empty pick">Pick a knowledge base.</div>';
+      // The files slide out as they were (phones); then they go.
+      Promise.allSettled($('files').getAnimations().map((a) => a.finished)).then(() => {
+        if (state.repo) return;
+        $('files').innerHTML = '';
+        $('editor').innerHTML = '<div class="empty pick">Pick a knowledge base.</div>';
+      });
       toUrl('replace');
     }
   } else if (repo !== state.repo) {
@@ -2143,8 +2166,9 @@ window.addEventListener('popstate', async () => {
   }
   // Stayed (edits that could not be saved, kept): the URL goes back to what is shown.
   if (moved === false) toUrl('push');
-});
+}
 
+// A link to a knowledge base or a file lands on it: no slide until the page has opened it.
 (async () => {
   const q = new URLSearchParams(location.search);
   // `back=`, the inbox as it was left, from links made before ui/header.js kept it.
@@ -2208,4 +2232,4 @@ window.addEventListener('popstate', async () => {
   } else {
     toUrl('replace');
   }
-})();
+})().finally(slideAgain);

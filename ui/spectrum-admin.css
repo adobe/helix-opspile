@@ -131,8 +131,17 @@ tr.left td { opacity: .55; }
 
 }
 @media (max-width: 699px) {
-  main { grid-template-columns: 100%; }
-  body.picked #list, body:not(.picked) #detail { display: none; }
+  /* The list and what is picked in it, in one place: what is picked slides in over the list from
+     the right, and back out (as the inbox's list and thread do). The one out of view is hidden
+     once it is, for screen readers and the keyboard too. Clipped, not hidden: nothing may scroll
+     the page sideways to what is off its edge. */
+  main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
+  #list, #detail { grid-area: 1 / 1; transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  #detail { transform: translateX(100%); visibility: hidden; }
+  body.picked #list { transform: translateX(-25%); visibility: hidden; }
+  /* The one coming into view is visible as it starts to; the other hidden once it is out. */
+  body.picked #detail { transform: none; visibility: visible; }
+  body.picked #detail, body:not(.picked) #list { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out); }
 
 
   .title { flex-wrap: wrap; }
@@ -148,6 +157,12 @@ tr.left td { opacity: .55; }
 
   .seg { flex-wrap: wrap; }
 }
+/* No slide for those who ask the browser for less motion, on the first load (a link to a team
+   lands on it), or between the pages (`main.instant`, ui/admin.js). */
+@media (max-width: 699px) and (prefers-reduced-motion: reduce) {
+  #list, #detail, body.picked #detail, body:not(.picked) #list { transition: none; }
+}
+body main.instant :is(#list, #detail) { transition: none; }
 /* The parts the script writes: the title's heading, a row of a field and its button, a hint
    leading a card, a list's empty note, the new team's slug and a rule's priority. */
 .title h1 { margin: 0; }

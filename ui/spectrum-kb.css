@@ -195,16 +195,28 @@ kbd { padding: 0 var(--spectrum-spacing-75); }
   main { grid-template-columns: minmax(calc(var(--spectrum-spacing-100) * 21 + var(--spectrum-spacing-50)), 22%) minmax(calc(var(--spectrum-spacing-100) * 25), 27%) minmax(0, 1fr); }
 }
 @media (max-width: 699px) {
-  main { grid-template-columns: 100%; }
-
-  main:not([data-pane="bases"]) #bases, main:not([data-pane="files"]) #files,
-  main:not([data-pane="editor"]) #editor { display: none; }
+  /* The three columns in one place: the next one slides in over the one before from the right,
+     and back out (as the inbox's list and thread do). Those out of view are hidden once they
+     are, for screen readers and the keyboard too. Clipped, not hidden: nothing may scroll the
+     page sideways to what is off its edge. */
+  main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
+  #bases, #files, #editor { grid-area: 1 / 1; transform: translateX(100%); visibility: hidden;
+    transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  main:is([data-pane="files"], [data-pane="editor"]) #bases, main[data-pane="editor"] #files { transform: translateX(-25%); }
+  main[data-pane="bases"] #bases, main[data-pane="files"] #files, main[data-pane="editor"] #editor {
+    transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out); }
   .up { display: inline-flex; align-items: center;
  }
 
   .bar .path { min-width: 0; overflow-wrap: anywhere; }
   .foot input { min-width: 0; }
 }
+/* No slide for those who ask the browser for less motion, on the first load (a link to a file
+   lands on it), or for Back that the browser has animated already (`main.instant`, ui/kb.js). */
+@media (max-width: 699px) and (prefers-reduced-motion: reduce) {
+  main[data-pane] :is(#bases, #files, #editor) { transition: none; }
+}
+main.instant[data-pane] :is(#bases, #files, #editor) { transition: none; }
 /* The parts the script writes: a list's empty note, the note leading the tools and the global
    servers, and the fields of a form that need less than the whole width. */
 .empty.pad { padding: var(--spectrum-spacing-100); }
