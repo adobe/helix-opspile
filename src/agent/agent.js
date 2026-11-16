@@ -381,12 +381,6 @@ export class ThreadAgent extends Agent {
       : { mode: 'direct' };
   }
 
-  /** The time, for the kernel: a call into this object refreshes its clock (see `kernel`). */
-  // eslint-disable-next-line class-methods-use-this
-  now() {
-    return Date.now();
-  }
-
   /**
    * The SLICC kernel of the computer (src/agent/kernel.js), made with the first command: its
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
@@ -398,8 +392,11 @@ export class ThreadAgent extends Agent {
    * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile
    * one at run time), and hands the request to the same transport. A program's own TCP
    * leaves through the uplink (src/agent/uplink.js), the Worker's sockets, to port 443 only,
-   * past the gateway: for a site's own TLS. A Worker's clock stands
-   * still while it computes, so the kernel asks this object for the time before each timed wait.
+   * past the gateway: for a site's own TLS. A Worker's clock stands still while it computes;
+   * the kernel waits on a timer before each timed wait, which moves it. It must not call into
+   * this object for the time (it did up to 1.188): each such call raised the request's
+   * subrequest depth, until R2 failed in the same request and a program read from the image
+   * failed to start with EIO.
    */
   kernel() {
     this.booting ??= (async () => {
@@ -415,7 +412,6 @@ export class ThreadAgent extends Agent {
         loader: this.env.LOADER,
         sql: storage.sql,
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
-        clock: () => this.env.AGENTS.get(this.ctx.id).now(),
         commands: { append: [IMAGE_COMMANDS] },
         // How much of a Dynamic Worker's 128 MB the kernel fills with processes: by default
         // 64 MiB, too little for git's clone, which is three processes deep (git, git
