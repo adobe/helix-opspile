@@ -14,6 +14,7 @@ import {
   config, deleteRule, deleteTech, saveRule, saveTech, testRule,
 } from './extract.js';
 import { json } from './http.js';
+import { LAYERS } from './stack.js';
 import { ownerOf } from './mcpadmin.js';
 
 /**
@@ -48,7 +49,10 @@ export async function extractionAdmin(request, env, url, me) {
   const team = reader.slug;
   if (url.pathname === PATH && request.method === 'GET') {
     const editor = await ownerOf(env, me, repo);
-    return json({ repo, ...await config(env, team), may: Boolean(editor) });
+    // The layers of the stack a technology may be in (src/stack.js), for the form.
+    return json({
+      repo, ...await config(env, team), layers: LAYERS, may: Boolean(editor),
+    });
   }
   // Testing changes nothing, but runs scripts: for those who may change the rules, too.
   if (!await ownerOf(env, me, repo)) {

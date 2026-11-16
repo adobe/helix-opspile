@@ -1439,7 +1439,38 @@ function groupHtml(x) {
   }
   const name = customerName(x.head);
   const back = x.picked ? '<span class="back">All customers</span>' : '';
-  return `<button type="button" class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}${back}</button>`;
+  const keys = stackLine(x.head);
+  const stack = keys.length ? `<span class="stk-line" title="${esc(`${name}'s tech stack: ${keys.join(', ')}`)}">${keys.map((k) => `<span>${esc(k)}</span>`).join('')}</span>` : '';
+  return `<button type="button" class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}${stack}${back}</button>`;
+}
+
+/*
+ * A customer's tech stack at a glance: what Clef saw in its channels (`stacks`, src/api.js
+ * orgStacks), each technology in its layer (`vocab.layers`, `vocab.stack`, src/stack.js). Beside
+ * the customer's heading, the likeliest technology of each layer, top to bottom.
+ */
+/** The customer's technologies, likeliest first: `[{ tech, name, p, layer }]`. */
+function orgStack(org) {
+  const v = state.data?.vocab || {};
+  return (state.data?.stacks?.[org] || []).map((t) => ({
+    tech: t.tech, p: t.p, name: v.tech?.[t.tech] || t.tech, layer: v.layers?.[t.tech] || null,
+  }));
+}
+/** The names of the key parts of a customer's stack: each layer's likeliest, but Other's. */
+function stackLine(org) {
+  const by = new Map();
+  for (const t of orgStack(org)) if (t.layer && t.layer !== 'other' && !by.has(t.layer)) by.set(t.layer, t.name);
+  return (state.data?.vocab?.stack || []).map((l) => by.get(l.id)).filter(Boolean);
+}
+/** Pages of the inbox, merged: each customer's technologies at the highest probability of any. */
+function mergeStacks(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [org, list] of Object.entries(b || {})) {
+    const best = new Map((out[org] || []).map((t) => [t.tech, t.p]));
+    for (const t of list) if (!(best.get(t.tech) >= t.p)) best.set(t.tech, t.p);
+    out[org] = [...best].map(([tech, p]) => ({ tech, p })).sort((x, y) => y.p - x.p);
+  }
+  return out;
 }
 
 /** Markdown as one line of plain text, for a preview. */
@@ -6785,6 +6816,7 @@ async function loadInbox(early = null) {
     first.threads = [...first.threads,
       ...prev.threads.filter((t) => !keys.has(t.thread) && !folded.has(t.thread))];
     first.people = { ...prev.people, ...first.people };
+    first.stacks = mergeStacks(prev.stacks, first.stacks);
     // The deepest page loaded so far is where the next one starts.
     if (prev.page?.deeper) first.page = { ...first.page, next: prev.page.next, deeper: true };
     // The first page is not the last one: keep the counts the last page brought.
@@ -6816,6 +6848,7 @@ function addPage(p) {
   settleFolds();
   keepReads(added);
   state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
+  state.data.stacks = mergeStacks(state.data.stacks, p.stacks);
   state.data.page = { ...state.data.page, next: p.page?.next || null, deeper: true };
   if (p.elsewhere) state.data.elsewhere = p.elsewhere;
   mergeProfiles(p.profiles);

@@ -386,6 +386,30 @@ async function unreadElsewhere(env, me) {
 }
 
 /**
+ * The tech stack of each customer, over its channels in this page of the inbox: `{ [org]:
+ * [{ tech, p }] }`, likeliest first, each technology at the highest probability any of its
+ * channels has (channel_tech). The list by customer names the key parts under each customer
+ * (ui/inbox.js `stackLine`); pages are merged the same way in the page.
+ */
+export function orgStacks(rows) {
+  const best = new Map();
+  for (const r of rows || []) {
+    if (r.org && r.p != null) {
+      if (!best.has(r.org)) {
+        best.set(r.org, new Map());
+      }
+      const m = best.get(r.org);
+      if (!(m.get(r.tech) >= r.p)) {
+        m.set(r.tech, r.p);
+      }
+    }
+  }
+  return Object.fromEntries([...best].map(([org, m]) => [org, [...m]
+    .map(([tech, p]) => ({ tech, p: Math.round(p * 1000) / 1000 }))
+    .sort((a, b) => b.p - a.p || a.tech.localeCompare(b.tech))]));
+}
+
+/**
  * A page of a team's inbox, or with `personal` (and no team) of the viewer's personal view.
  * `before` is the `next` cursor of the previous page (`<latest>|<group>`): the groups whose
  * latest activity comes after it in the newest-first order. With `groups` (inbox entry keys,
@@ -523,8 +547,9 @@ export async function inbox(env, me, team, {
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
-    // The tech stack of each thread's channel (src/label.js recordTech), for the tech facet.
-    env.DB.prepare(`SELECT t.thread, c.tech FROM threads t JOIN channel_tech c
+    // The tech stack of each thread's channel (src/label.js recordTech), for the tech facet,
+    // and of each customer, over its channels here (`stacks`), for the list by customer.
+    env.DB.prepare(`SELECT t.thread, t.org, c.tech, c.p FROM threads t JOIN channel_tech c
         ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
       WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
       .bind(keys, TECH_MIN).all(),
@@ -547,6 +572,7 @@ export async function inbox(env, me, team, {
   };
   const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
   const techBy = by(techRows, (r) => r.tech);
+  const stacks = orgStacks(techRows);
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
@@ -582,6 +608,7 @@ export async function inbox(env, me, team, {
     teams: myTeams,
     members: teamMembers,
     vocab: techVocab,
+    stacks,
     ...(elsewhere ? { elsewhere } : {}),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
     threads: await nameChannelIds(env, fold(states

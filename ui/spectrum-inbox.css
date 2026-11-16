@@ -2611,6 +2611,9 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 #threads .rows > .grp.sticky { position: sticky; top: var(--list-head, 0px); z-index: 1; padding-top: var(--spectrum-spacing-100); }
 #threads .rows > .grp .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #threads .rows > .grp .back { margin-left: auto; flex: none; }
+/* The key parts of the customer's stack, beside its name (ui/inbox.js `stackLine`). */
+#threads .rows > .grp .stk-line { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: var(--spectrum-spacing-75); }
+#threads .rows > .grp .stk-line > span + span::before { content: "·"; padding: 0 var(--spectrum-spacing-75); }
 #threads .rows > .grp-more { display: block; width: 100%; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-200) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100));
   border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
 #threads .rows > .grp-quiet { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-200); line-height: 1.5; }
@@ -2647,6 +2650,7 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 }
 .spectrum #threads .rows > .grp-more, .spectrum #threads .rows > .grp .back { color: var(--spectrum-accent-content-color-default); }
 .spectrum #threads .rows > .grp .back { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
+.spectrum #threads .rows > .grp .stk-line { color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
 .spectrum #threads .rows > .grp-more:hover { text-decoration: underline; }
 .spectrum #threads .rows > .grp-quiet { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* Mentions, at the top right of the personal view's customers: a quiet ActionButton, in its

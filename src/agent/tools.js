@@ -51,6 +51,7 @@ import {
   accessibleRepos, commitLog, grepFiles, listFiles, readText,
 } from './repos.js';
 import { MAX_SOURCES } from '../sources.js';
+import { LAYERS } from '../stack.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -791,6 +792,7 @@ function extractionTools(ctx) {
         tech: Type.String({ description: 'Id: lower case letters, digits and _' }),
         name: Type.Optional(Type.String()),
         description: Type.Optional(Type.String()),
+        layer: Type.Optional(Type.Union(LAYERS.map((l) => Type.Literal(l.id)), { description: `Where in a customer's stack it is: ${LAYERS.map((l) => `${l.id} (${l.hint})`).join('; ')}` })),
         enabled: Type.Optional(Type.Boolean()),
       }),
       executionMode: 'sequential',

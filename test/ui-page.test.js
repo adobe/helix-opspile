@@ -581,6 +581,7 @@ describe('inbox page', () => {
         render: () => {},
         backfill: () => {},
         keepReads: () => {},
+        mergeStacks: (a, b) => ({ ...a, ...b }),
       });
       return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
     }

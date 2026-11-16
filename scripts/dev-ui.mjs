@@ -85,7 +85,9 @@ import { snippet, terms } from '../src/search.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
-import { fold, readMembers, threadTech } from '../src/api.js';
+import {
+  fold, orgStacks, readMembers, threadTech,
+} from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
@@ -518,6 +520,10 @@ function unreadInYours(rows) {
   return out;
 }
 
+/** The channel's tech stack (channel_tech), likeliest first. */
+const channelTech = (entry) => (entry.ch.tech || [])
+  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -599,6 +605,9 @@ function inbox(team, before = null, personal = false, only = null) {
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
     vocab: vocabNames,
+    // Each customer's stack over its channels here, as src/api.js `orgStacks` makes it.
+    stacks: orgStacks(threads.flatMap((t) => channelTech(store.threads.get(t.thread))
+      .map((x) => ({ org: t.org, ...x })))),
     threads,
     page,
     ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
@@ -845,10 +854,6 @@ function agentTurn(entry, { asked = false } = {}) {
  * with every member's messages. A member's key opens its group: `thread.thread` is the entry's.
  */
 const DEV_READ_MEMBERS = 8;
-
-/** The channel's tech stack (channel_tech), likeliest first. */
-const channelTech = (entry) => (entry.ch.tech || [])
-  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
 
 function thread(asked) {
   const own = store.threads.get(asked);
