@@ -157,10 +157,10 @@ window.Dialog = (() => {
  * was there, the region fades in. A placeholder ("Loading…", alone in the region as `.empty`)
  * is shown at once, not faded, and counts as a subject of its own, so the content that
  * replaces it fades in: a thread that has to be loaded fades in once, when it arrives.
- * Re-rendering the same subject (a live update, a save) does not fade, and nothing waits for the fade: the content
- * is in the page, focusable and clickable, from its first frame. `skip()` says when not to
- * (where the region slides in already); with reduced motion, or in a tab in the background,
- * nothing fades.
+ * Re-rendering the same subject (a live update, a save) does not fade, and nothing waits for
+ * the fade: the content is in the page, focusable and clickable, from its first frame.
+ * `skip()` says when not to (where the region slides in already); with reduced motion, or in
+ * a tab in the background, nothing fades.
  *
  * The View Transitions API would cross-fade the old content out as well, but it changes the
  * page only a frame later, in a callback, and the pages read and focus what they have just
@@ -171,7 +171,8 @@ window.Swap = (() => {
   const ms = (v) => (/ms$/.test(v) ? parseFloat(v) : parseFloat(v) * 1000) || 0;
   // `--s2-swap-in` (ui/spectrum.css): a duration, then an easing.
   const timing = (el) => {
-    const [, duration = '', easing = ''] = /^(\S*)\s*(.*)$/.exec(getComputedStyle(el).getPropertyValue('--s2-swap-in').trim());
+    const value = getComputedStyle(el).getPropertyValue('--s2-swap-in').trim();
+    const [, duration = '', easing = ''] = /^(\S*)\s*(.*)$/.exec(value);
     return { duration: ms(duration), easing: easing || 'ease-out' };
   };
   const watch = (region, subject, { skip = () => false } = {}) => {
