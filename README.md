@@ -704,9 +704,10 @@ threads from forty invented customers, a quarter of them 50–150 messages long)
 `/api` answer wait 400 ms, as production's do. `node scripts/perf-ui.mjs` then drives a headless
 Chrome over it with the CPU four times slower and prints the web vitals: load (LCP, time to a
 usable list, long tasks), INP of the everyday interactions (opening threads, j/k, filters,
-sorting, typing, @-mentions, profile cards), CLS, and what a live update costs
-(`--runs=5`, `--origin=…`, `--profile[=step]`, `--trace=step`). Fake data only: it refuses any
-origin but localhost.
+unread only, typing, @-mentions, profile cards, switching views), CLS, and what a live update
+costs (`--runs=5`, `--origin=…`, `--profile[=step]`, `--trace=step`). Fake data only: it refuses
+any origin but localhost. What it clicks is in `scripts/perf-ui-hooks.mjs`, and
+`test/perf-ui.test.js` fails when the page stops writing one of those hooks.
 
 To point the preview at production instead, sign in to the inbox in Chrome with remote
 debugging on (port 9222), then run `npm run ui:session -- <inbox origin>`. It copies the Access
