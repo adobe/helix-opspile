@@ -212,6 +212,10 @@ describe('discordToMarkdown', () => {
     );
   });
 
+  it('reads a code span on a line of its own as code, not as a fence', () => {
+    assert.equal(discordToMarkdown('```x```\n>>> quoted\nrest'), '`x`\n\n> quoted\n> rest');
+  });
+
   it('keeps as text what Discord shows as text', () => {
     assert.equal(
       discordToMarkdown('a\n---\n| x | y |\n|---|---|\n<b>hi</b> &amp; ![i](https://x.example/i.png)'),

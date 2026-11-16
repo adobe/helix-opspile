@@ -13,8 +13,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, withoutQuotes,
+  codeLines, markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, withoutQuotes,
 } from '../src/markdown.js';
+
+describe('codeLines', () => {
+  it('finds fenced code as CommonMark does', () => {
+    const lines = ['a', '```js', '```x', '~~~', '````', 'b', '```x```', '~~~ `ok`', 'c', '~~~~ ', 'd'];
+    assert.deepEqual(codeLines(lines), [
+      null, 'open', 'code', 'code', 'close', null, null, 'open', 'code', 'close', null,
+    ]);
+    // Indented four spaces is no fence; one not closed runs to the end.
+    assert.deepEqual(codeLines(['    ```', '```', 'e']), [null, 'open', 'code']);
+    assert.deepEqual(codeLines(['> ```', '> x', '> ```'], (l) => l.replace(/^> ?/, '')), ['open', 'code', 'close']);
+  });
+});
 
 describe('mdLink', () => {
   it('encodes what would end a link destination', () => {
@@ -57,6 +69,10 @@ describe('markdownToMrkdwn', () => {
     );
     // An unclosed fence still ends the code block.
     assert.equal(markdownToMrkdwn('```\nopen'), '```\nopen\n```');
+    assert.equal(markdownToMrkdwn('text\n```js'), 'text\n```\n```');
+    // A code span on a line of its own is no fence, and a fence with text after it no end.
+    assert.equal(markdownToMrkdwn('```x``` and **b**\n**c**'), '`x` and *b*\n*c*');
+    assert.equal(markdownToMrkdwn('```\na\n```x\n```\n**c**'), '```\na\n```x\n```\n*c*');
   });
 });
 

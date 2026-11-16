@@ -74,23 +74,52 @@ export const QUOTE_TITLE = 'Quoted message';
 export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:, ([^"\n]*))?"\)[ \t]*$/;
 
 /**
+ * Where the fenced code blocks of markdown lines are, as CommonMark has them: for each line,
+ * `'open'` or `'close'` (its fence opens or closes one), `'code'` (it is inside one) or null.
+ * A fence is three or more backticks or tildes, indented up to three spaces; a backtick
+ * fence's info string has no backtick (`` ```x``` `` is code in a line, not a fence), and a
+ * closing fence is the same character, at least as long, with nothing after it. A block not
+ * closed runs to the end.
+ *
+ * @param {string[]} lines
+ * @param {(line: string) => string} [strip] the part of a line to read (without a quote's `>`)
+ */
+export function codeLines(lines, strip = (l) => l) {
+  let fence = null;
+  return lines.map((line) => {
+    const l = strip(line);
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+        fence = null;
+        return 'close';
+      }
+      return 'code';
+    }
+    const open = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(l);
+    if (open) {
+      fence = open[1] || open[2];
+      return 'open';
+    }
+    return null;
+  });
+}
+
+/**
  * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
  * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
  */
 export const unlazy = (src) => {
-  let fence = null;
+  const lines = src.split('\n');
+  const code = codeLines(lines);
   let quoted = false;
-  return src.split('\n').flatMap((line) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
-        fence = null;
-      }
+  return lines.flatMap((line, i) => {
+    if (code[i]) {
+      quoted = false;
       return [line];
     }
     const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
     quoted = /^ {0,3}>/.test(line);
-    fence = f && !quoted ? f[1] : null;
     return out;
   }).join('\n');
 };
@@ -184,20 +213,12 @@ export function markdownToMrkdwn(md) {
   const keep = [];
   const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
-  let fence = null;
-  for (const line of lines) {
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      const closes = open && open[1][0] === fence[0] && open[1].length >= fence.length;
-      if (closes && !line.trim().slice(open[1].length)) {
-        fence = null;
-        out.push('```');
-      } else {
-        out.push(slackEscape(line));
-      }
-    } else if (open) {
-      [, fence] = open;
+  const code = codeLines(lines);
+  lines.forEach((line, i) => {
+    if (code[i] === 'open' || code[i] === 'close') {
       out.push('```');
+    } else if (code[i] === 'code') {
+      out.push(slackEscape(line));
     } else {
       let m = /^ {0,3}(?:[-*_][ \t]*){3,}$/.exec(line);
       if (m) {
@@ -215,8 +236,9 @@ export function markdownToMrkdwn(md) {
         }
       }
     }
-  }
-  if (fence) {
+  });
+  // A code block not closed ends with the text.
+  if (code.length && ['open', 'code'].includes(code[code.length - 1])) {
     out.push('```');
   }
   return out.join('\n').replace(new RegExp(`${KEEP}(\\d+)${KEEP}`, 'g'), (_, i) => keep[Number(i)]);

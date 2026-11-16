@@ -36,7 +36,7 @@ import { gfmAutolinkLiteral } from 'micromark-extension-gfm-autolink-literal';
 import { gfmStrikethrough } from 'micromark-extension-gfm-strikethrough';
 import { gfmTable } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
-import { mdUrl } from './markdown.js';
+import { codeLines, mdUrl } from './markdown.js';
 
 const SPANS = new Set(['strong', 'emphasis', 'delete']);
 
@@ -218,16 +218,11 @@ const OPTIONS = {
 export function writeMarkdown(tree) {
   merge(tree);
   tidy(tree);
-  // No line ends in white space, but in code.
-  let fence = null;
-  return toMarkdown(tree, OPTIONS).split('\n').map((line) => {
-    const open = /^(?:>[ ]?)*[ ]*(`{3,}|~{3,})/.exec(line);
-    if (open && (!fence || open[1].startsWith(fence))) {
-      fence = fence ? null : open[1];
-      return line;
-    }
-    return fence ? line : line.trimEnd();
-  }).join('\n')
+  // No line ends in white space, but in code (in a quote or a list item too).
+  const lines = toMarkdown(tree, OPTIONS).split('\n');
+  // A line is read without the quote markers, list markers and indents it is written under.
+  const code = codeLines(lines, (l) => l.replace(/^(?:[ ]*(?:>|[-*+]|\d+[.)])(?=[ ]|$)[ ]?)*[ ]*/, ''));
+  return lines.map((line, i) => (code[i] === 'code' ? line : line.trimEnd())).join('\n')
     .trim();
 }
 
