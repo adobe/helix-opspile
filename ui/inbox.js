@@ -8196,8 +8196,9 @@ function globalKey(e) {
     return run(() => cycleSection(e.key === 'ArrowRight' ? 1 : -1));
   }
   // The views, as Slack's ⌃1…: ⌃1 on a Mac, Ctrl+Shift+1 elsewhere (Ctrl+1 is the browser's).
+  // Off a Mac, Ctrl+Shift+7…9 in a text box are its lists and quote (formatKind): not views there.
   const digit = /^Digit([1-9])$/.exec(e.code || '')?.[1];
-  if (digit && !e.altKey && !e.metaKey && e.ctrlKey && e.shiftKey !== MAC) {
+  if (digit && !e.altKey && !e.metaKey && e.ctrlKey && e.shiftKey !== MAC && !(writable(e.target) && formatKind(e))) {
     const views = document.querySelectorAll('#threads .order [data-view]');
     const view = views[Number(digit) - 1];
     if (view) return run(() => view.click());
