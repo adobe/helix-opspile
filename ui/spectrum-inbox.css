@@ -1009,13 +1009,18 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
    They show once the pointer has rested on the bubble for a moment, not as it passes over the
    thread, and go a moment after it left, which is the time it has to reach them across the
    header, or from a bubble shorter than its header; focus, and their open picker, show them
-   at once. */
+   at once. They arrive as a Popover does, fading in from 2px below, and leave faster. The
+   visibility goes with the fade (visible while it runs), so hidden they take no pointer and
+   no Tab, and with less motion it is the step it was, at the same moments. */
 .msg .quick-at { flex: none; display: flex; align-items: flex-end; height: 0; margin: 0 var(--spectrum-spacing-100); }
 .msg .quick { position: relative; top: var(--spectrum-spacing-50); z-index: 3; flex: none; display: flex;
- visibility: hidden; transition: visibility var(--spectrum-animation-duration-0) linear var(--spectrum-animation-duration-1000); }
+ visibility: hidden; opacity: 0; translate: 0 var(--spectrum-spacing-50);
+ transition: var(--s2-out) var(--spectrum-animation-duration-1000); transition-property: opacity, translate, visibility; }
 .msg.cont .quick { top: var(--spectrum-spacing-300); }
-.msg:has(.bubble:hover) .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
-.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
+.msg:has(.bubble:hover) .quick { visibility: visible; opacity: 1; translate: none;
+ transition: var(--s2-pop-in) var(--spectrum-animation-duration-600); transition-property: opacity, translate, visibility; }
+.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; opacity: 1; translate: none;
+ transition: var(--s2-pop-in); transition-property: opacity, translate, visibility; }
 .msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
 .msg .quick button[aria-pressed="true"] { background: var(--sel); }

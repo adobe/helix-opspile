@@ -236,14 +236,17 @@ describe('message header styles', () => {
 
   it('keeps them while the pointer is on them, focus is in them, or their picker is open', () => {
     for (const selector of ['.msg .quick:hover', '.msg .quick:focus-within', '.msg .quick:has([aria-expanded="true"])']) {
-      assert.match(rule(selector), /visibility: visible; transition-delay: var\(--spectrum-animation-duration-0\);/, selector);
+      // At once: a fade with no delay.
+      assert.match(rule(selector), /visibility: visible; opacity: 1; translate: none;\s+transition: var\(--s2-pop-in\); transition-property: opacity, translate, visibility;/, selector);
     }
   });
 
   it('shows them after a rest on the bubble, and gives the pointer time to reach them', () => {
     // Hiding waits (the transition's delay), longer than showing does.
-    assert.match(rule('.msg .quick'), /transition: visibility var\(--spectrum-animation-duration-0\) linear var\(--spectrum-animation-duration-1000\);/);
-    assert.match(rule('.msg:has(.bubble:hover) .quick'), /transition-delay: var\(--spectrum-animation-duration-600\);/);
+    // They fade (in as a Popover does, out faster), and the visibility goes with the fade, so
+    // with less motion (no durations, the same delays) it is a step at the same moments.
+    assert.match(rule('.msg .quick'), /visibility: hidden; opacity: 0; translate: 0 var\(--spectrum-spacing-50\);\s+transition: var\(--s2-out\) var\(--spectrum-animation-duration-1000\); transition-property: opacity, translate, visibility;/);
+    assert.match(rule('.msg:has(.bubble:hover) .quick'), /visibility: visible; opacity: 1; translate: none;\s+transition: var\(--s2-pop-in\) var\(--spectrum-animation-duration-600\); transition-property: opacity, translate, visibility;/);
   });
 
   it('lays them out in the header line, where they wrap above the header for lack of room', () => {
