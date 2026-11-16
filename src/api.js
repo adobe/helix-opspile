@@ -438,7 +438,15 @@ export async function inbox(env, me, team, {
   const last = (groups || [])[groups.length - 1];
   const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
-  const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
+  // Each group's first thread and its five latest members, these by index (migration 0068): an
+  // alert channel folds thousands of posts into one entry, and ranking every thread of the
+  // inbox to find them was the query D1 spent the most time on.
+  const { results: threads } = await env.DB.prepare(`WITH g(k) AS (SELECT value FROM json_each(?2)),
+      c(thread) AS (SELECT k FROM g
+        UNION SELECT x.thread FROM g JOIN threads x ON x.thread IN (SELECT y.thread FROM threads y
+          WHERE y.logical_thread = g.k AND ${inInbox('y', personal, '?3')} AND y.kind != 'ignore'
+          ORDER BY COALESCE(y.last_at, y.any_at) DESC LIMIT 5))
+    SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
       messages,
       root_at IS NOT NULL AS root_known, logical_thread,
@@ -447,10 +455,10 @@ export async function inbox(env, me, team, {
         AS permalink
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
-        FROM threads t
+        FROM c JOIN threads t ON t.thread = c.thread
         WHERE ${inInbox('t', personal, '?3')} AND t.kind != 'ignore'
-          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
-    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
+          AND COALESCE(t.logical_thread, t.thread) IN g) r
+    WHERE r.rn <= 5 OR r.thread IN g`)
     .bind(...[scope.value, groupKeys, personal ? me.id : []].flat()).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {

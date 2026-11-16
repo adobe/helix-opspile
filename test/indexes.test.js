@@ -81,6 +81,19 @@ describe('inbox queries', () => {
     assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
   });
 
+  it('read the latest members of each entry by index when loading the inbox', async () => {
+    // Not every thread of the inbox ranked to find them (migration 0068): an alert channel
+    // folds thousands of posts into one entry.
+    for (const asked of [
+      await plans((env) => inbox(env, me, 'helix')),
+      await plans((env) => inbox(env, me, null, { personal: true })),
+    ]) {
+      const [p] = asked.filter((q) => q.sql.startsWith('WITH g(k) AS'));
+      assert.ok(p, 'the members query');
+      assert.ok(p.plan.some((d) => /SEARCH y USING INDEX threads_group_latest \(logical_thread=\?\)/.test(d)), p.plan.join('\n'));
+    }
+  });
+
   it('search identities and messages by index when opening a thread', async () => {
     assert.deepEqual(scans(await plans((env) => thread(env, me, 'slack:E1:C1:1.1'))), []);
   });
