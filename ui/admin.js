@@ -582,6 +582,7 @@ function placePicks(input, picks) {
   const above = r.top - document.querySelector('header').getBoundingClientRect().bottom - 16;
   const up = below < 240 && above > below;
   picks.classList.toggle('up', up);
+  picks.classList.toggle('s2-up', up);
   picks.style.maxHeight = `${Math.max(120, Math.min(360, up ? above : below))}px`;
 }
 
@@ -590,13 +591,13 @@ function channelsCard(target) {
   // A team manager asks the admin team for a channel instead (a request).
   if (!state.me.admin) {
     return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><label class="fld grow"><span>Ask for a channel</span><input id="pick" autocomplete="off"></label><div class="picks" id="picks" hidden></div></div>
+    <div class="form picker"><label class="fld grow"><span>Ask for a channel</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
     <p class="hint">Search by channel, Teams team, customer or id.</p>
     <div id="askSlot"></div>
     <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows under Requests. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
   }
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
-    <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks" id="picks" hidden></div></div>
+    <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
     <p class="hint">Search by channel, Teams team, customer, team or id. ${target === 'team'
     ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
     : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
@@ -772,8 +773,9 @@ function wireChannelPicker() {
         <span class="where">${pending(c) ? '<span class="tag open" title="Asked for already: waiting for the admin team">requested</span><br>' : ''}${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
     }).join('') || '<div class="empty pad">No channel matches.</div>';
-    picks.hidden = false;
+    // Placed first: it settles from the side it opens on (ui/spectrum.css, `.s2-float`).
     placePicks(input, picks);
+    picks.hidden = false;
     for (const el of picks.querySelectorAll('[data-i]')) {
       // The list shown when the row is picked.
       // eslint-disable-next-line no-loop-func
@@ -966,8 +968,9 @@ function wireMemberPicker() {
       ${p.new ? '<span class="tag">new person</span>' : ''}${p.staff ? '' : '<span class="tag vendor">not staff</span>'}
       ${p.teams && p.teams.length ? `<span class="sub">${esc(p.teams.map(teamLabel).join(', '))}</span>` : ''}</div>`).join('')
       || '<div class="empty pad">Nobody matches. Type a full email address to add someone new.</div>';
-    picks.hidden = false;
+    // Placed first: it settles from the side it opens on (ui/spectrum.css, `.s2-float`).
     placePicks(input, picks);
+    picks.hidden = false;
     for (const el of picks.querySelectorAll('[data-i]')) {
       // eslint-disable-next-line no-loop-func
       el.onmousedown = (e) => { e.preventDefault(); add(list[Number(el.dataset.i)]); };
@@ -1161,7 +1164,7 @@ async function showTeam(slug) {
       <span><b>Self-managed</b>: every member is a team manager and may add and remove members and edit the team's knowledge base.</span></label>
       <p class="hint">${admin ? 'Turning it on makes every member a manager, now and when they join. Turning it off keeps the roles as they are; new members join as members, and managers can be demoted.' : 'Only the admin team changes this.'}</p></div>` : ''}
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
-      <div class="form picker"><label class="fld grow"><span>Add a member</span><input id="mFind" autocomplete="off"></label><div class="picks" id="mPicks" hidden></div></div>
+      <div class="form picker"><label class="fld grow"><span>Add a member</span><input id="mFind" autocomplete="off"></label><div class="picks s2-float" id="mPicks" hidden></div></div>
       <p class="hint">Type a name or an email. Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>

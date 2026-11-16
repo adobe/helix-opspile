@@ -1359,7 +1359,8 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/experts') {
     // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'
-    // suggestions. The thread about the old blog paths has one.
+    // suggestions. The thread about the old blog paths has two: one on the header's line, the
+    // other in its dropdown.
     const entry = store.threads.get(url.searchParams.get('thread'));
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
@@ -1372,6 +1373,12 @@ async function api(req, res, url) {
       member: true,
       suggested: { at: new Date().toISOString() },
       reasons: ['Wrote the redirects for the last blog migration'],
+    }, {
+      id: 'tom',
+      name: 'Tom Okafor',
+      member: true,
+      suggested: { at: new Date().toISOString() },
+      reasons: ['Reviewed the redirect rules of the blog'],
     }] : [];
     const experts = agent.filter((e) => !inThread(e.name) && e.name !== store.people.get(ME)?.name)
       .map((e) => ({

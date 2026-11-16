@@ -208,11 +208,47 @@ function cardHtml(p, ctx) {
 }
 
 const card = { el: null, target: null, showTimer: 0, hideTimer: 0, pointer: 'mouse' };
+
+// The floating panels that are not popovers (`.s2-float`, ui/spectrum.css) fade in as their
+// `hidden` goes and out as it comes back, as the stylesheet says; these are what it cannot say.
+/** Once panel `el` has faded out, `then` (empty it, take it off the page), unless it is back. */
+function afterFade(el, then) {
+  el.__fade = (el.__fade || 0) + 1;
+  const fade = el.__fade;
+  const done = () => { if (el.hidden && el.__fade === fade) then(); };
+  Promise.all(el.getAnimations().map((a) => a.finished)).then(done, done);
+}
+/** Shows panel `el`, drawn again while it was open, where it was: it does not arrive again. */
+function stayShown(el) {
+  el.classList.add('s2-still');
+  el.hidden = false;
+  getComputedStyle(el).getPropertyValue('opacity');
+  el.classList.remove('s2-still');
+}
+/** The panels drawn open in `node` (the suggestions' dropdown) that were open in `was` stay. */
+function keepShown(was, node) {
+  if (!was || !node) return;
+  const open = new Set([...was.querySelectorAll('.s2-float:not([hidden])')].map((el) => el.className));
+  for (const el of node.querySelectorAll('.s2-float:not([hidden])')) if (open.has(el.className)) stayShown(el);
+}
+/**
+ * The size of panel `el` as it will be shown, laid out unseen while it is hidden; `done(size)`
+ * places it (`.s2-up` when it opens above), and it is shown from there.
+ */
+function measureFloat(el, done) {
+  if (!el.hidden) { done({ w: el.offsetWidth, h: el.offsetHeight }); return; }
+  el.classList.add('s2-measure');
+  done({ w: el.offsetWidth, h: el.offsetHeight });
+  // Where it settles from is the way it opens, known only now.
+  getComputedStyle(el).getPropertyValue('translate');
+  el.classList.remove('s2-measure');
+  el.hidden = false;
+}
 function cardEl() {
   if (card.el) return card.el;
   const el = document.createElement('div');
   el.id = 'pcard';
-  el.className = 'pcard';
+  el.className = 'pcard s2-float';
   el.setAttribute('role', 'tooltip');
   el.hidden = true;
   el.addEventListener('pointerenter', () => clearTimeout(card.hideTimer));
@@ -229,17 +265,18 @@ function showCard(target) {
   const el = cardEl();
   if (card.target && card.target !== target) card.target.removeAttribute('aria-describedby');
   el.innerHTML = cardHtml(p, cardContext(target));
-  el.hidden = false;
   card.target = target;
   target.setAttribute('aria-describedby', 'pcard');
   // Below the name or avatar, or above it when there is no room; always on screen.
   const r = target.getBoundingClientRect();
-  const w = el.offsetWidth;
-  const h = el.offsetHeight;
-  let top = r.bottom + 6;
-  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
-  el.style.top = `${top}px`;
-  el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  measureFloat(el, ({ w, h }) => {
+    let top = r.bottom + 6;
+    const up = top + h > window.innerHeight - 8;
+    if (up) top = Math.max(8, r.top - h - 6);
+    el.classList.toggle('s2-up', up);
+    el.style.top = `${top}px`;
+    el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+  });
 }
 function hideCard() {
   clearTimeout(card.showTimer);
@@ -544,7 +581,7 @@ function closeSlackChoice() { if (slackMenu.el) slackMenu.el.hidden = true; }
 function openSlackChoice(a) {
   if (!slackMenu.el) {
     const el = document.createElement('div');
-    el.className = 'linkpick';
+    el.className = 'linkpick s2-float';
     el.setAttribute('role', 'menu');
     el.hidden = true;
     document.body.append(el);
@@ -2210,7 +2247,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
   const quick = (can && !editing) || pen ? `<div class="quick-at"><div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${editing ? '' : picks}</div></div>` : '';
   // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
   const bubble = editing
-    ? `<div class="bubble editing"><ul class="mentions" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
+    ? `<div class="bubble editing"><ul class="mentions s2-float s2-up" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
       <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the bot' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
     : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}${m.pending && m.files?.length ? pendingFiles(m.files) : ''}</div>`;
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
@@ -2506,7 +2543,7 @@ function headMenu(name, { button, main = '', label, list }) {
   const toggle = main
     ? `${main}<button class="more" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(label)}"><span class="s2-chevron" aria-hidden="true"></span></button>`
     : `<button class="hmb" data-hm-toggle="${name}" aria-haspopup="true" aria-expanded="false" title="${esc(label)}">${button}<span class="chev s2-chevron" aria-hidden="true"></span></button>`;
-  return `<div class="hm${main ? ' split' : ''}" data-hm="${name}">${toggle}<div class="hmpop" role="group" aria-label="${esc(label)}" hidden>${list}</div></div>`;
+  return `<div class="hm${main ? ' split' : ''}" data-hm="${name}">${toggle}<div class="hmpop s2-float" role="group" aria-label="${esc(label)}" hidden>${list}</div></div>`;
 }
 
 const hmSection = (title, rows) => (rows.length ? `<div class="hms"><div class="hmh">${esc(title)}</div>${rows.join('')}</div>` : '');
@@ -2581,7 +2618,7 @@ function headSource(thread, members, entry) {
     });
     const label = `${members.length.toLocaleString()} posts folded into one thread: open one in ${p}`;
     return `<div class="hm" data-hm="posts"><button class="src" data-hm-toggle="posts" aria-haspopup="true" aria-expanded="false" aria-label="${esc(label)}" title="${esc(`${who ? `${who}: ` : ''}${members.length.toLocaleString()} posts folded into one thread`)}">${face}${badge}</button>`
-      + `<div class="hmpop" role="group" aria-label="${esc(label)}" hidden><div class="hms"><div class="hmh">${members.length.toLocaleString()} posts folded into one thread</div>${rows.join('')}</div></div></div>`;
+      + `<div class="hmpop s2-float" role="group" aria-label="${esc(label)}" hidden><div class="hms"><div class="hmh">${members.length.toLocaleString()} posts folded into one thread</div>${rows.join('')}</div></div></div>`;
   }
   const link = thread.permalink || linked[0]?.permalink;
   const title = `${who ? `${who} · ` : ''}${link ? `Open in ${p}` : p}`;
@@ -2590,15 +2627,21 @@ function headSource(thread, members, entry) {
     : `<span class="src" title="${esc(title)}">${face}${badge}</span>`;
 }
 
-// The dropdown open in the header, `{ key, name }`: it stays open while the thread updates.
+// The dropdown open in the header, `{ key, name }`: it stays open while the thread updates, and
+// one drawn again with the header (`shownHeadMenu` was open already) does not arrive again.
+let shownHeadMenu = null;
 function syncHeadMenus() {
   const open = state.headOpen?.key === state.open ? state.headOpen.name : null;
+  const shown = open && `${state.open}\n${open}`;
   for (const el of document.querySelectorAll('#pane > .ph [data-hm]')) {
     const on = el.dataset.hm === open;
+    const pop = el.querySelector('.hmpop');
     el.classList.toggle('open', on);
-    el.querySelector('.hmpop').hidden = !on;
+    if (on && pop.hidden && shown === shownHeadMenu) stayShown(pop);
+    else pop.hidden = !on;
     el.querySelector('[data-hm-toggle]')?.setAttribute('aria-expanded', String(on));
   }
+  shownHeadMenu = shown;
 }
 function closeHeadMenus(focus = false) {
   const name = state.headOpen?.name;
@@ -3210,14 +3253,27 @@ function expertsHtml(key) {
   const open = state.expertsOpen === key;
   const top = list[0];
   const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests"><span class="s2-chevron" aria-hidden="true"></span></button>` : '';
-  const rows = open ? `<ul class="expertlist" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
+  const rows = open ? `<ul class="expertlist s2-float" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
   return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
 }
 
 /** Puts the suggestions on screen without touching the rest of the header. */
 function placeExperts(key) {
   if (state.open !== key) return;
-  $('experts')?.replaceWith(toNode(expertsHtml(key)));
+  const was = $('experts');
+  const list = was?.querySelector('.expertlist:not([hidden])');
+  if (list && state.expertsOpen !== key) {
+    // Closed: the dropdown fades out before the suggestions are drawn again without it.
+    list.hidden = true;
+    was.querySelector('[data-experts-more]')?.setAttribute('aria-expanded', 'false');
+    afterFade(list, () => { if ($('experts') === was) placeExperts(key); });
+    return;
+  }
+  const node = toNode(expertsHtml(key));
+  const more = document.activeElement?.matches?.('#experts .more');
+  was?.replaceWith(node);
+  keepShown(was, node);
+  if (more) node.querySelector('.more')?.focus();
   wireExperts(key);
 }
 
@@ -3274,7 +3330,7 @@ function wireExperts(key) {
     if (e.target.closest('[data-experts-more]')) {
       state.expertsOpen = state.expertsOpen === key ? null : key;
       placeExperts(key);
-      const rows = document.querySelectorAll('#experts .expertlist [data-expert]');
+      const rows = document.querySelectorAll('#experts .expertlist:not([hidden]) [data-expert]');
       (rows[1] || rows[0])?.focus();
     } else if (pick) {
       const expert = state.experts.get(key)?.[Number(pick.dataset.expert)];
@@ -3288,7 +3344,7 @@ function wireExperts(key) {
     if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const rows = [...el.querySelectorAll('.expertlist [data-expert]')];
+    const rows = [...el.querySelectorAll('.expertlist:not([hidden]) [data-expert]')];
     const i = rows.indexOf(document.activeElement);
     rows[(i + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
   };
@@ -3334,10 +3390,10 @@ function composer(thread, resolve = '', key = thread.thread) {
   if (!state.me.connected?.[p]) {
     return `<div class="composer">${agent}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${LINES}</div>`;
   }
-  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+  return `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
     <textarea id="reply" rows="1" role="combobox" aria-label="Reply in thread" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
-    <span class="sendwrap"><span class="hold" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
+    <span class="sendwrap"><span class="hold s2-float s2-up" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -3399,7 +3455,11 @@ function renderPane(pane, key, {
     return;
   }
   const ph = pane.querySelector(':scope > .ph');
-  if (ph.__html !== head) ph.replaceWith(htmlNode(head));
+  if (ph.__html !== head) {
+    const node = htmlNode(head);
+    ph.replaceWith(node);
+    keepShown(ph, node);
+  }
   const rv = feed.parentElement.querySelector(':scope > .rv');
   if ((rv ? rv.__html : '') !== review) {
     rv?.remove();
@@ -3935,7 +3995,7 @@ function sourceBody(v) {
 function sourcePopEl() {
   if (sourcePop.el) return sourcePop.el;
   const el = document.createElement('section');
-  el.className = 'srcpop';
+  el.className = 'srcpop s2-float s2-up';
   el.hidden = true;
   el.setAttribute('aria-label', 'Source of the draft');
   el.addEventListener('pointerenter', () => clearTimeout(sourcePop.timer));
@@ -3999,8 +4059,9 @@ function hideSource() {
   clearTimeout(sourcePop.timer);
   if (!sourcePop.url) return;
   Object.assign(sourcePop, { key: null, url: null, message: null });
-  sourcePop.el.hidden = true;
-  sourcePop.el.innerHTML = '';
+  const { el } = sourcePop;
+  el.hidden = true;
+  afterFade(el, () => { el.innerHTML = ''; });
   const box = $('reply');
   $('draftbar')?.closest('.composer')?.classList.remove('checking');
   if (box) growReply(box);
@@ -5125,7 +5186,7 @@ function composeHead({ channel }) {
   const shut = '<button class="linkish cancel" data-close title="Close (Esc); what you wrote stays until you post it">Cancel</button>';
   const where = channel
     ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? ` · <span>${channelWhere(channel)}</span>` : ''} · <button class="linkish" data-rechannel>Change</button></div>`
-    : '<div class="chanpick"><label class="fld" for="chan-q"><span>Channel</span></label><input id="chan-q" type="search" role="combobox" aria-describedby="chan-hint" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" autocomplete="off" spellcheck="false"><span class="hint" id="chan-hint">Search by its name or its customer.</span><ul class="chans" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
+    : '<div class="chanpick"><label class="fld" for="chan-q"><span>Channel</span></label><input id="chan-q" type="search" role="combobox" aria-describedby="chan-hint" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" autocomplete="off" spellcheck="false"><span class="hint" id="chan-hint">Search by its name or its customer.</span><ul class="chans s2-float" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
 
@@ -5138,7 +5199,7 @@ function composeBox({ channel, posting, unsure }) {
   if (channel && !state.me.connected?.[channel.source]) {
     return `<div class="composer"><span class="connect">To post as yourself, <a href="/api/auth/${channel.source}/start">connect your ${accountOf(channel.source)} account</a>.</span></div>`;
   }
-  return `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul>
+  return `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${channel ? attachButton(channel) : ''}
     <textarea id="reply" rows="1" role="combobox" aria-label="${channel ? `Message to ${esc(channel.name)}` : 'Message'}" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${channel ? '' : ' title="Pick a channel first"'}${channel && !posting ? '' : ' disabled'}>${posting ? 'Posting…' : (unsure ? 'Post again' : 'Post')}</button></span></div>`;
@@ -5318,7 +5379,7 @@ function renderStarted() {
   const feed = `<div class="scroller"><div class="feed">${items.join('')}${note}</div></div>`;
   // Slack names the files of a post, not its message: replies wait for the thread in the inbox.
   const can = s.root !== null;
-  const reply = `<div class="composer"><ul class="mentions" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
+  const reply = `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-label="Reply in thread" aria-controls="mention-list" aria-expanded="false"></textarea>
     <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Send once the thread is in the inbox: what you write waits here"'}>Send</button></span></div>`;
   const scroller = pane.querySelector('.scroller');
@@ -6154,7 +6215,10 @@ function closeMentions() {
   mention.pooled = null;
   mention.seq += 1;
   clearTimeout(mention.timer);
-  for (const ul of document.querySelectorAll('#pane ul.mentions')) { ul.hidden = true; ul.innerHTML = ''; }
+  for (const ul of document.querySelectorAll('#pane ul.mentions')) {
+    ul.hidden = true;
+    afterFade(ul, () => { ul.innerHTML = ''; });
+  }
   for (const box of document.querySelectorAll('#reply, #pane .editbox')) {
     box.setAttribute('aria-expanded', 'false');
     box.removeAttribute('aria-activedescendant');
@@ -6347,19 +6411,23 @@ function toggleResolve() {
   resolveThread(key, Boolean(r && r.state === 'resolved' && r.mine));
 }
 
+/** The emoji picker open, not one fading out. */
+const openedPicker = (within = document) => within.querySelector('.picker:not([hidden])');
+
 function closePicker() {
-  const p = document.querySelector('.picker');
+  const p = openedPicker();
   if (!p) return;
   p.closest('.col')?.querySelector('[data-picker]')?.setAttribute('aria-expanded', 'false');
-  p.remove();
+  p.hidden = true;
+  afterFade(p, () => p.remove());
 }
 
 function openPicker(button) {
   const col = button.closest('.col');
-  const open = col.querySelector('.picker');
+  const open = openedPicker(col);
   closePicker();
   if (open) return;
-  const picker = toNode(`<div class="picker" role="menu">${PICKER.map((n) => `<button role="menuitem" data-pick="${n}" title=":${n}:">${emoji(n)}</button>`).join('')}</div>`);
+  const picker = toNode(`<div class="picker s2-float s2-up" role="menu">${PICKER.map((n) => `<button role="menuitem" data-pick="${n}" title=":${n}:">${emoji(n)}</button>`).join('')}</div>`);
   col.append(picker);
   button.setAttribute('aria-expanded', 'true');
   picker.querySelector('button').focus();
@@ -7845,8 +7913,8 @@ async function start() {
     if (e.key === 'Escape' && state.headOpen) { closeHeadMenus(true); return; }
     if (headMenuKey(e)) return;
     if (e.key === 'Escape' && state.filtering) { setFiltering(false); return; }
-    if (e.key === 'Escape' && document.querySelector('.picker')) {
-      const button = document.querySelector('.picker').closest('.col')?.querySelector('[data-picker]');
+    if (e.key === 'Escape' && openedPicker()) {
+      const button = openedPicker().closest('.col')?.querySelector('[data-picker]');
       closePicker();
       button?.focus();
       return;
