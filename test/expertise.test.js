@@ -124,7 +124,7 @@ describe('expertise', () => {
     assert.equal(await threadExperts(e, THREAD), null);
   });
 
-  it('puts the colleagues who know the topic after the customers in the thread', async () => {
+  it('puts the colleagues who know the topic first of those outside the thread and channel', async () => {
     const e = env({
       matches: [
         match(0.9, 'slack:E1:U12'),
