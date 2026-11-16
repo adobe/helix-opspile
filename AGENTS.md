@@ -50,6 +50,10 @@ code and docs, is the decision model that labels threads and channels.
   `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
   way). `npm run build` builds the bundles, and so do `npm test`, `npm run lint`,
   `npm run ui:dev`, `cf deploy` and `cf dev`. Run `npm ci` first in a fresh checkout.
+- `/api/*` and `/mcp` hold D1 reads (`all()`, `first()` of a `SELECT`) for a 0 ms timer and send
+  those asked for together as one `db.batch` (`src/d1batch.js`): one D1 request instead of one
+  each. Writes, `run()` and `raw()` go at once. A query that fails in a batch is asked again on
+  its own, so only it fails; `Server-Timing` counts a batch as one call.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`. The same goes for `@ai-ecoverse/slicc-kernel` (it imports

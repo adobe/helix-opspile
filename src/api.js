@@ -62,6 +62,7 @@ import {
 } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
+import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 
@@ -1415,12 +1416,15 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
 
 /**
  * Routes `/api/*`. Returns null for paths it does not own. Every answer says where its time
- * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only).
+ * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only). The reads it
+ * asks D1 for at once go as one batch (src/d1batch.js), each batch one D1 call there.
  */
 export async function api(request, env, url, options = {}) {
   if (!url.pathname.startsWith('/api/')) {
     return null;
   }
   const timing = new Timing();
-  return withTiming(await route(request, timing.wrap(env), url, options, timing), timing);
+  const timed = timing.wrap(env);
+  const batched = timed && timed.DB ? { ...timed, DB: batchedDatabase(timed.DB) } : timed;
+  return withTiming(await route(request, batched, url, options, timing), timing);
 }
