@@ -17,8 +17,13 @@
  * agents (`kb:…`) are not threads and take no part.
  *
  * What an agent in an arm uses is counted for COGS with the arm in the metric's detail
- * (`us.anthropic.claude-opus-5-5#cache=short`, `armTag`), so the dashboard can set the arms side
- * by side (src/cogs/report.js) and the prices still find the model (`untagged`).
+ * (`us.anthropic.claude-sonnet-5-5#model=sonnet`, `armTags`), so the dashboard can set the arms
+ * side by side (src/cogs/report.js) and the prices still find the model (`untagged`). What an
+ * experiment is judged by is its `measure`: `prompt`, the cost per million prompt tokens (which
+ * the arms do not change), or `drafts`, the model's cost per accepted draft (src/draftevents.js),
+ * the drafts counted by the arm their thread is pinned to. A `pinned` experiment keeps each
+ * thread in its arm for good, from when its agent first starts in the window (src/agent/arms.js);
+ * the others put every thread in its arm for the window only.
  */
 
 /**
@@ -30,6 +35,7 @@ export const CACHE = {
   title: 'Prompt cache: one hour or five minutes',
   from: '2026-11-07T00:00:00Z',
   until: '2026-11-14T00:00:00Z',
+  measure: 'prompt',
   arms: [
     { id: 'long', label: '1-hour cache' },
     { id: 'short', label: '5-minute cache' },
@@ -37,9 +43,30 @@ export const CACHE = {
   default: 'long',
 };
 
-export const EXPERIMENTS = [CACHE];
+/**
+ * The agents' model: the deployed Opus (AGENT_MODEL) against Sonnet 5.5 at the same inference
+ * profile (global or geo), judged by the cost per accepted draft. Only threads whose agent first
+ * starts in the window take part, each pinned to its arm for good (src/agent/arms.js): no thread
+ * changes model, at the window's edges or after. Only where AGENT_MODEL is an Opus model.
+ */
+export const MODEL = {
+  id: 'model',
+  title: 'The agents\' model: Opus or Sonnet',
+  from: '2026-11-17T00:00:00Z',
+  until: '2026-12-01T00:00:00Z',
+  measure: 'drafts',
+  pinned: true,
+  arms: [
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'sonnet', label: 'Sonnet 5.5', model: 'claude-sonnet-5-5' },
+  ],
+  default: 'opus',
+  applies: (env) => /(?:^|\.)anthropic\.claude-opus-/.test(String(env?.AGENT_MODEL || '')),
+};
 
-const TAG = /#([a-z0-9_-]+)=([a-z0-9_-]+)$/;
+export const EXPERIMENTS = [CACHE, MODEL];
+
+const TAG = /#([a-z0-9_-]+)=([a-z0-9_-]+)/g;
 
 /** FNV-1a, 32 bits: the same number for the same text everywhere. */
 /* eslint-disable no-bitwise */
@@ -58,15 +85,26 @@ export const running = (experiment, now = Date.now()) => now >= Date.parse(exper
   && now < Date.parse(experiment.until);
 
 /**
- * The arm the agent `name` is in (`{ id, label }`), or null: outside the window, and for an
- * agent that is not a thread's.
+ * The arm the agent `name` is assigned to (`{ id, label }`), whenever it is asked, or null for
+ * an agent that is not a thread's: what its drafts are counted by.
  */
-export function armOf(experiment, name, now = Date.now()) {
-  if (!name || String(name).startsWith('kb:') || !running(experiment, now)) {
+export function assignedArm(experiment, name) {
+  if (!name || String(name).startsWith('kb:')) {
     return null;
   }
   const { arms } = experiment;
   return arms[fnv(`${experiment.id}:${name}`) % arms.length];
+}
+
+/**
+ * The arm the agent `name` is in now (`{ id, label }`), or null: outside the window, for an
+ * agent that is not a thread's, and where the experiment does not apply to `env`.
+ */
+export function armOf(experiment, name, now = Date.now(), env = undefined) {
+  if (!running(experiment, now) || (experiment.applies && !experiment.applies(env))) {
+    return null;
+  }
+  return assignedArm(experiment, name);
 }
 
 /** The prompt cache retention the agent `name` asks for now: its arm's, or the default. */
@@ -75,17 +113,41 @@ export function cacheRetention(name, now = Date.now()) {
   return arm ? arm.id : CACHE.default;
 }
 
-/** What the agent `name`'s model use is tagged with for COGS now: `#cache=short`, or ''. */
-export function armTag(name, now = Date.now()) {
-  const arm = armOf(CACHE, name, now);
-  return arm ? `#${CACHE.id}=${arm.id}` : '';
+/**
+ * The Bedrock model a thread pinned to the model experiment's `arm` (src/agent/arms.js) runs
+ * instead of AGENT_MODEL, or null: the arm's, at AGENT_MODEL's inference profile, global or geo
+ * (`global.anthropic.claude-opus-5-5` runs `global.anthropic.claude-sonnet-5-5`, `us.…` runs
+ * `us.…`). None where AGENT_MODEL is not an Opus model.
+ */
+export function armModel(env, arm) {
+  const def = MODEL.arms.find((a) => a.id === arm);
+  const geo = /^((?:[a-z]{2,6}\.)?anthropic\.)/.exec(String(env?.AGENT_MODEL || ''));
+  return def && def.model && geo && MODEL.applies(env) ? `${geo[1]}${def.model}` : null;
 }
 
-/** A metric's detail without its arm: the model, as priced. */
+/**
+ * What the agent `name`'s model use is tagged with for COGS now: the arms it is in
+ * (`#model=sonnet`), or ''. A pinned experiment's arm is the agent's pin (`pins`, by
+ * experiment), whenever it is; the others' by the window.
+ */
+export function armTags(name, now = Date.now(), env = undefined, pins = {}) {
+  return EXPERIMENTS.map((x) => {
+    if (!x.pinned) {
+      return [x, armOf(x, name, now, env)?.id];
+    }
+    return [x, pins[x.id] && (!x.applies || x.applies(env)) ? pins[x.id] : null];
+  }).filter(([, arm]) => arm).map(([x, arm]) => `#${x.id}=${arm}`).join('');
+}
+
+/** A metric's detail without its arms: the model, as priced. */
 export const untagged = (detail) => String(detail || '').replace(TAG, '');
 
-/** The experiment and arm in a metric's detail (`{ experiment, arm, detail }`), or null. */
-export function tagOf(detail) {
-  const m = TAG.exec(String(detail || ''));
-  return m ? { experiment: m[1], arm: m[2], detail: untagged(detail) } : null;
+/** The experiments and arms in a metric's detail: `[{ experiment, arm, detail }]`. */
+export function tagsOf(detail) {
+  const plain = untagged(detail);
+  return [...String(detail || '').matchAll(TAG)]
+    .map((m) => ({ experiment: m[1], arm: m[2], detail: plain }));
 }
+
+/** The first experiment and arm in a metric's detail (`tagsOf`), or null. */
+export const tagOf = (detail) => tagsOf(detail)[0] || null;

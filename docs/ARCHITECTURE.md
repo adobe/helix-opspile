@@ -1429,10 +1429,22 @@ But every write costs 2× the input price for an hour against 1.25× for five mi
 that pays depends on how far apart turns are. **Experiments** (`src/experiments.js`) settle it:
 for a fixed window, each thread is in one arm by a hash of its key (salted with the experiment,
 the same arm all along; knowledge-base agents take no part), and the provider asks for the arm's
-retention at every request (`retainingApi`, `src/agent/model.js`), so an agent that is running
-at the window's edges switches on its next request. The cache experiment puts half the threads
-on `short` from 2026-11-07 to 2026-11-14 (UTC); outside it every thread is on `long`. What an
-agent in an arm uses is counted for COGS with the arm in the detail (below).
+retention and model at every request (`armApi`, `src/agent/model.js`), so an agent that is
+running at the window's edges switches on its next request. The cache experiment put half the
+threads on `short` from 2026-11-07 to 2026-11-14 (UTC), and it was a tie. The model experiment
+is pinned instead: a thread never changes model. An agent that first starts between 2026-11-17
+and 2026-12-01 (nothing delivered or metered yet) is pinned to its thread's arm for good
+(`src/agent/arms.js`: kept in its storage, `arm:model`, and in D1, `agent_arms`), half on
+Sonnet 5.5 at AGENT_MODEL's inference profile (`global.` for `global.`, `us.` for `us.`), where
+AGENT_MODEL is an Opus model; threads that started before, or start after, stay on AGENT_MODEL.
+The pin is read before the agent's first request, so there is no switch at midnight, and the
+Sonnet threads stay on Sonnet after the window. The session keeps AGENT_MODEL; the request
+asks the arm's model as itself (its prices and limits), and pi-ai drops the other model's
+thinking from the history, which Bedrock would refuse. A model the account cannot use (a 403, a
+404, a 400 about the model) falls back to AGENT_MODEL for ten minutes, logged
+(`experiment: 'model unusable'`), and shows on the dashboard as the arm's second model. Outside
+the windows every thread is on `long` and AGENT_MODEL. What an agent in an arm uses is counted
+for COGS with the arm in the detail (below).
 
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
@@ -2058,8 +2070,8 @@ generation task) and before it is told something, and counts the difference sinc
 (kept in its storage, `cogs:usage`) as Bedrock input, output, cache read and cache write tokens
 (five-minute and one-hour writes apart, as Bedrock prices them), and what pi's catalog says they
 cost, which prices a model the list does not know. While an experiment runs, the arm the agent
-is in follows the model in the detail (`us.anthropic.claude-opus-5-5#cache=short`), which the
-prices read past. An agent that was never metered starts from
+is in follows the model in the detail (`us.anthropic.claude-sonnet-5-5#model=sonnet`, one tag
+per experiment), which the prices read past. An agent that was never metered starts from
 its ledger as it is: what it used before is not counted on the day COGS started. Once a day it
 writes the size of its SQLite (`cogs_objects`), for the agents' storage.
 
@@ -2142,9 +2154,17 @@ count from the first whole day of the drafts' events as well (`drafts.estimate`)
 before they were recorded does not divide by none; a service's per accepted draft is its own flow,
 so Bedrock's is what the agents' model cost per accepted draft. Costs are at the margin: the
 allowances of a plan are listed with the prices, not subtracted. An experiment's arms are set side
-by side (`experiments`, of what is selected): per arm, the Bedrock tokens and cost, and the prompt
-(input, cache reads and writes), which a cache policy does not change, so what the prompt cost per
-million tokens compares the arms however the threads fell between them.
+by side (`experiments`, of what is selected, the newest first): per arm, the Bedrock tokens, cost
+and models, and what the experiment is judged by. The cache experiment by what the prompt (input,
+cache reads and writes, which a cache policy does not change) cost per million tokens, which
+compares the arms however the threads fell between them. The model experiment by the arm's
+Bedrock cost per accepted draft: the agents' drafts are counted by the arm their thread is
+pinned to (`agent_arms`), those started in the period, with what became of them whenever it did,
+so a draft written by Sonnet and sent the day after the period still counts for Sonnet; a pinned
+thread's tokens carry its arm whenever they are used. The cost is
+all of the arm's model use, drafts or not, so a model that drafts less or worse pays for it. With
+a few dozen accepted drafts a week, each arm's count carries its 95% interval (`margin`,
+1.96/√n).
 
 ## People
 
