@@ -22,7 +22,7 @@
 
 /* eslint-disable no-param-reassign -- the tree is made here and changed in place */
 
-import { unlazy } from './markdown.js';
+import { codeLines, unlazy } from './markdown.js';
 import { readMarkdown, writeMarkdown } from './mdast.js';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -49,21 +49,8 @@ const HELD = /\uE010(\d+)\uE010/g;
 /** `>>> ` quotes the line it starts and every line after it; in a code block it is code. */
 function quoteRest(src) {
   const lines = src.split('\n');
-  let fence = null;
-  const at = lines.findIndex((l) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(l);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
-        fence = null;
-      }
-      return false;
-    }
-    if (f) {
-      [, fence] = f;
-      return false;
-    }
-    return /^>>> /.test(l);
-  });
+  const code = codeLines(lines);
+  const at = lines.findIndex((l, i) => !code[i] && /^>>> /.test(l));
   return at < 0 ? src : [
     ...lines.slice(0, at),
     ...lines.slice(at).map((l, i) => `> ${i ? l : l.slice(4)}`),

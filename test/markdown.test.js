@@ -13,8 +13,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, withoutQuotes,
+  codeLines, markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, withoutQuotes,
 } from '../src/markdown.js';
+
+describe('codeLines', () => {
+  it('finds fenced code as CommonMark does', () => {
+    const lines = ['a', '```js', '```x', '~~~', '````', 'b', '```x```', '~~~ `ok`', 'c', '~~~~ ', 'd'];
+    assert.deepEqual(codeLines(lines), [
+      null, 'fence', 'code', 'code', 'fence', null, null, 'fence', 'code', 'fence', null,
+    ]);
+    // Indented four spaces is no fence; one not closed runs to the end.
+    assert.deepEqual(codeLines(['    ```', '```', 'e']), [null, 'fence', 'code']);
+    assert.deepEqual(codeLines(['> ```', '> x', '> ```'], (l) => l.replace(/^> ?/, '')), ['fence', 'code', 'fence']);
+  });
+});
 
 describe('mdLink', () => {
   it('encodes what would end a link destination', () => {

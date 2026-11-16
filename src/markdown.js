@@ -74,6 +74,37 @@ export const QUOTE_TITLE = 'Quoted message';
 export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:, ([^"\n]*))?"\)[ \t]*$/;
 
 /**
+ * Where the fenced code blocks of markdown lines are, as CommonMark has them: for each line,
+ * `'fence'` (it opens or closes one), `'code'` (it is inside one) or null. A fence is three or
+ * more backticks or tildes, indented up to three spaces; a backtick fence's info string has no
+ * backtick (`` ```x``` `` is code in a line, not a fence), and a closing fence is the same
+ * character, at least as long, with nothing after it. A block not closed runs to the end.
+ *
+ * @param {string[]} lines
+ * @param {(line: string) => string} [strip] the part of a line to read (without a quote's `>`)
+ */
+export function codeLines(lines, strip = (l) => l) {
+  let fence = null;
+  return lines.map((line) => {
+    const l = strip(line);
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+        fence = null;
+        return 'fence';
+      }
+      return 'code';
+    }
+    const open = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(l);
+    if (open) {
+      fence = open[1] || open[2];
+      return 'fence';
+    }
+    return null;
+  });
+}
+
+/**
  * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
  * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
  */
