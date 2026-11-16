@@ -1229,7 +1229,8 @@ describe('seeds with a chosen knowledge base', () => {
     assert.deepEqual(await seed({ ...agent, env: {} }, note), { error: 'missing AI_GATEWAY_ACCOUNT, AGENT_GATEWAY, AGENT_MODEL, BEDROCK_API_KEY' });
   });
 
-  const concept = (title) => `---\ntype: Playbook\ntitle: ${title}\ndescription: A made-up playbook.\n---\nDo it.\n`;
+  // Of the type its directory is for (src/agent/okf.js, LAYOUT).
+  const concept = (title) => `---\ntype: ${title.startsWith('sites/') ? 'Site' : 'Playbook'}\ntitle: ${title}\ndescription: A made-up concept.\n---\nDo it.\n`;
   const write = (kb, path) => ({ kb, message: 'x', changes: [{ path, content: concept(path) }] });
 
   /**

@@ -88,6 +88,7 @@ import { previewOf, readState, waitingOn } from '../src/threads.js';
 import { fold, readMembers, threadTech } from '../src/api.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
+import { findPerson } from '../src/kbpeople.js';
 import { createStore } from './dev-ui-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1356,6 +1357,28 @@ async function api(req, res, url) {
       people: suggestMentions(pool, url.searchParams.get('q')),
       ...(url.searchParams.has('pool') ? { pool } : {}),
     });
+  }
+  if (url.pathname === '/api/person') {
+    // As src/kbpeople.js personInKb, over the fake knowledge bases: the person's Contact in the
+    // thread's customer's and team's.
+    const entry = store.threads.get(url.searchParams.get('thread'));
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const who = String(url.searchParams.get('p') || '').split(':')[2];
+    const p = [...store.people.values()].find((x) => x.key === who);
+    const names = new Map(kb.list().map((b) => [b.repo, b.name]));
+    const kbs = [['org', entry.row.org], ['team', entry.row.team]]
+      .map(([kind, slug]) => ({ kind, slug, repo: `kb-${kind}-${slug}` }))
+      .filter((k) => names.has(k.repo)).map((k) => ({ ...k, name: names.get(k.repo) }));
+    const reader = {
+      list: async (repo) => (await kb.files(repo)).filter((f) => /^contacts\/[^/]+$/.test(f.path)),
+      blobs: kb.blobs,
+    };
+    const found = await findPerson(reader, kbs, {
+      email: p?.email, names: [p?.name, url.searchParams.get('name')].filter(Boolean),
+    });
+    return json(res, { entries: found });
   }
   if (url.pathname === '/api/experts') {
     // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'

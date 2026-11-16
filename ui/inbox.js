@@ -180,11 +180,62 @@ function cardContext(el) {
   const t = state.data?.threads.find((x) => x.thread === key) || {};
   const th = state.cache.get(key)?.data?.thread || {};
   return {
-    org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
+    thread: key || null, org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
   };
 }
 
-function cardHtml(p, ctx) {
+// ---------------------------------------------------------------- people in the knowledge bases
+// The card of someone on a thread also says who they are in its knowledge bases: the
+// description of their Contact (`contacts/<first-last>.md`, docs/ARCHITECTURE.md "Layout") in
+// its customer's and its teams', which the inbox asks for when the card first shows
+// (GET /api/person), once per thread and person. A click on their picture asks the thread's
+// agent about them in the sidebar.
+const kbPeople = new Map();
+const kbPersonKey = (thread, key) => `${thread}\u0000${key}`;
+/** Who `p` (profile key `key`) is in the knowledge bases of `thread`: a promise, kept. */
+function kbPerson(thread, key, p) {
+  const k = kbPersonKey(thread, key);
+  if (!kbPeople.has(k)) {
+    const q = new URLSearchParams({ thread });
+    if (!p.local) q.set('p', key);
+    q.set('name', p.name || '');
+    const asked = get(`/api/person?${q}`).then((r) => ({ entries: r.entries || [] }), () => ({ failed: true }));
+    kbPeople.set(k, { pending: true, asked });
+    asked.then((r) => kbPeople.set(k, r));
+  }
+  return kbPeople.get(k);
+}
+const contactHref = (e) => `/inbox/kb?${new URLSearchParams({ repo: e.repo, path: e.path })}`;
+/** The card's knowledge-base part: their Contacts' descriptions, or that there is none yet. */
+function cardKb(found) {
+  if (!found || found.failed) return '';
+  if (found.pending) return '<div class="kb pending">Looking in the knowledge bases…</div>';
+  if (!found.entries.length) return '<div class="kb none">Not in the knowledge bases yet.</div>';
+  return `<div class="kb">${found.entries.map((e) => `<div class="kb-entry">
+      <p>${esc(e.description || e.title || 'No summary yet.')}${e.stale ? ' <span class="kb-stale">(may be out of date)</span>' : ''}</p>
+      <a href="${esc(contactHref(e))}" target="_blank" rel="noopener" title="${esc(`${e.path} in ${e.repo}`)}">${esc(e.name)} knowledge base</a></div>`).join('')}</div>`;
+}
+/** Whether the card's person may be asked about in thread `key`'s sidebar (an open one: its agent). */
+function mayAskAbout(key, p) {
+  if (!key || p.kind === 'bot' || !p.name || state.data?.me?.readonly) return false;
+  return state.cache.get(key)?.data ? canSide(key) : true;
+}
+/** Asks the agent of thread `key` about `name` in its sidebar, opening the thread first. */
+async function askAbout(key, name) {
+  hideCard();
+  if (state.open !== key) {
+    recordPick(key);
+    await openThread(key);
+  }
+  if (state.open !== key || !canSide(key)) return;
+  await enterSide(key);
+  const box = $('side-reply');
+  if (!box) return;
+  box.value = `What should I know about ${name}?`;
+  askSide(key);
+}
+
+function cardHtml(p, ctx, found) {
   const role = [p.title, p.company].filter(Boolean).join(' · ');
   const rel = p.relation || 'customer';
   const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
@@ -204,7 +255,9 @@ function cardHtml(p, ctx) {
       ${where ? `<span class="tag">${where}</span>` : ''}</div>
     ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
-    ${p.local ? '<div class="note">No account details known yet.</div>' : ''}`;
+    ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
+    ${cardKb(found)}
+    ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
 }
 
 const card = { el: null, target: null, showTimer: 0, hideTimer: 0, pointer: 'mouse' };
@@ -260,11 +313,18 @@ function cardEl() {
 function showCard(target) {
   clearTimeout(card.showTimer);
   clearTimeout(card.hideTimer);
+  drawCard(target);
+}
+/** Fills the card for `target` and places it; again when its knowledge-base part comes. */
+function drawCard(target) {
   const p = state.profiles.get(target.dataset.p);
   if (!p || !target.isConnected) return;
   const el = cardEl();
   if (card.target && card.target !== target) card.target.removeAttribute('aria-describedby');
-  el.innerHTML = cardHtml(p, cardContext(target));
+  const ctx = cardContext(target);
+  const found = ctx.thread && p.kind !== 'bot' ? kbPerson(ctx.thread, target.dataset.p, p) : null;
+  if (found?.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
+  el.innerHTML = cardHtml(p, ctx, found);
   card.target = target;
   target.setAttribute('aria-describedby', 'pcard');
   // Below the name or avatar, or above it when there is no room; always on screen.
@@ -314,8 +374,23 @@ function wireCards() {
     if (card.target) hideCardSoon();
   });
   // A tap shows the card (and does not open the thread underneath); a tap elsewhere hides it.
+  // A click on someone's picture, or on the card's question, asks the agent about them.
   document.addEventListener('click', (e) => {
+    const ask = e.target.closest('#pcard [data-ask-about]');
+    if (ask && card.target) {
+      e.preventDefault();
+      const ctx = cardContext(card.target);
+      askAbout(ctx.thread, state.profiles.get(card.target.dataset.p)?.name);
+      return;
+    }
     const t = e.target.closest('[data-p]');
+    const face = t?.matches('.av') && card.pointer !== 'touch' && !t.closest('.t[data-hit]') && state.profiles.get(t.dataset.p);
+    if (face && mayAskAbout(cardContext(t).thread, face)) {
+      e.preventDefault();
+      e.stopPropagation();
+      askAbout(cardContext(t).thread, face.name);
+      return;
+    }
     if (t && card.pointer === 'touch') {
       e.preventDefault();
       e.stopPropagation();

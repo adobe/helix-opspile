@@ -437,6 +437,38 @@ and stamps `generated`, and a write that is not a well-formed concept is refused
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
 
+**Layout.** OKF fixes no taxonomy; ours does, so that every knowledge base is laid out the
+same way and a concept is found by its type (`LAYOUT`, src/agent/okf.js). The types and their
+directories are the ones the agents had settled on most:
+
+| type | directory | |
+| --- | --- | --- |
+| Customer | `customer/` | kb-org only |
+| Contact | `contacts/` | one person, at `contacts/<first-last>.md` |
+| Site | `sites/` | kb-org only |
+| Tech Stack | `tech-stack/` | |
+| Project | `projects/` | kb-org only |
+| Known Issue | `issues/` | |
+| Incident | `incidents/` | |
+| Decision | `decisions/` | |
+| Playbook | `playbooks/` | |
+| Product Area | `product-areas/` | |
+| Reference | `reference/` | anything else worth looking up |
+
+A type of its own goes in a directory named after it. The agents' prompt lists the table, and
+`kb_write` refuses an agent's concept of one of these types anywhere but its directory, a type
+spelled otherwise, a customer's type in a team's knowledge base, and a Contact that is not one
+person named after its title (a list of people, `contacts/people.md`); people's edits in the
+editor are not held to it. Concepts written before it stay where they are until an agent changes
+them, which moves them (the prompt says so). People are a Contact each, an
+[OKF concept](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md#4-concept-documents)
+like any other: its `title` their name as the platform shows it, its `description` who they are
+to us in one sentence (which the inbox's profile cards show), `aliases` the other names they go
+by, and `resource: mailto:<address>` (OKF's "canonical URI for the underlying asset") when a
+message shows it. A customer's knowledge base has everyone who works on its threads, the
+customer's, partners' and Adobe's people, with their role on that account; a team's has the
+colleagues and partners it works with across customers, and never a customer's people.
+
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,
@@ -2242,6 +2274,20 @@ A list of partner domains is explicit and never wrong, where guessing from "not 
 the customer's domain" would call a customer's second domain a partner. The cards travel with
 the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
 request, and emails stay on the server.
+
+Below that, the card says who the person is in the thread's knowledge bases: the description
+of their Contact (`contacts/<first-last>.md`, see "Layout" under the knowledge bases) in its
+customer's and in its teams' (the one it is filed under, those it is shared with), each with a
+link to it in the editor, or that there is none yet. That is the one request a card makes
+(`GET /api/person`, `src/kbpeople.js`), once per thread and person in a page: the Worker finds
+the Contact by the account's mail address (`resource: mailto:`), else by any name it goes by
+(the platform's name, handle and display names; the Contact's file name, title and `aliases`,
+compared as `personSlug` makes them, so `Ops, Dana` is `dana-ops`), in the knowledge bases the
+viewer may read (src/kbaccess.js), and never sends the address. Contacts are parsed once per
+blob and isolate. Bots have none. A click on someone's picture in the thread or the list (or the
+card's *What should I know about …?*) opens the thread, enters its sidebar and asks its agent
+that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
+it did.
 
 ## Platform facts that shape the design
 

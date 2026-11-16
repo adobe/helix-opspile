@@ -16,7 +16,8 @@ import git from 'isomorphic-git';
 import { checkChanges, commitChanges, writeKnowledge } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
 import {
-  addLogEntry, checkConcept, renderIndex, scalar, splitFrontmatter, stampGenerated,
+  addLogEntry, checkConcept, checkLayout, personSlug, renderIndex, scalar, splitFrontmatter,
+  stampGenerated, strings,
 } from '../src/agent/okf.js';
 import { gitServer, hasGit } from './git-server.js';
 
@@ -31,6 +32,9 @@ sources:
 
 Purges are eventually consistent.[^t1]
 `;
+
+// A type of its own, which goes anywhere (src/agent/okf.js, LAYOUT).
+const NOTE = CONCEPT.replace('type: Known Issue', 'type: Note');
 
 describe('OKF', () => {
   it('reads the frontmatter scalars a concept needs', () => {
@@ -95,6 +99,52 @@ const OPTS = {
   message: 'Add CDN purge delay', by: 'opspile-agent/m', at: '2026-10-22T10:00:00.000Z', logEntry: '**Update**: Add CDN purge delay (thread x)',
 };
 
+const contact = (title, more = '') => `---\ntype: Contact\ntitle: ${title}\n${more}---\n\nWho they are.\n`;
+
+describe('the layout of a knowledge base', () => {
+  it('names a person\'s file after their name', () => {
+    assert.equal(personSlug('Dana Ops'), 'dana-ops');
+    assert.equal(personSlug('Ops, Dana'), 'dana-ops');
+    assert.equal(personSlug('Marcin Żmuda-Trzebiatowski'), 'marcin-zmuda-trzebiatowski');
+    assert.equal(personSlug('Heather Roberson (heather@example.com)'), 'heather-roberson');
+    assert.equal(personSlug('José Łukasz Ødegård'), 'jose-lukasz-odegard');
+    assert.equal(personSlug(''), '');
+  });
+
+  it('reads lists of strings in either YAML form', () => {
+    assert.deepEqual(strings('aliases: [dops, "Dana O."]', 'aliases'), ['dops', 'Dana O.']);
+    assert.deepEqual(strings('aliases:\n  - dops\n  - \'Dana O.\'\ntitle: x', 'aliases'), ['dops', 'Dana O.']);
+    assert.deepEqual(strings('aliases: dops', 'aliases'), ['dops']);
+    assert.deepEqual(strings('title: x', 'aliases'), []);
+  });
+
+  it('puts each type of concept in its directory', () => {
+    assert.equal(checkLayout('issues/cdn-purge-delay.md', CONCEPT, 'team'), null);
+    assert.match(checkLayout('reference/cdn-purge-delay.md', CONCEPT, 'team'), /goes in issues\//);
+    assert.match(checkLayout('issues/x.md', CONCEPT.replace('Known Issue', 'known issue'), 'org'), /spelled "Known Issue"/);
+    const site = '---\ntype: Site\ntitle: www\n---\n';
+    assert.equal(checkLayout('sites/www.md', site, 'org'), null);
+    assert.match(checkLayout('sites/www.md', site, 'team'), /goes to kb-org/);
+    // Types of its own go anywhere.
+    assert.equal(checkLayout('engagements/q4.md', '---\ntype: Engagement\n---\n', 'org'), null);
+  });
+
+  it('has one Contact per person, named after them', () => {
+    assert.equal(checkLayout('contacts/dana-ops.md', contact('Dana Ops'), 'org'), null);
+    assert.match(checkLayout('contacts/people.md', contact('Customer contacts'), 'org'), /one file per person/);
+    assert.match(checkLayout('contacts/dana.md', contact('Dana Ops'), 'org'), /contacts\/dana-ops\.md/);
+    assert.match(checkLayout('contacts/adobe/dana-ops.md', contact('Dana Ops'), 'team'), /contacts\/dana-ops\.md/);
+    assert.match(checkLayout('people/dana-ops.md', contact('Dana Ops'), 'org'), /goes in contacts\//);
+  });
+
+  it('holds the agents to it, not people', () => {
+    const roster = [{ path: 'contacts/people.md', content: contact('People') }];
+    assert.match(checkChanges(roster, { kind: 'org' }), /contacts\/people\.md: a Contact is one person/);
+    assert.equal(checkChanges(roster, { kind: 'org', staff: true }), null);
+    assert.equal(checkChanges(roster), null);
+  });
+});
+
 describe('knowledge base writes', () => {
   it('checks a change set before cloning anything', () => {
     assert.match(checkChanges([]), /at least one/);
@@ -148,12 +198,12 @@ describe('knowledge base writes over git', { skip: !hasGit() && 'git is not inst
     try {
       srv.create('kb-team-helix');
       const env = { ARTIFACTS: srv.artifacts };
-      const first = await writeKnowledge(env, 'kb-team-helix', [{ path: 'playbooks/purge.md', content: CONCEPT }], OPTS);
+      const first = await writeKnowledge(env, 'kb-team-helix', [{ path: 'issues/purge.md', content: CONCEPT }], OPTS);
       assert.equal(first.commit, srv.head('kb-team-helix'));
-      assert.deepEqual(srv.files('kb-team-helix'), ['index.md', 'log.md', 'playbooks/index.md', 'playbooks/purge.md']);
-      const second = await writeKnowledge(env, 'kb-team-helix', [{ path: 'playbooks/other.md', content: CONCEPT }], { ...OPTS, logEntry: 'two' });
+      assert.deepEqual(srv.files('kb-team-helix'), ['index.md', 'issues/index.md', 'issues/purge.md', 'log.md']);
+      const second = await writeKnowledge(env, 'kb-team-helix', [{ path: 'issues/other.md', content: CONCEPT }], { ...OPTS, logEntry: 'two' });
       assert.equal(second.commit, srv.head('kb-team-helix'));
-      assert.match(srv.show('kb-team-helix', 'playbooks/index.md'), /other\.md[\s\S]*purge\.md/);
+      assert.match(srv.show('kb-team-helix', 'issues/index.md'), /other\.md[\s\S]*purge\.md/);
       assert.match(srv.show('kb-team-helix', 'log.md'), /\* two\n\* \*\*Update\*\*/);
       assert.ok(srv.seen.every((a) => a === 'Bearer art_v1_made-up?expires=1'));
     } finally {
@@ -166,7 +216,7 @@ describe('knowledge base writes over git', { skip: !hasGit() && 'git is not inst
     try {
       srv.create('kb-org-acme');
       const env = { ARTIFACTS: srv.artifacts };
-      await writeKnowledge(env, 'kb-org-acme', [{ path: 'a.md', content: CONCEPT }], OPTS);
+      await writeKnowledge(env, 'kb-org-acme', [{ path: 'a.md', content: NOTE }], OPTS);
       // Another agent pushes between our clone and our push.
       const realGet = srv.artifacts.get;
       let raced = false;
@@ -186,7 +236,7 @@ describe('knowledge base writes over git', { skip: !hasGit() && 'git is not inst
           };
         },
       };
-      const r = await writeKnowledge(env, 'kb-org-acme', [{ path: 'c.md', content: CONCEPT }], { ...OPTS, logEntry: 'mine' });
+      const r = await writeKnowledge(env, 'kb-org-acme', [{ path: 'c.md', content: NOTE }], { ...OPTS, logEntry: 'mine' });
       assert.equal(r.commit, srv.head('kb-org-acme'));
       assert.deepEqual(srv.files('kb-org-acme'), ['a.md', 'b.md', 'c.md', 'index.md', 'log.md']);
       assert.match(srv.show('kb-org-acme', 'index.md'), /b\.md/);

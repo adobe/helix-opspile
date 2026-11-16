@@ -1179,6 +1179,12 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard dd { margin: 0; min-width: 0; display: flex; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); align-items: center; overflow-wrap: anywhere; }
 .pcard dd img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-radius: var(--spectrum-corner-radius-75); flex: none; }
 .pcard .note { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+/* Who they are in the thread's knowledge bases, and the question to ask the agent about them. */
+.pcard .kb { margin-top: var(--spectrum-spacing-200); padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); display: grid; gap: var(--spectrum-spacing-100); }
+.pcard .kb p { margin: 0 0 var(--spectrum-spacing-50); overflow-wrap: anywhere; }
+.pcard .kb a { font-size: var(--spectrum-font-size-50); }
+.pcard .ask-about { display: flex; align-items: center; gap: var(--spectrum-spacing-75); width: 100%; margin-top: var(--spectrum-spacing-200); font: inherit; text-align: left; cursor: pointer; }
+.pcard .ask-about .bubble-ico { position: static; flex: none; padding: 0; }
 
 .rv .apply { display: flex; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
 .rv .apply .send { border-radius: var(--spectrum-corner-radius-100); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); background: var(--me); color: var(--spectrum-white); border: 0; }
@@ -2196,6 +2202,27 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .spectrum .pcard .rel.customer { background: var(--spectrum-cinnamon-background-color-default); }
 .spectrum .pcard .rel.bot { background: var(--spectrum-gray-background-color-default); }
+/* Its knowledge-base part under a divider, the Contact's description as body text and where it
+   is a quiet link; the question to the agent a quiet button in the sidebar's purple. */
+.spectrum .pcard .kb { border-top-color: var(--spectrum-gray-200); }
+.spectrum .pcard .kb p { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .pcard .kb a { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .kb a:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .pcard :is(.kb.pending, .kb.none, .kb-stale) { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .ask-about {
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
+  border-radius: calc(var(--spectrum-component-height-100) / 2);
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-purple-1000);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .pcard .ask-about:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .pcard .ask-about:focus-visible { outline: var(--s2-focus); }
+.spectrum .pcard .ask-about .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* A picture in a thread is a button: a click asks the agent about them. */
+.spectrum .feed .face .av[data-p] { cursor: pointer; }
 /* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
 .spectrum .srcpop .head { font-size: var(--spectrum-font-size-75); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum .srcpop .host, .spectrum .srcpop .only { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
