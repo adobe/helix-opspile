@@ -70,7 +70,7 @@ describe('mention matching', () => {
     assert.deepEqual(names('', 3), ['Lu Kent', 'Bo Kim', 'Anna Klein']);
   });
 
-  it('puts the Adobe people who know the topic after the customers in the thread', () => {
+  it('puts the thread, then the channel, then everyone else, whoever knows the topic', () => {
     const people = [
       { name: 'Ann Cust', here: true },
       { name: 'Bea Here', staff: true, here: true },
@@ -82,10 +82,20 @@ describe('mention matching', () => {
       { name: 'Flo Staff', staff: true },
       // An affinity only counts for staff.
       { name: 'Gus Cust', affinity: 0.9 },
+      // Knowing the topic orders the thread's people too, never ahead of the customers.
+      {
+        name: 'Hal Here', staff: true, here: true, affinity: 0.5,
+      },
     ];
     const names = (q) => rankMentions(people, q).map((p) => p.name);
     assert.deepEqual(names(''), [
-      'Ann Cust', 'Ed Expert', 'Di Expert', 'Bea Here', 'Cy Member', 'Flo Staff', 'Gus Cust',
+      // The thread: customers, then Adobe, who knows the topic first.
+      'Ann Cust', 'Hal Here', 'Bea Here',
+      // The channel: who knows the topic first.
+      'Ed Expert', 'Cy Member',
+      // Everyone else: an Adobe person who knows the topic but is in neither is not ahead of
+      // anyone in the thread or the channel.
+      'Di Expert', 'Flo Staff', 'Gus Cust',
     ]);
     // What is typed still has to match.
     assert.deepEqual(names('e'), ['Ed Expert', 'Di Expert']);

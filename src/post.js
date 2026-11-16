@@ -855,11 +855,11 @@ const poolAccount = (r) => ({
  * GET /api/mentionable?thread=…&q=… (or `channel=…`, as `channelPlace` reads it, for a thread
  * being started: no one is in it yet, and nobody knows what it is about): people to mention in
  * a reply, from the accounts in D1
- * for the thread's platform and workspace. People outside Adobe who posted in the thread come
- * first, then, with `me` given, the Adobe people who know what the thread is about (`expert`:
- * their messages anywhere are close to it, src/expertise.js), then anyone else who posted in
- * it, the members of its channel (on Teams: of its team, or who posted there), and everyone
- * else; among them by that affinity, then by how well `q` matches (src/mention-match.js: the
+ * for the thread's platform and workspace. Those who posted in the thread come first (people
+ * outside Adobe before Adobe's), then the members of its channel (on Teams: of its team, or who
+ * posted there), then everyone else; within each, with `me` given, the Adobe people who know
+ * what the thread is about first (`expert`: their messages anywhere are close to it,
+ * src/expertise.js), by that affinity, then by how well `q` matches (src/mention-match.js: the
  * start of any word of the name, the Slack login or display name, or the mail address, in any
  * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
  * as well.

@@ -1112,7 +1112,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   });
 
   // An Adobe person who knows the preview deploys (the ACME 503 thread is about one): offered
-  // first among staff when someone types @ there, as "Adobe · related" (src/expertise.js).
+  // first of those outside the thread and the channel when someone types @ there, as
+  // "Adobe · related" (src/expertise.js).
   seed({
     ch: CHANNELS.release,
     messages: [
