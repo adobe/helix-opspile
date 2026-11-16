@@ -20,8 +20,9 @@ import { DEFAULT_IMAGE, isImageName } from './image.js';
  * The kernel runs in the ThreadAgent object, its processes in Dynamic Workers (env.LOADER)
  * that have no network of their own. It is a backend of the same Workspace as just-bash
  * (`sliccBackend`), so the thread's files are the same ones, mounted at /workspace, the
- * uploads among them. The kernel's own root (/root, /tmp, /etc, and its programs under
- * /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
+ * uploads among them, read-only, in a mount of their own (`overWorkspace`). The kernel's own
+ * root (/root, /tmp, /etc, and its programs under /node_modules) is in the object's SQLite
+ * too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
  * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageSpec`).
@@ -158,6 +159,26 @@ export function imageSpec(image, target) {
 }
 
 /**
+ * Where and as what a kernel mounts one of the Workspace's read-only mounts, at `root` (the
+ * uploads): read-only, the Workspace's own files there. `overWorkspace` mounts it.
+ */
+export function readOnlySpec(root) {
+  return {
+    type: 'workspace',
+    source: `workspace:${root}`,
+    target: root,
+    options: { ro: '' },
+  };
+}
+
+/** The roots of a Workspace's `mounts` (its option) that are read-only. */
+export function readOnlyRoots(mounts = {}) {
+  return Object.entries(mounts)
+    .filter(([, mount]) => mount && mount.mode === 'read-only')
+    .map(([root]) => root);
+}
+
+/**
  * `fs` (a Workspace's) whose `mkdir -p` of a directory that is there does nothing. The
  * kernel's driver makes its mount point that way with every connection, and a Workspace
  * refuses any change to a directory a read-only mount is in, even that one (EROFS): the
@@ -189,16 +210,105 @@ export function patientFs(fs) {
   });
 }
 
-/** `backend` (the kernel's `sliccBackend`), connected to a Workspace through `patientFs`. */
-export function overWorkspace(backend) {
+/** The read-only mounts `overWorkspace` made in a kernel: `{ owner, targets }`. */
+const readOnlyMounts = new WeakMap();
+
+/**
+ * Takes the read-only mounts of `kernel` away, those of the connection `owner` only when it
+ * is given: the targets that are still mounted (one in use stays).
+ */
+async function unmountReadOnly(kernel, owner) {
+  const held = readOnlyMounts.get(kernel);
+  if (!held || (owner && held.owner !== owner)) {
+    return [];
+  }
+  readOnlyMounts.delete(kernel);
+  const left = [];
+  for (const target of held.targets) {
+    // eslint-disable-next-line no-await-in-loop
+    await kernel.umount(target).catch(() => left.push(target));
+  }
+  return left;
+}
+
+async function isDirectory(fs, path) {
+  try {
+    return Boolean((await fs.stat(path)).isDirectory);
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return false;
+    }
+    throw e;
+  }
+}
+
+/**
+ * `backend` (the kernel's `sliccBackend`), connected to a Workspace through `patientFs`.
+ *
+ * The Workspace's read-only mounts (`readOnly`, their roots: the uploads) are mounts of their
+ * own in the kernel, read-only (`readOnlySpec`), over the same files: `workspaceDriver` and
+ * `inProcessMount` are the kernel's (@ai-ecoverse/slicc-kernel/cloudflare), and `kernel` the
+ * backend's. The backend's own mount would open a file there for writing and fail only when it
+ * is closed, which is too late: bash does not look at what `close` answers, so
+ * `echo x > uploads/a.log` exited 0 and said nothing. The kernel refuses a read-only mount's
+ * changes where they start, as Linux does (EROFS: "Read-only file system"). Each connection
+ * mounts them anew, after the backend closed the one before it, and takes them away when it
+ * is closed.
+ */
+export function overWorkspace(backend, {
+  readOnly = [], kernel, workspaceDriver, inProcessMount,
+} = {}) {
+  const mountReadOnly = async (k, fs, owner) => {
+    const left = await unmountReadOnly(k);
+    const held = { owner, targets: [] };
+    readOnlyMounts.set(k, held);
+    for (const root of readOnly) {
+      // A mount still in use is still read-only, over the same files.
+      // eslint-disable-next-line no-await-in-loop
+      if (!left.includes(root) && await isDirectory(fs, root)) {
+        const driver = workspaceDriver(fs, { root });
+        // eslint-disable-next-line no-await-in-loop
+        await k.mount(inProcessMount(readOnlySpec(root), {
+          handlers: driver, capabilities: driver.capabilities, served: driver.served,
+        }));
+        held.targets.push(root);
+      }
+    }
+    held.targets.push(...left);
+  };
   return {
     id: backend.id,
     type: backend.type,
     callable: backend.callable,
     description: backend.description,
-    connect: (host) => backend.connect(new Proxy(host, {
-      get: (target, prop) => (prop === 'fs' ? patientFs(target.fs) : Reflect.get(target, prop)),
-    })),
+    async connect(host) {
+      const fs = patientFs(host.fs);
+      const handle = await backend.connect(new Proxy(host, {
+        get: (target, prop) => (prop === 'fs' ? fs : Reflect.get(target, prop)),
+      }));
+      if (readOnly.length === 0) {
+        return handle;
+      }
+      const owner = {};
+      let k;
+      try {
+        k = await kernel();
+        await mountReadOnly(k, fs, owner);
+      } catch (e) {
+        if (k) {
+          await unmountReadOnly(k, owner);
+        }
+        await handle.close().catch(() => {});
+        throw e;
+      }
+      return {
+        ...handle,
+        close: async () => {
+          await unmountReadOnly(k, owner);
+          return handle.close();
+        },
+      };
+    },
   };
 }
 

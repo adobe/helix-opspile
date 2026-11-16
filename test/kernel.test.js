@@ -20,8 +20,9 @@ import {
   isImageName, listImages, readImage,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, overWorkspace, patientFs, runtimeFor,
-  RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, overWorkspace, patientFs, readOnlyRoots,
+  readOnlySpec, runtimeFor, RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage,
+  teamRuntime, timedOut,
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
@@ -678,5 +679,117 @@ describe('the kernel on a Workspace', () => {
     assert.equal(backend.description, 'GNU bash');
     assert.equal((await backend.connect(host)).db, 'db');
     assert.deepEqual(fs.made, []);
+  });
+
+  /**
+   * A kernel, the kernel's backend and its driver, each saying what was asked of it into
+   * `calls`. `umountFails` and `mountFails` are targets whose umount or mount fails.
+   */
+  function kernelOnWorkspace({ umountFails = [], mountFails = [] } = {}) {
+    const calls = [];
+    const kernel = {
+      async mount(spec) {
+        calls.push(['mount', spec.target, spec.options, spec.driver.handlers.root]);
+        if (mountFails.includes(spec.target)) {
+          throw fsError('EIO', spec.target);
+        }
+      },
+      async umount(target) {
+        calls.push(['umount', target]);
+        if (umountFails.includes(target)) {
+          throw fsError('EBUSY', `${target} has open files`);
+        }
+      },
+    };
+    let connections = 0;
+    const backend = {
+      id: 'slicc',
+      async connect() {
+        connections += 1;
+        const n = connections;
+        calls.push(['connect', n]);
+        return { runtimeId: n, close: async () => calls.push(['close', n]) };
+      },
+    };
+    const options = {
+      readOnly: ['/workspace/uploads', '/workspace/gone'],
+      kernel: async () => kernel,
+      workspaceDriver: (fs, { root }) => ({ root, fs, capabilities: { ranges: true } }),
+      inProcessMount: (spec, driver) => ({ ...spec, driver }),
+    };
+    const fs = workspaceFs({ dirs: ['/workspace', '/workspace/uploads'] });
+    return {
+      calls, backend, options, host: { fs },
+    };
+  }
+
+  it('says which of a Workspace\'s mounts are read-only, and how the kernel mounts one', () => {
+    assert.deepEqual(readOnlyRoots({
+      '/workspace/uploads': { mode: 'read-only' },
+      '/workspace/cache': { mode: 'read-write' },
+      '/workspace/later': () => ({ mode: 'read-only' }),
+    }), ['/workspace/uploads']);
+    assert.deepEqual(readOnlyRoots(undefined), []);
+    assert.deepEqual(readOnlySpec('/workspace/uploads'), {
+      type: 'workspace',
+      source: 'workspace:/workspace/uploads',
+      target: '/workspace/uploads',
+      options: { ro: '' },
+    });
+  });
+
+  it('mounts the uploads read-only in the kernel, after its own mount, so a write fails at open', async () => {
+    const {
+      calls, backend, options, host,
+    } = kernelOnWorkspace();
+    const handle = await overWorkspace(backend, options).connect(host);
+    assert.equal(handle.runtimeId, 1);
+    // One that is not in the Workspace is not mounted.
+    assert.deepEqual(calls, [
+      ['connect', 1],
+      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
+    ]);
+    await handle.close();
+    assert.deepEqual(calls.slice(2), [['umount', '/workspace/uploads'], ['close', 1]]);
+  });
+
+  it('mounts them anew with each connection, which outlived ones do not take away', async () => {
+    const {
+      calls, backend, options, host,
+    } = kernelOnWorkspace();
+    const shell = overWorkspace(backend, options);
+    const first = await shell.connect(host);
+    // A new Workspace (the uploads changed): the backend closes the connection before it itself.
+    const second = await shell.connect(host);
+    assert.deepEqual(calls.slice(2), [
+      ['connect', 2],
+      ['umount', '/workspace/uploads'],
+      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
+    ]);
+    await first.close();
+    assert.deepEqual(calls.slice(5), [['close', 1]]);
+    await second.close();
+    assert.deepEqual(calls.slice(6), [['umount', '/workspace/uploads'], ['close', 2]]);
+  });
+
+  it('keeps a mount that is still in use, and closes a connection whose mount fails', async () => {
+    const busy = kernelOnWorkspace({ umountFails: ['/workspace/uploads'] });
+    const shell = overWorkspace(busy.backend, busy.options);
+    await shell.connect(busy.host);
+    const second = await shell.connect(busy.host);
+    assert.deepEqual(busy.calls.slice(2), [['connect', 2], ['umount', '/workspace/uploads']]);
+    // It is the second connection's to take away now.
+    await second.close();
+    assert.deepEqual(busy.calls.slice(4), [['umount', '/workspace/uploads'], ['close', 2]]);
+
+    const broken = kernelOnWorkspace({ mountFails: ['/workspace/uploads'] });
+    await assert.rejects(
+      overWorkspace(broken.backend, broken.options).connect(broken.host),
+      { code: 'EIO' },
+    );
+    assert.deepEqual(broken.calls.slice(1), [
+      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
+      ['close', 1],
+    ]);
   });
 });

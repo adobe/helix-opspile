@@ -171,7 +171,11 @@ failed check is not a verdict: it is not stored, the queue retries the delivery,
 thread asks again.
 
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
-before the list is stored, so a failure tries again.
+before the list is stored, so a failure tries again. With the kernel, they are a read-only mount of
+the kernel too, owned by the Workspace's connection that made it (`overWorkspace`,
+`src/agent/kernel.js`): the next connection takes it away after its backend ended the one before,
+and mounts its own; closing a connection takes away only its own. One still in use when the next
+connection comes stays, read-only over the same files, and becomes the new connection's.
 
 **Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
 (`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's

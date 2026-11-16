@@ -24,7 +24,7 @@ import curlModules from '@cloudflare/computer/shell/curl';
 import jqModules from '@cloudflare/computer/shell/jq';
 import {
   attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, inProcessMount,
-  sliccBackend,
+  sliccBackend, workspaceDriver,
 } from '@ai-ecoverse/slicc-kernel/cloudflare';
 import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 // wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
@@ -45,7 +45,7 @@ import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, overWorkspace, shellFor,
+  DEFAULT_RUNTIME, gatewayFetch, imageSpec, overWorkspace, readOnlyRoots, shellFor,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -451,16 +451,23 @@ export class ThreadAgent extends Agent {
     return this.booting;
   }
 
-  /** The shell of the computer, as a backend of its Workspace: the one its team chose. */
-  backend() {
+  /**
+   * The shell of the computer, as a backend of its Workspace: the one its team chose. With the
+   * kernel, the Workspace's read-only `mounts` (the uploads) are read-only mounts of the kernel.
+   */
+  backend(mounts) {
     if (this.runtime === 'slicc-kernel') {
-      // A file is in the Workspace when its program closed it, not a second later: writing
-      // into the read-only uploads fails where it happens.
+      // A file is in the Workspace when its program closed it, not a second later.
       return overWorkspace(sliccBackend({
         kernel: () => this.kernel(),
         mountPoint: COMPUTER_CWD,
         writeBehind: false,
-      }));
+      }), {
+        readOnly: readOnlyRoots(mounts),
+        kernel: () => this.kernel(),
+        workspaceDriver,
+        inProcessMount,
+      });
     }
     return new WorkerShellBackend({
       id: 'shell',
@@ -478,14 +485,16 @@ export class ThreadAgent extends Agent {
    * kernel's transport). Made once `currentRuntime` is known.
    */
   workspace() {
-    this.ws ??= new Workspace({
+    if (this.ws) {
+      return this.ws;
+    }
+    const mounts = this.env.FILES ? {
+      [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
+    } : undefined;
+    this.ws = new Workspace({
       storage: this.ctx.storage,
-      backends: [this.backend()],
-      ...(this.env.FILES ? {
-        mounts: {
-          [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
-        },
-      } : {}),
+      backends: [this.backend(mounts)],
+      ...(mounts ? { mounts } : {}),
       ...(this.runtime === 'slicc-kernel' ? { output: { dir: KERNEL_OUTPUT_DIR } } : {}),
     });
     return this.ws;
