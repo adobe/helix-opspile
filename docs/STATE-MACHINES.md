@@ -257,10 +257,16 @@ written before the pointer, and before anything is submitted, so two seeds at on
 sessions and never an unpinned one.
 
 **Agent experiment arm.** before → in an arm → after (`src/experiments.js`). Not stored: worked
-out from the clock and the agent's name at every model request (the retention it asks for) and at
-every metering (the tag on its tokens), so a deploy or an eviction cannot leave an agent in the
-wrong arm. The tokens metered first after the window opens or closes may include a round from just
-before it, counted with the arm of the moment.
+out from the clock and the agent's name at every model request (the retention and model it asks
+for) and at every metering (the tag on its tokens), so a deploy or an eviction cannot leave an agent
+in the wrong arm. The tokens metered first after the window opens or closes may include a round from
+just before it, counted with the arm of the moment. A draft's arm is its thread's, whatever the
+time; it counts for the experiment when it was started in the window.
+
+**Arm model unusable.** usable → unusable for ten minutes → usable (`unusable` in
+`src/agent/model.js`, per isolate). A request the arm's model refuses before any answer (`unusableModel`)
+goes to AGENT_MODEL instead, and the arm's model is not asked again until the time is up. Not
+stored, so a new isolate asks again; other failures are the request's, retried as any.
 
 **MCP tool catalog.** unknown → checked → stale or error (`src/agent/mcp.js`). A failed check keeps
 the servers the agent had. A change of configuration, or an hour, asks again.

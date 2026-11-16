@@ -14,7 +14,7 @@ import {
   costOf, isStock, metricOf, priceList, serviceOf, SERVICES, unitPrice, VOLUME,
 } from './prices.js';
 import { dayOf, HOUR_DAYS } from './rollup.js';
-import { EXPERIMENTS, tagOf } from '../experiments.js';
+import { assignedArm, EXPERIMENTS, tagsOf } from '../experiments.js';
 import { draftCounts, draftsSince, openDrafts } from '../draftevents.js';
 
 /*
@@ -346,65 +346,145 @@ function totalsOf(c, {
 /** The Bedrock metrics that are the prompt, as the model reads it. */
 const PROMPT = ['input_tokens', 'cache_read_tokens', 'cache_write_tokens', 'cache_write_1h_tokens'];
 
+/** An arm's drafts, as `draftCounts` (src/draftevents.js) counts them. */
+const noDrafts = () => ({
+  started: 0, sent: 0, edited: 0, discarded: 0, withdrawn: 0, posts: 0,
+});
+
 /**
- * The experiments' arms side by side (src/experiments.js), from the priced `rows` of what is
- * selected whose detail names an arm: per arm, its tokens and cost per metric, and the prompt
- * (what the model read: input, cache reads and writes), which a cache policy does not change,
- * so what the prompt cost per million tokens compares the arms however the threads fell. `vs`:
- * how much more (or less, below 0) that is than in the experiment's default arm.
+ * The drafts of the experiments measured by them (`measure: 'drafts'`) that overlap the period,
+ * by arm: the agents' drafts started in the period and the window, by their thread's arm
+ * (`assignedArm`), and what became of them, whenever it did (a draft sent after the window still
+ * counts for the arm that wrote it); the agents' own posts by when they were posted. Of what
+ * `pick` selects (customer and team). `{ [experiment]: { [arm]: counts } }`.
  */
-export function experimentsOf(rows) {
-  const found = new Map();
-  for (const r of rows) {
-    const tag = r.service === 'bedrock' ? tagOf(r.detail) : null;
-    if (!tag) {
+export async function experimentDrafts(env, { from, to }, pick = () => true) {
+  const out = {};
+  const start = `${from}T00:00:00.000Z`;
+  const end = new Date(ms(to) + DAY_MS).toISOString();
+  for (const x of EXPERIMENTS.filter((e) => e.measure === 'drafts')) {
+    const since = x.from > start ? new Date(Date.parse(x.from)).toISOString() : start;
+    const until = new Date(Date.parse(x.until)).toISOString() < end
+      ? new Date(Date.parse(x.until)).toISOString() : end;
+    if (since >= until) {
       // eslint-disable-next-line no-continue
       continue;
     }
-    if (!found.has(tag.experiment)) {
-      found.set(tag.experiment, new Map());
+    // eslint-disable-next-line no-await-in-loop
+    const { results } = await env.DB.prepare(`SELECT thread, org, team, action, by_agent,
+        origin_agent, changed, version = draft AS first
+      FROM draft_events WHERE (action != 'posted' AND origin_agent = 1 AND draft >= ? AND draft < ?)
+        OR (action = 'posted' AND by_agent = 1 AND at >= ? AND at < ?)`)
+      .bind(since, until, since, until).all().catch(() => ({ results: [] }));
+    const arms = {};
+    for (const r of (results || []).filter(pick)) {
+      const arm = assignedArm(x, r.thread);
+      if (arm) {
+        const c = arms[arm.id] || (arms[arm.id] = noDrafts());
+        if (r.action === 'saved' && r.first) {
+          c.started += 1;
+        } else if (r.action === 'sent' && r.by_agent) {
+          c.posts += 1;
+        } else if (r.action === 'sent') {
+          c[Number(r.changed) > 0 ? 'edited' : 'sent'] += 1;
+        } else if (r.action === 'discarded') {
+          c[r.by_agent ? 'withdrawn' : 'discarded'] += 1;
+        } else if (r.action === 'posted') {
+          c.posts += 1;
+        }
+      }
     }
-    const arms = found.get(tag.experiment);
-    const a = arms.get(tag.arm) || arms.set(tag.arm, {
-      id: tag.arm, usd: 0, prompt: 0, promptUsd: 0, metrics: {},
-    }).get(tag.arm);
-    const m = a.metrics[r.metric] || (a.metrics[r.metric] = { quantity: 0, usd: 0 });
-    m.quantity += r.quantity;
-    m.usd += r.usd;
-    a.usd += r.usd;
-    if (PROMPT.includes(r.metric)) {
-      a.prompt += r.quantity;
-      a.promptUsd += r.usd;
+    out[x.id] = arms;
+  }
+  return out;
+}
+
+/**
+ * The experiments' arms side by side (src/experiments.js), from the priced `rows` of what is
+ * selected whose detail names an arm, and `drafts` (`experimentDrafts`): per arm, its tokens and
+ * cost per metric, the models it ran, and what the experiment is judged by (`measure`):
+ * - `prompt`: what the prompt (input, cache reads and writes, which a cache policy does not change)
+ *   cost per million tokens, which compares the arms however the threads fell;
+ * - `drafts`: what the model cost per accepted draft (sent by a person, as it was or edited), with
+ *   the acceptance rate, and `margin`, the relative 95% interval of a count of so many accepted.
+ * `vs`: how much more (or less, below 0) that is than in the experiment's default arm.
+ */
+export function experimentsOf(rows, drafts = {}) {
+  const found = new Map();
+  const armIn = (experiment, arm) => {
+    if (!found.has(experiment)) {
+      found.set(experiment, new Map());
+    }
+    const arms = found.get(experiment);
+    return arms.get(arm) || arms.set(arm, {
+      id: arm, usd: 0, prompt: 0, promptUsd: 0, metrics: {}, models: {},
+    }).get(arm);
+  };
+  for (const r of rows) {
+    for (const tag of r.service === 'bedrock' ? tagsOf(r.detail) : []) {
+      const a = armIn(tag.experiment, tag.arm);
+      const m = a.metrics[r.metric] || (a.metrics[r.metric] = { quantity: 0, usd: 0 });
+      m.quantity += r.quantity;
+      m.usd += r.usd;
+      a.usd += r.usd;
+      a.models[tag.detail] = (a.models[tag.detail] || 0) + r.usd;
+      if (PROMPT.includes(r.metric)) {
+        a.prompt += r.quantity;
+        a.promptUsd += r.usd;
+      }
+    }
+  }
+  for (const [experiment, arms] of Object.entries(drafts)) {
+    for (const arm of Object.keys(arms)) {
+      armIn(experiment, arm);
     }
   }
   return [...found].map(([id, arms]) => {
     const def = EXPERIMENTS.find((e) => e.id === id);
-    const perM = (a) => (a.prompt > 0 ? (a.promptUsd / a.prompt) * 1e6 : null);
-    const base = arms.get(def?.default);
+    const measure = def?.measure || 'prompt';
+    const withDrafts = (a) => {
+      const d = drafts[id]?.[a.id] || noDrafts();
+      const accepted = d.sent + d.edited;
+      const decided = accepted + d.discarded + d.withdrawn;
+      return {
+        ...a,
+        drafts: d,
+        accepted,
+        acceptance: decided ? accepted / decided : null,
+        perAccepted: accepted ? a.usd / accepted : null,
+        margin: accepted ? 1.96 / Math.sqrt(accepted) : null,
+      };
+    };
+    const score = (a) => (measure === 'drafts' ? a.perAccepted : a.perMPrompt);
     const order = def ? def.arms.map((x) => x.id) : [];
     const rank = (x) => (order.includes(x) ? order.indexOf(x) : order.length);
+    const sorted = [...arms.values()]
+      .sort((x, y) => rank(x.id) - rank(y.id) || x.id.localeCompare(y.id));
+    const list = sorted.map((a) => {
+      const read = a.metrics.cache_read_tokens?.quantity || 0;
+      return {
+        ...(measure === 'drafts' ? withDrafts(a) : a),
+        label: def?.arms.find((x) => x.id === a.id)?.label || a.id,
+        output: a.metrics.output_tokens?.quantity || 0,
+        hitRate: a.prompt > 0 ? read / a.prompt : null,
+        perMPrompt: a.prompt > 0 ? (a.promptUsd / a.prompt) * 1e6 : null,
+      };
+    });
+    const base = list.find((a) => a.id === def?.default);
+    const b = base ? score(base) : null;
     return {
       id,
       title: def?.title || id,
       from: def?.from || null,
       until: def?.until || null,
       default: def?.default || null,
-      arms: [...arms.values()].sort((x, y) => rank(x.id) - rank(y.id) || x.id.localeCompare(y.id))
-        .map((a) => {
-          const read = a.metrics.cache_read_tokens?.quantity || 0;
-          const p = perM(a);
-          const b = base && base !== a ? perM(base) : null;
-          return {
-            ...a,
-            label: def?.arms.find((x) => x.id === a.id)?.label || a.id,
-            output: a.metrics.output_tokens?.quantity || 0,
-            hitRate: a.prompt > 0 ? read / a.prompt : null,
-            perMPrompt: p,
-            vs: p !== null && b ? p / b - 1 : null,
-          };
-        }),
+      measure,
+      arms: list.map((a) => {
+        const v = score(a);
+        return { ...a, vs: a !== base && v !== null && b ? v / b - 1 : null };
+      }),
     };
-  });
+  }).sort((x, y) => String(y.from || '').localeCompare(String(x.from || '')));
 }
 
 /** The dashboard's numbers. `url`'s parameters: from, to, service, org, team, allocate, by. */
@@ -625,7 +705,7 @@ export async function cogsReport(env, url, { now = Date.now() } = {}) {
     },
     drafts,
     services: byService,
-    experiments: experimentsOf(chosen),
+    experiments: experimentsOf(chosen, await experimentDrafts(env, { from, to }, pick)),
     chart: { unit, by, columns: chartColumns },
     orgs: group('org').map((g) => ({
       ...g,

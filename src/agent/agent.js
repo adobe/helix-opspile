@@ -32,7 +32,7 @@ import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
-import { armTag, cacheRetention } from '../experiments.js';
+import { armModel, armTags, cacheRetention } from '../experiments.js';
 import { toolsFor } from './agenttools.js';
 import {
   bashDeadline, bashWatchdog, denyBash, runBash,
@@ -164,9 +164,12 @@ export class ThreadAgent extends Agent {
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
-        // The prompt cache's retention, per request: the thread's arm while the experiment runs
-        // (src/experiments.js), else the `long` asked for below.
-        models.setProvider(agentProvider(env, { cacheRetention: () => cacheRetention(this.name) }));
+        // The prompt cache's retention and the model, per request: the thread's arms while an
+        // experiment runs (src/experiments.js), else the `long` asked for below and AGENT_MODEL.
+        models.setProvider(agentProvider(env, {
+          cacheRetention: () => cacheRetention(this.name),
+          model: () => armModel(env, this.name),
+        }));
         const agent = {
           env,
           // The object's name, which the computer's gateway knows it by (src/agent/secrets.js).
@@ -710,8 +713,8 @@ export class ThreadAgent extends Agent {
     const { now, adds } = modelUsage(
       await this.ctx.storage.get('cogs:usage'),
       ledger,
-      this.env.AGENT_MODEL,
-      armTag(this.name),
+      armModel(this.env, this.name) || this.env.AGENT_MODEL,
+      armTags(this.name, Date.now(), this.env),
     );
     for (const [metric, model, q] of adds) {
       scope.add('bedrock', metric, model, q);
@@ -799,7 +802,7 @@ export class ThreadAgent extends Agent {
     this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
-      model: this.env.AGENT_MODEL || null,
+      model: armModel(this.env, this.name) || this.env.AGENT_MODEL || null,
       problem: modelProblem(this.env),
       mark: (await this.ctx.storage.get('mark')) || null,
       pending,

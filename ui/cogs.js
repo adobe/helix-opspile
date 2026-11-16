@@ -324,10 +324,11 @@ function draftsCard(d) {
  * (`…#cache=short`, src/experiments.js) as the arm's name.
  */
 function detailText(d, detail) {
-  const m = /^(.*)#([a-z0-9_-]+)=([a-z0-9_-]+)$/.exec(detail || '');
-  if (!m) return detail || '';
-  const arm = d.experiments?.find((e) => e.id === m[2])?.arms.find((a) => a.id === m[3]);
-  return `${m[1]} · ${arm ? arm.label : `${m[2]} ${m[3]}`}`;
+  const tags = [...String(detail || '').matchAll(/#([a-z0-9_-]+)=([a-z0-9_-]+)/g)];
+  if (!tags.length) return detail || '';
+  const names = tags.map(([, x, a]) => d.experiments?.find((e) => e.id === x)?.arms
+    .find((arm) => arm.id === a)?.label || `${x} ${a}`);
+  return [String(detail).replace(/#[a-z0-9_-]+=[a-z0-9_-]+/g, ''), ...names].join(' · ');
 }
 
 /** A change against the default arm: "+12%", "−8%". */
@@ -348,25 +349,54 @@ function experimentsCard(d) {
     const window = x.from && x.until
       ? `${x.from.slice(0, 10)} – ${new Date(Date.parse(x.until) - 1).toISOString().slice(0, 10)} (UTC)`
       : '';
+    const vs = (a) => (a === base ? '<span class="sub">baseline</span>' : `<span class="${a.vs < 0 ? 'better' : 'worse'}">${pctChange(a.vs)}</span>`);
+    const head = `<h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}half the threads each</span></h2>`;
+    if (x.measure === 'drafts') return `<div class="card experiment">${head}${draftArms(x, vs)}</div>`;
     const writes = (a) => (a.metrics.cache_write_tokens?.quantity || 0)
       + (a.metrics.cache_write_1h_tokens?.quantity || 0);
     const writesUsd = (a) => (a.metrics.cache_write_tokens?.usd || 0)
       + (a.metrics.cache_write_1h_tokens?.usd || 0);
     const rows = x.arms.map((a) => {
       const pct = a.hitRate === null ? '–' : `${Math.round(a.hitRate * 100)}%`;
-      const vs = a === base ? '<span class="sub">baseline</span>' : `<span class="${a.vs < 0 ? 'better' : 'worse'}">${pctChange(a.vs)}</span>`;
       return `<tr><td>${esc(a.label)}</td>
         <td class="n">${quantity(a.prompt, 'tokens')}</td><td class="n">${pct}</td>
         <td class="n">${quantity(writes(a), 'tokens')}<div class="sub">${usd(writesUsd(a))}</div></td>
         <td class="n">${quantity(a.output, 'tokens')}</td>
-        <td class="n">${usd(a.usd)}</td><td class="n">${usd(a.perMPrompt)}</td><td class="n">${vs}</td></tr>`;
+        <td class="n">${usd(a.usd)}</td><td class="n">${usd(a.perMPrompt)}</td><td class="n">${vs(a)}</td></tr>`;
     }).join('');
-    return `<div class="card experiment"><h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}half the threads each</span></h2>
+    return `<div class="card experiment">${head}
       <div class="scroll"><table>
         <thead><tr><th>Arm</th><th class="n" title="What the model read: input, cache reads and cache writes. The cache policy does not change it">Prompt</th><th class="n" title="The share of the prompt read from the cache">From cache</th><th class="n" title="Prompt tokens written to the cache, and what that cost">Cache writes</th><th class="n">Output</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="What the prompt cost per million prompt tokens: input, cache reads and writes">Per M prompt</th><th class="n" title="Per M prompt against the baseline">Change</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <p class="hint">Each thread is in one arm for the whole window, by a hash of its key. The prompt is the same whatever the cache keeps, so the cost per million prompt tokens compares the arms even where the threads fell unevenly; output is shown to see that the work was alike.</p></div>`;
   }).join('');
+}
+
+/**
+ * An experiment judged by the cost per accepted draft: per arm, what became of the drafts its
+ * threads' agents started, the models it ran (more than one: the arm's fell back), what they cost,
+ * and per accepted draft, with the interval a count of so many accepted drafts leaves.
+ */
+function draftArms(x, vs) {
+  const pct = (v) => (v === null || v === undefined ? '–' : `${Math.round(v * 100)}%`);
+  const rows = x.arms.map((a) => {
+    const r = a.drafts;
+    const models = Object.entries(a.models || {}).sort((p, q) => q[1] - p[1]);
+    const ran = models.length > 1
+      ? `<div class="sub worse">${models.map(([m, v]) => `${esc(m)} ${usd(v)}`).join(', ')}</div>`
+      : `<div class="sub">${esc(models[0]?.[0] || '')}</div>`;
+    const margin = a.margin === null ? '' : `<div class="sub">± ${Math.round(a.margin * 100)}%</div>`;
+    return `<tr><td>${esc(a.label)}${ran}</td>
+      <td class="n">${num(r.started)}</td>
+      <td class="n">${num(a.accepted)}<div class="sub">${num(r.sent)} as they were, ${num(r.edited)} edited</div></td>
+      <td class="n">${num(r.discarded)}<div class="sub">${num(r.withdrawn)} withdrawn</div></td>
+      <td class="n">${pct(a.acceptance)}</td><td class="n">${num(r.posts)}</td>
+      <td class="n">${usd(a.usd)}</td><td class="n">${usd(a.perAccepted)}${margin}</td><td class="n">${vs(a)}</td></tr>`;
+  }).join('');
+  return `<div class="scroll"><table>
+    <thead><tr><th>Arm</th><th class="n" title="Drafts the agents of the arm's threads started">Drafts</th><th class="n" title="Of those, the drafts a person sent, as they were or edited, whenever they did">Accepted</th><th class="n" title="Drafts a person discarded, and drafts the agent withdrew itself">Discarded</th><th class="n" title="Accepted of the drafts decided: sent, discarded or withdrawn">Acceptance</th><th class="n" title="Replies the agents posted themselves">Agent posts</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="Bedrock per accepted draft, and the 95% interval of so few accepted drafts">Per accepted draft</th><th class="n" title="Per accepted draft against the baseline">Change</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="hint">Each thread is in one arm for the whole window, by a hash of its key; a draft counts for the arm whose model wrote it, whenever it was sent. The model's cost is all of the arm's, drafts or not, so a model that drafts less, or worse, pays for it here. With few accepted drafts the cost per draft moves a lot by chance: a change inside the intervals is no difference.</p>`;
 }
 
 /** The top of a chart's scale: 1, 2, 2.5 or 5 times a power of ten, at or above `v`. */

@@ -13,6 +13,9 @@
 import { DIMENSIONS, DO_GB, isStock } from '../src/cogs/prices.js';
 import { HOUR_DAYS } from '../src/cogs/rollup.js';
 import { AGENT_EMAIL } from '../src/draftevents.js';
+import {
+  assignedArm, CACHE, MODEL, running,
+} from '../src/experiments.js';
 
 /**
  * The COGS dashboard's made-up usage for `npm run ui:dev` (`/inbox/cogs`): 120 days of what the
@@ -23,16 +26,29 @@ import { AGENT_EMAIL } from '../src/draftevents.js';
  * flow is in `cogs_hours` too, busiest in the European and American working hours, for the chart
  * of a week. The agents' customers' drafts of the last DRAFT_DAYS days (`draft_events`, as
  * src/draftevents.js records them): most sent, some edited first, some discarded or withdrawn,
- * a few posts of the agents' own, and a few drafts open. The agents' model use of the last
- * EXPERIMENT_DAYS days is split between the cache experiment's arms (src/experiments.js).
+ * a few posts of the agents' own, and a few drafts open. The agents' model use is split between
+ * the arms of the cache experiment (CACHE_DAYS) and of the model experiment (the last
+ * MODEL_DAYS), whose windows are moved there (src/experiments.js); Sonnet's drafts are accepted a
+ * little less often.
  * Seeded, so every start shows the same numbers. Made-up data only.
  */
 
 const DAYS = 120;
 const DAY_MS = 86400000;
 const AGENTS = new Set(['acme', 'hooli']);
-/** How many of the last days the agents were in the cache experiment's arms. */
-const EXPERIMENT_DAYS = 4;
+/**
+ * The experiments' windows in the preview, in days back from today: the cache experiment's
+ * (14 to 8 days ago) and the model experiment's (the last MODEL_DAYS days, and on).
+ */
+const CACHE_DAYS = [8, 14];
+const MODEL_DAYS = 5;
+
+/** The experiments' windows moved to the preview's days (CACHE_DAYS, MODEL_DAYS). */
+function placeExperiments(today) {
+  const at = (days) => new Date(today + days * DAY_MS).toISOString().replace('.000', '');
+  Object.assign(CACHE, { from: at(-CACHE_DAYS[1]), until: at(1 - CACHE_DAYS[0]) });
+  Object.assign(MODEL, { from: at(1 - MODEL_DAYS), until: at(10) });
+}
 /** How long the agents' drafts have been counted, for the preview. */
 const DRAFT_DAYS = 40;
 
@@ -63,7 +79,8 @@ function seedDrafts(DB, rnd, now) {
         const draft = new Date(start).toISOString();
         const end = new Date(Math.min(now, start + rnd() * 6 * 3600000)).toISOString();
         insert.run(t.thread, draft, draft, 'saved', null, agent, 1, agent, null, t.org, t.team, draft);
-        const p = rnd();
+        const sonnet = running(MODEL, start) && assignedArm(MODEL, t.thread).id === 'sonnet';
+        const p = Math.min(0.99, rnd() + (sonnet ? 0.08 : 0));
         if (p < 0.45) {
           insert.run(t.thread, draft, draft, 'sent', 'me', person, 0, agent, 0, t.org, t.team, end);
         } else if (p < 0.68) {
@@ -143,6 +160,7 @@ export function seedCogs(DB, now = Date.now()) {
     ON CONFLICT (day, source, service, metric, detail, org, team) DO UPDATE SET quantity = quantity + excluded.quantity`);
   const at = new Date(now).toISOString();
   const today = Date.parse(`${new Date(now).toISOString().slice(0, 10)}T00:00:00Z`);
+  placeExperiments(today);
   DB.sqlite.exec('BEGIN');
   for (let i = DAYS - 1; i >= 0; i -= 1) {
     const ms = today - i * DAY_MS;
@@ -181,13 +199,25 @@ export function seedCogs(DB, now = Date.now()) {
       put('meter', 'ai_search', 'uploads', '', org, team, messages * 0.8);
       put('meter', 'ai_search', 'ingest_bytes', '', org, team, messages * 0.8 * 650);
       put('account', 'artifacts', 'operations', '', org, team, messages * 3);
-      if (AGENTS.has(org) && i < EXPERIMENT_DAYS) {
-        // The cache experiment (src/experiments.js): half the work in each arm. The five-minute
-        // cache misses between turns, so it writes more, at a lower price per token.
-        const model = 'us.anthropic.claude-opus-5-5';
+      const opus = 'us.anthropic.claude-opus-5-5';
+      const sonnet = 'us.anthropic.claude-sonnet-5-5';
+      if (AGENTS.has(org) && i < MODEL_DAYS) {
+        // The model experiment (src/experiments.js): half the work in each arm. Sonnet takes a
+        // few more rounds for the same work, at half the price per token.
+        for (const [arm, model, part] of [['opus', opus, 0.5], ['sonnet', sonnet, 0.58]]) {
+          const m = messages * part;
+          const tag = `${model}#model=${arm}`;
+          put('meter', 'bedrock', 'input_tokens', tag, org, team, m * 2400);
+          put('meter', 'bedrock', 'output_tokens', tag, org, team, m * 1300);
+          put('meter', 'bedrock', 'cache_read_tokens', tag, org, team, m * 52000);
+          put('meter', 'bedrock', 'cache_write_1h_tokens', tag, org, team, m * 6100);
+        }
+      } else if (AGENTS.has(org) && i >= CACHE_DAYS[0] && i <= CACHE_DAYS[1]) {
+        // The cache experiment: half the work in each arm. The five-minute cache misses between
+        // turns, so it writes more, at a lower price per token.
         for (const [arm, part] of [['long', 0.52], ['short', 0.48]]) {
           const m = messages * part;
-          const tag = `${model}#cache=${arm}`;
+          const tag = `${opus}#cache=${arm}`;
           put('meter', 'bedrock', 'input_tokens', tag, org, team, m * 2400);
           put('meter', 'bedrock', 'output_tokens', tag, org, team, m * 1300);
           if (arm === 'long') {
@@ -199,10 +229,10 @@ export function seedCogs(DB, now = Date.now()) {
           }
         }
       } else if (AGENTS.has(org)) {
-        put('meter', 'bedrock', 'input_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 2400);
-        put('meter', 'bedrock', 'output_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 1300);
-        put('meter', 'bedrock', 'cache_read_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 52000);
-        put('meter', 'bedrock', 'cache_write_1h_tokens', 'us.anthropic.claude-opus-5-5', org, team, messages * 6100);
+        put('meter', 'bedrock', 'input_tokens', opus, org, team, messages * 2400);
+        put('meter', 'bedrock', 'output_tokens', opus, org, team, messages * 1300);
+        put('meter', 'bedrock', 'cache_read_tokens', opus, org, team, messages * 52000);
+        put('meter', 'bedrock', 'cache_write_1h_tokens', opus, org, team, messages * 6100);
       }
       if (AGENTS.has(org)) {
         // The thread agents: Claude on Bedrock (above), their Durable Objects and their browser.
