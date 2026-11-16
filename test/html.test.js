@@ -99,6 +99,11 @@ describe('htmlToMarkdown', () => {
     );
     assert.equal(htmlToMarkdown('<codeblock class=""><code class="language-js">a  \n</code></codeblock>'), '```js\na  \n```');
     assert.equal(htmlToMarkdown('<p>x &amp; y&nbsp;z</p>'), 'x & y z');
+    // Code keeps the white space its lines end in, in a quote and a list too.
+    assert.equal(
+      htmlToMarkdown('<blockquote><pre><code>a  \nb</code></pre></blockquote><ul><li><pre><code>c  </code></pre></li></ul>'),
+      '> ```\n> a  \n> b\n> ```\n\n- ```\n  c  \n  ```',
+    );
   });
 
   it('keeps emoji, and leaves out the empty lines Teams writes as paragraphs', () => {
