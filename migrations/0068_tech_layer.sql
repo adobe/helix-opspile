@@ -1,7 +1,7 @@
 -- Where in a customer's stack each technology is (src/stack.js LAYERS): edge, site, content, code,
--- commerce, martech, identity or other. The stack drawings of the knowledge bases (stack.md) are
--- drawn in the same layers, and the list by customer names the likeliest technology of each layer,
--- in that order, under the customer (ui/inbox.js). NULL: none yet (the list leaves it out). These
+-- commerce, martech, identity or other. The list by customer names the likeliest technology of
+-- each layer, in that order, beside the customer (ui/inbox.js). NULL: none yet (the list leaves it
+-- out). These
 -- are the admin team's; a team's own entry of the same id without one takes the admin team's.
 ALTER TABLE tech_stack ADD COLUMN layer TEXT;
 
