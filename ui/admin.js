@@ -232,13 +232,36 @@ function toUrl() {
  * left: one of them, from its address, without loading the page again. Going to another is a
  * new history entry (`push`), so Back returns to the one before.
  */
-function openUrl(url, { push = true } = {}) {
+function openUrl(url, { push = true, instant = false } = {}) {
   const q = new URL(url, location.origin).searchParams;
   const tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
   if (push) history.pushState(null, '', url);
-  switchTab(tab);
   const sel = q.get(PARAM[tab]);
-  if (sel) select(sel);
+  const open = () => {
+    switchTab(tab);
+    if (sel) select(sel);
+  };
+  // Phones slide between the list and what is picked in it within a page, not to another page
+  // or from one picked to another.
+  if (instant || tab !== state.tab || (sel && state.sel)) instantly(open);
+  // Back to the list within the page: as its back button, what was picked slides out as it was.
+  else if (!sel && state.sel) unselect();
+  else open();
+}
+
+/**
+ * Runs `fn` without the phones' slide between the list and what is picked (see the styles):
+ * its changes are applied before the slide is back.
+ */
+function instantly(fn) {
+  const main = document.querySelector('main');
+  main.classList.add('instant');
+  try {
+    fn();
+  } finally {
+    main.getBoundingClientRect();
+    main.classList.remove('instant');
+  }
 }
 
 async function load() {
@@ -404,7 +427,11 @@ function unselect() {
   state.sel = null;
   toUrl();
   renderList();
-  $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[state.tab]}.</div>`;
+  // What was picked slides out as it was (phones); then it goes.
+  const out = $('detail').getAnimations().map((a) => a.finished);
+  Promise.allSettled(out).then(() => {
+    if (!state.sel) $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[state.tab]}.</div>`;
+  });
 }
 const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
 
@@ -1276,7 +1303,7 @@ function renderRequests() {
     ? `<table><tr><th>Channel</th><th>Asked by</th><th>Note</th><th>Answer</th><th></th></tr>${rows}</table>`
     : '<div class="empty">Nothing asked for yet. Search for a channel above to ask for it.</div>';
   for (const b of $('requestsTable').querySelectorAll('[data-review]')) {
-    b.onclick = () => { switchTab('requests'); select(b.dataset.review); };
+    b.onclick = () => instantly(() => { switchTab('requests'); select(b.dataset.review); });
   }
   for (const b of $('requestsTable').querySelectorAll('[data-withdraw]')) {
     const r = v.requests.find((x) => String(x.id) === b.dataset.withdraw);
@@ -1578,6 +1605,8 @@ async function showOrg(slug) {
       openUrl(a.getAttribute('href'));
     }
   });
-  window.addEventListener('popstate', () => openUrl(location.href, { push: false }));
-  openUrl(location.href, { push: false });
+  // Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again.
+  window.addEventListener('popstate', (e) => openUrl(location.href, { push: false, instant: Boolean(e.hasUAVisualTransition) }));
+  // A link to a team lands on it.
+  openUrl(location.href, { push: false, instant: true });
 })();
