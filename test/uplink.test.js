@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DOH_JSON, errnoOf, socketUplink } from '../src/agent/uplink.js';
+import { errnoOf, socketUplink } from '../src/agent/uplink.js';
 
 /** A socket as `cloudflare:sockets` makes it, whose far end answers `reply` to what it gets. */
 function fakeSocket({ opened, reply = (b) => b } = {}) {
@@ -49,7 +49,7 @@ function fakeSocket({ opened, reply = (b) => b } = {}) {
 
 describe('the uplink of the computer', () => {
   it('routes every outside address to it, IPv4 only, and no UDP', () => {
-    const uplink = socketUplink({ connect: () => {}, fetch: () => {} });
+    const uplink = socketUplink({ connect: () => {} });
     assert.deepEqual(uplink.traits, { tcp: true, udp: false, ipv6: false });
     assert.deepEqual(uplink.routes, { prefixes: [], exit: true });
   });
@@ -63,7 +63,6 @@ describe('the uplink of the computer', () => {
         socket = fakeSocket({ reply: (b) => b.map((x) => x + 1) });
         return socket;
       },
-      fetch: () => {},
     });
     const conn = await uplink.dial({
       network: 'tcp', host: '192.0.2.7', port: 443, signal: new AbortController().signal,
@@ -82,7 +81,6 @@ describe('the uplink of the computer', () => {
   it('refuses every other port, and turns a failed connect into the errno the kernel takes', async () => {
     const uplink = socketUplink({
       connect: () => fakeSocket({ opened: Promise.reject(new Error('connection refused')) }),
-      fetch: () => {},
     });
     const { signal } = new AbortController();
     await assert.rejects(uplink.dial({
@@ -95,7 +93,6 @@ describe('the uplink of the computer', () => {
       connect: () => {
         throw new Error('proxy request failed, cannot connect to the specified address');
       },
-      fetch: () => {},
     });
     await assert.rejects(throwing.dial({
       network: 'tcp', host: '192.0.2.7', port: 443, signal,
@@ -113,7 +110,6 @@ describe('the uplink of the computer', () => {
         socket = fakeSocket({ opened: new Promise(() => {}) });
         return socket;
       },
-      fetch: () => {},
     });
     const abort = new AbortController();
     uplink.dial({
@@ -126,34 +122,7 @@ describe('the uplink of the computer', () => {
     assert.ok(socket.closed);
   });
 
-  it('resolves names over DNS over HTTPS, A records only, with their TTL', async () => {
-    const asked = [];
-    const answers = {
-      'www.example.com': {
-        Answer: [
-          { type: 5, data: 'edge.example.net.', TTL: 300 },
-          { type: 1, data: '192.0.2.1', TTL: 120 },
-          { type: 1, data: '192.0.2.2', TTL: 60 },
-        ],
-      },
-      'none.example.com': { Status: 3 },
-    };
-    const uplink = socketUplink({
-      connect: () => {},
-      fetch: async (url, init) => {
-        asked.push([url, init.headers.accept]);
-        const name = new URL(url).searchParams.get('name');
-        return name === 'down.example.com'
-          ? new Response('', { status: 502 }) : Response.json(answers[name]);
-      },
-    });
-    assert.deepEqual(await uplink.resolve('www.example.com', 0), {
-      addresses: ['192.0.2.1', '192.0.2.2'], ttl: 60,
-    });
-    assert.deepEqual(asked[0], [`${DOH_JSON}?name=www.example.com&type=A`, 'application/dns-json']);
-    assert.deepEqual(await uplink.resolve('none.example.com', 4), []);
-    assert.deepEqual(await uplink.resolve('down.example.com', 4), []);
-    assert.deepEqual(await uplink.resolve('www.example.com', 6), []);
-    assert.equal(asked.length, 3);
+  it('has no names of its own: the kernel resolves outside names through its forwarder', () => {
+    assert.equal(socketUplink({ connect: () => {} }).resolve, undefined);
   });
 });

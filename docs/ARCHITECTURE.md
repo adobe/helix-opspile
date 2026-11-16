@@ -1799,7 +1799,7 @@ the default. An agent follows its team's choice before each delivery, as it foll
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
     and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, dig), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
+    unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
     html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
     `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
@@ -1848,29 +1848,33 @@ the default. An agent follows its team's choice before each delivery, as it foll
   (`network.tlsEngine`, `compiledTlsEngine`). The real TLS connection is `fetch`'s: a server
   whose certificate Cloudflare refuses answers curl as an HTTP error (526), not as a TLS
   error, so `curl` without `-f` exits 0 on it.
-- **Programs linked with pthreads**, as jq is, run on one thread: a Dynamic Worker has no
-  second one, so `pthread_create` fails with `EAGAIN`. A program that starts threads fails
-  with it: BIND's dig (`wasix-bind`), so dig is `wasi-dig`. jq declares 64 MiB of memory, most
-  of a Dynamic Worker's budget, so each jq has one to itself (at most 8 run at once).
+- **Threads** of a WASIX program are further wasm instances on its memory, in its Dynamic
+  Worker, taking turns at their kernel calls (slicc-kernel 1.188): BIND's dig, host and
+  nslookup (`wasix-bind`) start them. An Emscripten program linked with pthreads, as jq is,
+  runs on one thread. jq declares 64 MiB of memory, most of a Dynamic Worker's budget, so each
+  jq has one to itself (at most 8 run at once).
 - **How many processes a Dynamic Worker holds**: the kernel places them by their memory, up
   to a budget per Dynamic Worker (`isolates.memory`), which is 96 MiB of its 128 MB here, not
   the kernel's 64 MiB: git's clone is three processes deep (git, git remote-https,
   git-remote-https) and forks a fourth to read the pack, and with 64 MiB the fork waits for a
   Dynamic Worker that never comes free (`EAGAIN`). A Durable Object may run at most 10 Dynamic
   Workers at once; the kernel runs at most 8.
-- **DNS**: the kernel has no UDP, and its programs no route to a name server. `dig`
-  (`@ai-ecoverse/wasi-dig`) asks DNS over HTTPS of `cloudflare-dns.com` through the proxy and
-  the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
-  every name curl reaches, so the agent is told it may look up a customer's names there. It
-  has no `+trace` and asks no name server itself.
+- **DNS**: the kernel answers DNS itself on 127.0.0.53, for local names, and forwards every
+  other question over DNS over HTTPS to `cloudflare-dns.com` (`network.doh`, through the
+  transport and so the gateway), handing back the answer as it came: CNAME chains, TTLs,
+  authority. `getaddrinfo` resolves outside names through the same forwarder. BIND's `dig`,
+  `host` and `nslookup` (`@ai-ecoverse/wasix-bind`) ask it. No other DNS leaves the computer:
+  the uplink carries TCP to port 443 only, so `dig @server` and `+trace` fail. Cloudflare,
+  on which the Worker runs, already resolves every name curl reaches, so the agent is told it
+  may look up a customer's names there.
 - **TLS** behind curl is `fetch`'s, so curl never sees a site's certificate chain. For that
   the kernel has an uplink (`src/agent/uplink.js`, `network.uplink`): a program's own TCP
   connections leave through the Worker's sockets (`connect` from `cloudflare:sockets`), to
   port 443 only; any other port of an outside address is an unreachable network
   (`ENETUNREACH`). `openssl s_client -connect host:443 -servername host` (from
   `@ai-ecoverse/wasix-openssl-cli`) shows the chain the site sends, checked against Mozilla's
-  roots. Names resolve over DNS over HTTPS (cloudflare-dns.com's JSON API, through the
-  gateway's `forward`), IPv4 only. These bytes pass the gateway by: it cannot put a secret
+  roots. The uplink has no names of its own: names resolve through the kernel's DNS forwarder
+  (above), IPv4 only. These bytes pass the gateway by: it cannot put a secret
   into them, and a program has only a secret's placeholder, never its value. The kernel keeps
   loopback, link-local and reserved addresses from the uplink, and Cloudflare refuses sockets
   to private networks and to its own addresses (a site behind Cloudflare cannot be reached

@@ -659,7 +659,7 @@ describe('the agent\'s switchable tools', () => {
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
     assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet; a site whose certificate`));
-    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. dig asks Cloudflare's resolver, over DNS over HTTPS \(cloudflare-dns\.com\): .* It cannot ask a name server itself \(no @server, no \+trace, no UDP\)\. openssl works on certificates, keys and requests .* Its s_client is the only way to see the certificate chain a site itself sends, which curl does not show: openssl s_client -connect host:443 -servername host -showcerts < \/dev\/null\. It reaches port 443 only; no other port leaves this computer except through curl's HTTP\. qjs runs JavaScript \(QuickJS:/);
+    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. dig, host and nslookup \(BIND's\) ask Cloudflare's resolver, over DNS over HTTPS \(cloudflare-dns\.com\), and show its answers as they are, CNAME chains and TTLs included: .* They cannot ask another name server \(no @server, no \+trace\): no DNS leaves this computer but through that resolver\. openssl works on certificates, keys and requests .* Its s_client is the only way to see the certificate chain a site itself sends, which curl does not show: openssl s_client -connect host:443 -servername host -showcerts < \/dev\/null\. It reaches port 443 only; no other port leaves this computer except through curl's HTTP\. qjs runs JavaScript \(QuickJS:/);
     // It has a JavaScript interpreter, and is told what of node that is not.
     assert.match(base, /It is not node: no require, no npm packages, no fetch \(use curl, and pipe to it\), no child processes\. There is no npm, node or python, and no other binaries\./);
     assert.doesNotMatch(base, /just-bash|sqlite3/);
@@ -668,7 +668,7 @@ describe('the agent\'s switchable tools', () => {
     assert.match(github, /, qjs, gh\. curl reaches the internet;/);
     assert.match(github, /gh \(GitHub CLI\) reads GitHub: .* It needs \$GH_TOKEN, a secret the team keeps for api\.github\.com: without it gh does not run .* Use it to read: creating, commenting on or merging anything on GitHub is for people\./);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, dig, openssl, git, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
+    assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
       // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
       assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);

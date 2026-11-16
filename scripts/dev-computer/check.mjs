@@ -115,7 +115,15 @@ export const CHECKS = [
     timeout: 120,
   },
   { name: 'grep', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
-  { name: 'dig', command: 'dig +short a www.aem.live', match: /^(\S+\.\n)*(\d+\.){3}\d+\n/ },
+  {
+    // The forwarder's own answer: the CNAME and its TTL, not addresses the kernel made up.
+    name: 'dig, host, nslookup',
+    command: 'dig +noall +answer www.aem.live | awk \'{ print $4 }\' | sort -u'
+      + ' && host www.aem.live | grep -c "is an alias for"'
+      + ' && nslookup www.aem.live | grep -c "canonical name"'
+      + ' && dig +short ns aem.live | wc -l',
+    match: /^A\nCNAME\n[1-9]\n[1-9]\n[1-9]\d*\n$/,
+  },
   {
     name: 'git clone, log, blame',
     command: 'cd /tmp && rm -rf c && git clone -q --depth 3 https://github.com/adobe/helix-opspile c'
