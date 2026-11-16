@@ -48,8 +48,6 @@ const TYPES = [
 ];
 const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
 const MINS = [1, 2, 3, 5, 8];
-/** People and customers with a name on the graph, the most threads first; the rest on pointing. */
-const NAMED = 14;
 const THREADS_SHOWN = 30;
 
 const state = {
@@ -107,18 +105,10 @@ const isCustomer = (slug) => TopicGraph.isCustomer(map(), slug);
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
 
-/** The graph for the filters (ui/topicgraph.js), the people, customers and products of most
- * threads named. */
+/** The graph for the filters (ui/topicgraph.js). */
 function graphOf() {
   const { q } = state;
-  const g = TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
-  const { nodes } = g;
-  // The people and customers with a name on the graph: those of the most threads.
-  for (const type of ['person', 'org', 'product']) {
-    nodes.filter((n) => n.type === type).sort((a, b) => b.threads.length - a.threads.length)
-      .slice(0, NAMED).forEach((n) => { n.named = true; });
-  }
-  return g;
+  return TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
 }
 
 // ---- the layout: d3-force's model -------------------------------------------------------
