@@ -604,6 +604,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   and it stays at the end of the column, struck through and out of the red badge of **All
   customers**, with or without threads, until a click brings it back. **All customers** drops
   the pick and what is excluded.
+  Beside each customer's heading in the list by customer are the key parts of its **stack**:
+  the likeliest technology of each layer of the stack (`tech_stack.layer`, see "Labels and
+  facts"), top to bottom, Other's left out, over the customer's channels on the pages loaded
+  (`stacks` of `/api/inbox`, `orgStacks` in src/api.js: each technology at the highest
+  probability of any of its channels there, at 0.8 or above; pages merge the same way).
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
@@ -871,6 +876,11 @@ and an unchanged thread is never labeled twice):
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM
   Sidekick was an alias of Edge Delivery until migration 0061, so Clef never asked about it, the
   Topics page drew it as Edge Delivery, and a thread about it showed nothing of its own.
+  Every entry is in a **layer** of the customer's stack (`tech_stack.layer`, migration 0068,
+  src/stack.js `LAYERS`): edge (CDN, WAF, code at the edge), site (what serves the pages), content
+  (authoring and assets), code, commerce and data, marketing and insights, identity, or other. A
+  team's own entry of an admin team's id without one takes the admin team's. The list by
+  customer names the likeliest of each layer beside the customer.
   Every entry is part of a **product** (`tech_stack.product`, migration 0056): the Adobe product
   it belongs to, by its name on [Adobe's product list](https://business.adobe.com/products.html)
   (Edge Delivery, Document Authoring, the AEM Sidekick, Universal Editor, Experience Workspace,

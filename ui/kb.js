@@ -1141,7 +1141,7 @@ function techRow(t, own) {
   const local = !own && !mine && mayRules() ? `<span class="acts"><button data-tlocal="${esc(t.tech)}">Change for ${esc(base().name)}</button><button data-toff="${esc(t.tech)}">Turn off here</button></span>` : '';
   return `<div class="ch rule${t.enabled ? '' : ' off'}${mine ? ' replaced' : ''}">
     <div class="who">
-      <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span>${t.product ? `<span class="src" title="The product it is part of">${esc(t.product)}</span>` : ''}</div>
+      <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span>${t.product ? `<span class="src" title="The product it is part of">${esc(t.product)}</span>` : ''}${t.layer ? `<span class="src" title="Where in a customer's stack it is">${esc(layerName(t.layer))}</span>` : ''}</div>
       <div class="sub">Does this thread show that the customer uses ${esc(t.description)}?</div>
       ${replaced}
       ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
@@ -1182,6 +1182,13 @@ function ruleForm(r = {}) {
   </form>`;
 }
 
+/** A layer of the stack (src/stack.js LAYERS) by its name, and what is in it. */
+const layerName = (id) => (state.extraction?.layers || []).find((l) => l.id === id)?.name || id;
+const layerHint = (id) => {
+  const l = (state.extraction?.layers || []).find((x) => x.id === id);
+  return l ? `${l.name}: ${l.hint}.` : '';
+};
+
 /** The products and categories the tech stacks name, for the form's suggestions. */
 function products() {
   const x = state.extraction;
@@ -1206,6 +1213,8 @@ function techForm(t = {}) {
     <label for="tProduct">Part of</label><input id="tProduct" list="tProducts" value="${esc(t.product || '')}" class="long">
     <datalist id="tProducts">${products().map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
     <span class="hint">An Adobe product by its name on <a href="https://business.adobe.com/products.html" target="_blank" rel="noopener">Adobe's product list</a>, or a category for other companies' products. The Topics page groups by it.</span>
+    <label for="tLayer">Layer</label><select id="tLayer"><option value="">None</option>${(state.extraction.layers || []).map((l) => `<option value="${esc(l.id)}"${l.id === t.layer ? ' selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+    <span class="hint">Where in a customer's stack it is. The list by customer names the likeliest technology of each layer under the customer, and the stack drawings are drawn in these layers. ${esc(layerHint(t.layer))}</span>
     <label for="tAliases">Also called</label><input id="tAliases" value="${esc(t.aliases || '')}" class="long">
     <span class="hint">Other names it goes by in threads, separated by commas, such as EdgeWorkers, Property Manager. Not asked of Clef: the Topics page matches the products the threads name against these too, so they do not show as missing from the tech stack.</span>
     <span class="apply"><button class="primary" id="tSave">${editing ? 'Save' : 'Add'}</button>${t.tech ? '<button type="button" id="tCancel">Cancel</button>' : ''}</span>
@@ -1327,7 +1336,7 @@ function bindExtraction() {
   $('techForm').onsubmit = async (e) => {
     e.preventDefault();
     const r = await send('POST', '/tech', {
-      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), product: $('tProduct').value.trim(), aliases: $('tAliases').value.trim(), enabled: true,
+      tech: $('tId').value.trim(), name: $('tName').value.trim(), description: $('tDesc').value.trim(), product: $('tProduct').value.trim(), aliases: $('tAliases').value.trim(), layer: $('tLayer').value, enabled: true,
     });
     if (r) { state.editTech = null; reload(`Saved ${r.tech.name}: Clef is asked about it from the next labeling of a thread.`); }
   };

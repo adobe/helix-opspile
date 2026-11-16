@@ -14,9 +14,10 @@ import { platformName } from './platforms.js';
 import { recordDead, sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
-  extract, rulesFor, techFor, techNames,
+  extract, rulesFor, techFor, techLayerMap, techNames,
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
+import { LAYERS } from './stack.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
 } from './products.js';
@@ -255,10 +256,16 @@ export function topicList(stored) {
 export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
   .map(([id, t]) => [id, t.name]));
 
-/** The names the inbox shows for tech stack and topic ids. */
-export const vocab = async (env, team = null) => ({
-  tech: await techNames(env, team), topics: topicNames(),
-});
+/**
+ * The names the inbox shows for tech stack and topic ids, the layer of the stack each
+ * technology is in (`layers`), and the layers, top to bottom (`stack`, src/stack.js).
+ */
+export const vocab = async (env, team = null) => {
+  const [tech, layers] = await Promise.all([techNames(env, team), techLayerMap(env, team)]);
+  return {
+    tech, topics: topicNames(), layers, stack: LAYERS.map(({ id, name }) => ({ id, name })),
+  };
+};
 
 /**
  * Clairic's `products` field: the wording of the product census (docs/ARCHITECTURE.md, "Labels
