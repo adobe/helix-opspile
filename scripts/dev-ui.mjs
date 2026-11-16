@@ -27,6 +27,10 @@
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
+ * `POST /__dev/d2` draws an FMC block diagram or a stack drawing with D2, the prototype of a
+ * renderer of its own (scripts/dev-ui-d2.mjs); `/__dev/fmc` shows the figures and the stacks
+ * both ways, and the inbox's stack popover has a switch between the two (dev-ui-d2-switch.js).
+ *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
  *
@@ -90,6 +94,7 @@ import {
 } from '../src/api.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin } from './dev-ui-admin.mjs';
+import { d2Route } from './dev-ui-d2.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { createStore } from './dev-ui-fixtures.mjs';
 
@@ -2006,6 +2011,9 @@ const RAIL_CLIENT = `<div id="dev-rail" style="position:fixed;right:8px;bottom:c
 })();</script>`;
 
 /** ui/<name>.html as the Worker serves it, with the banner and live reload. */
+/** The stack popover's switch between Graphviz and D2 (dev-ui-d2-switch.js), in the inbox. */
+const d2Client = async () => `<script>${await readFile(join(root, 'scripts', 'dev-ui-d2-switch.js'), 'utf8')}</script>`;
+
 async function uiPage(name) {
   const html = await readFile(join(uiDir, name), 'utf8');
   let served = (name === 'inbox.html' ? servedInbox : servedPage)(html, await scripts());
@@ -2018,7 +2026,7 @@ async function uiPage(name) {
       .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
       .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
   }
-  const rail = name === 'inbox.html' ? RAIL_CLIENT : '';
+  const rail = name === 'inbox.html' ? `${RAIL_CLIENT}${await d2Client()}` : '';
   return served.replace('</body>', `${banner()}${rail}${RELOAD_CLIENT}\n</body>`);
 }
 
@@ -2194,10 +2202,22 @@ const server = createServer(async (req, res) => {
       res.end(await uiPage('inbox.html'));
       return;
     }
+    // The D2 prototype's renderer (scripts/dev-ui-d2.mjs).
+    if (await d2Route(req, res, url)) {
+      return;
+    }
     // The FMC gallery: the guidelines' figures and the stacks, as the inbox draws them.
     if (url.pathname === '/__dev/fmc') {
       const { galleryPage } = await import(`./fmc-gallery.mjs?${Date.now()}`);
-      const html = galleryPage(servedPage, await scripts());
+      let html = galleryPage(servedPage, await scripts(), { layout: url.searchParams.get('layout') || 'elk' });
+      // ?scheme=light or dark, as UI_SCHEME does for the pages.
+      const scheme = url.searchParams.get('scheme') || process.env.UI_SCHEME;
+      if (scheme === 'light' || scheme === 'dark') {
+        const other = scheme === 'light' ? 'dark' : 'light';
+        html = html.replaceAll(`(prefers-color-scheme: ${scheme})`, 'all')
+          .replaceAll(`(prefers-color-scheme: ${other})`, 'not all')
+          .replace('</head>', `<style>:root { color-scheme: ${scheme} !important; }</style>\n</head>`);
+      }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html);
       return;

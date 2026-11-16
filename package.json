@@ -58,6 +58,7 @@
     "@ai-ecoverse/wasm-zip": "3.0.0-11",
     "@modelcontextprotocol/server": "2.3.1",
     "@spectrum-css/tokens": "16.0.2",
+    "@terrastruct/d2": "0.1.33",
     "cf": "1.0.0-beta.20",
     "esbuild": "0.28.2",
     "eslint": "^9.39.5",

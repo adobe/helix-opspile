@@ -13,8 +13,10 @@
 /**
  * The FMC gallery, at /__dev/fmc in `npm run ui:dev`: the figures of the FMC visualization
  * guidelines (https://www.fmc-modeling.org/visualization_guidelines), each original next to the
- * same structure as DOT, drawn by src/fmc.js as the inbox draws a stack, and the stack drawings
- * of the fake data. The originals load from fmc-modeling.org; nothing of theirs is in here
+ * same structure as DOT, drawn by src/fmc.js as the inbox draws a stack and by D2 (the prototype,
+ * POST /__dev/d2, scripts/dev-ui-d2.mjs), and the stack drawings of the fake data, both ways.
+ * `?layout=dagre` has D2 lay them out with dagre instead of ELK. The originals load from
+ * fmc-modeling.org; nothing of theirs is in here
  * but what the figures show, written again as DOT.
  */
 
@@ -401,13 +403,14 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
  * The gallery page, through `page` (src/page.js, with the pages' stylesheets `scripts`): it
  * imports the renderer the inbox does (/inbox/fmc.js) and draws every figure and stack with it.
  */
-export function galleryPage(page, scripts) {
+export function galleryPage(page, scripts, { layout = 'elk' } = {}) {
   const figures = FIGURES.map((f) => `<section class="fig" id="fig${f.n}"><h2>Figure ${f.n}: ${esc(f.title)}</h2>
 <div class="pair"><figure><img src="${esc(f.gif)}" alt="Figure ${f.n} of the FMC visualization guidelines"><figcaption>The original; the ${esc(f.good === 'both' ? 'whole figure is the good example' : `${f.good} one is the good one`)}</figcaption></figure>
-<figure><div class="draws">${f.dots.map((d, i) => `<div class="draw" data-dot="${f.n}:${i}"></div>`).join('')}</div><figcaption class="ms"></figcaption></figure></div>
-${f.note ? `<p class="note">${esc(f.note)}</p>` : ''}<details><summary>DOT</summary>${f.dots.map((d) => `<pre>${esc(d)}</pre>`).join('')}</details></section>`).join('\n');
+<figure><div class="draws">${f.dots.map((d, i) => `<div class="draw" data-dot="${f.n}:${i}"></div>`).join('')}</div><figcaption class="ms"></figcaption></figure>
+<figure><div class="draws">${f.dots.map((d, i) => `<div class="draw" data-d2="${f.n}:${i}"></div>`).join('')}</div><figcaption class="ms2"></figcaption></figure></div>
+${f.note ? `<p class="note">${esc(f.note)}</p>` : ''}<details><summary>DOT</summary>${f.dots.map((d) => `<pre>${esc(d)}</pre>`).join('')}</details><details><summary>D2</summary>${f.dots.map((d, i) => `<pre data-d2-source="${f.n}:${i}"></pre>`).join('')}</details></section>`).join('\n');
   const views = stacks();
-  const stackHtml = views.map((s, i) => `<section class="fig"><h2>${esc(s.title)}</h2><div class="stk-draw"><div class="draw" data-stack="${i}"></div></div><p class="ms"></p><details><summary>DOT</summary><pre data-stack-dot="${i}"></pre></details></section>`).join('\n');
+  const stackHtml = views.map((s, i) => `<section class="fig" id="stack${i}"><h2>${esc(s.title)}</h2><div class="pair two"><div><h3>Graphviz</h3><div class="stk-draw"><div class="draw" data-stack="${i}"></div></div><p class="ms"></p></div><div><h3>D2</h3><div class="stk-draw"><div class="draw" data-stack-d2="${i}"></div></div><p class="ms2"></p></div></div><details><summary>DOT</summary><pre data-stack-dot="${i}"></pre></details><details><summary>D2</summary><pre data-stack-d2-source="${i}"></pre></details></section>`).join('\n');
   const data = JSON.stringify({
     dots: Object.fromEntries(FIGURES.flatMap((f) => f.dots.map((d, i) => [`${f.n}:${i}`, d]))),
     stacks: views,
@@ -428,7 +431,10 @@ main.gallery { display: block; max-width: 1400px; margin: 0px auto; padding: var
 .gallery h1 { font-size: var(--spectrum-font-size-500); }
 .gallery h2 { font-size: var(--spectrum-font-size-200); margin: var(--spectrum-spacing-300) 0px var(--spectrum-spacing-100); }
 .gallery .fig { padding: var(--spectrum-spacing-300) 0px; border-top: var(--spectrum-border-width-100) solid var(--line); }
-.gallery .pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spectrum-spacing-400); align-items: start; }
+.gallery .pair { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--spectrum-spacing-400); align-items: start; }
+.gallery .pair.two { grid-template-columns: 1fr 1fr; }
+.gallery h3 { margin: 0px 0px var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-100); color: var(--mute); }
+.gallery .cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--spectrum-spacing-400); position: sticky; top: 0px; z-index: 1; padding: var(--spectrum-spacing-100) 0px; background: var(--content); font-weight: var(--spectrum-bold-font-weight); }
 .gallery figure { margin: 0px; }
 .gallery img { max-width: 100%; background: var(--spectrum-gray-50); }
 .gallery figcaption, .gallery .ms, .gallery .note { color: var(--mute); font-size: var(--spectrum-font-size-75); }
@@ -439,14 +445,61 @@ main.gallery { display: block; max-width: 1400px; margin: 0px auto; padding: var
 </head>
 <body>
 <main class="gallery">
-<h1>FMC block diagrams, drawn by src/fmc.js</h1>
-<p>Left, each figure of the <a href="https://www.fmc-modeling.org/visualization_guidelines">FMC visualization guidelines</a> as it is there; right, the same structure written as DOT, laid out by Graphviz (<code>@viz-js/viz</code>) and drawn by the inbox's renderer. Below, the stack drawings of the fake data. Hover a part to light its flows.</p>
+<h1>FMC block diagrams: Graphviz and D2</h1>
+<p>Left, each figure of the <a href="https://www.fmc-modeling.org/visualization_guidelines">FMC visualization guidelines</a> as it is there; in the middle, the same structure written as DOT, laid out by Graphviz (<code>@viz-js/viz</code>) and drawn by the inbox's renderer (src/fmc.js); right, the same DOT as D2 source (src/fmcd2.js), laid out and drawn by D2 (<code>@terrastruct/d2</code>, ${layout === 'dagre' ? 'dagre' : 'ELK'}, in Node: POST /__dev/d2), then given the FMC notation D2 has not. Below, the stack drawings of the fake data. Hover a part to light its flows. <a href="?layout=${layout === 'dagre' ? 'elk' : 'dagre'}">D2 with ${layout === 'dagre' ? 'ELK' : 'dagre'}</a></p>
+<div class="cols"><span>The original</span><span>Graphviz</span><span>D2</span></div>
 ${figures}
 <h1>Stack drawings</h1>
 ${stackHtml}
 </main>
 <script type="module">
 const data = ${data};
+const layout = ${JSON.stringify(layout === 'dagre' ? 'dagre' : 'elk')};
+const d2 = async (body) => {
+  const r = await fetch('/__dev/d2?format=json', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...body, layout }) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error);
+  return j;
+};
+const lightUp = (el, s) => {
+  const parts = s.view.layers.flatMap((l) => l.parts);
+  const draw = el.closest('.stk-draw');
+  el.addEventListener('pointerover', (e) => {
+    const g = e.target.closest('[data-part]');
+    if (!g) return;
+    const i = Number(g.dataset.part);
+    const name = parts[i].name.toLowerCase();
+    const mine = new Set(s.view.flows.map((f, k) => [f, k]).filter(([f]) => [f.from, f.to].some((x) => x.toLowerCase() === name)).map(([, k]) => String(k)));
+    draw.classList.add('lit');
+    el.querySelectorAll('[data-flow]').forEach((x) => x.classList.toggle('on', mine.has(x.dataset.flow)));
+    el.querySelectorAll('[data-flows]').forEach((x) => x.classList.toggle('on', x.dataset.flows.split(' ').some((k) => mine.has(k))));
+    el.querySelectorAll('[data-part]').forEach((x) => x.classList.toggle('on', x === g));
+  });
+  el.addEventListener('pointerleave', () => draw.classList.remove('lit'));
+};
+// D2's drawings, all at once (each is a request to the dev server).
+const d2Figures = Promise.all([...document.querySelectorAll('[data-d2]')].map(async (el) => {
+  try {
+    const r = await d2({ dot: data.dots[el.dataset.d2] });
+    el.innerHTML = r.svg;
+    const svg = el.querySelector('svg');
+    svg.setAttribute('width', String(r.width * 1.35));
+    svg.setAttribute('height', String(r.height * 1.35));
+    document.querySelector('[data-d2-source="' + el.dataset.d2 + '"]').textContent = r.source;
+    const ms = el.closest('figure').querySelector('.ms2');
+    ms.textContent = (ms.textContent ? ms.textContent + ', ' : 'Drawn in ') + r.ms.toFixed(1) + ' ms (Node)';
+  } catch (e) { el.textContent = String(e.message || e); }
+}));
+const d2Stacks = Promise.all([...document.querySelectorAll('[data-stack-d2]')].map(async (el) => {
+  const s = data.stacks[Number(el.dataset.stackD2)];
+  try {
+    const r = await d2({ view: s.view, title: s.name });
+    el.innerHTML = r.svg;
+    el.closest('.pair > div').querySelector('.ms2').textContent = 'Drawn in ' + r.ms.toFixed(1) + ' ms (Node), ' + Math.round(r.width) + ' by ' + Math.round(r.height) + ' px';
+    document.querySelector('[data-stack-d2-source="' + el.dataset.stackD2 + '"]').textContent = r.source;
+    lightUp(el, s);
+  } catch (e) { el.textContent = String(e.message || e); }
+}));
 const m = await import('/inbox/fmc.js');
 for (const el of document.querySelectorAll('[data-dot]')) {
   try {
@@ -464,23 +517,12 @@ for (const el of document.querySelectorAll('[data-stack]')) {
   const s = data.stacks[Number(el.dataset.stack)];
   const r = await m.drawStack(s.view, { title: s.name });
   el.innerHTML = r.svg;
-  el.closest('.fig').querySelector('.ms').textContent = 'Drawn in ' + r.ms.toFixed(1) + ' ms, ' + Math.round(r.width) + ' by ' + Math.round(r.height) + ' px';
+  el.closest('.pair > div').querySelector('.ms').textContent = 'Drawn in ' + r.ms.toFixed(1) + ' ms, ' + Math.round(r.width) + ' by ' + Math.round(r.height) + ' px';
   document.querySelector('[data-stack-dot="' + el.dataset.stack + '"]').textContent = r.dot;
-  const parts = s.view.layers.flatMap((l) => l.parts);
-  const draw = el.closest('.stk-draw');
-  el.addEventListener('pointerover', (e) => {
-    const g = e.target.closest('[data-part]');
-    if (!g) return;
-    const i = Number(g.dataset.part);
-    const name = parts[i].name.toLowerCase();
-    const mine = new Set(s.view.flows.map((f, k) => [f, k]).filter(([f]) => [f.from, f.to].some((x) => x.toLowerCase() === name)).map(([, k]) => String(k)));
-    draw.classList.add('lit');
-    el.querySelectorAll('[data-flow]').forEach((x) => x.classList.toggle('on', mine.has(x.dataset.flow)));
-    el.querySelectorAll('[data-flows]').forEach((x) => x.classList.toggle('on', x.dataset.flows.split(' ').some((k) => mine.has(k))));
-    el.querySelectorAll('[data-part]').forEach((x) => x.classList.toggle('on', x === g));
-  });
-  el.addEventListener('pointerleave', () => draw.classList.remove('lit'));
+  lightUp(el, s);
 }
+await Promise.all([d2Figures, d2Stacks]);
+document.body.dataset.done = '1';
 </script>
 </body>
 </html>`;

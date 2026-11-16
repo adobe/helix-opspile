@@ -2844,6 +2844,13 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .stk-draw.lit .fmc .fmc-edge.on { stroke: var(--accent); }
 .stk-draw.lit .fmc .fmc-arrow.on { fill: var(--accent); }
 .stk-draw.lit .fmc .fmc-node.on .fmc-shape { stroke: var(--accent); }
+/* The D2 prototype's drawings (src/fmcd2.js, in `npm run ui:dev` only): laid out larger than they
+   are drawn, so their lines keep the width of the others' and their text the size D2 measured. */
+.fmc.fmc-d2 .fmc-shape, .fmc.fmc-d2 .fmc-inner, .fmc.fmc-d2 .fmc-edge, .fmc.fmc-d2 .fmc-figure { vector-effect: non-scaling-stroke; }
+.fmc.fmc-d2 .fmc-d2-flabel, .fmc.fmc-d2 .fmc-d2-clabel, .fmc.fmc-d2 .fmc-d2-note { fill: var(--mute); }
+.fmc.fmc-d2 .fmc-d2-dots { fill: var(--spectrum-gray-800); }
+.stkpop .stk-engine { display: inline-flex; overflow: hidden; font-size: var(--spectrum-font-size-75); }
+.stkpop .stk-engine button { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-200); font: inherit; cursor: pointer; }
 .stkpop .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
 .stkpop .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
 .stkpop .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
