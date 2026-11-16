@@ -1432,8 +1432,13 @@ the same arm all along; knowledge-base agents take no part), and the provider as
 retention and model at every request (`armApi`, `src/agent/model.js`), so an agent that is
 running at the window's edges switches on its next request. The cache experiment put half the
 threads on `short` from 2026-11-07 to 2026-11-14 (UTC), and it was a tie. The model experiment
-puts half the threads on Sonnet 5.5 (at AGENT_MODEL's inference profile, `us.`) from 2026-11-17
-to 2026-12-01, where AGENT_MODEL is an Opus model. The session keeps AGENT_MODEL; the request
+is pinned instead: a thread never changes model. An agent that first starts between 2026-11-17
+and 2026-12-01 (nothing delivered or metered yet) is pinned to its thread's arm for good
+(`src/agent/arms.js`: kept in its storage, `arm:model`, and in D1, `agent_arms`), half on
+Sonnet 5.5 at AGENT_MODEL's inference profile (`global.` for `global.`, `us.` for `us.`), where
+AGENT_MODEL is an Opus model; threads that started before, or start after, stay on AGENT_MODEL.
+The pin is read before the agent's first request, so there is no switch at midnight, and the
+Sonnet threads stay on Sonnet after the window. The session keeps AGENT_MODEL; the request
 asks the arm's model as itself (its prices and limits), and pi-ai drops the other model's
 thinking from the history, which Bedrock would refuse. A model the account cannot use (a 403, a
 404, a 400 about the model) falls back to AGENT_MODEL for ten minutes, logged
@@ -2153,9 +2158,10 @@ by side (`experiments`, of what is selected, the newest first): per arm, the Bed
 and models, and what the experiment is judged by. The cache experiment by what the prompt (input,
 cache reads and writes, which a cache policy does not change) cost per million tokens, which
 compares the arms however the threads fell between them. The model experiment by the arm's
-Bedrock cost per accepted draft: the agents' drafts are counted by their thread's arm (the same
-hash), those started in the window and the period, with what became of them whenever it did, so
-a draft written by Sonnet and sent the day after the window still counts for Sonnet. The cost is
+Bedrock cost per accepted draft: the agents' drafts are counted by the arm their thread is
+pinned to (`agent_arms`), those started in the period, with what became of them whenever it did,
+so a draft written by Sonnet and sent the day after the period still counts for Sonnet; a pinned
+thread's tokens carry its arm whenever they are used. The cost is
 all of the arm's model use, drafts or not, so a model that drafts less or worse pays for it. With
 a few dozen accepted drafts a week, each arm's count carries its 95% interval (`margin`,
 1.96/√n).

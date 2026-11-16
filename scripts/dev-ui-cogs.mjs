@@ -28,8 +28,9 @@ import {
  * src/draftevents.js records them): most sent, some edited first, some discarded or withdrawn,
  * a few posts of the agents' own, and a few drafts open. The agents' model use is split between
  * the arms of the cache experiment (CACHE_DAYS) and of the model experiment (the last
- * MODEL_DAYS), whose windows are moved there (src/experiments.js); Sonnet's drafts are accepted a
- * little less often.
+ * MODEL_DAYS), whose windows are moved there (src/experiments.js); every other agent thread is
+ * new in the model window and pinned to its arm, and Sonnet's drafts are accepted a little less
+ * often.
  * Seeded, so every start shows the same numbers. Made-up data only.
  */
 
@@ -64,6 +65,14 @@ function seedDrafts(DB, rnd, now) {
     ?? agent;
   const threads = DB.sqlite.prepare('SELECT thread, org, team FROM threads ORDER BY thread').all()
     .filter((t) => AGENTS.has(t.org));
+  // Every other agent thread is new in the model experiment's window: pinned to its arm
+  // (agent_arms, as src/agent/arms.js writes it), with drafts only from then on.
+  const pinned = new Set(threads.filter((_, i) => i % 2 === 0).map((t) => t.thread));
+  const pin = DB.sqlite.prepare(`INSERT OR IGNORE INTO agent_arms (name, experiment, arm, at)
+    VALUES (?, ?, ?, ?)`);
+  for (const key of pinned) {
+    pin.run(key, MODEL.id, assignedArm(MODEL, key).id, MODEL.from);
+  }
   const insert = DB.sqlite.prepare(`INSERT INTO draft_events (thread, draft, version, action, how,
       person, by_agent, origin, origin_agent, changed, org, team, at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`);
@@ -72,14 +81,14 @@ function seedDrafts(DB, rnd, now) {
       const n = Math.floor(rnd() * 3);
       for (let k = 0; k < n; k += 1) {
         const start = now - i * DAY_MS - rnd() * DAY_MS * 0.9;
-        if (start > now) {
+        if (start > now || (pinned.has(t.thread) && !running(MODEL, start))) {
           // eslint-disable-next-line no-continue
           continue;
         }
         const draft = new Date(start).toISOString();
         const end = new Date(Math.min(now, start + rnd() * 6 * 3600000)).toISOString();
         insert.run(t.thread, draft, draft, 'saved', null, agent, 1, agent, null, t.org, t.team, draft);
-        const sonnet = running(MODEL, start) && assignedArm(MODEL, t.thread).id === 'sonnet';
+        const sonnet = pinned.has(t.thread) && assignedArm(MODEL, t.thread).id === 'sonnet';
         const p = Math.min(0.99, rnd() + (sonnet ? 0.08 : 0));
         if (p < 0.45) {
           insert.run(t.thread, draft, draft, 'sent', 'me', person, 0, agent, 0, t.org, t.team, end);
@@ -91,7 +100,7 @@ function seedDrafts(DB, rnd, now) {
           insert.run(t.thread, draft, draft, 'discarded', null, agent, 1, agent, null, t.org, t.team, end);
         }
       }
-      if (rnd() < 0.15) {
+      if (rnd() < 0.15 && (!pinned.has(t.thread) || running(MODEL, now - i * DAY_MS))) {
         const at = new Date(Math.min(now, now - i * DAY_MS - rnd() * DAY_MS)).toISOString();
         insert.run(t.thread, '', null, 'posted', 'agent', agent, 1, agent, null, t.org, t.team, at);
       }

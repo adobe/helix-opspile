@@ -33,6 +33,7 @@ import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
 import { armModel, armTags, cacheRetention } from '../experiments.js';
+import { pinnedArm } from './arms.js';
 import { toolsFor } from './agenttools.js';
 import {
   bashDeadline, bashWatchdog, denyBash, runBash,
@@ -164,11 +165,12 @@ export class ThreadAgent extends Agent {
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
-        // The prompt cache's retention and the model, per request: the thread's arms while an
-        // experiment runs (src/experiments.js), else the `long` asked for below and AGENT_MODEL.
+        // The prompt cache's retention and the model, per request: the cache experiment's arm
+        // while it runs, and the model the thread is pinned to (src/agent/arms.js, decided below,
+        // before any request), else the `long` asked for below and AGENT_MODEL.
         models.setProvider(agentProvider(env, {
           cacheRetention: () => cacheRetention(this.name),
-          model: () => armModel(env, this.name),
+          model: () => armModel(env, this.modelArm),
         }));
         const agent = {
           env,
@@ -191,6 +193,7 @@ export class ThreadAgent extends Agent {
         // code mode, the MCP servers, and the staff's instructions last. A reinstall replaces
         // an extension in place.
         this.registry.install(opspileExtension(agent));
+        await this.currentArm();
         await this.currentRuntime();
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
@@ -253,6 +256,16 @@ export class ThreadAgent extends Agent {
     } catch (e) {
       console.log(JSON.stringify({ route: 'agent', mcp: 'sync failed', error: e.message }));
     }
+  }
+
+  /** The model experiment's arm this thread is pinned to, or null (src/agent/arms.js). */
+  async currentArm() {
+    if (this.modelArm === undefined) {
+      this.modelArm = await pinnedArm({
+        storage: this.ctx.storage, env: this.env, name: this.name,
+      });
+    }
+    return this.modelArm;
   }
 
   /** The switchable tools last installed (src/agent/agenttools.js), from storage at first. */
@@ -713,8 +726,8 @@ export class ThreadAgent extends Agent {
     const { now, adds } = modelUsage(
       await this.ctx.storage.get('cogs:usage'),
       ledger,
-      armModel(this.env, this.name) || this.env.AGENT_MODEL,
-      armTags(this.name, Date.now(), this.env),
+      armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL,
+      armTags(this.name, Date.now(), this.env, { model: await this.currentArm() }),
     );
     for (const [metric, model, q] of adds) {
       scope.add('bedrock', metric, model, q);
@@ -802,7 +815,7 @@ export class ThreadAgent extends Agent {
     this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
-      model: armModel(this.env, this.name) || this.env.AGENT_MODEL || null,
+      model: armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL || null,
       problem: modelProblem(this.env),
       mark: (await this.ctx.storage.get('mark')) || null,
       pending,

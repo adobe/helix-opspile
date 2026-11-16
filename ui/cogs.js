@@ -350,7 +350,8 @@ function experimentsCard(d) {
       ? `${x.from.slice(0, 10)} – ${new Date(Date.parse(x.until) - 1).toISOString().slice(0, 10)} (UTC)`
       : '';
     const vs = (a) => (a === base ? '<span class="sub">baseline</span>' : `<span class="${a.vs < 0 ? 'better' : 'worse'}">${pctChange(a.vs)}</span>`);
-    const head = `<h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}half the threads each</span></h2>`;
+    const who = x.measure === 'drafts' ? 'half the threads started in it each' : 'half the threads each';
+    const head = `<h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}${who}</span></h2>`;
     if (x.measure === 'drafts') return `<div class="card experiment">${head}${draftArms(x, vs)}</div>`;
     const writes = (a) => (a.metrics.cache_write_tokens?.quantity || 0)
       + (a.metrics.cache_write_1h_tokens?.quantity || 0);
@@ -396,7 +397,7 @@ function draftArms(x, vs) {
   return `<div class="scroll"><table>
     <thead><tr><th>Arm</th><th class="n" title="Drafts the agents of the arm's threads started">Drafts</th><th class="n" title="Of those, the drafts a person sent, as they were or edited, whenever they did">Accepted</th><th class="n" title="Drafts a person discarded, and drafts the agent withdrew itself">Discarded</th><th class="n" title="Accepted of the drafts decided: sent, discarded or withdrawn">Acceptance</th><th class="n" title="Replies the agents posted themselves">Agent posts</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="Bedrock per accepted draft, and the 95% interval of so few accepted drafts">Per accepted draft</th><th class="n" title="Per accepted draft against the baseline">Change</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
-    <p class="hint">Each thread is in one arm for the whole window, by a hash of its key; a draft counts for the arm whose model wrote it, whenever it was sent. The model's cost is all of the arm's, drafts or not, so a model that drafts less, or worse, pays for it here. With few accepted drafts the cost per draft moves a lot by chance: a change inside the intervals is no difference.</p>`;
+    <p class="hint">Only threads whose agent first started in the window take part, half in each arm by a hash of their key, and each keeps its model for good, after the window too; a draft counts for the arm whose model wrote it, whenever it was sent. The model's cost is all of the arm's, drafts or not, so a model that drafts less, or worse, pays for it here. With few accepted drafts the cost per draft moves a lot by chance: a change inside the intervals is no difference.</p>`;
 }
 
 /** The top of a chart's scale: 1, 2, 2.5 or 5 times a power of ten, at or above `v`. */

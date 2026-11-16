@@ -260,8 +260,14 @@ sessions and never an unpinned one.
 out from the clock and the agent's name at every model request (the retention and model it asks
 for) and at every metering (the tag on its tokens), so a deploy or an eviction cannot leave an agent
 in the wrong arm. The tokens metered first after the window opens or closes may include a round from
-just before it, counted with the arm of the moment. A draft's arm is its thread's, whatever the
-time; it counts for the experiment when it was started in the window.
+just before it, counted with the arm of the moment. That is the cache experiment's.
+
+**Model experiment pin.** undecided → pinned to an arm, or to none (`arm:model` in the agent's
+storage, `src/agent/arms.js`), for good. Decided once, when Pi first opens: an agent with nothing
+delivered or metered (`mark`, `cogs:usage`) inside the window gets its thread's arm, any other
+none. Kept in storage first, then written to D1 (`agent_arms`), then marked `recorded`: a failed
+write is tried again at the next open, and the pin is never decided twice, so a thread never
+changes model. A draft counts for the arm of its thread's pin.
 
 **Arm model unusable.** usable → unusable for ten minutes → usable (`unusable` in
 `src/agent/model.js`, per isolate). A request the arm's model refuses before any answer (`unusableModel`)

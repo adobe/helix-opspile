@@ -21,7 +21,9 @@
  * side by side (src/cogs/report.js) and the prices still find the model (`untagged`). What an
  * experiment is judged by is its `measure`: `prompt`, the cost per million prompt tokens (which
  * the arms do not change), or `drafts`, the model's cost per accepted draft (src/draftevents.js),
- * the drafts counted by the arm of their thread.
+ * the drafts counted by the arm their thread is pinned to. A `pinned` experiment keeps each
+ * thread in its arm for good, from when its agent first starts in the window (src/agent/arms.js);
+ * the others put every thread in its arm for the window only.
  */
 
 /**
@@ -42,9 +44,10 @@ export const CACHE = {
 };
 
 /**
- * The agents' model: the deployed Opus (AGENT_MODEL) against Sonnet 5.5 at the same geography's
- * inference profile, from midnight UTC for two weeks, judged by the cost per accepted draft.
- * Only where AGENT_MODEL is an Opus model; outside it, every agent runs AGENT_MODEL.
+ * The agents' model: the deployed Opus (AGENT_MODEL) against Sonnet 5.5 at the same inference
+ * profile (global or geo), judged by the cost per accepted draft. Only threads whose agent first
+ * starts in the window take part, each pinned to its arm for good (src/agent/arms.js): no thread
+ * changes model, at the window's edges or after. Only where AGENT_MODEL is an Opus model.
  */
 export const MODEL = {
   id: 'model',
@@ -52,6 +55,7 @@ export const MODEL = {
   from: '2026-11-17T00:00:00Z',
   until: '2026-12-01T00:00:00Z',
   measure: 'drafts',
+  pinned: true,
   arms: [
     { id: 'opus', label: 'Opus 5.5' },
     { id: 'sonnet', label: 'Sonnet 5.5', model: 'claude-sonnet-5-5' },
@@ -110,22 +114,29 @@ export function cacheRetention(name, now = Date.now()) {
 }
 
 /**
- * The Bedrock model the agent `name` runs now instead of AGENT_MODEL, or null: its arm's, at
- * AGENT_MODEL's inference profile (`us.anthropic.claude-sonnet-5-5`).
+ * The Bedrock model a thread pinned to the model experiment's `arm` (src/agent/arms.js) runs
+ * instead of AGENT_MODEL, or null: the arm's, at AGENT_MODEL's inference profile, global or geo
+ * (`global.anthropic.claude-opus-5-5` runs `global.anthropic.claude-sonnet-5-5`, `us.…` runs
+ * `us.…`). None where AGENT_MODEL is not an Opus model.
  */
-export function armModel(env, name, now = Date.now()) {
-  const arm = armOf(MODEL, name, now, env);
+export function armModel(env, arm) {
+  const def = MODEL.arms.find((a) => a.id === arm);
   const geo = /^((?:[a-z]{2,6}\.)?anthropic\.)/.exec(String(env?.AGENT_MODEL || ''));
-  return arm && arm.model && geo ? `${geo[1]}${arm.model}` : null;
+  return def && def.model && geo && MODEL.applies(env) ? `${geo[1]}${def.model}` : null;
 }
 
 /**
  * What the agent `name`'s model use is tagged with for COGS now: the arms it is in
- * (`#model=sonnet`), or ''.
+ * (`#model=sonnet`), or ''. A pinned experiment's arm is the agent's pin (`pins`, by
+ * experiment), whenever it is; the others' by the window.
  */
-export function armTags(name, now = Date.now(), env = undefined) {
-  return EXPERIMENTS.map((x) => [x, armOf(x, name, now, env)]).filter(([, arm]) => arm)
-    .map(([x, arm]) => `#${x.id}=${arm.id}`).join('');
+export function armTags(name, now = Date.now(), env = undefined, pins = {}) {
+  return EXPERIMENTS.map((x) => {
+    if (!x.pinned) {
+      return [x, armOf(x, name, now, env)?.id];
+    }
+    return [x, pins[x.id] && (!x.applies || x.applies(env)) ? pins[x.id] : null];
+  }).filter(([, arm]) => arm).map(([x, arm]) => `#${x.id}=${arm}`).join('');
 }
 
 /** A metric's detail without its arms: the model, as priced. */

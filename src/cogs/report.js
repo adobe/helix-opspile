@@ -352,35 +352,39 @@ const noDrafts = () => ({
 });
 
 /**
- * The drafts of the experiments measured by them (`measure: 'drafts'`) that overlap the period,
- * by arm: the agents' drafts started in the period and the window, by their thread's arm
- * (`assignedArm`), and what became of them, whenever it did (a draft sent after the window still
- * counts for the arm that wrote it); the agents' own posts by when they were posted. Of what
- * `pick` selects (customer and team). `{ [experiment]: { [arm]: counts } }`.
+ * The drafts of the experiments measured by them (`measure: 'drafts'`), by arm: the agents'
+ * drafts started in the period, by the arm their thread is pinned to (`agent_arms`, for a pinned
+ * experiment; else by its thread's arm, started in the window), and what became of them, whenever
+ * it did (a draft sent after the period still counts); the agents' own posts by when they were
+ * posted. Of what `pick` selects (customer and team). `{ [experiment]: { [arm]: counts } }`.
  */
 export async function experimentDrafts(env, { from, to }, pick = () => true) {
   const out = {};
   const start = `${from}T00:00:00.000Z`;
   const end = new Date(ms(to) + DAY_MS).toISOString();
   for (const x of EXPERIMENTS.filter((e) => e.measure === 'drafts')) {
-    const since = x.from > start ? new Date(Date.parse(x.from)).toISOString() : start;
-    const until = new Date(Date.parse(x.until)).toISOString() < end
-      ? new Date(Date.parse(x.until)).toISOString() : end;
+    const iso = (t) => new Date(Date.parse(t)).toISOString();
+    const since = x.pinned || iso(x.from) < start ? start : iso(x.from);
+    const until = x.pinned || iso(x.until) > end ? end : iso(x.until);
     if (since >= until) {
       // eslint-disable-next-line no-continue
       continue;
     }
+    const arm = x.pinned ? 'a.arm' : 'NULL';
+    const join = x.pinned ? 'JOIN agent_arms a ON a.name = e.thread AND a.experiment = ?' : '';
     // eslint-disable-next-line no-await-in-loop
-    const { results } = await env.DB.prepare(`SELECT thread, org, team, action, by_agent,
-        origin_agent, changed, version = draft AS first
-      FROM draft_events WHERE (action != 'posted' AND origin_agent = 1 AND draft >= ? AND draft < ?)
-        OR (action = 'posted' AND by_agent = 1 AND at >= ? AND at < ?)`)
-      .bind(since, until, since, until).all().catch(() => ({ results: [] }));
+    const { results } = await env.DB.prepare(`SELECT e.thread, e.org, e.team, e.action,
+        e.by_agent, e.changed, e.version = e.draft AS first, ${arm} AS arm
+      FROM draft_events e ${join}
+      WHERE (e.action != 'posted' AND e.origin_agent = 1 AND e.draft >= ? AND e.draft < ?)
+        OR (e.action = 'posted' AND e.by_agent = 1 AND e.at >= ? AND e.at < ?)`)
+      .bind(...(x.pinned ? [x.id] : []), since, until, since, until).all()
+      .catch(() => ({ results: [] }));
     const arms = {};
     for (const r of (results || []).filter(pick)) {
-      const arm = assignedArm(x, r.thread);
-      if (arm) {
-        const c = arms[arm.id] || (arms[arm.id] = noDrafts());
+      const id = r.arm || assignedArm(x, r.thread)?.id;
+      if (id) {
+        const c = arms[id] || (arms[id] = noDrafts());
         if (r.action === 'saved' && r.first) {
           c.started += 1;
         } else if (r.action === 'sent' && r.by_agent) {
@@ -394,7 +398,9 @@ export async function experimentDrafts(env, { from, to }, pick = () => true) {
         }
       }
     }
-    out[x.id] = arms;
+    if (Object.keys(arms).length) {
+      out[x.id] = arms;
+    }
   }
   return out;
 }
