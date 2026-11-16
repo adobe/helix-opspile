@@ -1232,10 +1232,11 @@ channels of every team, which neither the viewer nor a thread agent may read. It
 minutes per version of the thread, per isolate.
 
 A thread agent can pull someone in too: `list_experts` reads the same list, and `suggest_expert`
-puts a colleague at the top of it, with its reason (`expert_suggestions`, migration 0045; user
-state, like drafts). Nobody is told or mentioned; a person decides. It takes only staff with an
-account on the thread's platform, three per thread at most, and a suggestion goes away once the
-person is in the thread. It tells the open inboxes (a room event `experts`), and the header shows
+suggests a colleague to the team, with its reason (`expert_suggestions`, migration 0045; user
+state, like drafts), and puts them first in its own `list_experts`. Nobody is told or mentioned;
+a person decides. It takes only staff with an account on the thread's platform, three per thread
+at most, and a suggestion goes away once the person is in the thread, which frees its place for
+another (docs/STATE-MACHINES.md, "Expert suggestion"). It tells the open inboxes (a room event `experts`), and the header shows
 it as "Agent suggests …": clicking it mentions them in the reply box, as picking them after `@`
 does, and ▾ lists each suggestion with its reason when there are several. Nothing is sent: the
 reply stays the person's to write.

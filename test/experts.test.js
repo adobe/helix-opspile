@@ -460,6 +460,27 @@ describe('expert finder', () => {
     assert.deepEqual(results.map((r) => `${r.user_id}:${r.reason}`), ['U1:better', 'U3:why', 'U7:why']);
   });
 
+  it('frees a suggestion\'s place once the person is in the thread (#210)', async () => {
+    const e = env();
+    const by = 'opspile-agent/test';
+    for (let i = 1; i <= MAX_SUGGESTED; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await suggestExpert(e, THREAD, { id: `U${i}`, reason: 'why', by })).ok, true);
+    }
+    assert.match((await suggestExpert(e, THREAD, { id: 'U5', reason: 'why', by })).error, /withdraw one/);
+    // Each of them posts: the header shows none of them any more, and the slots are free.
+    for (let i = 1; i <= MAX_SUGGESTED; i += 1) {
+      e.addMessage(THREAD, `joined${i}`, i, 0);
+    }
+    const shown = await (await experts(e, THREAD, () => true, { suggestedOnly: true })).json();
+    assert.deepEqual(shown.experts, []);
+    assert.deepEqual(await suggestExpert(e, THREAD, { id: 'U5', reason: 'why', by }), { ok: true, name: 'Ed' });
+    // Only the outstanding ones count: two more fit, and then it is full again.
+    assert.equal((await suggestExpert(e, THREAD, { id: 'U6', reason: 'why', by })).ok, true);
+    assert.equal((await suggestExpert(e, THREAD, { id: 'U7', reason: 'why', by })).ok, true);
+    assert.match((await suggestExpert(e, THREAD, { id: 'U4', reason: 'why', by })).error, /withdraw one/);
+  });
+
   it('answers only those who may see the thread, and no message text', async () => {
     const e = env({ matches: [vector(0.9, 1)] });
     e.addThread('slack:E1:C9:1.1', { org: 'other', channel: 'C9' });
