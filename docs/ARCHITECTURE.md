@@ -1830,7 +1830,9 @@ the default. An agent follows its team's choice before each delivery, as it foll
     computer failed".
   - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
     read for every agent in its isolate: the trees of the last 8 images, and blobs up to
-    32 MB, the least recently used going first. A new isolate reads them again.
+    32 MB, the least recently used going first. A new isolate reads them again. A file over
+    16 MB (yq, gh) is kept only by the open file that read it, once per open: the kernel keeps
+    its own copy of a program it runs, and two of gh's 50 MB would crowd the object's 128 MB.
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
@@ -1878,6 +1880,13 @@ the default. An agent follows its team's choice before each delivery, as it foll
   which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
   `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
   so where its image has it.
+- **gh** (`@ai-ecoverse/wasi-gh`, the GitHub CLI) is in an image of its own, **GitHub**
+  (`from: 'base'`), not in Base: its wasm is 50 MB, more than a Dynamic Worker shares, so
+  each gh has one to itself (of the kernel's 8), and the agent's object keeps a copy while its
+  kernel runs. Its imports module (`host/gh-host.mjs`) runs in its Dynamic Worker, and its
+  HTTP goes through the kernel's transport, so the gateway puts a team's `GH_TOKEN` in; gh
+  does not run without one. The agent is told to read with it, not to change anything on
+  GitHub.
 - **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
   just-bash has.
 

@@ -25,7 +25,8 @@
  * finds the image's commands under IMAGE_COMMANDS.
  *
  * Layers and blobs are named by their content and never change, so what was read is kept for
- * every agent of this isolate: the trees of the last few images, and blobs up to CACHE_BYTES.
+ * every agent of this isolate: the trees of the last few images, and blobs up to CACHE_BYTES
+ * (but none above CACHE_BLOB_MAX, which only the file handle that read it keeps).
  *
  * No Workers runtime is needed here, so this is tested in Node, with a bucket in memory.
  */
@@ -38,6 +39,10 @@ export const IMAGE_ROOT = '/opt/image';
 export const IMAGE_COMMANDS = `${IMAGE_ROOT}/node_modules`;
 
 const CACHE_BYTES = 32 * 1024 * 1024;
+// A blob larger than this is kept by the file handle that read it, not for the isolate: the
+// kernel keeps its own copy of a program it runs (gh's 50 MB), and two would crowd the
+// object's 128 MB.
+const CACHE_BLOB_MAX = CACHE_BYTES / 2;
 const CACHE_TREES = 8;
 // How long the kernel may keep what it was told of a file: the image never changes.
 const TTL_MS = 60 * 60 * 1000;
@@ -155,6 +160,9 @@ async function blob(bucket, hash, path) {
   if (await sha256(bytes) !== hash) {
     throw fsError('EIO', `blobs/${hash} is not the file it names (${path})`);
   }
+  if (bytes.length > CACHE_BLOB_MAX) {
+    return bytes;
+  }
   blobs.set(hash, bytes);
   cached += bytes.length;
   while (cached > CACHE_BYTES && blobs.size > 1) {
@@ -208,16 +216,22 @@ export function imageDriver(bucket, tree) {
         throw fsError(dirs.has(path) ? 'EISDIR' : 'ENOENT', path);
       }
       next += 1;
-      open.set(next, path);
+      open.set(next, { path });
       return next;
     },
     async read(fh, offset, size) {
-      const path = open.get(fh);
-      if (!path) {
+      const handle = open.get(fh);
+      if (!handle) {
         throw fsError('EBADF', String(fh));
       }
-      const file = files.get(path);
-      const bytes = file.bytes || await blob(bucket, file.sha256, path);
+      const file = files.get(handle.path);
+      // The handle keeps what it read, so a large blob is read once per open, not per read.
+      handle.bytes ??= file.bytes ? Promise.resolve(file.bytes)
+        : blob(bucket, file.sha256, handle.path);
+      const bytes = await handle.bytes.catch((e) => {
+        handle.bytes = undefined;
+        throw e;
+      });
       // A copy: the kernel may take the buffer it is given.
       return bytes.slice(offset, offset + size);
     },

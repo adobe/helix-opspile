@@ -27,6 +27,7 @@
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
     "@ai-ecoverse/wasi-dig": "0.1.0-4",
+    "@ai-ecoverse/wasi-gh": "2.102.0-3",
     "@ai-ecoverse/wasi-html-to-markdown": "2.5.2-1",
     "@ai-ecoverse/wasi-quickjs": "0.18.0-1",
     "@ai-ecoverse/wasi-ripgrep": "15.2.0-5",
