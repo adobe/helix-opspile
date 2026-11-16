@@ -598,6 +598,8 @@ function details(n) {
 function renderPanel() {
   const panel = $('panel');
   if (!panel) return;
+  // Another pick fades in (ui/app.js); the panel is made again with the page's body.
+  Swap.watch(panel, () => state.q.sel);
   const n = state.q.sel && state.graph.all.get(state.q.sel);
   panel.innerHTML = n ? details(n) : overview();
   // The meters' fill, as wide as its share: a class per tenth (ui/spectrum-topics.css).

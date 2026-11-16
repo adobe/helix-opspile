@@ -2170,6 +2170,8 @@ async function popped() {
 
 // A link to a knowledge base or a file lands on it: no slide until the page has opened it.
 (async () => {
+  // Another file, view or knowledge base fades in (ui/app.js).
+  Swap.watch($('editor'), () => `${state.repo}|${state.view}|${state.view === 'file' ? (state.file ? state.file.path : state.opening?.path) : ''}`);
   const q = new URLSearchParams(location.search);
   // `back=`, the inbox as it was left, from links made before ui/header.js kept it.
   const back = q.get('back');

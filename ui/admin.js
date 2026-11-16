@@ -1574,6 +1574,8 @@ async function showOrg(slug) {
 // ---- start ------------------------------------------------------------------------------
 
 (async () => {
+  // Another team, org or request fades in (ui/app.js).
+  Swap.watch($('detail'), () => `${state.tab}|${state.sel ?? ''}`);
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
