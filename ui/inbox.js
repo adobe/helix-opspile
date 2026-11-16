@@ -4193,6 +4193,11 @@ function renderDraftBar(key, force = false) {
     // A change in the open thread's line grows or folds it; a line that comes with the thread
     // is there at once. On a phone the line is in the drawer, and the drawer is what moves.
     const animate = el.__html !== undefined && el.__key === key && !LINES_DRAWER.matches;
+    // Opening or closing the draft grows or shrinks its text (`resizeDraft`), not the line.
+    const was = el.__key === key && !el.hidden ? el.querySelector('.pv') : null;
+    const from = was && {
+      height: was.getBoundingClientRect().height, open: el.classList.contains('open'), md: was.firstElementChild, top: was.scrollTop,
+    };
     el.__html = html;
     foldRow(el, Boolean(d), {
       animate,
@@ -4208,11 +4213,52 @@ function renderDraftBar(key, force = false) {
         el.classList.toggle('open', draftOpen.has(key));
       },
     });
+    if (from && d && !el.__fold) resizeDraft(el, from);
   }
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
   renderLines(key);
+}
+
+/**
+ * The draft line, opened or closed (`from`: how its text was, re-rendered), grows to all of the
+ * draft or shrinks back to its line instead of jumping: opening, it settles (ease-out), and it
+ * closes faster (ease-in), with all of the draft shown as it goes; the timings are the
+ * stylesheet's (`--draft-open`, `--draft-close`). A line re-rendered as it moves goes on from
+ * where it is; one re-rendered otherwise (a live update) does not move. Its bottom edge stays, so
+ * opening only grows the line around a pointer on it.
+ */
+function resizeDraft(el, from) {
+  const pv = el.querySelector('.pv');
+  const open = el.classList.contains('open');
+  const moving = el.__resize?.playState === 'running';
+  el.__resize?.cancel();
+  el.__resize = null;
+  if (!pv || (open === from.open && !moving) || REDUCED_MOTION.matches) return;
+  const to = pv.getBoundingClientRect().height;
+  if (Math.abs(to - from.height) < 1) return;
+  const css = getComputedStyle(el);
+  const timing = (name) => ({
+    duration: parseFloat(css.getPropertyValue(`--draft-${name}`)) || 0,
+    easing: css.getPropertyValue(`--draft-${name}-ease`).trim() || 'ease',
+  });
+  const line = pv.firstElementChild;
+  // Closing, the line keeps showing all of the draft, scrolled as it was, until it is one line.
+  const shut = !open && from.md && !from.md.classList.contains('line');
+  if (shut) {
+    pv.replaceChildren(from.md);
+    pv.scrollTop = from.top;
+  }
+  pv.classList.add('resizing');
+  const anim = pv.animate([{ height: `${from.height}px` }, { height: `${to}px` }], timing(open ? 'open' : 'close'));
+  el.__resize = anim;
+  settled(anim, () => {
+    if (el.__resize !== anim) return;
+    el.__resize = null;
+    pv.classList.remove('resizing');
+    if (shut && pv.firstElementChild === from.md) pv.replaceChildren(line);
+  });
 }
 
 /**
