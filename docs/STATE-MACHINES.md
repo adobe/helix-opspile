@@ -374,7 +374,9 @@ back has missed what its room said, so the inbox and the open thread reload.
 changed and reloads when it is shown.
 
 **Thread list.** fresh → held in place → re-sorted (`state.list`). While `listKey` is the same, the
-rows stay where they are.
+rows stay where they are. Unread only lets go of the read threads it holds once the inbox has been
+away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
+and not after a shorter look elsewhere.
 
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
