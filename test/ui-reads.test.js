@@ -50,7 +50,7 @@ beforeEach(() => {
   state = {
     me: { id: ME }, sockets: [], team: 'ops', as: null, data: { me: {}, threads: [] },
   };
-  const a = js.indexOf('function markRead(t)');
+  const a = js.indexOf('function markRead(t');
   const b = js.indexOf('// Live updates reload the inbox', a);
   assert.ok(a >= 0 && b > a);
   const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
