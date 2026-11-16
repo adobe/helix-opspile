@@ -179,6 +179,40 @@ describe('processKey', () => {
     assert.deepEqual([who.title, who.guest], ['CTO', 1]);
   });
 
+  it('writes a Slack message from its blocks, which say what Slack shows', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000200-Ev2.json';
+    const e = env({
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000200',
+        text: '*Status:* down <@U1>\n• one',
+        blocks: [{
+          type: 'rich_text',
+          elements: [
+            {
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'Status: ', style: { bold: true } },
+                { type: 'text', text: 'down ' },
+                { type: 'user', user_id: 'U1' },
+              ],
+            },
+            {
+              type: 'rich_text_list',
+              style: 'bullet',
+              elements: [{ type: 'rich_text_section', elements: [{ type: 'text', text: 'one' }] }],
+            },
+          ],
+        }, { type: 'divider' }],
+      }),
+    });
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000200/1792584000.000200.md';
+    assert.equal(parse(e.CHANNELS.objects.get(path).body).body, '**Status:** down @Ada Staff\n\n- one\n\n---');
+  });
+
   it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
     const key = 'slack/E1/C1/2026/10/21/1792584000.000100-Ev1.json';
     const from = 'https://example.slack.com/archives/C1/p1792583000000100?thread_ts=1792582000.000100&cid=C1';

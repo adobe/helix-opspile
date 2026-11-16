@@ -24,9 +24,11 @@ import {
   getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
 import { discordApi } from './discord.js';
+import { quoteMarkdown, withoutQuotes } from './markdown.js';
+import { discordToMarkdown, discordTokens } from './discordmd.js';
 import {
-  discordToMarkdown, quoteMarkdown, slackToMarkdown, withoutQuotes,
-} from './markdown.js';
+  blockUsers, slackBlocksToMarkdown, slackLabels, slackToMarkdown,
+} from './slackmd.js';
 import { htmlToMarkdown } from './html.js';
 import {
   isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
@@ -149,7 +151,7 @@ export async function processReaction(env, key, r) {
 const discordRoles = new Map();
 
 async function discordMarkdown(env, message) {
-  const text = message.text || '';
+  const text = [message.text, message.after].filter(Boolean).join('\n\n');
   const users = new Map();
   for (const id of [...new Set([...text.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]))].slice(0, MAX_MENTIONS)) {
     // eslint-disable-next-line no-await-in-loop
@@ -171,11 +173,14 @@ async function discordMarkdown(env, message) {
       WHERE source = 'discord' AND tenant = ? AND channel_id = ?`).bind(message.tenant, id).first();
     channels.set(id, row && row.name);
   }
-  return discordToMarkdown(text, {
+  const names = {
     user: (id) => users.get(id),
     role: (id) => (discordRoles.get(message.tenant) || new Map()).get(id),
     channel: (id) => channels.get(id),
-  });
+  };
+  // The embeds and files after the text are markdown already, with Discord's tokens.
+  return [discordToMarkdown(message.text, names), discordTokens(message.after, names)]
+    .filter(Boolean).join('\n\n');
 }
 
 /**
@@ -219,6 +224,7 @@ async function toMarkdown(env, message) {
   const mentioned = [message.text, ...quotes.map((q) => q.text)].join('\n');
   const ids = [...new Set([
     ...[...mentioned.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)].map((m) => m[1]),
+    ...blockUsers(message.blocks),
     ...quotes.map((q) => q.authorId).filter(Boolean),
   ])].slice(0, MAX_MENTIONS);
   const names = new Map();
@@ -230,7 +236,8 @@ async function toMarkdown(env, message) {
   const name = (id) => names.get(id);
   // A quoted message goes below the text, as Slack shows it, and above the files.
   return [
-    slackToMarkdown(message.text, name),
+    slackBlocksToMarkdown(message.blocks, { user: name, ...slackLabels(message.text) })
+      || slackToMarkdown(message.text, name),
     ...quotes.map((q) => quoteMarkdown({
       author: (q.authorId && name(q.authorId)) || q.author,
       url: q.url,

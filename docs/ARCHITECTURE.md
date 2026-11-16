@@ -194,10 +194,12 @@ channel is shared with stay. A rename event older than what D1 knows of the chan
 is left out.
 
 **One markdown file per message**, in a folder per platform thread (the root message's id; the
-root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves (Slack mrkdwn
-and Teams HTML are converted: Teams HTML through a syntax tree, parsed and written out by the
-unified tools (`src/html.js`), so markers and escapes are where markdown wants them and the
-inbox shows what Teams shows; a Teams system notice, whose body is an empty
+root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves, converted
+through a syntax tree: each platform's body is read into mdast (Teams HTML in `src/html.js`;
+Slack's blocks, `rich_text` first, and its mrkdwn where there are none in `src/slackmd.js`;
+Discord's flavor of markdown in `src/discordmd.js`) and written by `src/mdast.js`, so markers
+and escapes are where markdown wants them and the inbox shows what the platform shows (a
+Teams system notice, whose body is an empty
 `<systemEventMessage/>`, is written from its `eventDetail`: "Meeting ended after 50 s. Only Ada
 joined.", with the names looked up where Graph leaves them out), so keeping each message in its own file avoids nesting one
 document inside another, and makes every file a natural retrieval chunk. There is no
@@ -1700,7 +1702,8 @@ system prompt on how to use it.
 **`post_message`.** The agent posts a reply in the latest platform thread of its entry right
 away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot
 token (`chat.postMessage` in the thread, the Markdown in a `markdown` block, which Slack renders
-itself, and `text` in mrkdwn for notifications and for the message file), on Discord with the bot, in the Discord thread when
+itself, and `text` in mrkdwn for notifications; the message file is read from the blocks Slack
+sends back), on Discord with the bot, in the Discord thread when
 the conversation is one and as an inline reply to its first message otherwise, with mentions
 switched off (but for the people a person posting as the app picked, see "Replying"). On Teams with the opspile bot (`src/teamsbot.js`): Microsoft Graph lets no app
 post to a channel, but a Bot Framework bot can, through the Bot Connector, in a team it is

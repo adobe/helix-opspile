@@ -13,8 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, slackToMarkdown,
-  withoutQuotes,
+  markdownToMrkdwn, mdLink, mdUrl, quoteMarkdown, quotesAsText, withoutQuotes,
 } from '../src/markdown.js';
 
 describe('mdLink', () => {
@@ -29,39 +28,6 @@ describe('mdLink', () => {
   it('escapes brackets in the label', () => {
     assert.equal(mdLink('a [b] c', 'https://example.com/x y'), '[a \\[b\\] c](https://example.com/x%20y)');
     assert.equal(mdLink('pic', 'https://example.com/p.png', true), '![pic](https://example.com/p.png)');
-  });
-});
-
-describe('slackToMarkdown', () => {
-  it('converts emphasis, strike-through and quotes', () => {
-    assert.equal(slackToMarkdown('*bold* and _it_ and ~gone~'), '**bold** and *it* and ~~gone~~');
-    assert.equal(slackToMarkdown('&gt; quoted'), '> quoted');
-  });
-
-  it('converts links, mentions and channel references', () => {
-    const names = { U1: 'Ada' };
-    assert.equal(
-      slackToMarkdown('see <https://example.com|docs> and <https://example.org> <@U1> <@U2> <#C1|ops> <!here>', (id) => names[id]),
-      'see [docs](https://example.com) and <https://example.org> @Ada @U2 #ops @here',
-    );
-  });
-
-  it('leaves code alone', () => {
-    assert.equal(slackToMarkdown('run `a *b* c` now'), 'run `a *b* c` now');
-    assert.equal(slackToMarkdown('```\nif (a &lt; b) *x*\n```'), '```\nif (a < b) *x*\n```');
-  });
-
-  it('unescapes entities', () => {
-    assert.equal(slackToMarkdown('a &amp; b &lt;c&gt;'), 'a & b <c>');
-  });
-});
-
-describe('Slack markup in code', () => {
-  it('keeps what the person typed: the label, the URL or @name', () => {
-    const md = slackToMarkdown('try (`<https://www.site.example|www.site.example>`) or `<@U1>`\n```<http://x.example/a>```', (id) => (id === 'U1' ? 'Ada' : undefined));
-    assert.match(md, /\(`www\.site\.example`\)/);
-    assert.match(md, /`@Ada`/);
-    assert.match(md, /```\nhttp:\/\/x\.example\/a\n```/);
   });
 });
 

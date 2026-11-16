@@ -84,6 +84,8 @@
     "hast-util-to-text": "4.0.3",
     "isomorphic-git": "1.44.3",
     "just-bash": "3.6.0",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm-autolink-literal": "2.1.0",
     "mdast-util-gfm-strikethrough": "2.0.1",
     "mdast-util-gfm-table": "2.0.1",
     "mdast-util-gfm-task-list-item": "2.0.1",

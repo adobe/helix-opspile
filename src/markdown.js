@@ -11,9 +11,9 @@
  */
 
 /**
- * Message bodies to markdown: Slack mrkdwn and Discord's tokens (Teams HTML is src/html.js),
- * and markdown to Slack mrkdwn. The converters are small and conservative; anything they do
- * not understand is kept as text.
+ * What the converters of message bodies to markdown share (Teams HTML is src/html.js, Slack
+ * src/slackmd.js, Discord src/discordmd.js; src/mdast.js writes their trees), quotes, and
+ * markdown to Slack mrkdwn.
  */
 
 const ENTITIES = {
@@ -74,6 +74,28 @@ export const QUOTE_TITLE = 'Quoted message';
 export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:, ([^"\n]*))?"\)[ \t]*$/;
 
 /**
+ * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
+ * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
+ */
+export const unlazy = (src) => {
+  let fence = null;
+  let quoted = false;
+  return src.split('\n').flatMap((line) => {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
+        fence = null;
+      }
+      return [line];
+    }
+    const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
+    quoted = /^ {0,3}>/.test(line);
+    fence = f && !quoted ? f[1] : null;
+    return out;
+  }).join('\n');
+};
+
+/**
  * A message that a message quotes (Slack: one forwarded, or the preview under a link to it), as
  * a markdown quote: its author, linked to it (the title says it is a quote, and when it was
  * posted), a blank line, then its text, itself markdown.
@@ -125,100 +147,6 @@ export function quotesAsText(body) {
     `> ${head[1].replace(/\\(.)/g, '$1')} wrote:`,
     ...rest.filter((l, k) => k > 0 || l.trim() !== '>'),
   ]);
-}
-
-/**
- * Slack mrkdwn to markdown.
- *
- * @param {string} text
- * @param {(id: string) => string|undefined} userName resolves `<@U…>` mentions
- */
-/**
- * Slack's markup inside code: Slack links URLs and mentions in `text` even within backticks,
- * but shows what the person typed, so code keeps the label (or the bare URL, or @name).
- */
-function unlinkCode(code, userName) {
-  return code
-    .replace(/<((?:https?|mailto):[^|>\s]+)(?:\|([^>]*))?>/g, (_, url, label) => label || url)
-    .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`);
-}
-
-export function slackToMarkdown(text, userName = () => undefined) {
-  if (!text) {
-    return '';
-  }
-  const blocks = String(text).split(/(```[\s\S]*?```)/);
-  return blocks.map((part, i) => {
-    if (i % 2 === 1) {
-      const code = part.slice(3, -3).replace(/^\n|\n$/g, '');
-      return `\n\`\`\`\n${decodeEntities(unlinkCode(code, userName))}\n\`\`\`\n`;
-    }
-    return part
-      .split(/(`[^`\n]+`)/)
-      .map((seg, j) => {
-        if (j % 2 === 1) {
-          return decodeEntities(unlinkCode(seg, userName));
-        }
-        return seg
-          .replace(/<@([UW][A-Z0-9]+)(?:\|([^>]+))?>/g, (_, id, label) => `@${label || userName(id) || id}`)
-          .replace(/<#([CG][A-Z0-9]+)(?:\|([^>]*))?>/g, (_, id, label) => `#${label || id}`)
-          .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]+))?>/g, (_, label) => (label || '@group'))
-          .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, '@$1')
-          .replace(/<!date\^\d+\^[^|>]*\|([^>]+)>/g, '$1')
-          .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_, url, label) => mdLink(label, url))
-          .replace(/<((?:https?|mailto):[^>]+)>/g, '<$1>')
-          .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1**$2**')
-          .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, '$1*$2*')
-          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, '$1~~$2~~')
-          .replace(/^&gt;\s?/gm, '> ')
-          .replace(/&(lt|gt|amp);/g, (m) => decodeEntities(m));
-      })
-      .join('');
-  }).join('').trim();
-}
-
-const pad2 = (n) => String(n).padStart(2, '0');
-
-/** A Discord `<t:…>` timestamp as text: date and time in UTC. */
-function discordTime(seconds, style) {
-  const d = new Date(Number(seconds) * 1000);
-  if (Number.isNaN(d.getTime())) {
-    return seconds;
-  }
-  const date = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-  return /^[dD]$/.test(style || '') ? date : `${date} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
-}
-
-/**
- * Discord message content to markdown. Discord writes markdown already; what is left are its
- * tokens: user, role and channel mentions, custom emoji, timestamps, and `-#` small text.
- * Code keeps what was typed.
- *
- * @param {string} text
- * @param {{ user?: (id: string) => string|undefined, role?: (id: string) => string|undefined,
- *   channel?: (id: string) => string|undefined }} names
- */
-export function discordToMarkdown(text, names = {}) {
-  if (!text) {
-    return '';
-  }
-  const user = names.user || (() => undefined);
-  const role = names.role || (() => undefined);
-  const channel = names.channel || (() => undefined);
-  return String(text).split(/(```[\s\S]*?```|`[^`\n]+`)/).map((part, i) => {
-    if (i % 2 === 1) {
-      return part;
-    }
-    return part
-      .replace(/<@!?(\d+)>/g, (_, id) => `@${user(id) || 'unknown'}`)
-      .replace(/<@&(\d+)>/g, (_, id) => `@${role(id) || 'role'}`)
-      .replace(/<#(\d+)>/g, (_, id) => `#${channel(id) || 'channel'}`)
-      .replace(/<a?:(\w+):\d+>/g, ':$1:')
-      .replace(/<t:(-?\d+)(?::([tTdDfFR]))?>/g, (_, s, style) => discordTime(s, style))
-      .replace(/<\/([\w -]+):\d+>/g, '/$1')
-      .replace(/^-# /gm, '');
-  }).join('')
-    .trim();
 }
 
 // Placeholders while markdownToMrkdwn works: kept spans (code, links), bold markers.

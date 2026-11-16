@@ -78,8 +78,6 @@ function slackFiles(files) {
   return [images.join('\n'), [...links, ...unseen].join('\n')].filter(Boolean).join('\n\n');
 }
 
-const blockText = (t) => (t && typeof t.text === 'string' ? t.text : '');
-
 /**
  * The messages a Slack message quotes: one forwarded with it (`is_share`), or the preview Slack
  * adds under a link to a message (`is_msg_unfurl`). Each is `{ authorId, author, at, url, text }`,
@@ -97,39 +95,6 @@ export function slackQuotes(attachments) {
       url: a.from_url,
       text: typeof a.text === 'string' ? a.text : '',
     }));
-}
-
-/**
- * Block Kit to mrkdwn, for messages whose blocks say more than their `text` (bots and
- * apps). `rich_text` blocks are what Slack's own composer sends; for those, `text` already
- * holds the same content, so they are not rendered.
- */
-export function slackBlocks(blocks) {
-  if (!Array.isArray(blocks) || blocks.every((b) => b.type === 'rich_text')) {
-    return null;
-  }
-  const out = [];
-  for (const b of blocks) {
-    if (b.type === 'header') {
-      out.push(`*${blockText(b.text)}*`);
-    } else if (b.type === 'section') {
-      if (b.text) {
-        out.push(blockText(b.text));
-      }
-      if (Array.isArray(b.fields) && b.fields.length) {
-        // "*Label:*\nvalue" fields become one "*Label:* value" line each.
-        out.push(b.fields.map((f) => blockText(f).replace(/^(\*[^*\n]+\*)\n/, '$1 ')).join('\n'));
-      }
-    } else if (b.type === 'context') {
-      out.push((b.elements || []).map(blockText).filter(Boolean).join(' · '));
-    } else if (b.type === 'divider') {
-      out.push('---');
-    } else if (b.type === 'image' && b.image_url) {
-      out.push(`<${b.image_url}|${b.alt_text || 'image'}>`);
-    }
-  }
-  const text = out.filter(Boolean).join('\n\n');
-  return text || null;
 }
 
 /** Slack's reactions on a message (present on backfilled messages), one row per user. */
@@ -176,7 +141,9 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     subtype: msg.subtype,
     format: 'mrkdwn',
     // The text, the messages it quotes, then its files (markdown already): src/normalizer.js.
-    text: slackBlocks(msg.blocks) || msg.text || '',
+    // The blocks are read before the text (src/slackmd.js), which is mrkdwn.
+    text: msg.text || '',
+    blocks: Array.isArray(msg.blocks) && msg.blocks.length ? msg.blocks : undefined,
     quotes: quotes.length ? quotes : undefined,
     files: files ? `Attachments:\n${files}` : undefined,
     reactions: slackReactions(msg),
@@ -393,7 +360,9 @@ export function normalizeDiscord(key, envelope) {
       authorRef,
       subject: subject || undefined,
       format: 'discord',
-      text: [d.content || '', embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n'),
+      // What was written (Discord's markdown), then its embeds and files, markdown already.
+      text: d.content || '',
+      after: [embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n') || undefined,
       reactions,
       // Whoever reacted has read the thread up to here.
       reactors: reactions ? [...new Set(reactions.map((r) => r.userId))] : undefined,
