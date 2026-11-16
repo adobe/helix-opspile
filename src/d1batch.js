@@ -21,6 +21,10 @@
  * whatever else is asked then goes in the same batch. Writes, `run()` and `raw()` go to D1 at
  * once, as they did. A batch is one transaction, which reads do not mind, but one failing query
  * fails all of it: then each is asked on its own, so only that one fails, as before.
+ *
+ * So a read asked for alongside a write (in one `Promise.all`) reaches D1 after it, and sees
+ * it: separate requests never promised an order either, and nothing may rely on one. A batch
+ * answers all at once, so a slow read holds back the reads asked with it.
  */
 
 const READ = /^\s*(?:--[^\n]*\n\s*)*(?:SELECT|WITH)\b/i;
