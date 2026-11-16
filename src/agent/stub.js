@@ -19,6 +19,7 @@ import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
 import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
 import { switchedOn } from './enabled.js';
+import { liveTurn } from './kept.js';
 
 /**
  * Reaching thread agents from the Worker: the queue pokes them, the inbox API seeds them and
@@ -57,8 +58,9 @@ export async function pokeAgent(env, thread, { retry = false } = {}) {
 
 /**
  * Thread `key`'s entry (`entryOf`, without its members' keys), whose knowledge bases its agent
- * has, and whether it has one, in one round trip: the inbox asks for this whenever a thread
- * opens (GET /api/agent), and it took five in a row.
+ * has, whether it has one, and what its agent last kept as doing (`live`, its `agent_live` row,
+ * or null), in one round trip: the inbox asks for this whenever a thread opens (GET /api/agent),
+ * and it took five in a row.
  */
 async function threadTarget(env, key) {
   if (!key) {
@@ -67,8 +69,10 @@ async function threadTarget(env, key) {
   const row = await env.DB.prepare(`${ENTRY_ROW}, a.team AS a_team, a.org AS a_org,
       a.kind AS a_kind, a.channel_id AS a_channel,
       (SELECT enabled FROM agent_channels WHERE channel_id = a.channel_id) AS channel,
-      (SELECT enabled FROM agent_teams WHERE team = a.team) AS on_team
-    FROM t LEFT JOIN threads a ON a.thread = t.k`).bind(String(key)).first();
+      (SELECT enabled FROM agent_teams WHERE team = a.team) AS on_team,
+      l.turn AS live_turn, l.at AS live_at
+    FROM t LEFT JOIN threads a ON a.thread = t.k LEFT JOIN agent_live l ON l.thread = t.k`)
+    .bind(String(key)).first();
   if (!row) {
     return null;
   }
@@ -80,6 +84,7 @@ async function threadTarget(env, key) {
     org: anchor ? row.a_org : null,
     enabled: anchor && row.a_kind === 'channel'
       && switchedOn(env, row.a_channel, { channel: row.channel, team: row.on_team }),
+    live: row.live_at ? { turn: row.live_turn, at: row.live_at } : null,
   };
 }
 
@@ -250,14 +255,23 @@ export async function decideBash(env, me, body, inTeam, { run }) {
   return json(rest, status || (run ? 202 : 200));
 }
 
-/** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */
-export async function agentStatus(env, key, canSee) {
+/**
+ * GET /api/agent?thread=…: whether the thread has an agent, and what it is doing (`turn`), as the
+ * agent last kept it in D1 (`agent_live`, src/agent/kept.js): the agent's object is not started
+ * for it. Only an agent that has kept none, or one whose turn has worked for longer than a run
+ * takes without a word (its object stopped half way), is asked itself, which keeps it again.
+ */
+export async function agentStatus(env, key, canSee, { now = Date.now() } = {}) {
   const t = await threadTarget(env, key);
   if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled || !env.AGENTS) {
     return json({ enabled: false });
+  }
+  const turn = liveTurn(t.live, now);
+  if (turn !== undefined) {
+    return json({ enabled: true, turn });
   }
   // One call to the agent's object, not two: `status` waits for the agent's startup itself
   // (agentStub's first call). In `Server-Timing` as `agent`.

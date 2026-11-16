@@ -1525,8 +1525,12 @@ instead of from the Durable Object a moment after them. The agent writes it a mo
 answer (or a failed request), and whenever `status()` finds a finished turn it has not kept (one
 that stopped half way and counts as failed now). The page asks `GET /api/agent` when the thread
 opens or changes, and every few seconds while the agent works or a new message waits for it;
-what the agent says wins over the kept turn when it is about a later one. A turn in progress is
-only ever the agent's to say, so it comes in after the messages. Its avatar opens the sidebar
+what the agent says wins over the kept turn when it is about a later one. That answer is a copy
+too (`agent_live`, `keepLive`): the latest turn in any state, which the agent writes whenever it
+may have changed (work accepted, a round of tools, an answer), so asking does not start the
+agent's Durable Object, which took over a second for an agent that was not running, and most of
+the agents' CPU outside their turns. Only an agent that has not written one yet, or whose turn
+has said `working` for 15 minutes without a word, is asked itself. Its avatar opens the sidebar
 (below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
 thread's channel).
 

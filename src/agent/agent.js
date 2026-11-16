@@ -59,7 +59,7 @@ import { agentToolsExtension, opspileExtension, staffExtension } from './tools.j
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
 } from '../threadfiles.js';
-import { keepTurn } from './kept.js';
+import { keepLive, keepTurn, liveDue } from './kept.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
@@ -118,12 +118,16 @@ const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Meters the agent's model use after each round of tools and each answer, and keeps the turn
- * an answer, or a failed request, ends for the inbox.
+ * for the inbox: what it is doing after each round of tools, and the turn an answer, or a failed
+ * request, ends.
  */
 const cogsExtension = (agent) => defineExtension({
   name: 'opspile-cogs',
   hooks: [hook(GenerationTask, {
-    afterTools: () => { agent.meterSoon(); },
+    afterTools: () => {
+      agent.meterSoon();
+      agent.keepTurnSoon();
+    },
     afterResponse: (message) => {
       if (message && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
         agent.keepTurnSoon();
@@ -221,6 +225,14 @@ export class ThreadAgent extends Agent {
       defaults: env.AGENT_MODEL ? { model: modelRef(env), thinkingLevel: 'medium' } : {},
     });
     this.lifecycle.use(this.harness);
+    // Work accepted (new messages, a sidebar message, a seed, the wrap-up, a command's outcome):
+    // the turn is working now, and GET /api/agent hears it from D1 (`keepTurn`).
+    const submit = this.harness.submit.bind(this.harness);
+    this.harness.submit = async (...args) => {
+      const receipt = await submit(...args);
+      this.keepTurnSoon();
+      return receipt;
+    };
   }
 
   /** Code mode and the MCP tools of `catalog`. */
@@ -759,17 +771,20 @@ export class ThreadAgent extends Agent {
   }
 
   /**
-   * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
-   * storage, so a woken object does not write it again. A turn in progress keeps nothing. One
-   * that answers a sidebar message is the sidebar's (src/agent/sidebar.js): the turn kept for
-   * the thread stays the one before it. Every finished sidebar answer in the transcript is kept
-   * first, also while a turn queued behind it works.
+   * Keeps `turn` for the inbox (src/agent/kept.js), as the transcript was at `at`: whatever it is
+   * as what the agent is doing now (`agent_live`, GET /api/agent), and a finished one for the
+   * thread (`agent_turns`, GET /api/thread), each once: what was kept last is in storage, so a
+   * woken object does not write it again. A turn that answers a sidebar message is the
+   * sidebar's (src/agent/sidebar.js): the turn kept for the thread stays the one before it.
+   * Every finished sidebar answer in the transcript is kept first, also while a turn queued
+   * behind it works.
    */
-  async keepTurn(turn) {
+  async keepTurn(turn, at = new Date().toISOString()) {
     if (this.name.startsWith('kb:')) {
       return;
     }
     await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
+    await this.keepLive(turn, at).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'live failed', error: e.message })));
     if (turn && turn.state === 'working') {
       return;
     }
@@ -785,22 +800,49 @@ export class ThreadAgent extends Agent {
     this.keptSig = sig;
   }
 
-  /** `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. */
-  keepTurnSoon(tries = KEEP_TRIES) {
-    if (this.keepTimer) {
+  /**
+   * Keeps `turn` as what the agent is doing (`agent_live`) when it changed since it was last
+   * kept, or the one kept is a third of STUCK_MS old: GET /api/agent asks the agent itself about
+   * a turn that has been working that long without a word from it.
+   */
+  async keepLive(turn, at) {
+    this.liveSig ??= (await this.ctx.storage.get('live-turn')) || null;
+    const last = { sig: this.liveSig, at: this.liveAt };
+    if (!liveDue(last, turn, at)) {
       return;
     }
+    await keepLive(this.env, this.name, turn, at);
+    this.liveSig = JSON.stringify(turn || null);
+    this.liveAt = at;
+    await this.ctx.storage.put('live-turn', this.liveSig);
+  }
+
+  /**
+   * `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. Asked
+   * again while it waits, it looks once more after that, so the last change is never missed.
+   */
+  keepTurnSoon(tries = KEEP_TRIES) {
+    if (this.keepTimer) {
+      this.keepAgain = true;
+      return;
+    }
+    this.keepAgain = false;
     this.keepTimer = setTimeout(async () => {
-      this.keepTimer = null;
+      let working = false;
       try {
+        const at = new Date().toISOString();
         const { turn } = await this.latestTurn();
         // The sidebar answers before it, even while the turn behind them works.
-        await this.keepTurn(turn);
-        if (turn && turn.state === 'working' && tries > 1) {
-          this.keepTurnSoon(tries - 1);
-        }
+        await this.keepTurn(turn, at);
+        working = Boolean(turn && turn.state === 'working');
       } catch (e) {
         console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
+      }
+      this.keepTimer = null;
+      if (this.keepAgain) {
+        this.keepTurnSoon();
+      } else if (working && tries > 1) {
+        this.keepTurnSoon(tries - 1);
       }
     }, KEEP_DELAY_MS);
   }
@@ -813,10 +855,12 @@ export class ThreadAgent extends Agent {
     await this.__unsafe_ensureInitialized();
     this.meterModel();
     const catalog = await this.servers.current();
+    const at = new Date().toISOString();
     const { pending, turn } = await this.latestTurn();
-    // A finished turn the inbox does not have yet (one that ended before this was deployed, or
-    // one that stopped half way and counts as failed now): kept behind the answer.
-    this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
+    // A turn the inbox does not have yet (what it is doing, for an agent that has not written
+    // it since this was deployed; one that stopped half way and counts as failed now): kept
+    // behind the answer.
+    this.keepTurn(turn, at).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
       model: armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL || null,

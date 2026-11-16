@@ -57,7 +57,7 @@ const texts = (m) => (Array.isArray(m.content) ? m.content : [])
 const calls = (m) => (Array.isArray(m.content) ? m.content : []).filter((c) => c.type === 'toolCall');
 
 // Longer than a model request and its retries take.
-const STUCK_MS = 15 * 60 * 1000;
+export const STUCK_MS = 15 * 60 * 1000;
 
 /** The id of the sidebar message the latest turn of `entries` answers, or null. */
 export function turnSidebar(entries) {
