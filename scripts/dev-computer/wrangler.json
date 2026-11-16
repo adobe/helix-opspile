@@ -35,5 +35,37 @@
       "binding": "IMAGES",
       "bucket_name": "opspile-dev-computer-images"
     }
-  ]
+  ],
+  "env": {
+    "stage": {
+      "name": "helix-opspile-computer-stage",
+      "workers_dev": true,
+      "vars": {
+        "REQUIRE_TOKEN": "1"
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "AGENTS",
+            "class_name": "ComputerAgent"
+          }
+        ]
+      },
+      "worker_loaders": [
+        {
+          "binding": "LOADER"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "helix-opspile-computer-stage-files"
+        },
+        {
+          "binding": "IMAGES",
+          "bucket_name": "helix-opspile-computer-stage-images"
+        }
+      ]
+    }
+  }
 }

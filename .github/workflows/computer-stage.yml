@@ -1,0 +1,95 @@
+name: Computer on stage
+
+# Deploys an agent's computer by itself (scripts/dev-computer/worker.mjs, the real ThreadAgent
+# with its shells, without a model, an inbox or D1) to Cloudflare as
+# helix-opspile-computer-stage, puts the images of scripts/computer-images.mjs into its bucket,
+# and runs their programs there (scripts/dev-computer/check.mjs): where local workerd does not
+# hold them to Dynamic Workers' limits (128 MB of memory, module sizes, 10 at once). On every
+# branch but main, which deploys production instead (ci.yml).
+#
+# The Worker is a shell on the internet: it answers only requests with the secret
+# COMPUTER_TOKEN, which each run makes, masks and keeps nowhere, and replaces with one nobody
+# knows when it ends. Its address names the account, so the logs and the summary leave it out.
+
+on:
+  push:
+    branches-ignore: [main]
+    paths-ignore: ['docs/**', 'ui/**', '**/*.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One stage Worker for every branch: one run at a time.
+concurrency:
+  group: computer-stage
+  cancel-in-progress: false
+
+env:
+  CF_SEND_TELEMETRY: 'false'
+  WRANGLER_SEND_METRICS: 'false'
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CONFIG: scripts/dev-computer/wrangler.json
+
+jobs:
+  computer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build --silent
+
+      - name: Make the buckets
+        run: |
+          for b in helix-opspile-computer-stage-images helix-opspile-computer-stage-files; do
+            npx wrangler r2 bucket info "$b" > /dev/null 2>&1 || npx wrangler r2 bucket create "$b"
+          done
+
+      - name: Make this run's token
+        run: |
+          token=$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')
+          echo "::add-mask::$token"
+          echo "COMPUTER_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        id: deploy
+        run: |
+          umask 077
+          printf '{"COMPUTER_TOKEN":"%s"}' "$COMPUTER_TOKEN" > "$RUNNER_TEMP/secrets.json"
+          status=0
+          npx wrangler deploy -c "$CONFIG" --env stage --secrets-file "$RUNNER_TEMP/secrets.json" \
+            > "$RUNNER_TEMP/deploy.log" 2>&1 || status=$?
+          rm -f "$RUNNER_TEMP/secrets.json"
+          url=$(grep -o 'https://[^ ]*\.workers\.dev' "$RUNNER_TEMP/deploy.log" | head -1)
+          [ -n "$url" ] && echo "::add-mask::$url"
+          sed -E 's#https://[^ ]+#<url>#g' "$RUNNER_TEMP/deploy.log"
+          [ "$status" = 0 ] && [ -n "$url" ] || { echo "the deploy failed, or named no workers.dev address"; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for it to answer
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf -H "x-opspile-computer-token: $COMPUTER_TOKEN" "$URL/health" > /dev/null && exit 0
+            sleep 2
+          done
+          echo "the stage computer did not answer"; exit 1
+
+      - name: Put the images, and run their programs
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+        run: npm run computer:check -- --images "$URL"
+
+      - name: Lock it again
+        if: always() && steps.deploy.outcome != 'skipped'
+        run: |
+          node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))' \
+            | npx wrangler secret put COMPUTER_TOKEN -c "$CONFIG" --env stage > /dev/null 2>&1 \
+            || echo "::warning::could not replace the stage computer's token"

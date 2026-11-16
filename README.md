@@ -670,6 +670,18 @@ Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, lay
 Worker with its own local bucket, which `node scripts/computer-images.mjs --upload --local`
 fills.
 
+`npm run computer:check -- http://localhost:8788` runs every program of every image there
+([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)): add a check for a program you
+add. Local workerd does not hold a computer to Cloudflare's limits (128 MB per Dynamic Worker,
+module sizes, 10 Dynamic Workers at once), so on every branch but main
+[.github/workflows/computer-stage.yml](.github/workflows/computer-stage.yml) deploys the same
+computer to Cloudflare as `helix-opspile-computer-stage` (`wrangler deploy --env stage`, buckets
+`helix-opspile-computer-stage-images` and `-files`, made by the workflow), puts the images into
+its bucket and runs the same checks there. That Worker is a shell on the internet: it answers
+only with the secret `COMPUTER_TOKEN` in `x-opspile-computer-token`, which each run makes and
+replaces with an unknown one when it ends. It needs the repository's `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`, as the deploy does.
+
 ### Measure the inbox
 
 `node scripts/dev-ui.mjs --big --no-sim --latency=400` serves a prod-sized fake inbox (some 250

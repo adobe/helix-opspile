@@ -29,7 +29,12 @@
  * `runtime` changes the computer's shell and `image` its kernel's image, as a team's choice
  * does at the agent's next message (`changeShell`), and stay until the next change. `/uploads`
  * puts files into the read-only uploads of the thread. Each `thread` is an agent of its own,
- * with its own files. `PUT /images/<key>` writes an object of the images bucket.
+ * with its own files. `PUT /images/<key>` writes an object of the images bucket, and
+ * `GET /images/<key>` reads it (404 when there is none). `GET /health` answers `ok`.
+ *
+ * Deployed (`--env stage`, .github/workflows/computer-stage.yml), it is a shell on the
+ * internet: `REQUIRE_TOKEN` is set there, and every request needs the secret `COMPUTER_TOKEN`
+ * in `x-opspile-computer-token`. Without the secret, it answers nothing but 403.
  */
 
 import { ThreadAgent } from '../../src/agent/agent.js';
@@ -90,12 +95,39 @@ export class ComputerAgent extends ThreadAgent {
   }
 }
 
+/** Whether `given` is `token`, in a time that does not tell how much of it matched. */
+function sameToken(given, token) {
+  const a = new TextEncoder().encode(String(given || ''));
+  const b = new TextEncoder().encode(String(token || ''));
+  // eslint-disable-next-line no-bitwise
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i += 1) {
+    // eslint-disable-next-line no-bitwise
+    diff |= (a[i] || 0) ^ b[i];
+  }
+  return b.length > 0 && diff === 0;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === 'PUT' && url.pathname.startsWith('/images/')) {
-      await env.IMAGES.put(url.pathname.slice('/images/'.length), request.body);
+    if (env.REQUIRE_TOKEN
+      && !sameToken(request.headers.get('x-opspile-computer-token'), env.COMPUTER_TOKEN)) {
+      return new Response('forbidden\n', { status: 403 });
+    }
+    if (url.pathname === '/health') {
       return new Response('ok\n');
+    }
+    if (url.pathname.startsWith('/images/')) {
+      const key = url.pathname.slice('/images/'.length);
+      if (request.method === 'PUT') {
+        await env.IMAGES.put(key, request.body);
+        return new Response('ok\n');
+      }
+      if (request.method === 'GET') {
+        const object = await env.IMAGES.get(key);
+        return object ? new Response(object.body) : new Response('not found\n', { status: 404 });
+      }
     }
     if (request.method !== 'POST') {
       return new Response('POST { command, runtime?, image?, timeout?, env? }, /uploads { name: text } or /shell\n', { status: 405 });

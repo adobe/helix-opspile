@@ -55,7 +55,9 @@ code and docs, is the decision model that labels threads and channels.
   `src/agent/agent.js`. The same goes for `@ai-ecoverse/slicc-kernel` (it imports
   `cloudflare:workers`): `src/agent/kernel.js` and `src/agent/image.js` have what Node can
   test, and `npm run computer:dev` runs an agent's computer in local workerd, both shells and
-  every image, to try the rest (README, "Try an agent's computer").
+  every image, to try the rest (README, "Try an agent's computer"); `npm run computer:check`
+  runs every image's programs there, and on Cloudflare in the `Computer on stage` workflow of
+  every branch but main.
 - The programs of a computer on the SLICC kernel are an **image** in the `IMAGES` bucket, not
   in the Worker: a stack of read-only layers, mounted at `/opt/image`.
   `scripts/computer-images.mjs` defines the layers and the images, from the
