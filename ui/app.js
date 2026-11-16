@@ -148,3 +148,53 @@ window.Dialog = (() => {
   }
   return { remove };
 })();
+
+/**
+ * Content swaps. A region that shows one subject at a time (the open thread, a file, a topic, a
+ * team) has its content replaced in one go when another is picked, and the new content fades
+ * in, quickly (S2: what arrives eases out). `Swap.watch(region, subject)` watches the region's
+ * children: when they are replaced and `subject()` names another subject than it did for what
+ * was there, the region fades in. A placeholder ("Loading…", alone in the region as `.empty`)
+ * is shown at once, not faded, and counts as a subject of its own, so the content that
+ * replaces it fades in: a thread that has to be loaded fades in once, when it arrives.
+ * Re-rendering the same subject (a live update, a save) does not fade, and nothing waits for
+ * the fade: the content is in the page, focusable and clickable, from its first frame.
+ * `skip()` says when not to (where the region slides in already); with reduced motion, or in
+ * a tab in the background, nothing fades.
+ *
+ * The View Transitions API would cross-fade the old content out as well, but it changes the
+ * page only a frame later, in a callback, and the pages read and focus what they have just
+ * written, so the new content fades in over nothing instead.
+ */
+window.Swap = (() => {
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ms = (v) => (/ms$/.test(v) ? parseFloat(v) : parseFloat(v) * 1000) || 0;
+  // `--s2-swap-in` (ui/spectrum.css): a duration, then an easing.
+  const timing = (el) => {
+    const value = getComputedStyle(el).getPropertyValue('--s2-swap-in').trim();
+    const [, duration = '', easing = ''] = /^(\S*)\s*(.*)$/.exec(value);
+    return { duration: ms(duration), easing: easing || 'ease-out' };
+  };
+  const watch = (region, subject, { skip = () => false } = {}) => {
+    if (!region || region.__swap) return;
+    region.__swap = true;
+    const loading = () => {
+      const only = region.children.length === 1 && region.firstElementChild;
+      return only && only.classList.contains('empty') ? only : null;
+    };
+    const now = () => `${subject() ?? ''}\n${loading()?.textContent ?? ''}`;
+    let shown = now();
+    let fade = null;
+    new MutationObserver(() => {
+      const was = shown;
+      shown = now();
+      if (was === shown) return;
+      fade?.cancel();
+      fade = null;
+      if (loading() || still() || document.visibilityState !== 'visible' || skip()) return;
+      const { duration, easing } = timing(region);
+      if (duration) fade = region.animate([{ opacity: 0 }, { opacity: 1 }], { duration, easing });
+    }).observe(region, { childList: true });
+  };
+  return { watch };
+})();

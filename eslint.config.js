@@ -76,6 +76,8 @@ export default [
         Table: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
+        // Content swaps that fade in, ui/app.js.
+        Swap: 'readonly',
       },
     },
     rules: {

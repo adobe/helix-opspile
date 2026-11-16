@@ -7858,6 +7858,9 @@ async function start() {
   wireRail();
   wireSideRoom();
   wireLogos();
+  // Another thread (or the new conversation) fades in; a live update of the same one does not
+  // (ui/app.js). Where the pane slides in over the list (phones), the slide is the motion.
+  Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     // The sidebar: entered by the agent's icon, left by ✕ Exit; its conversations unfold.
