@@ -616,6 +616,21 @@ describe('cogs: rollup', () => {
     assert.equal(await meterRows({ COGS_RESOURCES: '{}' }, '2026-11-02'), null);
   });
 
+  it('backfills the latest days without rows of the source, a few a run', async () => {
+    const DB = d1();
+    // The d1 source has 10-31 and 10-29; another source's row does not fill 10-30.
+    for (const [day, source] of [['2026-10-31', 'd1'], ['2026-10-29', 'd1'], ['2026-10-30', 'meter']]) {
+      usageRow(DB, {
+        day, source, service: 'volume', metric: 'messages', quantity: 1,
+      });
+    }
+    const out = await rollupCogs({ DB }, { now: Date.parse('2026-11-02T12:00:00Z') });
+    assert.deepEqual(Object.keys(out).filter((k) => k.startsWith('volume ')).sort(), [
+      'volume 2026-10-27', 'volume 2026-10-28', 'volume 2026-10-30',
+      'volume 2026-11-01', 'volume 2026-11-02',
+    ]);
+  });
+
   it('replaces a day: changed rows written, gone ones deleted, other services left alone', async () => {
     const DB = d1();
     const env = { DB };

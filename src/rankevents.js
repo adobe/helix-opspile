@@ -119,12 +119,15 @@ export async function rankEvents(env, since = 0, limit = EVENTS_PAGE) {
   return { events: page, next: more ? page[page.length - 1].id : null };
 }
 
-/** Deletes picks older than `days`, oldest first, at most `limit` a run. */
+/**
+ * Deletes picks older than `days`, oldest first, at most `limit` a run. Found by `rank_events_at`:
+ * in id order, SQLite read every pick to find none old enough, on every cron run.
+ */
 export async function pruneRankEvents(env, now = new Date(), {
   days = RANK_EVENTS_DAYS, limit = PRUNE_LIMIT,
 } = {}) {
   const before = new Date(now.getTime() - days * 86400000).toISOString();
   const res = await env.DB.prepare(`DELETE FROM rank_events WHERE id IN (
-      SELECT id FROM rank_events WHERE at < ? ORDER BY id LIMIT ?)`).bind(before, limit).run();
+      SELECT id FROM rank_events WHERE at < ? ORDER BY at, id LIMIT ?)`).bind(before, limit).run();
   return { deleted: res.meta?.changes ?? 0, before };
 }

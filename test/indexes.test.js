@@ -16,6 +16,9 @@ import { keptAccounts } from '../src/accounts.js';
 import { inbox, searchInbox, thread } from '../src/api.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
+import { rollupCogs } from '../src/cogs/rollup.js';
+import { pruneExpertEvents } from '../src/expertevents.js';
+import { pruneRankEvents } from '../src/rankevents.js';
 
 /** The plans of every query `fn` asks D1, as SQLite would run them. */
 async function plans(fn) {
@@ -92,5 +95,25 @@ describe('inbox queries', () => {
     assert.deepEqual(p.plan.filter((d) => /^SCAN (identities|messages|channel_members|[iowxm])\b/.test(d)), []);
     assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX messages_author/.test(d)), p.plan.join('\n'));
     assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX channel_members_user/.test(d)), p.plan.join('\n'));
+  });
+});
+
+describe('cron queries', () => {
+  it('find the old events and picks to delete by when they were, not by reading them all', async () => {
+    for (const prune of [pruneExpertEvents, pruneRankEvents]) {
+      // eslint-disable-next-line no-await-in-loop
+      const ps = await plans((env) => prune(env));
+      assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (expert_events|rank_events)\b/.test(d))), []);
+      assert.ok(ps.some((p) => p.plan.some((d) => /USING (COVERING )?INDEX (expert_events|rank_events)_at/.test(d))), JSON.stringify(ps));
+    }
+  });
+
+  it('look up each day of the COGS backfill by the primary key', async () => {
+    const ps = await plans((env) => rollupCogs(env, { now: Date.parse('2026-11-02T12:00:00Z') }));
+    const days = ps.filter((p) => p.sql.startsWith('WITH RECURSIVE d(day)'));
+    assert.ok(days.length, 'the missing days query');
+    for (const p of days) {
+      assert.ok(p.plan.some((d) => /SEARCH t .*USING PRIMARY KEY \(day=\?/.test(d)), p.plan.join('\n'));
+    }
   });
 });
