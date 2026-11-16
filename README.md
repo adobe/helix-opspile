@@ -666,7 +666,10 @@ curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another 
 ```
 
 Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, layer or program
-(`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `cf dev` runs the whole
+(`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `npm run computer:check`
+([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)) starts it on a free port and
+checks what they cannot: that both shells refuse every change to the uploads with an exit code
+and an error, and read them. `cf dev` runs the whole
 Worker with its own local bucket, which `node scripts/computer-images.mjs --upload --local`
 fills.
 

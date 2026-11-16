@@ -1775,10 +1775,17 @@ the default. An agent follows its team's choice before each delivery, as it foll
   Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
   tables of its own (`slicc_*`). Output that was too long is saved under
   `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
-  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`), so
-  writing into the read-only uploads fails where it happens. The kernel's driver makes its
-  mount point with `mkdir -p`, which the Workspace refuses in a directory with a read-only
-  mount: `patientFs` answers it when the directory is there.
+  cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
+  `/workspace/uploads` is a mount of the kernel of its own, read-only, over the same files
+  (`overWorkspace`, `readOnlySpec`): the kernel's driver of `/workspace` opens a file there for
+  writing and fails only when it is closed, and bash does not look at what `close` answers, so
+  `echo x > uploads/a.log` exited 0 without a word. The kernel refuses a read-only mount's
+  changes when they start, as Linux does: `Read-only file system`, and a non-zero exit code.
+  Each connection of the Workspace (a new one when the uploads change) mounts it anew, after the
+  backend ended the connection before it, and takes it away when it is closed. The kernel's
+  driver makes its mount point with `mkdir -p`, which the Workspace refuses in a directory with
+  a read-only mount: `patientFs` answers it when the directory is there. `npm run
+  computer:check` checks both shells on the uploads in local workerd.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
