@@ -446,12 +446,16 @@ export async function replaceHours(env, day, source, rows, services = null, now 
 
 /**
  * The days of the last `back` before `today` (and yesterday) without rows of `source` in `table`,
- * latest first.
+ * latest first. Each day is looked up by the primary key, which starts with it: the days' rows
+ * of every source are not read to find which days have some.
  */
 async function missingDays(env, source, today, table = 'cogs_usage', back = BACKFILL_DAYS) {
   const since = dayOf(Date.parse(iso(today)) - back * 86400000);
-  const { results } = await env.DB.prepare(`SELECT DISTINCT day FROM ${table}
-    WHERE source = ? AND day >= ? AND day < ?`).bind(source, since, today).all();
+  const { results } = await env.DB.prepare(`WITH RECURSIVE d(day) AS (
+      SELECT ?2 UNION ALL SELECT date(day, '+1 day') FROM d WHERE day < date(?3, '-1 day'))
+    SELECT day FROM d WHERE day < ?3
+      AND EXISTS (SELECT 1 FROM ${table} t WHERE t.day = d.day AND t.source = ?1)`)
+    .bind(source, since, today).all();
   const have = new Set((results || []).map((r) => r.day));
   const out = [];
   const before = (d, n = 1) => dayOf(Date.parse(iso(d)) - n * 86400000);

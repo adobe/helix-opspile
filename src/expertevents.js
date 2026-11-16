@@ -138,12 +138,16 @@ export async function expertEvents(env, since = 0, limit = EVENTS_PAGE) {
   return { events: page, next: more ? page[page.length - 1].id : null };
 }
 
-/** Deletes events older than `days`, oldest first, at most `limit` a run; rejects stay. */
+/**
+ * Deletes events older than `days`, oldest first, at most `limit` a run; rejects stay. Found by
+ * `expert_events_at`: in id order, SQLite read every event (their candidate lists too) to find
+ * none old enough, on every cron run.
+ */
 export async function pruneExpertEvents(env, now = new Date(), {
   days = EXPERT_EVENTS_DAYS, limit = PRUNE_LIMIT,
 } = {}) {
   const before = new Date(now.getTime() - days * 86400000).toISOString();
   const res = await env.DB.prepare(`DELETE FROM expert_events WHERE id IN (
-      SELECT id FROM expert_events WHERE at < ? AND action <> 'reject' ORDER BY id LIMIT ?)`).bind(before, limit).run();
+      SELECT id FROM expert_events WHERE at < ? AND action <> 'reject' ORDER BY at, id LIMIT ?)`).bind(before, limit).run();
   return { deleted: res.meta?.changes ?? 0, before };
 }
