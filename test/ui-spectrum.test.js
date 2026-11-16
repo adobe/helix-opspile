@@ -190,6 +190,7 @@ describe('Spectrum 2', () => {
     assert.match(shared, /@starting-style \{\s*\.spectrum \[popover\]:popover-open \{ opacity: 0;/);
     assert.match(shared, /@starting-style \{\s*\.spectrum dialog:not\(\.lightbox\)\[open\] \{ opacity: 0;/);
     assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum \*, [^{]*\{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*[^{]*\.spectrum dialog::backdrop \{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
     // A closed dialog stays until it has left (ui/app.js), and its underlay leaves with it: no
     // page pins the underlay's opacity (but the lightbox's, which animates itself), which would
     // keep it dark until the dialog is gone.
