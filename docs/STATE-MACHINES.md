@@ -119,7 +119,9 @@ discarded (by a person, or by the agent: withdrawn). Undo is a save of the same 
 draft, by the person who discarded it, within a minute (`UNDO_SECONDS`): it deletes the discard's
 event and the draft goes on with its `created_at` and `origin`, as if it had not been discarded.
 `origin` (who saved the first version) stays through every version and every move into a group;
-`origin_body` follows only that person's saves.
+`origin_body` follows only that person's saves, and an Undo too: a discard by somebody else of a
+draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
+minute is over (pruned at the next discard and by the cron).
 
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry

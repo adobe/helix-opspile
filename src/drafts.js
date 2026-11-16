@@ -16,7 +16,7 @@ import { notifyRoom } from './notify.js';
 import { teamsOf } from './shares.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
 import {
-  AGENT_EMAIL, changeOf, recordDraftEvent, textHash, undoneDiscard,
+  AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
 
 /**
@@ -198,8 +198,11 @@ export async function saveDraft(env, me, request, inTeam) {
       .bind(body, picked, cited, me.id, version, me.id, body, e.key, current.updated_at).run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
-    // group's key.
-    const proposed = origin === me.id || undone ? body : await originBody(env, current);
+    // group's key. One that comes back by an Undo is still compared with its origin's text.
+    let proposed = body;
+    if (origin !== me.id) {
+      proposed = undone ? undone.origin_body ?? body : await originBody(env, current);
+    }
     if (current) {
       await env.DB.prepare('DELETE FROM drafts WHERE thread = ? AND updated_at = ?')
         .bind(current.thread, current.updated_at).run();
@@ -244,7 +247,9 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
   if (base && current.updated_at !== base) {
     return conflict(current);
   }
-  const proposed = sent ? await originBody(env, current) : null;
+  // What its origin proposed: what a sent draft is compared with, and what an Undo of a
+  // discard by somebody else needs to compare it with once it is back.
+  const proposed = sent || current.origin !== me.id ? await originBody(env, current) : null;
   const { meta: { changes } } = await env.DB.prepare(`DELETE FROM drafts
     WHERE thread IN (SELECT value FROM json_each(?)) AND (? IS NULL OR updated_at = ?)`)
     .bind(JSON.stringify(e.keys), base, base).run();
@@ -259,6 +264,9 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
       changed: sent ? changeOf(proposed ?? current.body, sent.text) : null,
       hash: sent ? null : await textHash(current.body),
     });
+    if (!sent && proposed != null && proposed !== current.body) {
+      await keepForUndo(env, e, current.created_at, proposed);
+    }
     await notifyRoom(env, e.teams, { type: 'draft', thread: e.key });
   }
   return json({ ok: true, discarded: Boolean(changes), draft: current });
