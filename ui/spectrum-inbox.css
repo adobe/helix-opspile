@@ -1308,10 +1308,14 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 @media (max-width: 699px) {
   /* Clipped, not hidden: nothing may scroll the page sideways to the thread off its edge. */
   main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
-  #threads, #pane { grid-area: 1 / 1; border: 0; transition: transform var(--spectrum-animation-duration-500) ease-out, visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  #threads, #pane { grid-area: 1 / 1; border: 0; }
   #pane { transform: translateX(100%); visibility: hidden; }
-  main.reading #pane { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) ease-out; }
+  main.reading #pane { transform: none; visibility: visible; }
   main.reading #threads { transform: translateX(-25%); visibility: hidden; }
+  /* The one coming into view is visible as it starts to; the one leaving hidden once it is out
+     (until then it is on screen, under or beside the other). */
+  #threads, main.reading #pane { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out); }
+  #pane, main.reading #threads { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
   .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
   .t .cust { max-width: 40%; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
@@ -1339,7 +1343,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .empty { padding: var(--spectrum-spacing-500) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
 }
 @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
-  #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
+  #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane, main.reading #threads { transition: none; }
   .linesdrawer, .linesdrawer.open, .linesdrawer .sheet, .linesdrawer.open .sheet { transition: none; }
 }
 /* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
