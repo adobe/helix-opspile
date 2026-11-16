@@ -1846,10 +1846,18 @@ the default. An agent follows its team's choice before each delivery, as it foll
   the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
   every name curl reaches, so the agent is told it may look up a customer's names there. It
   has no `+trace` and asks no name server itself.
-- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain.
-  `openssl` (`@ai-ecoverse/wasix-openssl-cli`) works on certificates and keys as files, and
-  its `s_client` reaches only the kernel's loopback: no TCP leaves the computer. The agent is
-  told so.
+- **TLS** behind curl is `fetch`'s, so curl never sees a site's certificate chain. For that
+  the kernel has an uplink (`src/agent/uplink.js`, `network.uplink`): a program's own TCP
+  connections leave through the Worker's sockets (`connect` from `cloudflare:sockets`), to
+  port 443 only; any other port of an outside address is an unreachable network
+  (`ENETUNREACH`). `openssl s_client -connect host:443 -servername host` (from
+  `@ai-ecoverse/wasix-openssl-cli`) shows the chain the site sends, checked against Mozilla's
+  roots. Names resolve over DNS over HTTPS (cloudflare-dns.com's JSON API, through the
+  gateway's `forward`), IPv4 only. These bytes pass the gateway by: it cannot put a secret
+  into them, and a program has only a secret's placeholder, never its value. The kernel keeps
+  loopback, link-local and reserved addresses from the uplink, and Cloudflare refuses sockets
+  to private networks and to its own addresses (a site behind Cloudflare cannot be reached
+  this way). Proxy-aware programs (curl, git) still go through the proxy and the gateway.
 - **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
   program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
   which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no

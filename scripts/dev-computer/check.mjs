@@ -78,10 +78,21 @@ export const CHECKS = [
     timeout: 90,
   },
   {
-    // What the agent is told: no TCP leaves the computer but curl's HTTP.
-    name: 'openssl: s_client does not reach the internet',
-    command: 'openssl s_client -connect www.aem.live:443 -servername www.aem.live < /dev/null'
-      + ' > /dev/null 2>&1; echo $?',
+    // A site's own chain, through the uplink (src/agent/uplink.js), checked against the roots.
+    name: 'openssl: s_client to a site, port 443',
+    command: 'openssl s_client -connect www.aem.live:443 -servername www.aem.live'
+      + ' -verify_return_error < /dev/null 2>&1'
+      + ' | grep -oE "^(New, TLSv1\\.[23]|Verify return code: .*)"'
+      // The site's own certificate, not one of the kernel's proxy.
+      + ' && openssl s_client -connect www.aem.live:443 -servername www.aem.live < /dev/null'
+      + ' 2> /dev/null | openssl x509 -noout -issuer | grep -vic slicc',
+    match: /^New, TLSv1\.[23]\nVerify return code: 0 \(ok\)\n1\n$/,
+    timeout: 60,
+  },
+  {
+    // What the agent is told: no other port leaves the computer.
+    name: 'openssl: s_client to any other port is unreachable',
+    command: 'openssl s_client -connect www.aem.live:80 < /dev/null > /dev/null 2>&1; echo $?',
     match: /^1\n$/,
   },
   {

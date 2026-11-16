@@ -659,7 +659,7 @@ describe('the agent\'s switchable tools', () => {
     const base = await guide(shellOf(images[0]));
     assert.match(base, /^You have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
     assert.ok(base.includes(`The shell is GNU bash with real programs: ${images[0].tools}. curl reaches the internet; a site whose certificate`));
-    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. dig asks Cloudflare's resolver, over DNS over HTTPS \(cloudflare-dns\.com\): .* It cannot ask a name server itself \(no @server, no \+trace, no UDP\)\. openssl works on certificates, keys and requests you have as files .* so it cannot show a site's certificate chain\. qjs runs JavaScript \(QuickJS:/);
+    assert.match(base, /an HTTP error \(526\), not a TLS failure, so check the status \(curl -f, or -w '%\{http_code\}'\)\. dig asks Cloudflare's resolver, over DNS over HTTPS \(cloudflare-dns\.com\): .* It cannot ask a name server itself \(no @server, no \+trace, no UDP\)\. openssl works on certificates, keys and requests .* Its s_client is the only way to see the certificate chain a site itself sends, which curl does not show: openssl s_client -connect host:443 -servername host -showcerts < \/dev\/null\. It reaches port 443 only; no other port leaves this computer except through curl's HTTP\. qjs runs JavaScript \(QuickJS:/);
     // It has a JavaScript interpreter, and is told what of node that is not.
     assert.match(base, /It is not node: no require, no npm packages, no fetch \(use curl, and pipe to it\), no child processes\. There is no npm, node or python, and no other binaries\./);
     assert.doesNotMatch(base, /just-bash|sqlite3/);

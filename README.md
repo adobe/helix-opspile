@@ -424,8 +424,9 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   An image is a stack of read-only layers, as a container image is, defined in
   [scripts/computer-images.mjs](scripts/computer-images.mjs). They live in the `IMAGES`
   bucket, not in the Worker, and a computer mounts its image at `/opt/image` without copying
-  it. curl and the secrets work there as in just-bash: see docs/ARCHITECTURE.md, "The
-  computer's shell".
+  it. curl and the secrets work there as in just-bash, and a program's own TCP reaches port
+  443 of a site, past the secrets, so `openssl s_client` shows the site's own certificate
+  chain: see docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages. Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See
