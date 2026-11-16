@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { keptAccounts } from '../src/accounts.js';
 import { inbox, searchInbox, thread } from '../src/api.js';
+import { inChannel } from '../src/shares.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
@@ -83,6 +84,14 @@ describe('inbox queries', () => {
 
   it('search identities and messages by index when opening a thread', async () => {
     assert.deepEqual(scans(await plans((env) => thread(env, me, 'slack:E1:C1:1.1'))), []);
+  });
+
+  it('find who is in a channel by their mentions, not by the channel\'s threads', async () => {
+    // Asked for every event of a channel that someone off its team hears about (src/room.js),
+    // and whenever they open one of its threads: an alert channel has tens of thousands.
+    const [p] = await plans((env) => inChannel(env, [1], { source: 'slack', channel_id: 'C1' }));
+    assert.ok(p.plan.some((d) => /SEARCH n USING (COVERING )?INDEX mentions_person/.test(d)), p.plan.join('\n'));
+    assert.ok(!p.plan.some((d) => /threads_channel/.test(d)), p.plan.join('\n'));
   });
 
   it('search the messages and channels of a person\'s accounts by index', async () => {
