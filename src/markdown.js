@@ -75,10 +75,11 @@ export const QUOTE_HEAD = /^> \[((?:\\.|[^\]\\\n])*)\]\((\S+) "Quoted message(?:
 
 /**
  * Where the fenced code blocks of markdown lines are, as CommonMark has them: for each line,
- * `'fence'` (it opens or closes one), `'code'` (it is inside one) or null. A fence is three or
- * more backticks or tildes, indented up to three spaces; a backtick fence's info string has no
- * backtick (`` ```x``` `` is code in a line, not a fence), and a closing fence is the same
- * character, at least as long, with nothing after it. A block not closed runs to the end.
+ * `'open'` or `'close'` (its fence opens or closes one), `'code'` (it is inside one) or null.
+ * A fence is three or more backticks or tildes, indented up to three spaces; a backtick
+ * fence's info string has no backtick (`` ```x``` `` is code in a line, not a fence), and a
+ * closing fence is the same character, at least as long, with nothing after it. A block not
+ * closed runs to the end.
  *
  * @param {string[]} lines
  * @param {(line: string) => string} [strip] the part of a line to read (without a quote's `>`)
@@ -91,14 +92,14 @@ export function codeLines(lines, strip = (l) => l) {
       const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(l);
       if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
         fence = null;
-        return 'fence';
+        return 'close';
       }
       return 'code';
     }
     const open = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(l);
     if (open) {
       fence = open[1] || open[2];
-      return 'fence';
+      return 'open';
     }
     return null;
   });
@@ -214,7 +215,7 @@ export function markdownToMrkdwn(md) {
   const out = [];
   const code = codeLines(lines);
   lines.forEach((line, i) => {
-    if (code[i] === 'fence') {
+    if (code[i] === 'open' || code[i] === 'close') {
       out.push('```');
     } else if (code[i] === 'code') {
       out.push(slackEscape(line));
@@ -237,7 +238,7 @@ export function markdownToMrkdwn(md) {
     }
   });
   // A code block not closed ends with the text.
-  if (code.length && code[code.length - 1] === 'code') {
+  if (code.length && ['open', 'code'].includes(code[code.length - 1])) {
     out.push('```');
   }
   return out.join('\n').replace(new RegExp(`${KEEP}(\\d+)${KEEP}`, 'g'), (_, i) => keep[Number(i)]);

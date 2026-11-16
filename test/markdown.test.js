@@ -20,11 +20,11 @@ describe('codeLines', () => {
   it('finds fenced code as CommonMark does', () => {
     const lines = ['a', '```js', '```x', '~~~', '````', 'b', '```x```', '~~~ `ok`', 'c', '~~~~ ', 'd'];
     assert.deepEqual(codeLines(lines), [
-      null, 'fence', 'code', 'code', 'fence', null, null, 'fence', 'code', 'fence', null,
+      null, 'open', 'code', 'code', 'close', null, null, 'open', 'code', 'close', null,
     ]);
     // Indented four spaces is no fence; one not closed runs to the end.
-    assert.deepEqual(codeLines(['    ```', '```', 'e']), [null, 'fence', 'code']);
-    assert.deepEqual(codeLines(['> ```', '> x', '> ```'], (l) => l.replace(/^> ?/, '')), ['fence', 'code', 'fence']);
+    assert.deepEqual(codeLines(['    ```', '```', 'e']), [null, 'open', 'code']);
+    assert.deepEqual(codeLines(['> ```', '> x', '> ```'], (l) => l.replace(/^> ?/, '')), ['open', 'code', 'close']);
   });
 });
 
@@ -69,6 +69,7 @@ describe('markdownToMrkdwn', () => {
     );
     // An unclosed fence still ends the code block.
     assert.equal(markdownToMrkdwn('```\nopen'), '```\nopen\n```');
+    assert.equal(markdownToMrkdwn('text\n```js'), 'text\n```\n```');
     // A code span on a line of its own is no fence, and a fence with text after it no end.
     assert.equal(markdownToMrkdwn('```x``` and **b**\n**c**'), '`x` and *b*\n*c*');
     assert.equal(markdownToMrkdwn('```\na\n```x\n```\n**c**'), '```\na\n```x\n```\n*c*');
