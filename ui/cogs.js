@@ -725,12 +725,12 @@ function shapes() {
     for (const el of svg.querySelectorAll(sel)) at.set(key(el), { el, ...boxOf(rect(el)) });
     return { svg, at, width: svg.getAttribute('width') };
   };
-  const chartAt = read('chart', 'g.col rect[data-k]', (el) => `${el.parentNode.dataset.at}|${el.dataset.k}`, (el) => el);
+  const chartAt = read('chart', 'g.col rect[data-k]:not(.ghost)', (el) => `${el.parentNode.dataset.at}|${el.dataset.k}`, (el) => el);
   return {
     by: byOf(state.data),
     cols: state.data.chart.columns.map((x) => x.at).join(),
     chart: { ...chartAt, ticks: chartAt.svg?.querySelector(':scope > g.axis')?.textContent },
-    tree: read('treemap', 'g.tile[data-k]', (el) => el.dataset.k, (el) => el.querySelector(':scope > rect')),
+    tree: read('treemap', 'g.tile[data-k]:not(.ghost)', (el) => el.dataset.k, (el) => el.querySelector(':scope > rect')),
   };
 }
 
@@ -776,7 +776,7 @@ function morphChart(from, same, t) {
   }
   const moves = [];
   const now = new Set();
-  for (const el of svg.querySelectorAll('g.col rect[data-k]')) {
+  for (const el of svg.querySelectorAll('g.col rect[data-k]:not(.ghost)')) {
     const key = `${el.parentNode.dataset.at}|${el.dataset.k}`;
     now.add(key);
     const to = boxOf(el);
@@ -808,7 +808,7 @@ function morphTreemap(from, same, t) {
     return;
   }
   const now = new Set();
-  for (const g of svg.querySelectorAll('g.tile[data-k]')) {
+  for (const g of svg.querySelectorAll('g.tile[data-k]:not(.ghost)')) {
     now.add(g.dataset.k);
     const old = from.at.get(g.dataset.k);
     const rect = g.querySelector(':scope > rect');
