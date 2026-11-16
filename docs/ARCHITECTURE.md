@@ -1780,7 +1780,8 @@ the default. An agent follows its team's choice before each delivery, as it foll
   The kernel's driver of `/workspace` knows the Workspace's read-only mounts (the uploads):
   files below them are read-only to the kernel too, so it refuses any change there when it
   starts, as Linux does: `Read-only file system`, and a non-zero exit code. `npm run
-  computer:check` checks both shells on the uploads in local workerd.
+  computer:check` checks both shells on the uploads in local workerd, and on Cloudflare in the
+  `Computer on stage` workflow.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
@@ -1793,10 +1794,11 @@ the default. An agent follows its team's choice before each delivery, as it foll
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
     and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, dig), `js` (qjs), `git`, `formats` (yq, html2markdown,
-    file) and `data` (ripgrep, sqlite3, strings). `base` is the first seven, and `data` is
-    `from: 'base'` with the eighth. A package's other files a program needs are named in its
-    `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's magic).
+    unzip, xz, bzip2), `net` (curl, dig), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
+    html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
+    `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
+    in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
+    magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names
     a command the image lacks.
   - **In the bucket**, everything but the images and their index is named by its content, and
@@ -1854,15 +1856,25 @@ the default. An agent follows its team's choice before each delivery, as it foll
   the gateway, as curl asks a site: Cloudflare, on which the Worker runs, already resolves
   every name curl reaches, so the agent is told it may look up a customer's names there. It
   has no `+trace` and asks no name server itself.
-- **TLS** is `fetch`'s, so neither curl nor any program sees a site's certificate chain:
-  there is no `openssl`.
+- **TLS** behind curl is `fetch`'s, so curl never sees a site's certificate chain. For that
+  the kernel has an uplink (`src/agent/uplink.js`, `network.uplink`): a program's own TCP
+  connections leave through the Worker's sockets (`connect` from `cloudflare:sockets`), to
+  port 443 only; any other port of an outside address is an unreachable network
+  (`ENETUNREACH`). `openssl s_client -connect host:443 -servername host` (from
+  `@ai-ecoverse/wasix-openssl-cli`) shows the chain the site sends, checked against Mozilla's
+  roots. Names resolve over DNS over HTTPS (cloudflare-dns.com's JSON API, through the
+  gateway's `forward`), IPv4 only. These bytes pass the gateway by: it cannot put a secret
+  into them, and a program has only a secret's placeholder, never its value. The kernel keeps
+  loopback, link-local and reserved addresses from the uplink, and Cloudflare refuses sockets
+  to private networks and to its own addresses (a site behind Cloudflare cannot be reached
+  this way). Proxy-aware programs (curl, git) still go through the proxy and the gateway.
 - **JavaScript** is `qjs`, [QuickJS-NG](https://github.com/quickjs-ng/quickjs) as a WASI
   program (`@ai-ecoverse/wasi-quickjs`). The kernel's own `node` (slicc-jsh) is a JS program,
   which it does not run in a Worker. qjs is not node: it has no `require`, no npm packages, no
   `fetch` and no child processes, and its files are `qjs:std` and `qjs:os`. The agent is told
   so where its image has it.
-- **What it does not have:** python, node (and so the AEM CLI or `aio`), `openssl`, and
-  `xan`, which just-bash has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
+  just-bash has.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits

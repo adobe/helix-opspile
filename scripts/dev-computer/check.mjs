@@ -12,25 +12,268 @@
  */
 
 /**
- * `npm run computer:check`: what Node's tests cannot run, checked on an agent's computer in
- * local workerd. It starts `npm run computer:dev` (scripts/dev-computer/dev.mjs) on a free
- * port, runs commands in both shells, and stops it. Run it after updating
+ * `npm run computer:check`: what Node's tests cannot run, checked on an agent's computer
+ * (scripts/dev-computer/worker.mjs): the programs of the images of scripts/computer-images.mjs,
+ * and that both shells refuse every change to the uploads with an exit code and an error. Without
+ * an origin it starts `npm run computer:dev` on a free port and stops it after; with one it
+ * checks that computer, the local one or the one deployed to Cloudflare, where the limits of
+ * Dynamic Workers are real (.github/workflows/computer-stage.yml). Run it after updating
  * `@ai-ecoverse/slicc-kernel`, `@cloudflare/computer` or the images.
  *
  *   npm run computer:check
+ *   npm run computer:check -- http://localhost:8788
+ *   COMPUTER_TOKEN=… npm run computer:check -- --images https://<stage worker>
+ *
+ * `--images` first puts into the Worker's bucket the objects of the images it lacks
+ * (`syncImages`, as `npm run computer:images` does for a deployment). `COMPUTER_TOKEN` is sent
+ * in `x-opspile-computer-token`, which the deployed Worker requires. Each run's agents are new
+ * (`thread=check-<run>-…`), so a computer boots from nothing, as an agent's first command does.
+ * Exits 1 when a check fails; with GITHUB_STEP_SUMMARY, writes the results there too.
  */
 
-import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { appendFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
-import {
-  after, before, describe, it,
-} from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { build, missingFrom, objectsOf } from '../computer-images.mjs';
 
-const here = dirname(fileURLToPath(import.meta.url));
+/**
+ * The checks: `command` runs in `runtime` (the kernel by default) with `image` (base by
+ * default), on a computer of its own per runtime and image (so a check does not reboot
+ * another's kernel), with `uploads` (`{ name: text }`) put there first, and passes when its
+ * output matches `match` (stdout, then stderr) and its exit code is 0.
+ */
+const ORIGINAL = 'line 1\nERROR boom\n';
+
+/** Commands that change an upload, or the uploads, each of which the shell must refuse. */
+export const CHANGES = [
+  'echo overwrite > uploads/sample.log',
+  ': > uploads/sample.log',
+  'echo more >> uploads/sample.log',
+  'exec 3>uploads/sample.log',
+  'echo new > uploads/new.log',
+  'rm uploads/sample.log',
+];
+
+/**
+ * The uploads, in `runtime`: every change refused, with an exit code and an error, and the file
+ * as it was; read, with the files next to them written; and read-only still once they change,
+ * which takes a new Workspace. Each change runs in a subshell, whose exit code is printed.
+ */
+export function uploadChecks(runtime) {
+  const uploads = { 'sample.log': ORIGINAL };
+  return [
+    ...CHANGES.map((change) => ({
+      name: `${runtime}: the uploads refuse \`${change}\``,
+      runtime,
+      uploads,
+      command: `( ${change} ); s=$?; cat uploads/sample.log; echo "exit $s"`,
+      match: /^line 1\nERROR boom\nexit [1-9]\d*\n[\s\S]*read-only/i,
+    })),
+    {
+      name: `${runtime}: the uploads are read, and the files next to them written`,
+      runtime,
+      uploads,
+      command: 'cat uploads/sample.log && echo ok > notes.txt && cat notes.txt',
+      match: /^line 1\nERROR boom\nok\n$/,
+    },
+    {
+      name: `${runtime}: the uploads are read-only still once they change`,
+      runtime,
+      uploads: { ...uploads, 'other.log': 'other\n' },
+      command: '( echo overwrite > uploads/other.log ); s=$?'
+        + '; cat uploads/other.log uploads/sample.log notes.txt; echo "exit $s"',
+      match: /^other\nline 1\nERROR boom\nok\nexit [1-9]\d*\n[\s\S]*read-only/i,
+    },
+  ];
+}
+
+export const CHECKS = [
+  { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
+  {
+    name: 'curl over https',
+    command: "curl -sS -o /dev/null -w '%{http_code}\\n' https://www.aem.live/",
+    match: /^200\n$/,
+  },
+  {
+    name: 'jq, four at once',
+    command: 'echo \'{"a":[1,2]}\' | jq -c . | jq -c .a | jq -c add | jq .',
+    match: /^3\n$/,
+  },
+  { name: 'qjs', command: "qjs -e 'console.log(6 * 7)'", match: /^42\n$/ },
+  { name: 'grep', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
+  { name: 'dig', command: 'dig +short a www.aem.live', match: /^(\S+\.\n)*(\d+\.){3}\d+\n/ },
+  {
+    name: 'git clone, log, blame',
+    command: 'cd /tmp && rm -rf c && git clone -q --depth 3 https://github.com/adobe/helix-opspile c'
+      + ' && git -C c log --oneline | wc -l && git -C c blame -L1,1 package.json | cut -d")" -f2',
+    match: /^[1-9]\d*\n \{\n$/,
+    timeout: 120,
+  },
+  { name: 'grep, after git', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
+  {
+    name: 'openssl: a CA, a certificate, verify, and s_client on loopback',
+    command: 'cd /tmp && rm -rf tls && mkdir tls && cd tls'
+      + ' && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1'
+      + ' -subj /CN=ca -keyout ca.key -out ca.pem 2> /dev/null'
+      + ' && openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=localhost'
+      + ' -keyout s.key -out s.csr 2> /dev/null'
+      + ' && openssl x509 -req -in s.csr -CA ca.pem -CAkey ca.key -days 1 -out s.pem'
+      + ' -extfile <(printf "subjectAltName=DNS:localhost") 2> /dev/null'
+      + ' && openssl verify -CAfile ca.pem s.pem'
+      + ' && openssl x509 -in s.pem -noout -ext subjectAltName | tail -1'
+      + ' && { openssl s_server -accept 4433 -cert s.pem -key s.key -quiet -naccept 1'
+      + ' > /dev/null 2>&1 & sleep 1;'
+      + ' echo | openssl s_client -connect localhost:4433 -servername localhost -CAfile ca.pem'
+      + ' -verify_return_error 2>&1 | grep -E "^Verify return code"; wait; }',
+    match: /^s\.pem: OK\n +DNS:localhost\nVerify return code: 0 \(ok\)\n$/,
+    timeout: 90,
+  },
+  {
+    // A site's own chain, through the uplink (src/agent/uplink.js), checked against the roots.
+    name: 'openssl: s_client to a site, port 443',
+    command: 'openssl s_client -connect www.aem.live:443 -servername www.aem.live'
+      + ' -verify_return_error < /dev/null 2>&1'
+      + ' | grep -oE "^(New, TLSv1\\.[23]|Verify return code: .*)"'
+      // The site's own certificate, not one of the kernel's proxy.
+      + ' && openssl s_client -connect www.aem.live:443 -servername www.aem.live < /dev/null'
+      + ' 2> /dev/null | openssl x509 -noout -issuer | grep -vic slicc',
+    match: /^New, TLSv1\.[23]\nVerify return code: 0 \(ok\)\n1\n$/,
+    timeout: 60,
+  },
+  {
+    // What the agent is told: no other port leaves the computer.
+    name: 'openssl: s_client to any other port is unreachable',
+    command: 'openssl s_client -connect www.aem.live:80 < /dev/null > /dev/null 2>&1; echo $?',
+    match: /^1\n$/,
+  },
+  {
+    name: 'yq',
+    command: "printf 'a:\\n  b: [1, 2]\\n' | yq -o json -I0 .a",
+    match: /^\{"b":\[1,2\]\}\n$/,
+  },
+  {
+    name: 'html2markdown',
+    command: "printf '<h1>Hi</h1><p>a <b>b</b></p>' | html2markdown",
+    match: /^# Hi\n\na \*\*b\*\*\n*$/,
+  },
+  {
+    name: 'file, xxd, patch, xz, bzip2',
+    command: 'cd /tmp && echo \'{"a":1}\' > j && file -b j && echo hi | xxd -p'
+      + ' && printf "a\\nb\\n" > x && printf "a\\nc\\n" > y && { diff -u x y > p || true; }'
+      + ' && patch -s x < p && tail -1 x && echo hi | xz | xz -dc && echo hi | bzip2 | bzcat',
+    match: /^JSON text data\n68690a\nc\nhi\nhi\n$/,
+  },
+  {
+    name: 'data: rg, sqlite3, strings',
+    image: 'data',
+    command: "printf 'x\\nneedle\\n' | rg -c needle && sqlite3 :memory: 'select 6 * 7'"
+      + ' && printf "\\0\\0hello\\0" | strings',
+    match: /^1\n42\nhello\n$/,
+  },
+  ...uploadChecks('just-bash'),
+  ...uploadChecks('slicc-kernel'),
+];
+
+/** Every command of `image` (a manifest) the computer has in /usr/bin. */
+export const commandsCheck = (image) => ({
+  name: `${image.name}: its ${image.commands.length} commands in /usr/bin`,
+  image: image.name,
+  command: `cd /usr/bin && for c in ${image.commands.map((c) => `'${c}'`).join(' ')}; do`
+    + ' [ -x "$c" ] || echo "missing $c"; done; echo checked',
+  match: /^checked\n$/,
+});
+
+const headersOf = (token) => (token ? { 'x-opspile-computer-token': token } : {});
+
+/**
+ * Puts the objects of `built` (scripts/computer-images.mjs `build`) that the Worker at
+ * `origin` lacks into its bucket, in upload order: how many it put.
+ */
+export async function syncImages(origin, built, { token, log = console.log } = {}) {
+  const objects = objectsOf(built);
+  const read = async (key) => {
+    const res = await fetch(`${origin}/images/${key}`, { headers: headersOf(token) });
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error(`could not read ${key}: ${res.status}`);
+    }
+    return res.text();
+  };
+  const missing = await missingFrom(objects, read);
+  for (const o of missing) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await fetch(`${origin}/images/${o.key}`, {
+      method: 'PUT', body: o.body, headers: headersOf(token),
+    });
+    if (!res.ok) {
+      throw new Error(`could not put ${o.key}: ${res.status}`);
+    }
+  }
+  log(`images: ${missing.length} of ${objects.length} objects put`);
+  return missing.length;
+}
+
+/** Runs `check` on the computer at `origin`: `{ name, ok, ms, output, exitCode, error }`. */
+export async function runCheck(origin, check, { token, run }) {
+  const image = check.image || 'base';
+  const runtime = check.runtime || 'slicc-kernel';
+  const thread = `check-${run}-${runtime === 'slicc-kernel' ? image : runtime}`;
+  const headers = { 'content-type': 'application/json', ...headersOf(token) };
+  const started = Date.now();
+  try {
+    if (check.uploads) {
+      const put = await fetch(`${origin}/uploads?thread=${thread}`, {
+        method: 'POST', headers, body: JSON.stringify(check.uploads),
+      });
+      if (!put.ok) {
+        throw new Error(`could not put the uploads: ${put.status}`);
+      }
+    }
+    const res = await fetch(`${origin}/?thread=${thread}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        command: check.command,
+        runtime,
+        ...(runtime === 'slicc-kernel' ? { image } : {}),
+        timeout: check.timeout || 60,
+      }),
+    });
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    const output = `${body.stdout || ''}${body.stderr || ''}`;
+    const ok = res.ok && !body.error && body.exitCode === 0 && check.match.test(output);
+    return {
+      name: check.name,
+      ok,
+      ms: Date.now() - started,
+      output,
+      exitCode: body.exitCode,
+      error: body.error ? `${body.error}${body.message ? `: ${body.message}` : ''}` : undefined,
+    };
+  } catch (e) {
+    return {
+      name: check.name, ok: false, ms: Date.now() - started, output: '', error: e.message,
+    };
+  }
+}
+
+const tail = (text, lines = 15) => text.trimEnd().split('\n').slice(-lines).join('\n');
+
+/**
+ * The results as a Markdown table, and what the failed ones printed. Not where the computer is:
+ * a step summary is public, and the stage Worker's address names the account.
+ */
+export function summaryOf(results) {
+  const rows = results.map((r) => `| ${r.ok ? '✅' : '❌'} | ${r.name} | ${r.ms} ms |`);
+  const failed = results.filter((r) => !r.ok).map((r) => `\n**${r.name}**`
+    + ` (exit ${r.exitCode ?? '–'}${r.error ? `, ${r.error}` : ''}):\n\n\`\`\`\n${tail(r.output)}\n\`\`\``);
+  return ['### The agent\'s computer', '', '| | Check | Time |',
+    '| --- | --- | --- |', ...rows, ...failed, ''].join('\n');
+}
 
 const freePort = () => new Promise((resolve, reject) => {
   const server = createServer();
@@ -41,17 +284,14 @@ const freePort = () => new Promise((resolve, reject) => {
   });
 });
 
-let dev;
-let origin;
-let log = '';
-
-before(async () => {
+/** Starts `npm run computer:dev` on a free port: `{ origin, stop }`, once its images are in. */
+async function startDev() {
   const port = await freePort();
-  origin = `http://localhost:${port}`;
-  dev = spawn(process.execPath, [join(here, 'dev.mjs')], {
+  const dev = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'dev.mjs')], {
     env: { ...process.env, PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let log = '';
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`computer:dev did not start:\n${log}`)), 120_000);
     const seen = (chunk) => {
@@ -68,65 +308,48 @@ before(async () => {
       reject(new Error(`computer:dev exited (${code}):\n${log}`));
     });
   });
-}, { timeout: 130_000 });
-
-after(() => {
-  dev?.kill('SIGTERM');
-});
-
-/** POSTs `body` to `path` of the computer of `thread`: what it answers. */
-async function post(thread, path, body) {
-  const res = await fetch(`${origin}${path}?thread=${thread}`, {
-    method: 'POST', body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  assert.equal(res.status, 200, JSON.stringify(json));
-  return json;
+  return { origin: `http://localhost:${port}`, stop: () => dev.kill('SIGTERM') };
 }
 
-const ORIGINAL = 'line 1\nERROR boom\n';
-
-/** Commands that change an upload, or the uploads, each of which the shell must refuse. */
-const CHANGES = [
-  'echo overwrite > uploads/sample.log',
-  ': > uploads/sample.log',
-  'echo more >> uploads/sample.log',
-  'exec 3>uploads/sample.log',
-  'echo new > uploads/new.log',
-  'rm uploads/sample.log',
-];
-
-for (const runtime of ['just-bash', 'slicc-kernel']) {
-  describe(`the uploads, in ${runtime}`, () => {
-    const thread = `check-${randomUUID()}`;
-    const run = (command) => post(thread, '/', { command, runtime });
-
-    before(async () => {
-      await post(thread, '/uploads', { 'sample.log': ORIGINAL });
-    }, { timeout: 60_000 });
-
-    for (const command of CHANGES) {
-      it(`refuse \`${command}\`, with an exit code and an error`, async () => {
-        const res = await run(command);
-        assert.notEqual(res.exitCode, 0, JSON.stringify(res));
-        assert.match(res.stderr, /read-only/i, JSON.stringify(res));
-        assert.equal((await run('cat uploads/sample.log')).stdout, ORIGINAL);
-      }, { timeout: 60_000 });
+async function checkAll(origin, argv) {
+  const token = process.env.COMPUTER_TOKEN;
+  const built = await build();
+  if (argv.includes('--images')) {
+    await syncImages(origin, built, { token });
+  }
+  const run = process.env.GITHUB_RUN_ID || Date.now().toString(36);
+  const checks = [...CHECKS, ...built.images.map(commandsCheck)];
+  const results = [];
+  for (const check of checks) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await runCheck(origin, check, { token, run });
+    console.log(`${result.ok ? 'ok  ' : 'FAIL'} ${result.name} (${result.ms} ms)`);
+    if (!result.ok) {
+      console.log(`  exit ${result.exitCode ?? '–'}${result.error ? `, ${result.error}` : ''}`);
+      console.log(tail(result.output).replace(/^/gm, '  | '));
     }
+    results.push(result);
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, summaryOf(results));
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`${results.length - failed} of ${results.length} checks passed`);
+  process.exitCode = failed ? 1 : 0;
+}
 
-    it('are read, and the files next to them written', async () => {
-      const res = await run('cat uploads/sample.log && echo ok > notes.txt && cat notes.txt');
-      assert.equal(res.exitCode, 0, JSON.stringify(res));
-      assert.equal(res.stdout, `${ORIGINAL}ok\n`);
-    }, { timeout: 60_000 });
+async function main(argv) {
+  const given = argv.find((a) => /^https?:\/\//.test(a));
+  const dev = given ? null : await startDev();
+  try {
+    await checkAll(dev ? dev.origin : given, argv);
+  } finally {
+    if (dev) {
+      dev.stop();
+    }
+  }
+}
 
-    it('are read-only still once they change, which takes a new Workspace', async () => {
-      await post(thread, '/uploads', { 'sample.log': ORIGINAL, 'other.log': 'other\n' });
-      const res = await run('echo overwrite > uploads/other.log');
-      assert.notEqual(res.exitCode, 0, JSON.stringify(res));
-      assert.match(res.stderr, /read-only/i, JSON.stringify(res));
-      const read = await run('cat uploads/other.log uploads/sample.log notes.txt');
-      assert.equal(read.stdout, `other\n${ORIGINAL}ok\n`, JSON.stringify(read));
-    }, { timeout: 60_000 });
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main(process.argv.slice(2));
 }

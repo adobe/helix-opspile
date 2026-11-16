@@ -26,6 +26,7 @@ import {
   attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, inProcessMount,
   sliccBackend,
 } from '@ai-ecoverse/slicc-kernel/cloudflare';
+import { connect } from 'cloudflare:sockets';
 import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 // wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
 import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
@@ -50,6 +51,7 @@ import {
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
+import { socketUplink } from './uplink.js';
 import { seed, seedPin } from './seed.js';
 import { inSidebar, keepAnswers, talk } from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
@@ -394,7 +396,9 @@ export class ThreadAgent extends Agent {
    * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
    * follow redirects themselves, through it again. For `https://` the kernel's proxy ends a
    * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile
-   * one at run time), and hands the request to the same transport. A Worker's clock stands
+   * one at run time), and hands the request to the same transport. A program's own TCP
+   * leaves through the uplink (src/agent/uplink.js), the Worker's sockets, to port 443 only,
+   * past the gateway: for a site's own TLS. A Worker's clock stands
    * still while it computes, so the kernel asks this object for the time before each timed wait.
    */
   kernel() {
@@ -406,6 +410,7 @@ export class ThreadAgent extends Agent {
         throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
       }
       const tree = await imageTree(this.env.IMAGES, image);
+      const gateway = gatewayFetch((request) => forward(this.env, { agent: this.name }, request));
       const kernel = await createCloudflareKernel({
         loader: this.env.LOADER,
         sql: storage.sql,
@@ -418,11 +423,10 @@ export class ThreadAgent extends Agent {
         // runs no more Dynamic Workers (8) than a Durable Object may (10).
         isolates: { memory: 96 * 2 ** 20 },
         network: {
-          transport: fetchTransport({
-            fetch: gatewayFetch((request) => forward(this.env, { agent: this.name }, request)),
-            redirect: 'manual',
-          }),
+          transport: fetchTransport({ fetch: gateway, redirect: 'manual' }),
           tlsEngine: compiledTlsEngine(createTlsEngine, tlsWasm),
+          // TCP out, to port 443 only (src/agent/uplink.js): a site's own TLS.
+          uplink: socketUplink({ connect, fetch: gateway }),
         },
       });
       try {

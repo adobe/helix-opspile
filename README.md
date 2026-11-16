@@ -419,13 +419,14 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   kernel (experimental)**, GNU bash and real programs on the
   [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel), over the same files. With the
   kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, jq, yq,
-  find, diff, tar, gzip, zip, xz, html2markdown, curl, dig, git, and `qjs`, a JavaScript
+  find, diff, tar, gzip, zip, xz, html2markdown, curl, dig, openssl, git, and `qjs`, a JavaScript
   interpreter) or **Data** (Base, with ripgrep, sqlite3 and strings).
   An image is a stack of read-only layers, as a container image is, defined in
   [scripts/computer-images.mjs](scripts/computer-images.mjs). They live in the `IMAGES`
   bucket, not in the Worker, and a computer mounts its image at `/opt/image` without copying
-  it. curl and the secrets work there as in just-bash: see docs/ARCHITECTURE.md, "The
-  computer's shell".
+  it. curl and the secrets work there as in just-bash, and a program's own TCP reaches port
+  443 of a site, past the secrets, so `openssl s_client` shows the site's own certificate
+  chain: see docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages. Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See
@@ -668,10 +669,21 @@ curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another 
 Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, layer or program
 (`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `npm run computer:check`
 ([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)) starts it on a free port and
-checks what they cannot: that both shells refuse every change to the uploads with an exit code
-and an error, and read them. `cf dev` runs the whole
-Worker with its own local bucket, which `node scripts/computer-images.mjs --upload --local`
-fills.
+checks what they cannot: every program of every image, and that both shells refuse every change
+to the uploads with an exit code and an error, and read them. Add a check for a program you
+add. `npm run computer:check -- http://localhost:8788` checks a computer that is running
+already. `cf dev` runs the whole Worker with its own local bucket, which
+`node scripts/computer-images.mjs --upload --local` fills.
+
+Local workerd does not hold a computer to Cloudflare's limits (128 MB per Dynamic Worker,
+module sizes, 10 Dynamic Workers at once), so on every branch but main
+[.github/workflows/computer-stage.yml](.github/workflows/computer-stage.yml) deploys the same
+computer to Cloudflare as `helix-opspile-computer-stage` (`wrangler deploy --env stage`, buckets
+`helix-opspile-computer-stage-images` and `-files`, made by the workflow), puts the images into
+its bucket and runs the same checks there. That Worker is a shell on the internet: it answers
+only with the secret `COMPUTER_TOKEN` in `x-opspile-computer-token`, which each run makes and
+replaces with an unknown one when it ends. It needs the repository's `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`, as the deploy does.
 
 ### Measure the inbox
 
