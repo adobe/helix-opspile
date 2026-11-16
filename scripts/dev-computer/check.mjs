@@ -49,14 +49,16 @@ export const CHECKS = [
     match: /^3\n$/,
   },
   { name: 'qjs', command: "qjs -e 'console.log(6 * 7)'", match: /^42\n$/ },
+  { name: 'grep', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
   { name: 'dig', command: 'dig +short a www.aem.live', match: /^(\S+\.\n)*(\d+\.){3}\d+\n/ },
   {
     name: 'git clone, log, blame',
     command: 'cd /tmp && rm -rf c && git clone -q --depth 3 https://github.com/adobe/helix-opspile c'
-      + ' && git -C c log --oneline | wc -l && git -C c blame -L1,1 package.json | grep -c "{"',
-    match: /^[1-9]\d*\n1\n$/,
+      + ' && git -C c log --oneline | wc -l && git -C c blame -L1,1 package.json | cut -d")" -f2',
+    match: /^[1-9]\d*\n \{\n$/,
     timeout: 120,
   },
+  { name: 'grep, after git', command: 'printf "a\\nb\\na\\n" | grep -c a', match: /^2\n$/ },
   {
     name: 'yq',
     command: "printf 'a:\\n  b: [1, 2]\\n' | yq -o json -I0 .a",
