@@ -7642,8 +7642,9 @@ function emptyPane() {
   const slides = pane.getAnimations().filter((a) => a instanceof CSSTransition);
   if (!slides.length) { empty(); return; }
   pane.inert = true;
-  // Turned back (the thread opened again) cancels them, and the pane is the thread's again.
-  Promise.all(slides.map((a) => a.finished)).then(empty, () => {});
+  // A slide cut short (the thread opened again, the screen grown past the phone's, `main.instant`)
+  // ends it as well: opened again, `empty` leaves the pane to the thread.
+  Promise.all(slides.map((a) => a.finished)).then(empty, empty);
 }
 function setFiltering(on) {
   state.filtering = on;
