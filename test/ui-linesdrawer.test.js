@@ -117,6 +117,10 @@ describe('the drawer', () => {
     assert.match(rules, /\.linesdrawer\.still, \.linesdrawer\.still \.sheet \{ transition: none; \}/);
     const render = js.slice(js.indexOf('function renderLines(key)'), js.indexOf('/** Opens or closes the drawer'));
     assert.match(render, /if \(!open\) el\.classList\.remove\('still'\);\n {2}else if \(!el\.__wired\) el\.classList\.add\('still'\);\n {2}el\.classList\.toggle\('open', open\);/);
+    // Leaving, it is out of Tab's reach too; never on a wider screen (the reply box's lines).
+    assert.match(render, /\n {2}el\.inert = !open && LINES_DRAWER\.matches;\n/);
+    const widen = js.slice(js.indexOf("LINES_DRAWER.addEventListener('change'"), js.indexOf('// The thread whose drawer is open'));
+    assert.match(widen, /if \(LINES_DRAWER\.matches\) return;[\s\S]*if \(el\) el\.inert = false;/);
     // No motion for those who ask for less.
     assert.match(css, /@media \(max-width: 1099px\) and \(prefers-reduced-motion: reduce\) \{[^}]*\}\n {2}\.linesdrawer, \.linesdrawer\.open, \.linesdrawer \.sheet, \.linesdrawer\.open \.sheet \{ transition: none; \}/);
   });
@@ -136,7 +140,7 @@ describe('the drawer', () => {
     assert.match(render, /const dialog = \{ role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' \};/);
     assert.match(render, /if \(open\) sheet\.setAttribute\(name, value\); else sheet\.removeAttribute\(name\);/);
     // A screen that grows past the phone's breakpoint has no drawer left to be open.
-    assert.match(js, /const LINES_DRAWER = matchMedia\('\(max-width: 699px\)'\);\nLINES_DRAWER\.addEventListener\('change', \(\) => \{ if \(!LINES_DRAWER\.matches && linesDrawer\.key\) setLines\(linesDrawer\.key, false\); \}\);/);
+    assert.match(js, /const LINES_DRAWER = matchMedia\('\(max-width: 699px\)'\);\nLINES_DRAWER\.addEventListener\('change', \(\) => \{\n {2}if \(LINES_DRAWER\.matches\) return;\n {2}if \(linesDrawer\.key\) setLines\(linesDrawer\.key, false\);/);
   });
 
   it('opens on its tab, and closes on ✕, a tap beside the sheet, Escape, and the draft going to the thread', () => {
