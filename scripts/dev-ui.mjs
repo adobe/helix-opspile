@@ -306,6 +306,23 @@ function broadcast(team, event) {
   }
 }
 
+/** FLUSH_MS in src/room.js, which Node cannot import. */
+const FLUSH_MS = 2000;
+
+/**
+ * ME's read, as a team's room has it (src/room.js): announced at once, written a while later,
+ * then announced as written (`reads`). A page that reloads before then has the thread unread.
+ */
+function readInRoom(team, key, at) {
+  broadcast(team, {
+    type: 'read', person: ME, thread: key, at,
+  });
+  setTimeout(() => {
+    store.read(ME, key, at);
+    broadcast(team, { type: 'reads', reads: [{ person: ME, thread: key, at }] });
+  }, FLUSH_MS);
+}
+
 // ---- API, the same shapes as src/api.js -----------------------------------------------
 
 /** The members of a team, or of several (the personal view: all of ME's teams). */
@@ -1675,10 +1692,7 @@ async function api(req, res, url) {
     if (!entry || !inTeam(entry.row.team) || typeof at !== 'string') {
       return json(res, { error: 'not found' }, 404);
     }
-    store.read(ME, key, at);
-    broadcast(entry.row.team, {
-      type: 'read', person: ME, thread: key, at,
-    });
+    readInRoom(entry.row.team, key, at);
     res.writeHead(204).end();
     return true;
   }
@@ -1767,10 +1781,7 @@ function handleClientMessage(team, data) {
     return;
   }
   if (msg.type === 'read' && store.threads.get(msg.thread)) {
-    store.read(ME, msg.thread, msg.at);
-    broadcast(team, {
-      type: 'read', person: ME, thread: msg.thread, at: msg.at,
-    });
+    readInRoom(team, msg.thread, msg.at);
   }
 }
 
